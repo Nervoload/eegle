@@ -82,7 +82,7 @@ def apply_pyglet_macos_notification_patch() -> None:
     except Exception:
         return
 
-    if getattr(cocoa.CocoaWindow.dispatch_events, "_closedloop_patched", False):
+    if getattr(cocoa.CocoaWindow.dispatch_events, "_eegle_patched", False):
         return
 
     def dispatch_events(self):  # type: ignore[no-untyped-def]
@@ -119,5 +119,5 @@ def apply_pyglet_macos_notification_patch() -> None:
         pool.drain()
         self._allow_dispatch_event = False
 
-    dispatch_events._closedloop_patched = True  # type: ignore[attr-defined]
+    dispatch_events._eegle_patched = True  # type: ignore[attr-defined]
     cocoa.CocoaWindow.dispatch_events = dispatch_events

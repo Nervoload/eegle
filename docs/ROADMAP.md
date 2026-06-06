@@ -2,7 +2,7 @@
 
 ## Immediate Foundation
 
-1. Validate `make doctor` with NIC2 streaming Enobio EEG over LSL.
+1. Validate `eegle check-setup --require-eeg` with NIC2 streaming Enobio EEG over LSL.
 2. Run `make forward-dry-run` and confirm the BciPy-style session folders are created.
 3. Run `make forward-pvt` with NIC2 streaming and confirm `raw/eeg.csv` receives samples.
 4. Run PVT in PsychoPy mode with no subject, then with a photodiode timing check.

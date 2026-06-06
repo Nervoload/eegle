@@ -1,4 +1,4 @@
-"""Command-line interface for the EEG experiment scaffold."""
+"""Command-line interface for EEGle."""
 
 from __future__ import annotations
 
@@ -35,19 +35,23 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="closedloop-eeg", description="Closed-loop EEG experiment scaffold")
+    parser = argparse.ArgumentParser(prog="eegle", description="Reproducible realtime EEG experiments")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG), help="Path to experiment JSON config")
     _add_telemetry_args(parser)
     subparsers = parser.add_subparsers(required=True)
 
-    doctor = subparsers.add_parser("doctor", help="Run hardware and runtime preflight checks")
-    _add_config_arg(doctor)
-    _add_telemetry_args(doctor)
-    doctor.add_argument("--lsl-wait", type=float, default=1.0, help="Seconds to wait for LSL stream discovery")
-    doctor.add_argument("--require-eeg", action="store_true", help="Fail if no Enobio/NIC2 LSL stream is found")
-    doctor.add_argument("--allow-missing-eeg", action="store_true", help="Warn instead of failing if no Enobio/NIC2 LSL stream is found")
-    doctor.add_argument("--save", default=None, help="Optional JSON report path")
-    doctor.set_defaults(func=cmd_doctor)
+    setup_check = subparsers.add_parser(
+        "check-setup",
+        aliases=["doctor"],
+        help="Check Python dependencies, LSL discovery, and configured EEG hardware",
+    )
+    _add_config_arg(setup_check)
+    _add_telemetry_args(setup_check)
+    setup_check.add_argument("--lsl-wait", type=float, default=1.0, help="Seconds to wait for LSL stream discovery")
+    setup_check.add_argument("--require-eeg", action="store_true", help="Fail if no Enobio/NIC2 LSL stream is found")
+    setup_check.add_argument("--allow-missing-eeg", action="store_true", help="Warn instead of failing if no Enobio/NIC2 LSL stream is found")
+    setup_check.add_argument("--save", default=None, help="Optional JSON report path")
+    setup_check.set_defaults(func=cmd_check_setup)
 
     tasks = subparsers.add_parser("list-tasks", help="List known experiment tasks")
     _add_config_arg(tasks)
@@ -188,7 +192,7 @@ def _add_telemetry_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--quiet", action="store_true", help="Suppress console telemetry for this run")
 
 
-def cmd_doctor(args: argparse.Namespace, config: dict[str, Any]) -> int:
+def cmd_check_setup(args: argparse.Namespace, config: dict[str, Any]) -> int:
     require_eeg = None
     if args.require_eeg:
         require_eeg = True
@@ -201,6 +205,10 @@ def cmd_doctor(args: argparse.Namespace, config: dict[str, Any]) -> int:
         write_preflight_report(results, args.save)
         print(f"saved preflight report: {args.save}")
     return 0 if all(result.ok for result in results) else 1
+
+
+# Compatibility for callers that imported the old command handler.
+cmd_doctor = cmd_check_setup
 
 
 def cmd_list_tasks(args: argparse.Namespace, config: dict[str, Any]) -> int:

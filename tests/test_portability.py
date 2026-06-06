@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from reproduce.cli import build_parser, cmd_check_setup
 from reproduce.config import DEFAULT_CONFIG
 from reproduce.hardware.system import check_platform, check_python
 from reproduce.runtime import _disable_psychopy_glfw
@@ -13,6 +14,12 @@ from reproduce.session import create_session
 
 
 class PortabilityTests(unittest.TestCase):
+    def test_primary_cli_name_and_setup_check_command_are_clear(self) -> None:
+        parser = build_parser()
+        self.assertEqual(parser.prog, "eegle")
+        self.assertIs(parser.parse_args(["check-setup"]).func, cmd_check_setup)
+        self.assertIs(parser.parse_args(["doctor"]).func, cmd_check_setup)
+
     def test_default_config_is_packaged_with_the_runtime(self) -> None:
         self.assertTrue(DEFAULT_CONFIG.exists())
 

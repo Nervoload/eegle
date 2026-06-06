@@ -30,7 +30,7 @@ class JsonlFeedbackEmitter:
 
 
 class LslFeedbackEmitter:
-    def __init__(self, name: str, stream_type: str = "Feedback", source_id: str = "closedloop-feedback") -> None:
+    def __init__(self, name: str, stream_type: str = "Feedback", source_id: str = "eegle-feedback") -> None:
         import pylsl
 
         info = pylsl.StreamInfo(name, stream_type, 1, 0, "string", source_id)

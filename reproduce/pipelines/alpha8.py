@@ -59,15 +59,15 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     full = subparsers.add_parser(
         "full",
-        help="Run doctor, posterior-alpha calibration, 100-trial Go/No-go, analysis, and HTML summary",
+        help="Run setup checks, posterior-alpha calibration, 100-trial Go/No-go, analysis, and HTML summary",
     )
     full.add_argument("--config", default=str(DEFAULT_ALPHA8_CONFIG), help="Pipeline config JSON")
     full.add_argument("--participant", default=None, help="Participant/session id override")
     full.add_argument("--trials", type=int, default=MAX_ALPHA8_TRIALS, help="Main Go/No-go trial count, maximum 100")
     full.add_argument("--task-mode", choices=["psychopy", "dry-run"], default="psychopy")
     full.add_argument("--skip-eeg", action="store_true", help="Development mode: skip EEG recorder and realtime LSL")
-    full.add_argument("--allow-missing-eeg", action="store_true", help="Warn instead of failing when doctor finds no EEG stream")
-    full.add_argument("--lsl-wait", type=float, default=5.0, help="Seconds to wait during Enobio8 LSL doctor check")
+    full.add_argument("--allow-missing-eeg", action="store_true", help="Warn instead of failing when setup checks find no EEG stream")
+    full.add_argument("--lsl-wait", type=float, default=5.0, help="Seconds to wait during the Enobio8 LSL setup check")
     full.add_argument("--max-raw-points", type=int, default=120000, help="Maximum raw EEG points embedded in HTML replay")
     full.add_argument("--max-alpha-points", type=int, default=12000, help="Maximum alpha windows embedded in HTML plots")
     full.add_argument("--log-level", choices=["quiet", "default", "realtime", "debug"], default=None)
@@ -138,13 +138,13 @@ def run_full_pipeline(options: Alpha8PipelineOptions) -> dict[str, Any]:
     preflight_report = cache_root / "alpha8" / "preflight_alpha8_full.json"
 
     _step_start("1/4 preflight", options)
-    doctor = run_preflight(config, lsl_wait=options.lsl_wait_seconds, require_eeg=options.require_eeg)
+    setup_checks = run_preflight(config, lsl_wait=options.lsl_wait_seconds, require_eeg=options.require_eeg)
     preflight_report.parent.mkdir(parents=True, exist_ok=True)
-    write_preflight_report(doctor, preflight_report)
-    doctor_payload = _preflight_payload(doctor, preflight_report)
-    pipeline_steps.append({"step": "preflight", **doctor_payload})
-    _print_preflight(doctor, preflight_report, options)
-    if any(result.status == "fail" for result in doctor):
+    write_preflight_report(setup_checks, preflight_report)
+    setup_check_payload = _preflight_payload(setup_checks, preflight_report)
+    pipeline_steps.append({"step": "preflight", **setup_check_payload})
+    _print_preflight(setup_checks, preflight_report, options)
+    if any(result.status == "fail" for result in setup_checks):
         summary = {
             "schema_version": 1,
             "pipeline": "alpha8.full",
@@ -153,7 +153,7 @@ def run_full_pipeline(options: Alpha8PipelineOptions) -> dict[str, Any]:
             "completed_at": datetime.now().isoformat(timespec="seconds"),
             "steps": pipeline_steps,
             "failure_step": "preflight",
-            "reason": "doctor_failed",
+            "reason": "setup_check_failed",
         }
         _print_step("Pipeline stopped before calibration because preflight failed.", options)
         return summary

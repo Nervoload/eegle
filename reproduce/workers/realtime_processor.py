@@ -529,7 +529,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _try_open_marker_inlet(pylsl: Any, config: dict[str, Any]) -> tuple[Any | None, dict[str, Any] | None]:
     marker_config = config.get("hardware", {}).get("markers", {})
-    name = marker_config.get("lsl_stream_name", "ClosedLoopMarkers")
+    name = marker_config.get("lsl_stream_name", "EEGleMarkers")
     stream_type = marker_config.get("lsl_stream_type", "Markers")
     source_id = marker_config.get("source_id")
     matches = [

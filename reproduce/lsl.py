@@ -78,7 +78,7 @@ def lsl_local_clock() -> float | None:
 class LslMarkerOutlet:
     """Small marker outlet wrapper for task event markers."""
 
-    def __init__(self, name: str, stream_type: str = "Markers", source_id: str = "closedloop-markers") -> None:
+    def __init__(self, name: str, stream_type: str = "Markers", source_id: str = "eegle-markers") -> None:
         import pylsl
 
         info = pylsl.StreamInfo(name, stream_type, 1, 0, "string", source_id)
@@ -105,7 +105,7 @@ def session_marker_source_id(session_dir: str | Path) -> str:
     root = Path(session_dir).expanduser().resolve()
     run_stamp = root.parent.name
     path_digest = hashlib.sha1(str(root).encode("utf-8")).hexdigest()[:12]
-    return f"closedloop-markers-{run_stamp}-{root.name}-{path_digest}"
+    return f"eegle-markers-{run_stamp}-{root.name}-{path_digest}"
 
 
 def lsl_processing_flags(pylsl: Any, *, dejitter: bool) -> int:

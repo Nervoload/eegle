@@ -1004,7 +1004,7 @@ def _safe_wait(seconds: float) -> None:
 def _make_marker_outlet(markers: dict[str, Any], paths: SessionPaths) -> LslMarkerOutlet | NullMarkerOutlet:
     try:
         return LslMarkerOutlet(
-            name=markers.get("lsl_stream_name", "ClosedLoopMarkers"),
+            name=markers.get("lsl_stream_name", "EEGleMarkers"),
             stream_type=markers.get("lsl_stream_type", "Markers"),
             source_id=markers.get("source_id") or session_marker_source_id(paths.root),
         )

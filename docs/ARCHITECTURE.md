@@ -46,7 +46,7 @@ default preflight -> FeedbackManager -> task -> managed recorder/realtime worker
 
 When `--calibration-suite posterior_alpha` is selected for Go/No-go, the runner starts the recorder, runs the posterior alpha calibration suite, writes the individualized or fallback alpha band into `parameters.json`, then starts realtime alpha measurement before the main task.
 
-`alpha8 full` is the top-level Enobio8 posterior-alpha orchestration command. It runs a required Enobio8 doctor/preflight check, then invokes the existing forward runner with `posterior_alpha`, 100 main Go/No-go stimuli, realtime alpha measurement, post-analysis, and `reports/experiment_summary.html` generation in strict sequence. The dry validation form is `./alpha8 full --task-mode dry-run --skip-eeg --allow-missing-eeg --trials 2`.
+`alpha8 full` is the top-level Enobio8 posterior-alpha orchestration command. It runs a required Enobio8 setup/preflight check, then invokes the existing forward runner with `posterior_alpha`, 100 main Go/No-go stimuli, realtime alpha measurement, post-analysis, and `reports/experiment_summary.html` generation in strict sequence. The dry validation form is `alpha8 full --task-mode dry-run --skip-eeg --allow-missing-eeg --trials 2`.
 
 `reproduce.session` creates a BciPy-inspired session layout:
 

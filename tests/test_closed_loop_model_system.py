@@ -240,7 +240,7 @@ class ClosedLoopModelSystemTests(unittest.TestCase):
                 "telemetry": {"console_level": "disabled", "file_level": "disabled"},
                 "hardware": {
                     "eeg": {"profile": "enobio8_alpha_posterior", "expected_sample_rate_hz": 100},
-                    "markers": {"lsl_stream_name": "ClosedLoopMarkers", "lsl_stream_type": "Markers"},
+                    "markers": {"lsl_stream_name": "EEGleMarkers", "lsl_stream_type": "Markers"},
                 },
                 "tasks": {
                     "go_nogo": {
@@ -625,7 +625,7 @@ class ClosedLoopModelSystemTests(unittest.TestCase):
                         "stream_timeout_seconds": 0.1,
                         "required_for_run": False,
                     },
-                    "markers": {"lsl_stream_name": "ClosedLoopMarkers", "lsl_stream_type": "Markers"},
+                    "markers": {"lsl_stream_name": "EEGleMarkers", "lsl_stream_type": "Markers"},
                 },
                 "processes": {
                     "recorder": {"enabled": False, "backend": "disabled"},

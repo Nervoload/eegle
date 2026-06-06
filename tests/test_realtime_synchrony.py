@@ -91,15 +91,15 @@ class RealtimeSynchronyTests(unittest.TestCase):
     def test_marker_inlet_requires_exact_session_stream_and_applies_clock_sync(self) -> None:
         pylsl = _FakePylsl(
             [
-                _FakeInfo("ClosedLoopMarkers", "Markers", "stale-session"),
-                _FakeInfo("ClosedLoopMarkers", "Markers", "run-123"),
+                _FakeInfo("EEGleMarkers", "Markers", "stale-session"),
+                _FakeInfo("EEGleMarkers", "Markers", "run-123"),
                 _FakeInfo("OtherMarkers", "Markers", "run-123"),
             ]
         )
         config = {
             "hardware": {
                 "markers": {
-                    "lsl_stream_name": "ClosedLoopMarkers",
+                    "lsl_stream_name": "EEGleMarkers",
                     "lsl_stream_type": "Markers",
                     "source_id": "run-123",
                 }
@@ -116,8 +116,8 @@ class RealtimeSynchronyTests(unittest.TestCase):
     def test_duplicate_exact_marker_streams_are_rejected(self) -> None:
         pylsl = _FakePylsl(
             [
-                _FakeInfo("ClosedLoopMarkers", "Markers", "run-123"),
-                _FakeInfo("ClosedLoopMarkers", "Markers", "run-123"),
+                _FakeInfo("EEGleMarkers", "Markers", "run-123"),
+                _FakeInfo("EEGleMarkers", "Markers", "run-123"),
             ]
         )
         config = {"hardware": {"markers": {"source_id": "run-123"}}}
@@ -207,7 +207,7 @@ class RealtimeSynchronyTests(unittest.TestCase):
             config = {
                 "runtime": {"session_root": tmp},
                 "experiment": {"experiment_id": "test", "participant_id": "p1", "task": "go_nogo"},
-                "hardware": {"markers": {"lsl_stream_name": "ClosedLoopMarkers", "lsl_stream_type": "Markers"}},
+                "hardware": {"markers": {"lsl_stream_name": "EEGleMarkers", "lsl_stream_type": "Markers"}},
                 "realtime": {"enabled": True},
             }
             paths = create_session(config, root=Path(tmp))

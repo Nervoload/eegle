@@ -328,7 +328,7 @@ def _window_backend(display: dict[str, Any]) -> str:
 def _make_marker_outlet(markers: dict[str, Any]) -> LslMarkerOutlet | NullMarkerOutlet:
     try:
         return LslMarkerOutlet(
-            name=markers.get("lsl_stream_name", "ClosedLoopMarkers"),
+            name=markers.get("lsl_stream_name", "EEGleMarkers"),
             stream_type=markers.get("lsl_stream_type", "Markers"),
         )
     except Exception:

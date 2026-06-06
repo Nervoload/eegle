@@ -37,7 +37,7 @@ def make_feedback_emitter(kind: str, config: dict[str, Any], feedback_jsonl: str
         return JsonlFeedbackEmitter(feedback_jsonl)
     if kind == "lsl":
         return LslFeedbackEmitter(
-            name=config.get("lsl_stream_name", "ClosedLoopFeedback"),
+            name=config.get("lsl_stream_name", "EEGleFeedback"),
             stream_type=config.get("lsl_stream_type", "Feedback"),
         )
     raise NotImplementedError(f"feedback emitter '{kind}' is not implemented")

@@ -2,13 +2,17 @@ PYTHON ?= python3
 CONFIG ?= configs/default_experiment.json
 SESSION ?=
 
-.PHONY: doctor doctor-enobio8 list-tasks init-session dry-run forward-dry-run forward-pvt forward-pvt-8 forward-go-nogo-dry-run forward-go-nogo-alpha-dry-run forward-go-nogo-8 alpha8-full alpha8-dry-run inhibition8-full inhibition8-dry-run simulate-eeg analyze report-html compile
+.PHONY: check-setup check-enobio8 doctor doctor-enobio8 list-tasks init-session dry-run forward-dry-run forward-pvt forward-pvt-8 forward-go-nogo-dry-run forward-go-nogo-alpha-dry-run forward-go-nogo-8 alpha8-full alpha8-dry-run inhibition8-full inhibition8-dry-run simulate-eeg analyze report-html compile
 
-doctor:
-	$(PYTHON) -m reproduce.cli doctor --config $(CONFIG)
+check-setup:
+	$(PYTHON) -m reproduce.cli check-setup --config $(CONFIG)
 
-doctor-enobio8:
-	$(PYTHON) -m reproduce.cli doctor --config configs/forward_pvt_enobio8.json --require-eeg
+check-enobio8:
+	$(PYTHON) -m reproduce.cli check-setup --config configs/forward_pvt_enobio8.json --require-eeg
+
+doctor: check-setup
+
+doctor-enobio8: check-enobio8
 
 list-tasks:
 	$(PYTHON) -m reproduce.cli list-tasks

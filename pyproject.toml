@@ -1,39 +1,39 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools==78.1.1", "wheel==0.47.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "closedloop-eeg"
+name = "eegle"
 version = "0.1.0"
-description = "Scaffold for reproducible EEG attention and working-memory experiments with LSL and closed-loop feedback."
+description = "Reproducible realtime EEG experiments with LSL, PsychoPy, and analysis pipelines."
 readme = "README.md"
 requires-python = ">=3.10,<3.11"
 dependencies = [
-  "matplotlib",
-  "mne",
-  "numpy",
-  "pandas",
-  "pylsl",
-  "scipy",
+  "matplotlib==3.10.9",
+  "mne==1.12.1",
+  "numpy==2.2.6",
+  "pandas==2.3.3",
+  "pylsl==1.18.2",
+  "scipy==1.14.1",
 ]
 
 [project.optional-dependencies]
 runtime = [
-  "psychopy",
-  "specparam",
+  "psychopy==2026.1.3",
+  "specparam==2.0.0rc6",
 ]
 ml = [
-  "joblib",
-  "pyriemann",
-  "scikit-learn",
+  "joblib==1.5.2",
+  "pyriemann==0.9",
+  "scikit-learn==1.7.2",
 ]
 deep-learning = [
-  "onnxruntime",
-  "torch",
+  "onnxruntime==1.23.2",
+  "torch==2.9.1",
 ]
 
 [project.scripts]
-closedloop-eeg = "reproduce.cli:main"
+eegle = "reproduce.cli:main"
 alpha8 = "reproduce.pipelines.alpha8:main"
 inhibition8 = "reproduce.pipelines.inhibition8:main"
 

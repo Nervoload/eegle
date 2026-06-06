@@ -34,7 +34,7 @@ class TaskFeedbackClient:
         self.config = dict(config or {})
         self.enabled = bool(self.config.get("enabled", False))
         self.backend = str(self.config.get("backend", "disabled")).lower()
-        self.lsl_stream_name = str(self.config.get("lsl_stream_name", "ClosedLoopFeedback"))
+        self.lsl_stream_name = str(self.config.get("lsl_stream_name", "EEGleFeedback"))
         self.lsl_stream_type = str(self.config.get("lsl_stream_type", "Feedback"))
         self.jsonl_path = Path(self.config.get("jsonl_path") or default_jsonl_path or "")
         self.max_future_trials = int(self.config.get("max_future_trials", 5))

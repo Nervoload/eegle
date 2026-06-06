@@ -1,6 +1,6 @@
 {
   "runtime": {
-    "project_name": "closedloop-eeg",
+    "project_name": "eegle",
     "session_root": "data",
     "runtime_cache_dir": ".runtime"
   },
@@ -23,7 +23,7 @@
       "required_for_run": true
     },
     "markers": {
-      "lsl_stream_name": "ClosedLoopMarkers",
+      "lsl_stream_name": "EEGleMarkers",
       "lsl_stream_type": "Markers"
     },
     "display": {
@@ -153,13 +153,13 @@
     },
     "feedback": {
       "mode": "visual_adaptation",
-      "lsl_stream_name": "ClosedLoopFeedback",
+      "lsl_stream_name": "EEGleFeedback",
       "allow_task_adaptation": true,
       "allow_stimulation": false,
       "client": {
         "enabled": false,
         "backend": "auto",
-        "lsl_stream_name": "ClosedLoopFeedback",
+        "lsl_stream_name": "EEGleFeedback",
         "jsonl_path": null
       }
     }

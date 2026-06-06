@@ -159,7 +159,7 @@ def create_session(
         "components": experiment.get("components", {}),
         "processes": config.get("processes", {}),
         "marker_stream": {
-            "name": config_to_write.get("hardware", {}).get("markers", {}).get("lsl_stream_name", "ClosedLoopMarkers"),
+            "name": config_to_write.get("hardware", {}).get("markers", {}).get("lsl_stream_name", "EEGleMarkers"),
             "type": config_to_write.get("hardware", {}).get("markers", {}).get("lsl_stream_type", "Markers"),
             "source_id": marker_source_id,
         },
