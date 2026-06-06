@@ -693,12 +693,22 @@ label {{ display: inline-flex; align-items: center; gap: 5px; color: var(--muted
 #rawStackPanel.hidden {{ display: none; }}
 .channel-replay {{ border: 1px solid var(--line); border-radius: 6px; background: #fff; overflow: hidden; }}
 .channel-replay canvas {{ width: 100%; height: 104px; display: block; }}
-#alphaPanel {{ display: none; }}
-#alphaPanel.open {{ display: block; }}
-.resizable {{ resize: both; overflow: auto; min-width: 520px; min-height: 300px; width: 100%; height: 430px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }}
-#alphaCanvas {{ width: 100%; height: 100%; display: block; }}
-#featureCanvas {{ width: 100%; height: 420px; display: block; }}
+.resizable {{ resize: both; overflow: auto; min-width: 520px; min-height: 420px; width: 100%; height: 700px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }}
+#featureCanvas {{ width: 100%; height: 100%; display: block; }}
 .checks {{ display: flex; flex-wrap: wrap; gap: 8px 12px; }}
+.dashboard-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }}
+.dashboard-block {{ border: 1px solid var(--line); border-radius: 6px; padding: 11px; background: var(--panel); min-width: 0; }}
+.dashboard-block h3 {{ margin: 0 0 8px; font-size: 13px; }}
+.dashboard-block strong {{ display: block; font-size: 20px; margin-bottom: 2px; }}
+.dashboard-block .subvalue {{ color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }}
+.status-good {{ color: #08775e; }}
+.status-warn {{ color: var(--warn); }}
+.compact-table {{ width: 100%; border-collapse: collapse; font-size: 12px; }}
+.compact-table th, .compact-table td {{ padding: 6px 7px; text-align: left; border-bottom: 1px solid var(--line); }}
+.compact-table th {{ color: var(--muted); font-weight: 600; }}
+.chip-row {{ display: flex; flex-wrap: wrap; gap: 5px; }}
+.chip {{ display: inline-flex; padding: 3px 6px; border-radius: 4px; background: #e8edf2; font-size: 11px; color: #334155; }}
+.section-note {{ color: var(--muted); font-size: 12px; margin: -4px 0 10px; }}
 .legend {{ display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 8px 0 10px; color: var(--muted); font-size: 12px; }}
 .legend-item {{ display: inline-flex; align-items: center; gap: 5px; }}
 .legend-swatch {{ width: 18px; height: 3px; border-radius: 2px; display: inline-block; }}
@@ -723,44 +733,34 @@ label {{ display: inline-flex; align-items: center; gap: 5px; color: var(--muted
   <section class="summary-grid" id="metrics"></section>
 
   <section class="panel">
-    <h2>Realtime Feature Replay</h2>
-    <pre class="facts" id="replayFacts"></pre>
+    <h2>Realtime Feature Integrity</h2>
+    <div class="dashboard-grid" id="replayDashboard"></div>
+    <div id="stageDashboard" style="margin-top:10px"></div>
   </section>
 
   <section class="panel">
     <h2>Exploratory Feature-Behavior Analysis</h2>
-    <pre class="facts" id="behaviorFacts"></pre>
+    <p class="section-note">Observe-only associations. These results are not inhibition decoding claims.</p>
+    <div class="dashboard-grid" id="behaviorDashboard"></div>
   </section>
 
   <section class="panel">
+    <h2>Feature Analysis</h2>
     <div class="toolbar">
-      <h2 style="margin:0">Staged Realtime Features</h2>
       <label>View
         <select class="segmentControl" id="featureSegment"></select>
       </label>
+      <button id="featureReset">Reset Zoom</button>
+      <button id="featureZoomIn">Zoom In</button>
+      <button id="featureZoomOut">Zoom Out</button>
+      <label><input id="showFeatureMarkers" type="checkbox"> Markers</label>
+      <label><input id="showFeatureMarkerLabels" type="checkbox"> Marker labels</label>
       <span class="status" id="featureStatus"></span>
     </div>
-    <div class="canvas-wrap">
+    <div class="checks" id="featureToggles"></div>
+    <div class="legend" id="featureLegend"></div>
+    <div class="resizable">
       <canvas id="featureCanvas"></canvas>
-    </div>
-  </section>
-
-  <section class="panel">
-    <div class="toolbar">
-      <label>View
-        <select class="segmentControl" id="alphaSegment"></select>
-      </label>
-      <button id="toggleAlpha" class="primary">Show Alpha Channels</button>
-      <button id="alphaReset">Reset Alpha Zoom</button>
-      <button id="alphaZoomIn">Zoom In</button>
-      <button id="alphaZoomOut">Zoom Out</button>
-      <label><input id="showAlphaGraphMarkers" type="checkbox" checked> Markers</label>
-      <span class="status" id="alphaStatus"></span>
-    </div>
-    <div id="alphaPanel">
-      <div class="resizable">
-        <canvas id="alphaCanvas"></canvas>
-      </div>
     </div>
   </section>
 
@@ -809,6 +809,7 @@ const colors = ['#0f766e','#7c3aed','#b45309','#2563eb','#db2777','#16a34a','#dc
 const segmentByKey = Object.fromEntries(segments.map(segment => [segment.key, segment]));
 const defaultSegmentKey = segmentByKey.task ? 'task' : 'full';
 const featureDefinitions = [
+  ['alpha_channels', 'offline alpha channels', '#0f766e'],
   ['readiness_alpha_power', 'readiness alpha power', '#0f766e'],
   ['early_theta_power', 'early theta power', '#b45309'],
   ['n2_mean_uv', 'N2 mean uV', '#2563eb'],
@@ -821,11 +822,13 @@ const state = {{
   segmentKey: defaultSegmentKey,
   time: segmentByKey[defaultSegmentKey]?.start || 0,
   lastFrame: null,
-  alphaStart: segmentByKey[defaultSegmentKey]?.start || 0,
-  alphaEnd: segmentByKey[defaultSegmentKey]?.end || Math.max(1, raw.duration_seconds || 1),
-  alphaDragging: false,
-  alphaDragX: 0,
-  showAlphaGraphMarkers: true,
+  featureStart: segmentByKey[defaultSegmentKey]?.start || 0,
+  featureEnd: segmentByKey[defaultSegmentKey]?.end || Math.max(1, raw.duration_seconds || 1),
+  featureDragging: false,
+  featureDragX: 0,
+  showFeatureMarkers: false,
+  showFeatureMarkerLabels: false,
+  enabledFeatures: new Set(featureDefinitions.map(row => row[0])),
   enabledCategories: new Set(categories)
 }};
 
@@ -844,11 +847,11 @@ function setup() {{
   renderFeatureFacts();
   setupSegments();
   setupMarkers();
+  setupFeatureControls();
   setupControls();
   syncSegmentControls();
   updateSliderBounds();
   drawReplay();
-  drawAlphaGraph();
   drawFeatureGraph();
   requestAnimationFrame(tick);
 }}
@@ -858,27 +861,55 @@ function renderFeatureFacts() {{
   const replay = features.replay || {{status:'missing'}};
   const engine = features.engine || {{}};
   const behavior = features.behavior || {{status:'missing'}};
-  document.getElementById('replayFacts').textContent = JSON.stringify({{
-    status: replay.status,
-    quality_status: replay.quality_status,
-    reasons: replay.reasons,
-    online_packet_count: replay.online_packet_count,
-    replay_packet_count: replay.replay_packet_count,
-    material_difference_count: replay.material_difference_count,
-    stage_packet_counts: replay.stage_packet_counts,
-    valid_stage_packet_counts: replay.valid_stage_packet_counts,
-    reference_contamination_packets: replay.reference_contamination_packets,
-    filter_warmup_invalid_packets: replay.filter_warmup_invalid_packets,
-    roi_resolution: engine.roi_resolution,
-    missing_declared_channels: engine.missing_declared_channels,
-    fixed_reference_channels: engine.fixed_reference_channels,
-    filter_profiles: engine.filter_profiles
-    ,acceptance_scope: replay.acceptance_scope
-    ,acceptance_online_packet_count: replay.acceptance_online_packet_count
-    ,excluded_practice_online_packet_count: replay.excluded_practice_online_packet_count
-    ,excluded_practice_replay_packet_count: replay.excluded_practice_replay_packet_count
-  }}, null, 2);
-  document.getElementById('behaviorFacts').textContent = JSON.stringify(behavior, null, 2);
+  const replayCards = [
+    [replay.status || 'missing', 'causal replay', replay.reasons?.length ? replay.reasons.join(', ') : 'online and replay feature facts agree'],
+    [replay.quality_status || 'unknown', 'feature quality', `${{sumValues(replay.valid_stage_packet_counts)}} valid stage packets`],
+    [replay.material_difference_count ?? 'unknown', 'material differences', `${{replay.acceptance_online_packet_count ?? 0}} accepted online packets`],
+    [replay.excluded_practice_online_packet_count ?? 0, 'practice packets excluded', 'retained for audit; outside main-task acceptance'],
+    [replay.reference_contamination_packets?.length ?? 0, 'reference contamination', `${{engine.fixed_reference_channels?.length ?? 0}} fixed reference channels`],
+    [replay.filter_warmup_invalid_packets?.length ?? 0, 'warmup-invalid packets', replay.acceptance_scope || 'main task scope']
+  ];
+  document.getElementById('replayDashboard').innerHTML = replayCards.map(([value, label, note]) =>
+    dashboardCard(value, label, note)
+  ).join('');
+  const stages = Object.keys(replay.stage_packet_counts || {{}});
+  const roi = engine.roi_resolution || {{}};
+  document.getElementById('stageDashboard').innerHTML = `
+    <div class="dashboard-block">
+      <h3>Feature Stage Coverage</h3>
+      <table class="compact-table"><thead><tr><th>Stage</th><th>Packets</th><th>Valid</th></tr></thead><tbody>
+        ${{stages.map(stage => `<tr><td>${{escapeHtml(stage.replaceAll('_',' '))}}</td><td>${{replay.stage_packet_counts[stage] ?? 0}}</td><td>${{replay.valid_stage_packet_counts?.[stage] ?? 0}}</td></tr>`).join('')}}
+      </tbody></table>
+    </div>
+    <div class="dashboard-block" style="margin-top:10px">
+      <h3>Resolved Regions</h3>
+      ${{Object.entries(roi).map(([name, channels]) => `<div style="margin-bottom:7px"><span class="subvalue">${{escapeHtml(name.replaceAll('_',' '))}}</span><div class="chip-row">${{(channels || []).map(channel => `<span class="chip">${{escapeHtml(String(channel))}}</span>`).join('')}}</div></div>`).join('')}}
+    </div>`;
+  const analyses = behavior.analyses || {{}};
+  document.getElementById('behaviorDashboard').innerHTML = Object.entries(analyses).map(([name, result]) => {{
+    const score = result.score == null ? result.status || 'skipped' : Number(result.score).toFixed(3);
+    const note = result.reason || `${{result.score_name || 'metric'}}; n=${{result.n ?? '?'}}; permutation p=${{formatNumber(result.permutation_p_value)}}`;
+    return dashboardCard(score, name.replaceAll('_',' '), note);
+  }}).join('') || dashboardCard(behavior.status || 'missing', 'analysis status', behavior.reason || 'no exploratory analyses available');
+}}
+
+function sumValues(values) {{
+  return Object.values(values || {{}}).reduce((total, value) => total + Number(value || 0), 0);
+}}
+
+function formatNumber(value) {{
+  return value == null || !Number.isFinite(Number(value)) ? 'n/a' : Number(value).toFixed(3);
+}}
+
+function dashboardCard(value, label, note) {{
+  const normalized = String(value).toLowerCase();
+  const statusClass = ['pass','ok','usable','accepted'].some(token => normalized.includes(token)) ? 'status-good' :
+    (['invalid','failed','missing','degraded'].some(token => normalized.includes(token)) ? 'status-warn' : '');
+  return `<div class="dashboard-block"><strong class="${{statusClass}}">${{escapeHtml(prettyText(value))}}</strong><h3>${{escapeHtml(prettyText(label))}}</h3><div class="subvalue">${{escapeHtml(prettyText(note || ''))}}</div></div>`;
+}}
+
+function prettyText(value) {{
+  return String(value).replaceAll('_', ' ');
 }}
 
 function renderMetrics() {{
@@ -932,11 +963,27 @@ function setupMarkers() {{
       if (input.checked) state.enabledCategories.add(input.dataset.category);
       else state.enabledCategories.delete(input.dataset.category);
       drawReplay();
-      drawAlphaGraph();
       drawFeatureGraph();
     }});
   }});
   renderMarkerLegend();
+}}
+
+function setupFeatureControls() {{
+  const host = document.getElementById('featureToggles');
+  host.innerHTML = featureDefinitions.map(([key, label]) =>
+    `<label><input type="checkbox" data-feature="${{escapeHtml(key)}}" checked> ${{escapeHtml(label)}}</label>`
+  ).join('');
+  host.querySelectorAll('input').forEach(input => {{
+    input.addEventListener('change', () => {{
+      if (input.checked) state.enabledFeatures.add(input.dataset.feature);
+      else state.enabledFeatures.delete(input.dataset.feature);
+      drawFeatureGraph();
+    }});
+  }});
+  document.getElementById('featureLegend').innerHTML = featureDefinitions.map(([key, label, color]) =>
+    `<span class="legend-item"><span class="legend-swatch" style="background:${{color}}"></span>${{escapeHtml(label)}}</span>`
+  ).join('');
 }}
 
 function setupControls() {{
@@ -948,9 +995,13 @@ function setupControls() {{
   document.getElementById('windowSeconds').addEventListener('input', drawReplay);
   document.getElementById('uvScale').addEventListener('input', drawReplay);
   document.getElementById('showRawStack').addEventListener('change', drawReplay);
-  document.getElementById('showAlphaGraphMarkers').addEventListener('change', event => {{
-    state.showAlphaGraphMarkers = event.target.checked;
-    drawAlphaGraph();
+  document.getElementById('showFeatureMarkers').addEventListener('change', event => {{
+    state.showFeatureMarkers = event.target.checked;
+    drawFeatureGraph();
+  }});
+  document.getElementById('showFeatureMarkerLabels').addEventListener('change', event => {{
+    state.showFeatureMarkerLabels = event.target.checked;
+    drawFeatureGraph();
   }});
   const slider = document.getElementById('timeSlider');
   slider.addEventListener('input', () => {{
@@ -959,39 +1010,33 @@ function setupControls() {{
     document.getElementById('playPause').textContent = 'Play';
     drawReplay();
   }});
-  document.getElementById('toggleAlpha').addEventListener('click', () => {{
-    const panel = document.getElementById('alphaPanel');
-    panel.classList.toggle('open');
-    document.getElementById('toggleAlpha').textContent = panel.classList.contains('open') ? 'Hide Alpha Channels' : 'Show Alpha Channels';
-    drawAlphaGraph();
-  }});
-  document.getElementById('alphaReset').addEventListener('click', () => {{
+  document.getElementById('featureReset').addEventListener('click', () => {{
     const segment = activeSegment();
-    state.alphaStart = segment.start;
-    state.alphaEnd = segment.end;
-    drawAlphaGraph();
+    state.featureStart = segment.start;
+    state.featureEnd = segment.end;
+    drawFeatureGraph();
   }});
-  document.getElementById('alphaZoomIn').addEventListener('click', () => zoomAlpha(0.5));
-  document.getElementById('alphaZoomOut').addEventListener('click', () => zoomAlpha(2));
-  const alphaCanvas = document.getElementById('alphaCanvas');
-  alphaCanvas.addEventListener('mousedown', event => {{
-    state.alphaDragging = true;
-    state.alphaDragX = event.clientX;
+  document.getElementById('featureZoomIn').addEventListener('click', () => zoomFeature(0.5));
+  document.getElementById('featureZoomOut').addEventListener('click', () => zoomFeature(2));
+  const featureCanvas = document.getElementById('featureCanvas');
+  featureCanvas.addEventListener('mousedown', event => {{
+    state.featureDragging = true;
+    state.featureDragX = event.clientX;
   }});
-  window.addEventListener('mouseup', () => state.alphaDragging = false);
+  window.addEventListener('mouseup', () => state.featureDragging = false);
   window.addEventListener('mousemove', event => {{
-    if (!state.alphaDragging) return;
-    const span = state.alphaEnd - state.alphaStart;
-    const dx = event.clientX - state.alphaDragX;
-    state.alphaDragX = event.clientX;
-    const shift = -dx / Math.max(1, alphaCanvas.clientWidth) * span;
-    setAlphaRange(state.alphaStart + shift, state.alphaEnd + shift);
+    if (!state.featureDragging) return;
+    const span = state.featureEnd - state.featureStart;
+    const dx = event.clientX - state.featureDragX;
+    state.featureDragX = event.clientX;
+    const shift = -dx / Math.max(1, featureCanvas.clientWidth) * span;
+    setFeatureRange(state.featureStart + shift, state.featureEnd + shift);
   }});
-  alphaCanvas.addEventListener('wheel', event => {{
+  featureCanvas.addEventListener('wheel', event => {{
     event.preventDefault();
-    zoomAlpha(event.deltaY > 0 ? 1.2 : 0.8);
+    zoomFeature(event.deltaY > 0 ? 1.2 : 0.8);
   }});
-  new ResizeObserver(() => {{ drawReplay(); drawAlphaGraph(); drawFeatureGraph(); }}).observe(document.body);
+  new ResizeObserver(() => {{ drawReplay(); drawFeatureGraph(); }}).observe(document.body);
 }}
 
 function activeSegment() {{
@@ -1002,14 +1047,13 @@ function setSegment(key) {{
   const segment = segmentByKey[key] || activeSegment();
   state.segmentKey = segment.key;
   state.time = segment.start;
-  state.alphaStart = segment.start;
-  state.alphaEnd = segment.end;
+  state.featureStart = segment.start;
+  state.featureEnd = segment.end;
   state.playing = false;
   document.getElementById('playPause').textContent = 'Play';
   syncSegmentControls();
   updateSliderBounds();
   drawReplay();
-  drawAlphaGraph();
   drawFeatureGraph();
 }}
 
@@ -1286,77 +1330,32 @@ function drawAlphaOverlay(ctx, width, top, height, start, end) {{
   }});
 }}
 
-function drawAlphaGraph() {{
-  const {{ctx, width, height}} = canvasContext('alphaCanvas');
-  ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, width, height);
-  const channels = offlineAlpha.channels || [];
-  const times = offlineAlpha.times || [];
-  const segment = activeSegment();
-  document.getElementById('alphaStatus').textContent = offlineAlpha.status === 'ok'
-    ? `${{segment.label}}; ${{channels.length}} channels, ${{offlineAlpha.window_count}} windows`
-    : `offline alpha is ${{offlineAlpha.status || 'missing'}}`;
-  if (offlineAlpha.status !== 'ok' || !channels.length) {{
-    centeredText(ctx, width, height, `Offline alpha is ${{offlineAlpha.status || 'missing'}}`);
-    return;
-  }}
-  const start = state.alphaStart;
-  const end = state.alphaEnd;
-  const left = 58;
-  const right = 18;
-  const top = 18;
-  const bottom = 34;
-  const values = finiteValues(channels.flatMap(channel => channel.values));
-  const minY = Math.min(...values, 0);
-  const maxY = Math.max(...values, 1);
-  ctx.strokeStyle = '#e5e7eb';
-  ctx.strokeRect(left, top, width - left - right, height - top - bottom);
-  channels.forEach((channel, index) => {{
-    drawLine(ctx, times, channel.values, start, end, left, width - right, height - bottom, top, minY, maxY, colors[index % colors.length]);
-  }});
-  if (state.showAlphaGraphMarkers) {{
-    drawReplayMarkers(ctx, width, top, height - top - bottom, start, end, true, left, width - right);
-  }}
-  channels.slice(0, 12).forEach((channel, index) => {{
-    const x = left + 8 + (index % 4) * 120;
-    const y = top + 16 + Math.floor(index / 4) * 16;
-    ctx.fillStyle = colors[index % colors.length];
-    ctx.fillRect(x, y - 8, 10, 2);
-    ctx.fillStyle = '#334155';
-    ctx.font = '11px sans-serif';
-    ctx.fillText(channel.name, x + 14, y - 4);
-  }});
-  ctx.fillStyle = '#64748b';
-  ctx.font = '11px sans-serif';
-  ctx.fillText(`${{start.toFixed(1)}}s`, left, height - 12);
-  ctx.fillText(`${{end.toFixed(1)}}s`, width - right - 52, height - 12);
-}}
-
 function drawFeatureGraph() {{
   const {{ctx, width, height}} = canvasContext('featureCanvas');
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, width, height);
   const segment = activeSegment();
+  const start = state.featureStart;
+  const end = state.featureEnd;
   const points = (stagedFeatures.points || []).filter(point =>
-    Number.isFinite(point.time) && point.time >= segment.start && point.time <= segment.end
+    Number.isFinite(point.time) && point.time >= start && point.time <= end
   );
-  document.getElementById('featureStatus').textContent = stagedFeatures.status === 'ok'
-    ? `${{segment.label}}; ${{points.length}} staged packets`
-    : `staged features are ${{stagedFeatures.status || 'missing'}}`;
-  if (stagedFeatures.status !== 'ok' || !points.length) {{
-    centeredText(ctx, width, height, `No staged realtime features in ${{segment.label}}`);
+  const enabled = featureDefinitions.filter(([key]) => state.enabledFeatures.has(key));
+  document.getElementById('featureStatus').textContent =
+    `${{segment.label}}; ${{enabled.length}} lanes; ${{points.length}} staged packets; ${{offlineAlpha.channels?.length || 0}} alpha channels`;
+  if (!enabled.length) {{
+    centeredText(ctx, width, height, 'Select at least one feature lane');
     return;
   }}
   const left = 150;
   const right = 18;
   const top = 18;
-  const laneHeight = (height - top - 28) / featureDefinitions.length;
-  featureDefinitions.forEach(([key, label, color], laneIndex) => {{
+  const bottom = 28;
+  const laneHeight = (height - top - bottom) / enabled.length;
+  enabled.forEach(([key, label, color], laneIndex) => {{
     const laneTop = top + laneIndex * laneHeight;
     const laneBottom = laneTop + laneHeight - 8;
-    const values = points.map(point => point[key]).filter(Number.isFinite);
     ctx.fillStyle = laneIndex % 2 ? '#fbfcfd' : '#f7f9fb';
     ctx.fillRect(left, laneTop, width - left - right, laneHeight - 2);
     ctx.strokeStyle = '#e5e7eb';
@@ -1364,6 +1363,11 @@ function drawFeatureGraph() {{
     ctx.fillStyle = color;
     ctx.font = '12px sans-serif';
     ctx.fillText(label, 8, laneTop + 18);
+    if (key === 'alpha_channels') {{
+      drawAlphaChannelLane(ctx, width, laneTop, laneBottom, start, end, left, right);
+      return;
+    }}
+    const values = points.map(point => point[key]).filter(Number.isFinite);
     if (!values.length) {{
       ctx.fillStyle = '#94a3b8';
       ctx.fillText('no valid values', 8, laneTop + 36);
@@ -1375,7 +1379,7 @@ function drawFeatureGraph() {{
     points.forEach(point => {{
       const value = point[key];
       if (!Number.isFinite(value)) return;
-      const x = map(point.time, segment.start, segment.end, left, width - right);
+      const x = map(point.time, start, end, left, width - right);
       const y = map(value, minValue - padding, maxValue + padding, laneBottom, laneTop + 6);
       ctx.fillStyle = point.valid ? color : '#94a3b8';
       ctx.beginPath();
@@ -1386,11 +1390,50 @@ function drawFeatureGraph() {{
     ctx.font = '10px sans-serif';
     ctx.fillText(`${{minValue.toPrecision(3)}} to ${{maxValue.toPrecision(3)}}`, 8, laneTop + 34);
   }});
-  drawReplayMarkers(ctx, width, top, height - top - 28, segment.start, segment.end, false, left, width - right);
+  if (state.showFeatureMarkers) {{
+    drawReplayMarkers(ctx, width, top, height - top - bottom, start, end, state.showFeatureMarkerLabels, left, width - right);
+  }}
   ctx.fillStyle = '#64748b';
   ctx.font = '11px sans-serif';
-  ctx.fillText(`${{segment.start.toFixed(1)}}s`, left, height - 8);
-  ctx.fillText(`${{segment.end.toFixed(1)}}s`, width - right - 52, height - 8);
+  ctx.fillText(`${{start.toFixed(1)}}s`, left, height - 8);
+  ctx.fillText(`${{end.toFixed(1)}}s`, width - right - 52, height - 8);
+}}
+
+function drawAlphaChannelLane(ctx, width, laneTop, laneBottom, start, end, left, right) {{
+  const channels = offlineAlpha.channels || [];
+  const times = offlineAlpha.times || [];
+  if (offlineAlpha.status !== 'ok' || !channels.length) {{
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText(`offline alpha is ${{offlineAlpha.status || 'missing'}}`, 8, laneTop + 36);
+    return;
+  }}
+  const visibleValues = [];
+  channels.forEach(channel => {{
+    for (let index = 0; index < times.length; index++) {{
+      if (times[index] >= start && times[index] <= end && Number.isFinite(channel.values[index])) visibleValues.push(channel.values[index]);
+    }}
+  }});
+  if (!visibleValues.length) {{
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText('no alpha windows in range', 8, laneTop + 36);
+    return;
+  }}
+  const minY = Math.min(...visibleValues, 0);
+  const maxY = Math.max(...visibleValues, 1);
+  channels.forEach((channel, index) => {{
+    drawLine(ctx, times, channel.values, start, end, left, width - right, laneBottom, laneTop + 6, minY, maxY, colors[index % colors.length]);
+  }});
+  channels.slice(0, 8).forEach((channel, index) => {{
+    const x = left + 8 + index * Math.max(54, Math.min(86, (width - left - right - 20) / Math.max(1, channels.length)));
+    ctx.fillStyle = colors[index % colors.length];
+    ctx.fillRect(x, laneTop + 8, 10, 2);
+    ctx.fillStyle = '#475569';
+    ctx.font = '9px sans-serif';
+    ctx.fillText(channel.name, x + 13, laneTop + 12);
+  }});
+  ctx.fillStyle = '#64748b';
+  ctx.font = '10px sans-serif';
+  ctx.fillText(`${{channels.length}} channels; ${{minY.toPrecision(3)}} to ${{maxY.toPrecision(3)}}`, 8, laneTop + 34);
 }}
 
 function drawLine(ctx, times, values, start, end, x0, x1, y0, y1, minY, maxY, color) {{
@@ -1410,13 +1453,13 @@ function drawLine(ctx, times, values, start, end, x0, x1, y0, y1, minY, maxY, co
   ctx.stroke();
 }}
 
-function zoomAlpha(multiplier) {{
-  const center = (state.alphaStart + state.alphaEnd) / 2;
-  const span = Math.max(0.5, (state.alphaEnd - state.alphaStart) * multiplier);
-  setAlphaRange(center - span / 2, center + span / 2);
+function zoomFeature(multiplier) {{
+  const center = (state.featureStart + state.featureEnd) / 2;
+  const span = Math.max(0.5, (state.featureEnd - state.featureStart) * multiplier);
+  setFeatureRange(center - span / 2, center + span / 2);
 }}
 
-function setAlphaRange(start, end) {{
+function setFeatureRange(start, end) {{
   const segment = activeSegment();
   const span = Math.max(0.5, end - start);
   let nextStart = Math.max(segment.start, start);
@@ -1425,9 +1468,9 @@ function setAlphaRange(start, end) {{
     nextEnd = segment.end;
     nextStart = Math.max(segment.start, nextEnd - span);
   }}
-  state.alphaStart = nextStart;
-  state.alphaEnd = nextEnd;
-  drawAlphaGraph();
+  state.featureStart = nextStart;
+  state.featureEnd = nextEnd;
+  drawFeatureGraph();
 }}
 
 function map(value, inMin, inMax, outMin, outMax) {{

@@ -9,7 +9,7 @@ import numpy as np
 
 from reproduce.analysis.inhibition8 import replay_realtime_session, run_feature_behavior_analysis
 from reproduce.analysis.alpha import run_alpha_validation
-from reproduce.analysis.html_summary import _build_segments
+from reproduce.analysis.html_summary import _build_segments, _render_html
 from reproduce.analysis.reports import _behavior_summary
 from reproduce.hardware.enobio import expected_profile, mapped_channel_names
 from reproduce.config import load_config
@@ -396,6 +396,29 @@ class Inhibition8Tests(unittest.TestCase):
             self.assertEqual(summary["trials"], 2)
             self.assertEqual(summary["responses"], 1)
             self.assertAlmostEqual(summary["mean_rt_seconds"], 0.3)
+
+    def test_experiment_html_uses_combined_feature_dashboard_without_json_dumps(self) -> None:
+        html = _render_html(
+            {
+                "session": {"session_dir": "test", "summary": {}, "alpha_summary": {}},
+                "raw": {},
+                "offline_alpha": {},
+                "live_alpha": [],
+                "staged_features": {},
+                "markers": [],
+                "marker_categories": [],
+                "segments": [],
+                "realtime_features": {},
+            }
+        )
+
+        self.assertIn("Feature Analysis", html)
+        self.assertIn('id="showFeatureMarkers"', html)
+        self.assertIn('id="showFeatureMarkerLabels"', html)
+        self.assertIn('id="featureToggles"', html)
+        self.assertNotIn('id="replayFacts"', html)
+        self.assertNotIn('id="behaviorFacts"', html)
+        self.assertNotIn("Staged Realtime Features", html)
 
 
 def _engine_config() -> dict[str, object]:
