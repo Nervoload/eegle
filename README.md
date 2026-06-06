@@ -1,6 +1,6 @@
-# Closed-Loop EEG Experiment Scaffold
+# EEGle -- Realtime EEG experimentation for brain-computer interfaces with AI
 
-This scaffold is the foundation for reproducible attention and working-memory EEG experiments with Enobio/NIC2, LSL, PsychoPy, and closed-loop neurofeedback components.
+EEGle is a realtime pipeline for experimentation, training EEG AI models, testing hardware or software on EEG devices, or reproduceable BCI research. Currently supporting EEG experiments with Enobio/NIC2 using LSL, PsychoPy and PyTorch. 
 
 ## Quick Start
 
