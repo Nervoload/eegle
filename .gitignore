@@ -1,0 +1,27 @@
+# Python environments and build output
+.venv/
+venv/
+env/
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Generated experiment output and runtime caches
+data/
+.runtime/
+artifacts/
+models/
+<session_dir>/
+
+# Local logs and editor/OS files
+*.log
+.DS_Store
+Thumbs.db
+.idea/

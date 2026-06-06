@@ -1,0 +1,284 @@
+{
+  "runtime": {
+    "project_name": "closedloop-eeg",
+    "session_root": "data",
+    "runtime_cache_dir": ".runtime"
+  },
+  "telemetry": {
+    "console_level": "default",
+    "file_level": "realtime",
+    "trace_enabled": false,
+    "heartbeat_seconds": 5.0
+  },
+  "hardware": {
+    "eeg": {
+      "family": "Enobio",
+      "profile": "enobio8_inhibition",
+      "expected_channel_counts": [8],
+      "expected_sample_rate_hz": 500,
+      "lsl_stream_type": "EEG",
+      "lsl_name_patterns": ["enobio", "nic", "neuroelectrics", "LSLOutletStreamName-EEG"],
+      "allow_type_only_fallback": false,
+      "stream_timeout_seconds": 5.0,
+      "sample_probe_seconds": 2.0,
+      "required_for_run": true
+    },
+    "markers": {
+      "lsl_stream_name": "ClosedLoopMarkers",
+      "lsl_stream_type": "Markers",
+      "required_for_realtime": true
+    },
+    "display": {
+      "screen_index": 0,
+      "full_screen": false,
+      "win_type": "pyglet",
+      "allow_gui": true,
+      "size": [1000, 700],
+      "units": "height",
+      "background_color": "black",
+      "photodiode_patch": false,
+      "expected_refresh_rate_hz": 60.0,
+      "fixed_display_latency_ms": 0.0
+    }
+  },
+  "experiment": {
+    "experiment_id": "go_nogo_response_inhibition",
+    "participant_id": "example-participant",
+    "task": "go_nogo",
+    "mode": "forward",
+    "calibration_suite": null,
+    "components": {
+      "preflight": "default",
+      "task": "go_nogo",
+      "eeg_recorder": "lsl_csv",
+      "realtime_processor": "disabled",
+      "feedback": "disabled",
+      "analysis": "minimal"
+    },
+    "output_formats": ["csv", "jsonl", "triggers_txt", "raw_json"],
+    "procedures": [
+      "preflight",
+      "eeg_recording",
+      "task",
+      "post_analysis"
+    ]
+  },
+  "processes": {
+    "recorder": {
+      "enabled": true,
+      "backend": "lsl_csv",
+      "csv_mirror": true,
+      "startup_timeout_seconds": 8.0
+    },
+    "realtime_processor": {
+      "enabled": false,
+      "backend": "disabled",
+      "preprocessor": "causal_bandpass_notch",
+      "model": "none_observe_only",
+      "startup_timeout_seconds": 8.0
+    },
+    "feedback": {
+      "enabled": false,
+      "backend": "disabled"
+    },
+    "offline_analyzer": {
+      "enabled": true,
+      "backend": "minimal",
+      "timeout_seconds": 120.0
+    }
+  },
+  "tasks": {
+    "go_nogo": {
+      "trials": 40,
+      "go_probability": 0.7,
+      "no_go_probability": 0.3,
+      "stimulus_seconds": 0.8,
+      "isi_seconds": 0.7,
+      "practice_enabled": true,
+      "practice_message_min_seconds": 1.0,
+      "countdown_seconds": 3,
+      "countdown_step_seconds": 1.0,
+      "response_keys": ["space"],
+      "escape_keys": ["escape"],
+      "completion_auto_close_seconds": 30.0,
+      "shapes": ["circle", "square", "triangle", "star", "hexagon"],
+      "colors": ["red", "blue", "green", "yellow", "magenta"],
+      "no_go": {
+        "shape": "x",
+        "color": "white",
+        "randomize": false
+      }
+    }
+  },
+  "calibration": {
+    "posterior_alpha": {
+      "eyes_open_seconds": 120.0,
+      "eyes_closed_seconds": 120.0,
+      "go_nogo_practice_seconds": 150.0,
+      "go_nogo_practice_trials": 100,
+      "countdown_seconds": 5,
+      "channel_protocol": ["Fz", "Cz", "Pz", "C3", "C4", "P3", "P4", "Oz"],
+      "posterior_channels": ["Pz", "P3", "P4", "Oz"],
+      "welch_window_seconds": 4.0,
+      "welch_overlap_fraction": 0.5,
+      "specparam_fit_range_hz": [3.0, 35.0],
+      "specparam_peak_width_limits_hz": [0.5, 8.0],
+      "specparam_max_n_peaks": 6,
+      "specparam_min_peak_height": 0.05,
+      "allow_psd_peak_fallback": true,
+      "psd_peak_min_prominence": 0.01,
+      "alpha_candidate_range_hz": [7.0, 14.0],
+      "min_peak_power": 0.05,
+      "min_bandwidth_hz": 0.5,
+      "max_bandwidth_hz": 8.0,
+      "min_eyes_closed_open_ratio": 1.05,
+      "offline_filter_low_hz": 1.0,
+      "offline_filter_high_hz": 40.0,
+      "offline_max_abs_uv": 150.0,
+      "offline_epoch_peak_to_peak_uv": 250.0,
+      "offline_min_clean_fraction": 0.05,
+      "online_window_seconds": 1.0,
+      "online_step_seconds": 0.1,
+      "online_smoothing_seconds": 0.2,
+      "online_artifact_gate": {
+        "max_abs_uv": 150.0,
+        "max_peak_to_peak_uv": 250.0,
+        "max_nan_fraction": 0.0
+      },
+      "synthetic_phase_seconds": 20.0
+    }
+  },
+  "realtime": {
+    "enabled": false,
+    "max_chunk_samples": 32,
+    "max_pull_samples": 128,
+    "pull_timeout_seconds": 0.01,
+    "clock_error_threshold_seconds": 60.0,
+    "epoching": {
+      "enabled": false,
+      "marker_prefix": "go_nogo_stimulus_onset",
+      "tmin_seconds": -0.2,
+      "tmax_seconds": 0.8,
+      "timebase": "lsl",
+      "sample_tolerance_seconds": 0.01,
+      "drop_incomplete": true,
+      "include_practice_trials": false
+    },
+    "preprocessing": {
+      "notch_hz": 60.0,
+      "bandpass_low_hz": 1.0,
+      "bandpass_high_hz": 45.0,
+      "downsample_factor": 1,
+      "reference": "average"
+    },
+    "model": {
+      "kind": "none_observe_only",
+      "artifact_path": null
+    },
+    "decision_policy": {
+      "kind": "observe_only",
+      "enabled": true,
+      "allow_task_adaptation": false,
+      "actions": ["observe_only"]
+    },
+    "feedback": {
+      "mode": "observe_only",
+      "lsl_stream_name": "ClosedLoopFeedback",
+      "allow_task_adaptation": false,
+      "allow_stimulation": false,
+      "client": {
+        "enabled": false,
+        "backend": "disabled",
+        "lsl_stream_name": "ClosedLoopFeedback",
+        "jsonl_path": null
+      }
+    },
+    "alpha": {
+      "enabled": false,
+      "method": "hilbert",
+      "band": {
+        "low_hz": 8.0,
+        "high_hz": 12.0,
+        "center_hz": 10.0,
+        "bandwidth_hz": 4.0,
+        "source": "default",
+        "confidence": "fallback"
+      },
+      "posterior_channels": ["Pz", "P3", "P4", "Oz"],
+      "window_seconds": 1.0,
+      "step_seconds": 0.1,
+      "smoothing_seconds": 0.2,
+      "telemetry_every_estimates": 10,
+      "artifact_gate": {
+        "max_abs_uv": 150.0,
+        "max_peak_to_peak_uv": 250.0,
+        "max_nan_fraction": 0.0
+      }
+    },
+    "event_features": {
+      "enabled": true,
+      "feature_schema_version": "inhibition8.features.v1",
+      "montage_profile": "enobio8_inhibition",
+      "marker_prefix": "go_nogo_stimulus_onset",
+      "include_practice_trials": false,
+      "fixed_reference_channels": ["Fz", "Cz", "Pz", "C3", "C4", "P3", "P4", "Oz"],
+      "alpha_band": {
+        "low_hz": 8.0,
+        "high_hz": 12.0
+      },
+      "alpha_rebound": {
+        "enabled": false,
+        "window_seconds": [0.8, 1.5]
+      },
+      "notch_hz": 60.0,
+      "filter_warmup_seconds": 2.0,
+      "buffer_seconds": 30.0,
+      "display_latency_ms": 0.0,
+      "display_latency_validated_by_photodiode": false,
+      "quality_gate": {
+        "minimum_reference_channels": 4,
+        "max_abs_uv": 250.0,
+        "max_peak_to_peak_uv": 400.0,
+        "min_std_uv": 0.01,
+        "max_drift_uv": 150.0,
+        "max_broadband_diff_std_uv": 100.0,
+        "max_nan_fraction": 0.0
+      }
+    }
+  },
+  "analysis": {
+    "erp": {
+      "enabled": true,
+      "task": "go_nogo",
+      "tmin_seconds": -0.2,
+      "tmax_seconds": 0.8,
+      "baseline_seconds": [-0.2, 0.0],
+      "n2_window_seconds": [0.2, 0.35],
+      "p300_window_seconds": [0.25, 0.6],
+      "filter_low_hz": 0.1,
+      "filter_high_hz": 30.0,
+      "notch_hz": 60.0,
+      "input_units": "microvolts",
+      "roi_channels": ["Cz", "Pz", "P3", "P4"],
+      "n2_roi_channels": ["Fz", "Cz"],
+      "dashboard_montage_times_ms": [-200, 0, 100, 200, 300, 400, 500, 600, 700, 800],
+      "dashboard_px_per_second": 220
+    },
+    "alpha": {
+      "enabled": true
+    },
+    "inhibition8": {
+      "permutations": 100,
+      "replay_feature_tolerance": 1e-9
+    },
+    "html": {
+      "enabled": true,
+      "max_raw_points": 120000,
+      "max_alpha_points": 12000
+    },
+    "reports": {
+      "behavior": true,
+      "raw_eeg_summary": true
+    }
+  }
+}

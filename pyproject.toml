@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "closedloop-eeg"
+version = "0.1.0"
+description = "Scaffold for reproducible EEG attention and working-memory experiments with LSL and closed-loop feedback."
+readme = "README.md"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+  "matplotlib",
+  "mne",
+  "numpy",
+  "pandas",
+  "pylsl",
+  "scipy",
+]
+
+[project.optional-dependencies]
+runtime = [
+  "psychopy",
+  "specparam",
+]
+ml = [
+  "joblib",
+  "pyriemann",
+  "scikit-learn",
+]
+deep-learning = [
+  "onnxruntime",
+  "torch",
+]
+
+[project.scripts]
+closedloop-eeg = "reproduce.cli:main"
+alpha8 = "reproduce.pipelines.alpha8:main"
+inhibition8 = "reproduce.pipelines.inhibition8:main"
+
+[tool.setuptools.packages.find]
+include = ["configs*", "reproduce*"]
+
+[tool.setuptools.package-data]
+configs = ["*.json"]
