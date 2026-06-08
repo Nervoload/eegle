@@ -69,6 +69,7 @@ def _build_report_data(root: Path, alpha_summary: dict[str, Any], max_raw_points
     marker_categories = sorted({marker["category"] for marker in markers})
     replay_summary = _load_json(root / "reports" / "realtime_features" / "replay_summary.json") or {"status": "missing"}
     behavior_features = _load_json(root / "reports" / "realtime_features" / "behavior_feature_summary.json") or {"status": "missing"}
+    classification = _load_json(root / "reports" / "classification" / "metrics.json") or {"status": "missing"}
     engine_metadata = _load_json(root / "realtime" / "engine_metadata.json") or {"status": "missing"}
     return {
         "schema_version": 1,
@@ -94,6 +95,7 @@ def _build_report_data(root: Path, alpha_summary: dict[str, Any], max_raw_points
             "behavior": behavior_features,
             "engine": engine_metadata,
         },
+        "classification": classification,
         "files": {
             "raw_eeg": str(root / "raw" / "eeg.csv"),
             "events_jsonl": str(root / "events" / "events.jsonl"),
@@ -102,6 +104,7 @@ def _build_report_data(root: Path, alpha_summary: dict[str, Any], max_raw_points
             "live_alpha": str(root / "realtime" / "alpha_power.jsonl"),
             "staged_features": str(root / "realtime" / "event_features.jsonl"),
             "offline_alpha": str(root / "reports" / "alpha" / "offline_alpha_timeseries.csv"),
+            "classification_metrics": str(root / "reports" / "classification" / "metrics.json"),
         },
     }
 
@@ -579,14 +582,42 @@ def _load_staged_features(path: Path, raw_lsl_start: float | None, max_points: i
     rows = _load_jsonl(path)
     if not rows:
         return {"status": "missing", "file": str(path), "packet_count": 0, "points": []}
-    stride = max(1, math.ceil(len(rows) / max(1, int(max_points))))
-    points: list[dict[str, Any]] = []
+    main_rows = [row for row in rows if (_optional_int(row.get("trial")) or 0) >= 1]
+    practice_rows = [row for row in rows if (trial := _optional_int(row.get("trial"))) is not None and trial < 1]
+    unscoped_rows = [row for row in rows if _optional_int(row.get("trial")) is None]
+    main_stride = max(1, math.ceil(len(main_rows) / max(1, int(max_points))))
+    practice_stride = max(1, math.ceil(len(practice_rows) / max(1, int(max_points))))
     alpha_rows = [row for row in rows if str(row.get("stage")) in {"prestim_state", "alpha_erd"}]
     main_alpha_rows = [row for row in alpha_rows if (_optional_int(row.get("trial")) or 0) >= 1]
-    practice_alpha_rows = [row for row in alpha_rows if (_optional_int(row.get("trial")) or 0) < 0]
+    practice_alpha_rows = [
+        row for row in alpha_rows
+        if (trial := _optional_int(row.get("trial"))) is not None and trial < 1
+    ]
     alpha_packets = len(main_alpha_rows)
     valid_alpha_packets = sum(bool(row.get("valid", False)) for row in main_alpha_rows)
-    for row in rows[::stride]:
+    points = _staged_feature_points(main_rows[::main_stride], raw_lsl_start)
+    excluded_practice_points = _staged_feature_points(practice_rows[::practice_stride], raw_lsl_start)
+    return {
+        "status": "ok",
+        "file": str(path),
+        "packet_count": len(rows),
+        "display_packet_count": len(points),
+        "main_task_packet_count": len(main_rows),
+        "excluded_practice_packet_count": len(practice_rows),
+        "excluded_practice_display_packet_count": len(excluded_practice_points),
+        "unscoped_packet_count": len(unscoped_rows),
+        "alpha_packet_count": alpha_packets,
+        "valid_alpha_packet_count": valid_alpha_packets,
+        "all_alpha_packet_count": len(alpha_rows),
+        "excluded_practice_alpha_packet_count": len(practice_alpha_rows),
+        "points": points,
+        "excluded_practice_points": excluded_practice_points,
+    }
+
+
+def _staged_feature_points(rows: list[dict[str, Any]], raw_lsl_start: float | None) -> list[dict[str, Any]]:
+    points: list[dict[str, Any]] = []
+    for row in rows:
         deadline = _optional_float(row.get("stage_deadline_lsl"))
         if deadline is None or raw_lsl_start is None:
             continue
@@ -605,21 +636,7 @@ def _load_staged_features(path: Path, raw_lsl_start: float | None, max_points: i
                 "alpha_erd_percent": _optional_float(features.get("alpha_erd_percent")),
             }
         )
-    main_rows = [row for row in rows if (_optional_int(row.get("trial")) or 0) >= 1]
-    practice_rows = [row for row in rows if (_optional_int(row.get("trial")) or 0) < 0]
-    return {
-        "status": "ok",
-        "file": str(path),
-        "packet_count": len(rows),
-        "display_packet_count": len(points),
-        "main_task_packet_count": len(main_rows),
-        "practice_packet_count": len(practice_rows),
-        "alpha_packet_count": alpha_packets,
-        "valid_alpha_packet_count": valid_alpha_packets,
-        "all_alpha_packet_count": len(alpha_rows),
-        "practice_alpha_packet_count": len(practice_alpha_rows),
-        "points": points,
-    }
+    return points
 
 
 def _marker_category(label: str) -> str:
@@ -745,6 +762,12 @@ label {{ display: inline-flex; align-items: center; gap: 5px; color: var(--muted
   </section>
 
   <section class="panel">
+    <h2>GO / NO-GO EEG Condition Classification</h2>
+    <p class="section-note">Post-stimulus condition decoding from EEG. This is not an inhibition-decoding claim.</p>
+    <div class="dashboard-grid" id="classificationDashboard"></div>
+  </section>
+
+  <section class="panel">
     <h2>Feature Analysis</h2>
     <div class="toolbar">
       <label>View
@@ -801,6 +824,7 @@ const raw = DATA.raw || {{}};
 const offlineAlpha = DATA.offline_alpha || {{}};
 const liveAlpha = DATA.live_alpha || [];
 const stagedFeatures = DATA.staged_features || {{status:'missing', points:[]}};
+const classification = DATA.classification || {{status:'missing', metrics:{{}}}};
 const markers = DATA.markers || [];
 const categories = DATA.marker_categories || [];
 const segments = (DATA.segments && DATA.segments.length ? DATA.segments : [{{key:'full', label:'Full Time Series', start:0, end:Math.max(1, raw.duration_seconds || 1), duration:Math.max(1, raw.duration_seconds || 1)}}])
@@ -845,6 +869,7 @@ function setup() {{
   document.getElementById('sessionPath').textContent = DATA.session.session_dir || '';
   renderMetrics();
   renderFeatureFacts();
+  renderClassification();
   setupSegments();
   setupMarkers();
   setupFeatureControls();
@@ -856,6 +881,17 @@ function setup() {{
   requestAnimationFrame(tick);
 }}
 
+function renderClassification() {{
+  const metrics = classification.metrics || {{}};
+  const cards = Object.entries(metrics).map(([model, value]) => {{
+    const balanced = value.balanced_accuracy == null ? value.status || 'missing' : Number(value.balanced_accuracy).toFixed(3);
+    const note = `coverage=${{formatNumber(value.coverage)}}; NO-GO recall=${{formatNumber(value.no_go_recall)}}; AUC=${{formatNumber(value.roc_auc)}}`;
+    return dashboardCard(balanced, model, note);
+  }});
+  document.getElementById('classificationDashboard').innerHTML =
+    cards.join('') || dashboardCard(classification.status || 'missing', 'classification status', 'no scored classifier predictions');
+}}
+
 function renderFeatureFacts() {{
   const features = DATA.realtime_features || {{}};
   const replay = features.replay || {{status:'missing'}};
@@ -865,7 +901,7 @@ function renderFeatureFacts() {{
     [replay.status || 'missing', 'causal replay', replay.reasons?.length ? replay.reasons.join(', ') : 'online and replay feature facts agree'],
     [replay.quality_status || 'unknown', 'feature quality', `${{sumValues(replay.valid_stage_packet_counts)}} valid stage packets`],
     [replay.material_difference_count ?? 'unknown', 'material differences', `${{replay.acceptance_online_packet_count ?? 0}} accepted online packets`],
-    [replay.excluded_practice_online_packet_count ?? 0, 'practice packets excluded', 'retained for audit; outside main-task acceptance'],
+    [replay.excluded_practice_online_packet_count ?? stagedFeatures.excluded_practice_packet_count ?? 0, 'practice packets excluded', 'retained for audit; outside main-task acceptance'],
     [replay.reference_contamination_packets?.length ?? 0, 'reference contamination', `${{engine.fixed_reference_channels?.length ?? 0}} fixed reference channels`],
     [replay.filter_warmup_invalid_packets?.length ?? 0, 'warmup-invalid packets', replay.acceptance_scope || 'main task scope']
   ];
@@ -929,11 +965,13 @@ function renderMetrics() {{
     [markers.length, 'event markers'],
     [offlineAlpha.status || 'missing', 'offline alpha'],
     [stagedAlphaCount, 'staged alpha packets'],
+    [stagedFeatures.excluded_practice_packet_count ?? 0, 'excluded practice packets'],
     [stagedQuality.status || 'unknown', 'staged alpha quality'],
     [continuousAlphaLabel, 'legacy continuous alpha'],
     [DATA.realtime_features?.replay?.status || 'missing', 'causal replay'],
     [DATA.realtime_features?.replay?.quality_status || 'missing', 'feature quality'],
     [DATA.realtime_features?.behavior?.status || 'missing', 'feature behavior'],
+    [classification.status || 'missing', 'classification'],
     [taskSummary.trials ?? 'unknown', 'Go/No-go trials'],
     [taskSummary.accuracy != null ? `${{(taskSummary.accuracy * 100).toFixed(1)}}%` : 'unknown', 'accuracy']
   ];

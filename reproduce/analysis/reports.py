@@ -9,6 +9,7 @@ from statistics import mean
 from typing import Any
 
 from reproduce.analysis.alpha import run_alpha_validation
+from reproduce.analysis.classification import evaluate_classifier_session, replay_classifier_session
 from reproduce.analysis.erp import run_erp_analysis
 from reproduce.analysis.html_summary import generate_experiment_html_report
 from reproduce.analysis.inhibition8 import run_feature_behavior_analysis
@@ -23,6 +24,12 @@ def analyze_session(session_dir: str | Path) -> dict[str, Any]:
     erp_config = parameters.get("analysis", {}).get("erp", {})
     alpha_config = parameters.get("analysis", {}).get("alpha", {})
     event_features_enabled = bool(parameters.get("realtime", {}).get("event_features", {}).get("enabled", False))
+    classifier_enabled = (
+        bool(parameters.get("realtime", {}).get("epoching", {}).get("enabled", False))
+        and bool(parameters.get("realtime", {}).get("classifier", {}).get("enabled", False))
+        and bool(parameters.get("realtime", {}).get("inference", {}).get("enabled", True))
+        and not event_features_enabled
+    )
     erp = run_erp_analysis(root, erp_config)
     alpha = run_alpha_validation(root, alpha_config)
     replay = _load_json(root / "reports" / "realtime_features" / "replay_summary.json") or {"status": "missing"}
@@ -30,6 +37,15 @@ def analyze_session(session_dir: str | Path) -> dict[str, Any]:
         root,
         parameters.get("analysis", {}).get("inhibition8", {}),
     ) if event_features_enabled else {"status": "disabled"}
+    if classifier_enabled:
+        try:
+            classifier_replay = replay_classifier_session(root)
+            classification = evaluate_classifier_session(root)
+            classification["replay"] = classifier_replay
+        except Exception as exc:
+            classification = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+    else:
+        classification = {"status": "disabled"}
     epochs = _epoch_summary(root / "realtime" / "epochs" / "manifest.json")
     if event_features_enabled and epochs.get("status") == "missing":
         epochs = {
@@ -50,11 +66,12 @@ def analyze_session(session_dir: str | Path) -> dict[str, Any]:
         "alpha": alpha,
         "realtime_feature_replay": replay,
         "exploratory_feature_behavior": inhibition8_behavior,
+        "classification": classification,
         "html_report": html_report,
         "analysis_status": {
             "power_bands": "pending_raw_eeg",
             "scalp_maps": "pending_raw_eeg",
-            "classification": "pending_model_outputs",
+            "classification": classification.get("status"),
             "bids_export": "pending_raw_eeg",
             "erp": erp.get("status"),
             "alpha": alpha.get("status"),

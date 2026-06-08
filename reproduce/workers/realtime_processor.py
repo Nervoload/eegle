@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import threading
+from dataclasses import asdict
 from time import monotonic, sleep
 from typing import Any
 
@@ -16,6 +17,14 @@ from reproduce.hardware.enobio import mapped_channel_names
 from reproduce.lsl import inlet_time_correction, lsl_processing_flags
 from reproduce.realtime.alpha import AlphaPowerEstimator, load_alpha_config
 from reproduce.realtime.buffer import RingBuffer
+from reproduce.realtime.classification import (
+    assess_epoch_quality,
+    load_model_bundle,
+    model_prediction_row,
+    model_rejection_row,
+    sanitize_model_metadata,
+    snapshot_model_bundle,
+)
 from reproduce.realtime.epoching import EpochingConfig, MarkerEvent, RealtimeEpocher, expected_sample_count
 from reproduce.realtime.event_features import EngineInputCaptureWriter, RealtimeEventEngine
 from reproduce.realtime.registry import make_feedback_emitter, make_model, make_policy, make_stream_preprocessor
@@ -118,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     event_features_enabled = bool(event_features_config.get("enabled", False))
     epoching_config = EpochingConfig.from_dict(realtime_config.get("epoching", {}))
     epoching_enabled = bool(epoching_config.enabled) and not event_features_enabled
+    inference_enabled = bool(realtime_config.get("inference", {}).get("enabled", True)) and not event_features_enabled
     preprocessor_kind = args.preprocessor or preprocessing_config.get("kind", "causal_bandpass_notch")
     preprocessor = None if event_features_enabled else make_stream_preprocessor(preprocessor_kind, sample_rate, channel_count, preprocessing_config)
     alpha_config = load_alpha_config(config, paths.root)
@@ -142,11 +152,24 @@ def main(argv: list[str] | None = None) -> int:
         inlet.close_stream()
         return 1
     model_kind = "none_observe_only" if event_features_enabled else (args.model or model_config.get("kind", "erp_peak_baseline"))
-    model = None if event_features_enabled else make_model(model_kind, model_config)
+    classifier_mode = bool(
+        realtime_config.get("classifier", {}).get(
+            "enabled",
+            model_kind in {"erp_roi_logreg", "pyriemann_erp_cov", "torch_eegnet"} or bool(realtime_config.get("shadow_models")),
+        )
+    ) and not event_features_enabled
+    model_entries = [] if event_features_enabled or not inference_enabled else _load_classifier_models(
+        model_kind,
+        model_config,
+        list(realtime_config.get("shadow_models", [])),
+        paths,
+    )
+    _validate_model_entries(model_entries, channel_names, sample_rate, epoching_config)
+    model = None if not model_entries else model_entries[0]["adapter"]
     policy_config = dict(realtime_config.get("decision_policy", {}))
     policy_config.setdefault("allow_task_adaptation", bool(feedback_config.get("allow_task_adaptation", True)))
     policy_kind = "observe_only" if event_features_enabled else str(policy_config.get("kind", "conservative_p300"))
-    policy = None if event_features_enabled else make_policy(policy_kind, policy_config)
+    policy = None if event_features_enabled or not inference_enabled else make_policy(policy_kind, policy_config)
     feedback_backend = "disabled" if event_features_enabled else args.feedback_backend
     emitter = make_feedback_emitter(feedback_backend, feedback_config, paths.realtime_feedback_jsonl)
     processed_sample_rate = sample_rate if preprocessor is None else preprocessor.output_sample_rate_hz
@@ -160,16 +183,25 @@ def main(argv: list[str] | None = None) -> int:
     raw_buffer = None if event_features_enabled else RingBuffer(raw_buffer_samples, channel_count)
     epocher = RealtimeEpocher(epoching_config) if epoching_enabled else None
     event_engine = RealtimeEventEngine(event_features_config, sample_rate, channel_names) if event_features_enabled else None
+    quality_config = dict(realtime_config.get("quality_gate", {}))
+    classifier_capture_enabled = (
+        classifier_mode
+        and bool(realtime_config.get("capture", {}).get("enabled", epoching_enabled))
+    )
 
     marker_inlet = None
     marker_stream = None
     marker_status = "pending"
     marker_count = 0
+    eligible_marker_count = 0
     sample_count = 0
     processed_count = 0
     window_count = 0
     epoch_count = 0
     rejected_epoch_count = 0
+    classifier_prediction_count = 0
+    classifier_predicted_epoch_count = 0
+    classifier_rejected_epoch_count = 0
     alpha_estimate_count = 0
     event_feature_packet_count = 0
     latest_raw_eeg_timestamp: float | None = None
@@ -190,17 +222,25 @@ def main(argv: list[str] | None = None) -> int:
         else None
     )
     event_feature_writer = JsonlWriter(paths.realtime_event_features_jsonl, flush_every=1) if event_features_enabled else None
+    model_prediction_writer = (
+        JsonlWriter(paths.realtime_model_predictions_jsonl, flush_every=1)
+        if epoching_enabled and classifier_mode
+        else None
+    )
     capture_writer = (
         EngineInputCaptureWriter(
             paths.realtime_engine_capture,
-            {
-                "schema_version": 1,
-                "sample_rate_hz": sample_rate,
-                "channel_names": channel_names,
-                "event_features_config": event_features_config,
-            },
+            _capture_header(
+                sample_rate,
+                channel_names,
+                event_features_config,
+                epoching_config,
+                quality_config,
+                model_entries,
+                event_features_enabled,
+            ),
         )
-        if event_features_enabled
+        if event_features_enabled or classifier_capture_enabled
         else None
     )
     if event_engine is not None:
@@ -222,6 +262,9 @@ def main(argv: list[str] | None = None) -> int:
             epoch_window_seconds=[epoching_config.tmin_seconds, epoching_config.tmax_seconds],
             raw_epoch_samples=raw_epoch_samples,
             model_kind=model_kind,
+            model_ids=[entry["id"] for entry in model_entries],
+            inference_enabled=inference_enabled,
+            classifier_mode=classifier_mode,
             decision_policy=policy_kind,
             feedback_backend=feedback_backend,
             alpha_enabled=alpha_enabled,
@@ -306,7 +349,8 @@ def main(argv: list[str] | None = None) -> int:
                                 event_feature_packet_count += 1
                 if epocher is not None:
                     for marker in marker_events:
-                        epocher.add_marker(marker)
+                        if epocher.add_marker(marker):
+                            eligible_marker_count += 1
 
             if alpha_estimator is not None and monotonic() >= next_alpha_at:
                 alpha_payload = alpha_estimator.snapshot()
@@ -351,6 +395,12 @@ def main(argv: list[str] | None = None) -> int:
                     rejected_epoch_count += 1
                     rejected_payload = attempt.payload(epoching_config)
                     append_jsonl(paths.realtime_epochs_jsonl, rejected_payload)
+                    if inference_enabled and classifier_mode:
+                        assert model_prediction_writer is not None
+                        model_prediction_writer.write(
+                            model_rejection_row(rejected_payload, attempt.reason)
+                        )
+                        classifier_rejected_epoch_count += 1
                     telemetry.emit(
                         "realtime.epoch_rejected",
                         level="realtime",
@@ -359,43 +409,78 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 for epoch in ready_epochs:
                     epoch_count += 1
-                    processing_started = monotonic()
                     epoch_payload = epoch.metadata_payload()
-                    model_metadata = {**epoch_payload, "relative_times": epoch.relative_times.astype(float).tolist()}
-                    assert model is not None and policy is not None
-                    prediction = model.predict_epoch(epoch.data, sample_rate, channel_names, model_metadata)
-                    latency_ms = (monotonic() - processing_started) * 1000.0
-                    prediction.latency_ms = latency_ms
-                    actions = policy.decide(prediction, epoch_payload)
                     append_jsonl(paths.realtime_epochs_jsonl, epoch_payload)
-                    payload = {
-                        "schema_version": 1,
-                        "decision_source": "event_epoch",
-                        "window_index": None,
-                        "epoch_index": epoch.epoch_index,
-                        "created_at_monotonic": monotonic(),
-                        "sample_count": sample_count,
-                        "processed_sample_count": processed_count,
-                        "marker_count": marker_count,
-                        "epoch_count": epoch_count,
-                        "prediction_label": prediction.label,
-                        "prediction_score": prediction.score,
-                        "prediction_probability": prediction.probability,
-                        "features": prediction.features,
-                        "prediction": prediction.to_payload(),
-                        "actions": [action.to_payload() for action in actions],
-                        "feedback": actions[0].to_payload() if actions else None,
-                        "processing_latency_ms": latency_ms,
-                        "epoch": epoch_payload,
-                    }
-                    append_jsonl(paths.realtime_decisions_jsonl, payload)
-                    emitter.emit(payload)
-                    telemetry.emit(
-                        "model.prediction",
-                        level="realtime",
-                        message=f"Realtime epoch prediction: {prediction.label} ({prediction.score:.3f})",
-                        metadata=payload,
-                    )
+                    if not inference_enabled:
+                        continue
+                    quality = assess_epoch_quality(epoch.data, quality_config) if classifier_mode else None
+                    if quality is not None and not quality.valid:
+                        assert model_prediction_writer is not None
+                        rejection = model_rejection_row(epoch_payload, ",".join(quality.reasons), quality.payload())
+                        model_prediction_writer.write(rejection)
+                        classifier_rejected_epoch_count += 1
+                        telemetry.emit("realtime.epoch_rejected", level="realtime", message="Classifier epoch rejected", metadata=rejection)
+                        continue
+                    full_model_metadata = {**epoch_payload, "relative_times": epoch.relative_times.astype(float).tolist()}
+                    model_metadata = sanitize_model_metadata(full_model_metadata) if classifier_mode else full_model_metadata
+                    for model_entry in model_entries:
+                        processing_started = monotonic()
+                        prediction = model_entry["adapter"].predict_epoch(epoch.data, sample_rate, channel_names, model_metadata)
+                        latency_ms = (monotonic() - processing_started) * 1000.0
+                        prediction.latency_ms = latency_ms
+                        row = None
+                        if classifier_mode:
+                            assert quality is not None and model_prediction_writer is not None
+                            row = model_prediction_row(
+                                epoch_payload,
+                                prediction.to_payload(),
+                                model_id=model_entry["id"],
+                                role=model_entry["role"],
+                                latency_ms=latency_ms,
+                                quality=quality.payload(),
+                            )
+                            model_prediction_writer.write(row)
+                            classifier_prediction_count += 1
+                            if model_entry["role"] == "primary":
+                                classifier_predicted_epoch_count += 1
+                        if model_entry["role"] != "primary":
+                            telemetry.emit(
+                                "model.shadow_prediction",
+                                level="realtime",
+                                message=f"Shadow prediction {model_entry['id']}: {prediction.label} ({prediction.score:.3f})",
+                                metadata=row or prediction.to_payload(),
+                            )
+                            continue
+                        assert policy is not None
+                        actions = policy.decide(prediction, epoch_payload)
+                        payload = {
+                            "schema_version": 1,
+                            "decision_source": "event_epoch",
+                            "window_index": None,
+                            "epoch_index": epoch.epoch_index,
+                            "created_at_monotonic": monotonic(),
+                            "sample_count": sample_count,
+                            "processed_sample_count": processed_count,
+                            "marker_count": marker_count,
+                            "epoch_count": epoch_count,
+                            "prediction_label": prediction.label,
+                            "prediction_score": prediction.score,
+                            "prediction_probability": prediction.probability,
+                            "features": prediction.features,
+                            "prediction": prediction.to_payload(),
+                            "actions": [action.to_payload() for action in actions],
+                            "feedback": actions[0].to_payload() if actions else None,
+                            "processing_latency_ms": latency_ms,
+                            "epoch": epoch_payload,
+                        }
+                        append_jsonl(paths.realtime_decisions_jsonl, payload)
+                        emitter.emit(payload)
+                        telemetry.emit(
+                            "model.prediction",
+                            level="realtime",
+                            message=f"Realtime epoch prediction: {prediction.label} ({prediction.score:.3f})",
+                            metadata=payload,
+                        )
 
             if not epoching_enabled and not event_features_enabled and buffer is not None and len(buffer) >= window_samples and monotonic() >= next_process_at:
                 window_count += 1
@@ -452,9 +537,13 @@ def main(argv: list[str] | None = None) -> int:
                     sample_count=sample_count,
                     processed_sample_count=processed_count,
                     marker_count=marker_count,
+                    eligible_marker_count=eligible_marker_count,
                     window_count=window_count,
                     epoch_count=epoch_count,
                     rejected_epoch_count=rejected_epoch_count,
+                    classifier_prediction_count=classifier_prediction_count,
+                    classifier_predicted_epoch_count=classifier_predicted_epoch_count,
+                    classifier_rejected_epoch_count=classifier_rejected_epoch_count,
                     alpha_estimate_count=alpha_estimate_count,
                     alpha_enabled=alpha_enabled,
                     event_features_enabled=event_features_enabled,
@@ -473,9 +562,13 @@ def main(argv: list[str] | None = None) -> int:
                         "sample_count": sample_count,
                         "processed_sample_count": processed_count,
                         "marker_count": marker_count,
+                        "eligible_marker_count": eligible_marker_count,
                         "window_count": window_count,
                         "epoch_count": epoch_count,
                         "rejected_epoch_count": rejected_epoch_count,
+                        "classifier_prediction_count": classifier_prediction_count,
+                        "classifier_predicted_epoch_count": classifier_predicted_epoch_count,
+                        "classifier_rejected_epoch_count": classifier_rejected_epoch_count,
                         "alpha_estimate_count": alpha_estimate_count,
                         "alpha_enabled": alpha_enabled,
                         "event_features_enabled": event_features_enabled,
@@ -496,10 +589,19 @@ def main(argv: list[str] | None = None) -> int:
         status.update("failed", error=f"{type(exc).__name__}: {exc}")
         return 1
     finally:
+        if inference_enabled and classifier_mode and epocher is not None and model_prediction_writer is not None:
+            for attempt in epocher.reject_pending("worker_stopped_before_epoch_completed"):
+                rejected_epoch_count += 1
+                classifier_rejected_epoch_count += 1
+                rejected_payload = attempt.payload(epoching_config)
+                append_jsonl(paths.realtime_epochs_jsonl, rejected_payload)
+                model_prediction_writer.write(model_rejection_row(rejected_payload, attempt.reason))
         if alpha_writer is not None:
             alpha_writer.close()
         if event_feature_writer is not None:
             event_feature_writer.close()
+        if model_prediction_writer is not None:
+            model_prediction_writer.close()
         if capture_writer is not None:
             capture_writer.close()
         if marker_inlet is not None:
@@ -515,9 +617,13 @@ def main(argv: list[str] | None = None) -> int:
         sample_count=sample_count,
         processed_sample_count=processed_count,
         marker_count=marker_count,
+        eligible_marker_count=eligible_marker_count,
         window_count=window_count,
         epoch_count=epoch_count,
         rejected_epoch_count=rejected_epoch_count,
+        classifier_prediction_count=classifier_prediction_count,
+        classifier_predicted_epoch_count=classifier_predicted_epoch_count,
+        classifier_rejected_epoch_count=classifier_rejected_epoch_count,
         alpha_estimate_count=alpha_estimate_count,
         alpha_enabled=alpha_enabled,
         event_features_enabled=event_features_enabled,
@@ -632,6 +738,101 @@ def _reference_for_artifact_gate(data: np.ndarray, preprocessing_config: dict[st
         # transient amplitude, not the DC offset, before causal filtering.
         values = values - np.nanmedian(values, axis=0, keepdims=True)
     return values
+
+
+def _load_classifier_models(
+    primary_kind: str,
+    primary_config: dict[str, Any],
+    shadow_configs: list[Any],
+    paths: Any,
+) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    configured = [{**dict(primary_config), "id": "primary", "role": "primary", "kind": primary_kind}]
+    for index, value in enumerate(shadow_configs, start=1):
+        shadow = {"kind": str(value)} if isinstance(value, str) else dict(value)
+        shadow.setdefault("id", f"shadow-{index}")
+        shadow["role"] = "shadow"
+        configured.append(shadow)
+    for value in configured:
+        kind = str(value.get("kind", "erp_roi_logreg"))
+        role = str(value.get("role", "shadow"))
+        model_id = str(value.get("id", f"{role}-{kind}"))
+        adapter_config = {key: item for key, item in value.items() if key not in {"id", "role", "kind"}}
+        if adapter_config.get("bundle_path"):
+            snapshot = snapshot_model_bundle(adapter_config["bundle_path"], paths.realtime_model_snapshots, model_id)
+            adapter_config["bundle_path"] = snapshot["bundle_dir"]
+        entries.append(
+            {
+                "id": model_id,
+                "role": role,
+                "kind": kind,
+                "config": adapter_config,
+                "adapter": make_model(kind, adapter_config),
+            }
+        )
+    return entries
+
+
+def _capture_header(
+    sample_rate: float,
+    channel_names: list[str],
+    event_features_config: dict[str, Any],
+    epoching_config: EpochingConfig,
+    quality_config: dict[str, Any],
+    model_entries: list[dict[str, Any]],
+    event_features_enabled: bool,
+) -> dict[str, Any]:
+    if event_features_enabled:
+        return {
+            "schema_version": 1,
+            "mode": "event_features",
+            "sample_rate_hz": sample_rate,
+            "channel_names": channel_names,
+            "event_features_config": event_features_config,
+        }
+    return {
+        "schema_version": 1,
+        "mode": "classifier",
+        "sample_rate_hz": sample_rate,
+        "channel_names": channel_names,
+        "epoching_config": asdict(epoching_config),
+        "quality_gate": quality_config,
+        "models": [
+            {
+                "id": entry["id"],
+                "role": entry["role"],
+                "kind": entry["kind"],
+                "config": entry["config"],
+            }
+            for entry in model_entries
+        ],
+    }
+
+
+def _validate_model_entries(
+    entries: list[dict[str, Any]],
+    channel_names: list[str],
+    sample_rate_hz: float,
+    epoching_config: EpochingConfig,
+) -> None:
+    runtime_window = [epoching_config.tmin_seconds, epoching_config.tmax_seconds]
+    for entry in entries:
+        bundle_path = entry["config"].get("bundle_path")
+        if not bundle_path:
+            continue
+        bundle = load_model_bundle(bundle_path)
+        contract = dict(bundle.get("contract") or {})
+        missing = [name for name in contract.get("required_channels", []) if name not in channel_names]
+        if missing:
+            raise ValueError(f"{entry['id']} model-required channels missing from stream: {', '.join(missing)}")
+        expected_rate = float(contract.get("sample_rate_hz", sample_rate_hz))
+        if abs(expected_rate - sample_rate_hz) > float(contract.get("sample_rate_tolerance_hz", 0.01)):
+            raise ValueError(f"{entry['id']} model sample rate {expected_rate:g} does not match stream {sample_rate_hz:g}")
+        expected_window = contract.get("epoch_window_seconds")
+        if expected_window and any(abs(float(a) - float(b)) > 0.01 for a, b in zip(expected_window, runtime_window)):
+            raise ValueError(f"{entry['id']} model epoch window {expected_window} does not match runtime {runtime_window}")
+        if str(contract.get("input_units", "microvolts")).lower() not in {"microvolts", "uv", "µv", "v", "volt", "volts"}:
+            raise ValueError(f"{entry['id']} model declares unsupported input units {contract.get('input_units')}")
 
 
 if __name__ == "__main__":

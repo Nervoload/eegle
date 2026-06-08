@@ -4,13 +4,15 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
 from reproduce.analysis.inhibition8 import replay_realtime_session, run_feature_behavior_analysis
 from reproduce.analysis.alpha import run_alpha_validation
-from reproduce.analysis.html_summary import _build_segments, _render_html
+from reproduce.analysis.html_summary import _build_segments, _load_staged_features, _render_html
 from reproduce.analysis.reports import _behavior_summary
+from reproduce.calibration.posterior_alpha import _draw_practice_stimulus
 from reproduce.hardware.enobio import expected_profile, mapped_channel_names
 from reproduce.config import load_config
 from reproduce.pipelines.inhibition8 import _config_contract_issues
@@ -22,9 +24,27 @@ from reproduce.realtime.event_features import (
     FeatureRegistry,
     RealtimeEventEngine,
 )
+from reproduce.tasks.go_nogo import _draw_stimulus, _run_practice, _shape_options
 
 
 CHANNELS = ["Fz", "Cz", "Pz", "C3", "C4", "P3", "P4", "Oz"]
+
+
+class _FakeDrawable:
+    def __init__(self, drawn: list[dict[str, object]], kind: str, **kwargs: object) -> None:
+        self.drawn = drawn
+        self.payload = {"kind": kind, **kwargs}
+
+    def draw(self) -> None:
+        self.drawn.append(self.payload)
+
+
+class _FakeVisual:
+    def __init__(self) -> None:
+        self.drawn: list[dict[str, object]] = []
+
+    def __getattr__(self, kind: str) -> object:
+        return lambda _win, **kwargs: _FakeDrawable(self.drawn, kind, **kwargs)
 
 
 class Inhibition8Tests(unittest.TestCase):
@@ -107,10 +127,37 @@ class Inhibition8Tests(unittest.TestCase):
         engine = RealtimeEventEngine(_engine_config(), sample_rate, CHANNELS)
         engine.process_chunk(timestamps[:250], data[:250])
 
-        packets = engine.add_marker(MarkerEvent("go_nogo_stimulus_onset_-1_go_circle_red", 2.5))
+        packets = engine.add_marker(MarkerEvent("go_nogo_stimulus_onset_-2_no_go_x_white", 2.5))
+        packets.extend(engine.add_marker(MarkerEvent("go_nogo_stimulus_onset_-1_go_circle_red", 2.5)))
         packets.extend(engine.process_chunk(timestamps[250:], data[250:]))
 
         self.assertEqual(packets, [])
+
+    def test_task_practice_uses_only_negative_trial_indices(self) -> None:
+        with (
+            patch("reproduce.tasks.go_nogo._show_practice_message", return_value=True),
+            patch("reproduce.tasks.go_nogo._present_stimulus", return_value=({}, False)) as present,
+            patch("reproduce.tasks.go_nogo._safe_wait"),
+        ):
+            aborted = _run_practice(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                {"shape": "x", "color": "white"},
+                {"shapes": ["triangle"], "colors": ["red"]},
+                ["space"],
+                ["escape"],
+                0.1,
+                0.1,
+                0.0,
+                {},
+            )
+
+        self.assertFalse(aborted)
+        self.assertEqual([call.args[7] for call in present.call_args_list], [-2, -1])
 
     def test_reference_contamination_invalidates_features_without_changing_reference(self) -> None:
         sample_rate = 100.0
@@ -263,7 +310,11 @@ class Inhibition8Tests(unittest.TestCase):
             engine = RealtimeEventEngine(config, sample_rate, CHANNELS)
             writer.write_eeg(timestamps[:250], data[:250])
             online = engine.process_chunk(timestamps[:250], data[:250])
-            for label in ("go_nogo_stimulus_onset_-1_go_circle_red", "go_nogo_stimulus_onset_1_go_circle_red"):
+            for label in (
+                "go_nogo_stimulus_onset_-2_no_go_x_white",
+                "go_nogo_stimulus_onset_-1_go_circle_red",
+                "go_nogo_stimulus_onset_1_go_circle_red",
+            ):
                 marker = MarkerEvent(label, 2.5)
                 writer.write_marker(marker)
                 online.extend(engine.add_marker(marker))
@@ -278,8 +329,36 @@ class Inhibition8Tests(unittest.TestCase):
 
             self.assertEqual(summary["status"], "pass")
             self.assertEqual(summary["acceptance_online_packet_count"], 4)
-            self.assertEqual(summary["excluded_practice_online_packet_count"], 4)
+            self.assertEqual(summary["excluded_practice_online_packet_count"], 8)
             self.assertEqual(summary["material_difference_count"], 0)
+
+    def test_dashboard_staged_features_keep_practice_out_of_main_points(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "event_features.jsonl"
+            rows = [
+                {"trial": -2, "stage": "p3", "stage_deadline_lsl": 1.0, "features": {"p3_mean_uv": 2.0}},
+                {"trial": -1, "stage": "p3", "stage_deadline_lsl": 2.0, "features": {"p3_mean_uv": 3.0}},
+                {"trial": 1, "stage": "p3", "stage_deadline_lsl": 3.0, "features": {"p3_mean_uv": 4.0}},
+            ]
+            path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+            staged = _load_staged_features(path, raw_lsl_start=0.0, max_points=100)
+
+            self.assertEqual([point["trial"] for point in staged["points"]], [1])
+            self.assertEqual([point["trial"] for point in staged["excluded_practice_points"]], [-2, -1])
+            self.assertEqual(staged["main_task_packet_count"], 1)
+            self.assertEqual(staged["excluded_practice_packet_count"], 2)
+            self.assertNotIn("practice_packet_count", staged)
+
+    def test_task_and_calibration_practice_draw_geometry_for_canonicalized_shapes(self) -> None:
+        visual = _FakeVisual()
+
+        _draw_stimulus(None, visual, {"shape": " TRIANGLE ", "color": "red"}, "GO")
+        _draw_practice_stimulus(None, visual, {"shape": "HEXAGON", "color": "blue"})
+
+        self.assertEqual([entry["edges"] for entry in visual.drawn if entry["kind"] == "Polygon"], [3, 6])
+        self.assertEqual([entry["text"] for entry in visual.drawn if entry["kind"] == "TextStim"], ["GO"])
+        self.assertEqual(_shape_options({"shapes": [" TRIANGLE ", "HEXAGON"]}), ("triangle", "hexagon"))
 
     def test_behavior_analysis_is_gated_and_commission_model_handles_sparse_errors(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -416,6 +495,7 @@ class Inhibition8Tests(unittest.TestCase):
         self.assertIn('id="showFeatureMarkers"', html)
         self.assertIn('id="showFeatureMarkerLabels"', html)
         self.assertIn('id="featureToggles"', html)
+        self.assertIn("stagedFeatures.excluded_practice_packet_count", html)
         self.assertNotIn('id="replayFacts"', html)
         self.assertNotIn('id="behaviorFacts"', html)
         self.assertNotIn("Staged Realtime Features", html)

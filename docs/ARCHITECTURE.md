@@ -114,6 +114,7 @@ Telemetry augments the canonical experiment files. Stimulus timing still lives i
 
 - `recorder`: `lsl_csv` is implemented; `labrecorder_xdf` is a configured hook only.
 - `realtime_processor`: reads EEG LSL and marker LSL, maintains raw and processed ring buffers, uses causal online preprocessing, runs marker-locked epochs through a registry-backed `ModelAdapter`, converts predictions through `DecisionPolicy`, and logs/emits explicit task actions. It can also run calibrated posterior alpha measurement continuously and write `realtime/alpha_power.jsonl` while marker-locked epoching remains enabled. Rolling-window decisions remain available as a compatibility path.
+- `dashboard`: optional non-critical localhost HTTP worker that reads session artifacts and displays live classifier status without touching the PsychoPy process.
 - `offline_analyzer`: runs the minimal session report.
 
 `reproduce.realtime` defines the reusable online pieces: ring buffer, marker-locked epoching, causal preprocessing, model registry, model adapters, bounded decision policies, feedback emitters, and the task-side feedback client. The marker epocher waits until the configured post-stimulus window is available before emitting an epoch, so P300 model decisions naturally apply to later stimuli or blocks.
@@ -134,4 +135,21 @@ The current ERP alignment path estimates event samples from task monotonic times
 
 The `extract-epochs` CLI replays the same marker-locked extraction offline and writes model-ready derived data to `realtime/epochs/epochs.npz` without modifying `raw/eeg.csv`. Its manifest hashes the raw EEG file before and after export and records marker-source hashes, epoch config, data shape, channel names, and label mapping.
 
-The `train-model` CLI trains lazy optional classical baselines from `epochs.npz`. Deep adapters (`torch_eegnet`, `torch_shallowconvnet`, `onnx_p300`) are inference-only in v1 and require configured artifacts.
+The `classify8` workflow layers participant-specific GO/NO-GO condition
+decoding on the marker-locked epoch path. Calibration collection can run with
+`realtime.inference.enabled=false` while still capturing exact EEG chunks and
+markers. Training writes versioned frozen model bundles. Online testing loads a
+primary model plus optional shadows, applies a shared quality gate, removes
+condition/stimulus/response metadata before inference, and writes normalized
+rows to `realtime/model_predictions.jsonl`. Feedback remains observe-only.
+
+Supported classifier training paths are baseline-corrected ERP ROI logistic
+regression, pyRiemann xDAWN covariance plus tangent-space logistic regression,
+and TorchScript EEGNet. The old flattened `sklearn_xdawn_lda` name remains a
+compatibility alias for `sklearn_flatten_lda`; it is not an xDAWN model.
+
+Classifier replay consumes the same binary capture format used by the staged
+feature replay, reconstructs marker-locked epochs, reloads the session-snapshot
+model bundles, and compares labels and probabilities. Final scoring joins
+predictions to `events/stimulus_manifest.json`, which remains the canonical
+truth source.

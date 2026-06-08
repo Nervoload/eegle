@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from reproduce.analysis.erp import run_erp_analysis
+from reproduce.analysis.classification import evaluate_classifier_session, replay_classifier_session
 from reproduce.analysis.html_summary import generate_experiment_html_report
 from reproduce.analysis.inhibition8 import replay_realtime_session, run_feature_behavior_analysis
 from reproduce.analysis.reanalysis import rerun_alpha_analysis
@@ -166,13 +167,29 @@ def build_parser() -> argparse.ArgumentParser:
     epochs.add_argument("--marker-prefix", default=None, help="Marker label prefix to epoch around")
     epochs.set_defaults(func=cmd_extract_epochs)
 
-    train_model = subparsers.add_parser("train-model", help="Train a classical epoch classifier from epochs.npz")
+    train_model = subparsers.add_parser("train-model", help="Train an epoch classifier from epochs.npz")
     _add_config_arg(train_model)
     _add_telemetry_args(train_model)
-    train_model.add_argument("--kind", choices=["sklearn_xdawn_lda", "pyriemann_erp_cov"], default=None)
+    train_model.add_argument(
+        "--kind",
+        choices=["erp_roi_logreg", "sklearn_flatten_lda", "sklearn_xdawn_lda", "pyriemann_erp_cov", "torch_eegnet"],
+        default=None,
+    )
     train_model.add_argument("--epochs-npz", required=True, help="Path to realtime/epochs/epochs.npz")
-    train_model.add_argument("--output", required=True, help="Output joblib artifact path")
+    train_model.add_argument("--output", required=True, help="Output artifact path, or suffix-free model-bundle directory")
     train_model.set_defaults(func=cmd_train_model)
+
+    evaluate_model = subparsers.add_parser("evaluate-model", help="Evaluate classifier predictions against the stimulus manifest")
+    _add_config_arg(evaluate_model)
+    _add_telemetry_args(evaluate_model)
+    evaluate_model.add_argument("--session-dir", required=True)
+    evaluate_model.set_defaults(func=cmd_evaluate_model)
+
+    replay_classifier = subparsers.add_parser("replay-classifier", help="Replay captured classifier EEG and markers")
+    _add_config_arg(replay_classifier)
+    _add_telemetry_args(replay_classifier)
+    replay_classifier.add_argument("--session-dir", required=True)
+    replay_classifier.set_defaults(func=cmd_replay_classifier)
 
     return parser
 
@@ -416,6 +433,18 @@ def cmd_train_model(args: argparse.Namespace, config: dict[str, Any]) -> int:
         }
     print(json.dumps(manifest, indent=2, sort_keys=True))
     return 0 if manifest.get("status") == "ok" else 1
+
+
+def cmd_evaluate_model(args: argparse.Namespace, config: dict[str, Any]) -> int:
+    summary = evaluate_classifier_session(args.session_dir)
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0 if summary.get("status") == "ok" else 1
+
+
+def cmd_replay_classifier(args: argparse.Namespace, config: dict[str, Any]) -> int:
+    summary = replay_classifier_session(args.session_dir)
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0 if summary.get("status") == "pass" else 1
 
 
 if __name__ == "__main__":

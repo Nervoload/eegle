@@ -549,8 +549,12 @@ def _show_practice_message(
 
 
 def _draw_stimulus(win: Any, visual: Any, stimulus: dict[str, Any], label: str, visual_alpha: float = 1.0) -> None:
-    shape = stimulus["shape"]
-    color = stimulus["color"]
+    _draw_shape(win, visual, stimulus["shape"], stimulus["color"], visual_alpha)
+    visual.TextStim(win, text=label, height=0.045, color="white", pos=(0, -0.24)).draw()
+
+
+def _draw_shape(win: Any, visual: Any, shape: Any, color: Any, visual_alpha: float = 1.0) -> None:
+    shape = _normalize_shape_name(shape)
     if shape == "circle":
         visual.Circle(win, radius=0.12, fillColor=color, lineColor=color, opacity=visual_alpha).draw()
     elif shape == "square":
@@ -565,7 +569,6 @@ def _draw_stimulus(win: Any, visual: Any, stimulus: dict[str, Any], label: str, 
         visual.TextStim(win, text="X", height=0.24, color=color, bold=True, opacity=visual_alpha).draw()
     else:
         visual.TextStim(win, text=str(shape).upper(), height=0.14, color=color, opacity=visual_alpha).draw()
-    visual.TextStim(win, text=label, height=0.045, color="white", pos=(0, -0.24)).draw()
 
 
 def _window_backend(display: dict[str, Any]) -> str:
@@ -721,11 +724,15 @@ def _resolve_no_go(config: dict[str, Any]) -> dict[str, str]:
     if randomize:
         shape = random.choice(_shape_options(config))
         color = random.choice(_color_options(config))
-    return {"shape": str(shape), "color": str(color)}
+    return {"shape": _normalize_shape_name(shape), "color": str(color)}
 
 
 def _shape_options(config: dict[str, Any]) -> tuple[str, ...]:
-    return tuple(str(shape) for shape in config.get("shapes", SHAPES))
+    return tuple(_normalize_shape_name(shape) for shape in config.get("shapes", SHAPES))
+
+
+def _normalize_shape_name(shape: Any) -> str:
+    return str(shape).strip().lower()
 
 
 def _color_options(config: dict[str, Any]) -> tuple[str, ...]:

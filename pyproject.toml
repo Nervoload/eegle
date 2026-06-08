@@ -36,6 +36,7 @@ deep-learning = [
 eegle = "reproduce.cli:main"
 alpha8 = "reproduce.pipelines.alpha8:main"
 inhibition8 = "reproduce.pipelines.inhibition8:main"
+classify8 = "reproduce.pipelines.classify8:main"
 
 [tool.setuptools.packages.find]
 include = ["configs*", "reproduce*"]

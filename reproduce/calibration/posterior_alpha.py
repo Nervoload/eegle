@@ -28,7 +28,7 @@ from reproduce.realtime.alpha import (
 )
 from reproduce.runtime import apply_pyglet_macos_notification_patch, ensure_runtime_environment
 from reproduce.session import SessionPaths
-from reproduce.tasks.go_nogo import _random_go_stimulus, _resolve_no_go, _star_vertices
+from reproduce.tasks.go_nogo import _draw_shape, _random_go_stimulus, _resolve_no_go
 from reproduce.telemetry import Telemetry
 
 
@@ -739,22 +739,7 @@ def _countdown(win: Any, visual: Any, phase: str, seconds: int | float, write_ev
 
 
 def _draw_practice_stimulus(win: Any, visual: Any, stimulus: dict[str, Any]) -> None:
-    shape = stimulus["shape"]
-    color = stimulus["color"]
-    if shape == "x":
-        visual.TextStim(win, text="X", height=0.24, color=color, bold=True).draw()
-    elif shape == "circle":
-        visual.Circle(win, radius=0.12, fillColor=color, lineColor=color).draw()
-    elif shape == "square":
-        visual.Rect(win, width=0.22, height=0.22, fillColor=color, lineColor=color).draw()
-    elif shape == "triangle":
-        visual.Polygon(win, edges=3, radius=0.15, fillColor=color, lineColor=color).draw()
-    elif shape == "hexagon":
-        visual.Polygon(win, edges=6, radius=0.14, fillColor=color, lineColor=color).draw()
-    elif shape == "star":
-        visual.ShapeStim(win, vertices=_star_vertices(0.15, 0.065), fillColor=color, lineColor=color).draw()
-    else:
-        visual.TextStim(win, text=str(shape).upper(), height=0.14, color=color).draw()
+    _draw_shape(win, visual, stimulus["shape"], stimulus["color"])
 
 
 def _practice_stimulus(config: dict[str, Any], no_go: dict[str, Any]) -> dict[str, Any]:

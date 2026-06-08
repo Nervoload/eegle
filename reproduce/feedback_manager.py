@@ -66,6 +66,7 @@ class FeedbackManager:
         self._patch_manifest()
         self.start_recorder()
         self.start_realtime_processor()
+        self.start_dashboard()
 
     def start_recorder(self) -> None:
         """Start only the EEG recorder process when enabled."""
@@ -109,9 +110,38 @@ class FeedbackManager:
                 "realtime processor disabled by experiment settings",
             )
 
+    def start_dashboard(self) -> None:
+        """Start the optional non-critical localhost classifier dashboard."""
+        dashboard = self.processes["dashboard"]
+        if not dashboard["enabled"]:
+            self._write_disabled_status("dashboard", dashboard["backend"], "dashboard disabled by experiment settings")
+            return
+        try:
+            self._start_worker(
+                "dashboard",
+                "reproduce.workers.dashboard",
+                [
+                    "--backend",
+                    dashboard["backend"],
+                    "--host",
+                    dashboard["host"],
+                    "--port",
+                    str(dashboard["port"]),
+                ],
+                wait_states={"running", "failed", "disabled"},
+                timeout_seconds=float(dashboard.get("startup_timeout_seconds", 4.0)),
+            )
+        except Exception as exc:
+            self.telemetry.emit(
+                "dashboard.failed_noncritical",
+                level="default",
+                message="Classifier dashboard failed; experiment will continue",
+                metadata={"exception_type": type(exc).__name__, "exception": str(exc)},
+            )
+
     def stop_after_task(self) -> None:
         self.telemetry.emit("manager.stop", level="default", message="Feedback manager stopping processes")
-        for name in ("realtime_processor", "recorder"):
+        for name in ("dashboard", "realtime_processor", "recorder"):
             worker = self._workers.get(name)
             if worker is not None:
                 self._stop_worker(worker)
@@ -377,12 +407,16 @@ class FeedbackManager:
 
     def _write_summary(self) -> None:
         statuses = {}
-        for name in ("recorder", "realtime_processor", "offline_analyzer"):
+        for name in ("recorder", "realtime_processor", "dashboard", "offline_analyzer"):
             statuses[name] = load_status(self.paths.process_logs / f"{name}.status.json") or {
                 "name": name,
                 "status": "missing",
             }
-        failed = [name for name, status in statuses.items() if status.get("status") in {"failed", "killed", "unsupported"}]
+        failed = [
+            name
+            for name, status in statuses.items()
+            if name != "dashboard" and status.get("status") in {"failed", "killed", "unsupported"}
+        ]
         validity_failures = _pipeline_validity_failures(statuses, self.processes, self.config)
         failed.extend(name for name in validity_failures if name not in failed)
         overall = "failed" if failed else "complete"
@@ -463,6 +497,10 @@ def normalize_processes(config: dict[str, Any], record_eeg: bool = True) -> dict
     analyzer = dict(process_config.get("offline_analyzer", {}))
     analyzer_backend = analyzer.get("backend") or components.get("analysis", "minimal")
     analyzer_enabled = bool(analyzer.get("enabled", analyzer_backend not in {"disabled", "none"}))
+    dashboard = dict(process_config.get("dashboard", {}))
+    dashboard_config = dict(realtime.get("dashboard", {}))
+    dashboard_enabled = bool(dashboard.get("enabled", dashboard_config.get("enabled", False)))
+    dashboard_backend = str(dashboard.get("backend", "http" if dashboard_enabled else "disabled"))
 
     return {
         "recorder": {
@@ -481,6 +519,13 @@ def normalize_processes(config: dict[str, Any], record_eeg: bool = True) -> dict
         "feedback": {
             "enabled": feedback_enabled,
             "backend": feedback_backend,
+        },
+        "dashboard": {
+            "enabled": dashboard_enabled,
+            "backend": dashboard_backend,
+            "host": str(dashboard.get("host", dashboard_config.get("host", "127.0.0.1"))),
+            "port": int(dashboard.get("port", dashboard_config.get("port", 8765))),
+            "startup_timeout_seconds": float(dashboard.get("startup_timeout_seconds", 4.0)),
         },
         "offline_analyzer": {
             "enabled": analyzer_enabled,
@@ -516,6 +561,24 @@ def _pipeline_validity_failures(
         failures["realtime_processor"] = "realtime epoching was enabled but received no task markers"
     elif bool(realtime_config.get("epoching", {}).get("enabled", False)) and _status_metric(realtime, "epoch_count") <= 0:
         failures["realtime_processor"] = "realtime epoching received markers but produced no usable epochs"
+    elif (
+        bool(realtime_config.get("epoching", {}).get("enabled", False))
+        and bool(realtime_config.get("classifier", {}).get("enabled", False))
+        and bool(realtime_config.get("inference", {}).get("enabled", True))
+        and _status_metric(realtime, "classifier_prediction_count") <= 0
+        and _status_metric(realtime, "classifier_rejected_epoch_count") <= 0
+    ):
+        failures["realtime_processor"] = "classifier inference produced neither predictions nor explicit rejections"
+    elif (
+        bool(realtime_config.get("classifier", {}).get("enabled", False))
+        and bool(realtime_config.get("inference", {}).get("enabled", True))
+        and (
+            _status_metric(realtime, "classifier_predicted_epoch_count")
+            + _status_metric(realtime, "classifier_rejected_epoch_count")
+            < _status_metric(realtime, "eligible_marker_count")
+        )
+    ):
+        failures["realtime_processor"] = "classifier did not account for every eligible marker"
     return failures
 
 

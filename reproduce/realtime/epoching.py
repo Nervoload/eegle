@@ -175,6 +175,11 @@ class RealtimeEpocher:
         self._pending.append(marker)
         return True
 
+    def reject_pending(self, reason: str) -> list[EpochAttempt]:
+        rejected = [EpochAttempt("rejected", reason, marker) for marker in self._pending]
+        self._pending = []
+        return rejected
+
     def extract_ready(
         self,
         timestamps: np.ndarray,

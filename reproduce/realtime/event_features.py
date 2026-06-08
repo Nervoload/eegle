@@ -533,7 +533,7 @@ class RealtimeEventEngine:
 
 
 class EngineInputCaptureWriter:
-    """Append exact online engine inputs as framed binary records."""
+    """Append exact online realtime inputs as framed binary records."""
 
     def __init__(self, path: str | Path, header: dict[str, Any]) -> None:
         self.path = Path(path)
@@ -604,6 +604,11 @@ def read_engine_capture(path: str | Path) -> tuple[dict[str, Any], Iterator[tupl
             handle.close()
 
     return header, records()
+
+
+# Neutral names for classifier capture/replay; legacy names remain compatible.
+RealtimeInputCaptureWriter = EngineInputCaptureWriter
+read_realtime_capture = read_engine_capture
 
 
 def _filter_provenance(

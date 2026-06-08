@@ -114,14 +114,18 @@ executables. Run them as `eegle run-forward ...`. Names such as
 | `eegle replay-realtime` | Replay captured realtime inputs and validate features |
 | `eegle extract-epochs` | Extract marker-locked EEG epochs |
 | `eegle train-model` | Train a supported classical epoch classifier |
+| `eegle evaluate-model` | Score classifier predictions against the stimulus manifest |
+| `eegle replay-classifier` | Reproduce classifier predictions from captured EEG and markers |
 
 The standalone `alpha8` command runs the posterior-alpha Enobio8 Go/No-go
 pipeline. `inhibition8` runs the separate observe-only response-inhibition
-pipeline. Both provide `full` and `reanalyze` subcommands:
+pipeline. `classify8` runs participant-specific GO/NO-GO EEG condition
+classification:
 
 ```bash
 alpha8 --help
 inhibition8 --help
+classify8 --help
 ```
 
 Run a 100-trial Go/No-go experiment without the alpha calibration pipeline:
@@ -154,6 +158,7 @@ analysis:
 | `configs/forward_pvt_enobio8.json` | PVT with an 8-channel, 500 Hz Enobio stream |
 | `configs/forward_go_nogo_enobio8.json` | Go/No-go with the posterior-alpha 8-channel montage |
 | `configs/forward_go_nogo_inhibition8.json` | Observe-only Go/No-go with the inhibition montage |
+| `configs/forward_go_nogo_classifier8.json` | Capture and observe-only GO/NO-GO EEG condition classification |
 
 Hardware expectations live under `hardware.eeg`. Before collecting data, check
 the configured channel count, sample rate, LSL stream type/name patterns, and
@@ -305,6 +310,31 @@ Fz, Cz, Pz, C3, C4, P3, P4, Oz
 
 LabRecorder/XDF launch is not implemented. EEGle currently records the matched
 LSL EEG stream to its own session output.
+
+## GO/NO-GO EEG Classification
+
+`classify8` implements a participant-specific calibration, frozen-model, and
+online-test workflow. It decodes the displayed GO versus NO-GO condition from
+the post-stimulus EEG epoch; it is not an inhibition-decoding claim.
+
+```bash
+classify8 collect --participant sub-001 --trials 240
+classify8 train --session-dir <calibration-session>
+classify8 online --participant sub-001 --model-dir <calibration-session>/models/classifier \
+  --primary erp_roi_logreg --shadow pyriemann_erp_cov --shadow torch_eegnet --trials 160
+classify8 evaluate --session-dir <online-session>
+```
+
+The online worker runs one primary model plus optional shadow models on each
+accepted marker-locked epoch. Model input metadata is label-blind, predictions
+are observe-only, and canonical truth is joined from
+`events/stimulus_manifest.json` only for display and scoring. Predictions are
+written to `realtime/model_predictions.jsonl`, frozen bundles are copied into
+the online session, and reports are written under `reports/classification/`.
+
+The optional dashboard binds only to `127.0.0.1`; it does not auto-open a
+browser or interact with PsychoPy. Training requires the `ml` extra for ROI
+logistic regression and pyRiemann, and the `deep-learning` extra for EEGNet.
 
 ## Current Scope
 

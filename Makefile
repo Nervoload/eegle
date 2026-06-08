@@ -2,7 +2,7 @@ PYTHON ?= python3
 CONFIG ?= configs/default_experiment.json
 SESSION ?=
 
-.PHONY: check-setup check-enobio8 doctor doctor-enobio8 list-tasks init-session dry-run forward-dry-run forward-pvt forward-pvt-8 forward-go-nogo-dry-run forward-go-nogo-alpha-dry-run forward-go-nogo-8 alpha8-full alpha8-dry-run inhibition8-full inhibition8-dry-run simulate-eeg analyze report-html compile
+.PHONY: check-setup check-enobio8 doctor doctor-enobio8 list-tasks init-session dry-run forward-dry-run forward-pvt forward-pvt-8 forward-go-nogo-dry-run forward-go-nogo-alpha-dry-run forward-go-nogo-8 alpha8-full alpha8-dry-run inhibition8-full inhibition8-dry-run classify8-collect-dry-run simulate-eeg analyze report-html compile
 
 check-setup:
 	$(PYTHON) -m reproduce.cli check-setup --config $(CONFIG)
@@ -52,6 +52,9 @@ inhibition8-full:
 
 inhibition8-dry-run:
 	./inhibition8 full --task-mode dry-run --skip-eeg --allow-missing-eeg --trials 2
+
+classify8-collect-dry-run:
+	$(PYTHON) -m reproduce.pipelines.classify8 collect --task-mode dry-run --skip-eeg --allow-missing-eeg --trials 2
 
 simulate-eeg:
 	$(PYTHON) -m reproduce.cli simulate-eeg --duration 30 --channels 32 --sample-rate 500

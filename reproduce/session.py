@@ -41,6 +41,7 @@ class SessionPaths:
     eeg_metadata: Path
     realtime_windows_jsonl: Path
     realtime_decisions_jsonl: Path
+    realtime_model_predictions_jsonl: Path
     realtime_markers_jsonl: Path
     realtime_feedback_jsonl: Path
     realtime_alpha_jsonl: Path
@@ -51,6 +52,7 @@ class SessionPaths:
     realtime_epochs_jsonl: Path
     realtime_epochs_npz: Path
     realtime_epoch_manifest: Path
+    realtime_model_snapshots: Path
     manager_summary: Path
     completion_summary: Path
 
@@ -107,6 +109,7 @@ def create_session(
         eeg_metadata=session_dir / "raw" / "eeg_metadata.json",
         realtime_windows_jsonl=session_dir / "realtime" / "windows.jsonl",
         realtime_decisions_jsonl=session_dir / "realtime" / "decisions.jsonl",
+        realtime_model_predictions_jsonl=session_dir / "realtime" / "model_predictions.jsonl",
         realtime_markers_jsonl=session_dir / "realtime" / "markers.jsonl",
         realtime_feedback_jsonl=session_dir / "realtime" / "feedback.jsonl",
         realtime_alpha_jsonl=session_dir / "realtime" / "alpha_power.jsonl",
@@ -117,6 +120,7 @@ def create_session(
         realtime_epochs_jsonl=session_dir / "realtime" / "epochs" / "epochs.jsonl",
         realtime_epochs_npz=session_dir / "realtime" / "epochs" / "epochs.npz",
         realtime_epoch_manifest=session_dir / "realtime" / "epochs" / "manifest.json",
+        realtime_model_snapshots=session_dir / "realtime" / "models",
         manager_summary=session_dir / "logs" / "feedback_manager.json",
         completion_summary=session_dir / "session_summary.json",
     )
@@ -129,6 +133,7 @@ def create_session(
         paths.reports,
         paths.realtime,
         paths.realtime_epochs,
+        paths.realtime_model_snapshots,
         paths.process_logs,
     ):
         folder.mkdir(parents=True, exist_ok=True)
@@ -214,6 +219,7 @@ def paths_for_existing_session(root: str | Path) -> SessionPaths:
         eeg_metadata=session_dir / "raw" / "eeg_metadata.json",
         realtime_windows_jsonl=session_dir / "realtime" / "windows.jsonl",
         realtime_decisions_jsonl=session_dir / "realtime" / "decisions.jsonl",
+        realtime_model_predictions_jsonl=session_dir / "realtime" / "model_predictions.jsonl",
         realtime_markers_jsonl=session_dir / "realtime" / "markers.jsonl",
         realtime_feedback_jsonl=session_dir / "realtime" / "feedback.jsonl",
         realtime_alpha_jsonl=session_dir / "realtime" / "alpha_power.jsonl",
@@ -224,6 +230,7 @@ def paths_for_existing_session(root: str | Path) -> SessionPaths:
         realtime_epochs_jsonl=session_dir / "realtime" / "epochs" / "epochs.jsonl",
         realtime_epochs_npz=session_dir / "realtime" / "epochs" / "epochs.npz",
         realtime_epoch_manifest=session_dir / "realtime" / "epochs" / "manifest.json",
+        realtime_model_snapshots=session_dir / "realtime" / "models",
         manager_summary=session_dir / "logs" / "feedback_manager.json",
         completion_summary=session_dir / "session_summary.json",
     )
@@ -235,6 +242,7 @@ def paths_for_existing_session(root: str | Path) -> SessionPaths:
         paths.reports,
         paths.realtime,
         paths.realtime_epochs,
+        paths.realtime_model_snapshots,
         paths.process_logs,
     ):
         folder.mkdir(parents=True, exist_ok=True)
