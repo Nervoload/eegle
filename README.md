@@ -97,6 +97,11 @@ visible LSL streams, configured Enobio/NIC2 stream match, and whether samples
 can be read. It replaces the less descriptive `doctor` command; `eegle doctor`
 remains as a compatibility alias.
 
+Commands such as `run-forward` are `eegle` subcommands, not standalone shell
+executables. Run them as `eegle run-forward ...`. Names such as
+`forward-go-nogo-8` are Makefile targets and must be run as
+`make forward-go-nogo-8` from the repository root.
+
 | Command | Purpose |
 | --- | --- |
 | `eegle check-setup` | Validate software, LSL discovery, and configured hardware |
@@ -117,6 +122,24 @@ pipeline. Both provide `full` and `reanalyze` subcommands:
 ```bash
 alpha8 --help
 inhibition8 --help
+```
+
+Run a 100-trial Go/No-go experiment without the alpha calibration pipeline:
+
+```bash
+eegle run-forward \
+  --config configs/forward_go_nogo_enobio8.json \
+  --task go_nogo \
+  --task-mode psychopy \
+  --trials 100 \
+  --participant sub-001 \
+  --require-eeg
+```
+
+Run the complete posterior-alpha calibration plus 100-trial Go/No-go pipeline:
+
+```bash
+alpha8 full --participant sub-001
 ```
 
 ## Configuration Guide
