@@ -9,6 +9,8 @@ from pathlib import Path
 import numpy as np
 
 from reproduce.analysis.classification import evaluate_classifier_session, replay_classifier_session
+from reproduce.analysis.model_validation import evaluate_preprocessing_loso, merge_epoch_files, optimal_balanced_threshold
+from reproduce.analysis.signal_quality import analyze_signal_quality
 from reproduce.config import load_config
 from reproduce.realtime.classification import (
     assess_epoch_quality,
@@ -24,7 +26,8 @@ from reproduce.realtime.event_features import EngineInputCaptureWriter
 from reproduce.realtime.models import prepare_artifact_epoch, train_epoch_model
 from reproduce.session import create_session
 from reproduce.workers.dashboard import dashboard_snapshot
-from reproduce.workers.realtime_processor import _load_classifier_models
+from reproduce.feedback_manager import normalize_processes
+from reproduce.workers.realtime_processor import _classifier_epoch_quality, _load_classifier_models
 
 
 class ClassificationTests(unittest.TestCase):
@@ -113,6 +116,40 @@ class ClassificationTests(unittest.TestCase):
         self.assertFalse(quality.valid)
         self.assertIn("non_finite", quality.reasons)
         self.assertIn("flatline", quality.reasons)
+        self.assertIn("max_abs_exceeded", quality.reasons)
+
+    def test_live_quality_assesses_full_8_by_501_epoch(self) -> None:
+        rng = np.random.default_rng(17)
+        epoch = rng.normal(0.0, 2.0, size=(501, 8))
+        epoch[400, 7] = 1000.0
+        metadata = {
+            "relative_times": (np.arange(501, dtype=float) / 500.0 - 0.2).tolist(),
+            "epoch_window_seconds": [-0.2, 0.8],
+        }
+        models = [{
+            "id": "primary",
+            "role": "primary",
+            "config": {"input_layout": "samples_x_channels", "average_reference": False},
+            "contract": {
+                "input_layout": "channels_x_samples",
+                "channel_names": [f"ch_{index + 1:03d}" for index in range(8)],
+                "sample_rate_hz": 500.0,
+                "epoch_window_seconds": [-0.2, 0.8],
+                "baseline_seconds": [-0.2, 0.0],
+            },
+        }]
+
+        quality = _classifier_epoch_quality(
+            epoch,
+            500.0,
+            [f"ch_{index + 1:03d}" for index in range(8)],
+            metadata,
+            models,
+            {"max_abs_uv": 250.0, "max_peak_to_peak_uv": 400.0, "minimum_channel_std_uv": 0.0},
+        )
+
+        self.assertEqual(quality.metrics["sample_count"], 501)
+        self.assertEqual(quality.metrics["channel_count"], 8)
         self.assertIn("max_abs_exceeded", quality.reasons)
 
     def test_model_bundle_round_trip_and_integrity(self) -> None:
@@ -303,6 +340,89 @@ class ClassificationTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "eligible non-practice training labels"):
                 train_epoch_model("erp_roi_logreg", root / "epochs.npz", root / "model")
+
+    def test_signal_quality_writes_separate_per_channel_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "raw").mkdir()
+            sample_rate = 500.0
+            times = np.arange(1000, dtype=float) / sample_rate
+            clean = 15.0 + np.sin(2.0 * np.pi * 10.0 * times)
+            noisy = 100.0 + 4.0 * times + 5.0 * np.sin(2.0 * np.pi * 60.0 * times)
+            noisy[700] += 500.0
+            rows = ["lsl_timestamp,local_received_time,Fz,Cz"]
+            rows.extend(f"{time:.6f},{time:.6f},{left:.8f},{right:.8f}" for time, left, right in zip(times, clean, noisy))
+            (root / "raw" / "eeg.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+            result = analyze_signal_quality(root)
+
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(result["channel_count"], 2)
+            self.assertGreater(result["channels"][1]["line_noise_60hz_ratio"], result["channels"][0]["line_noise_60hz_ratio"])
+            self.assertGreater(result["channels"][1]["transient_artifact_fraction"], 0.0)
+            self.assertTrue((root / "reports" / "quality" / "channel_quality.json").exists())
+
+    def test_threshold_calibration_optimizes_balanced_accuracy(self) -> None:
+        threshold, metrics = optimal_balanced_threshold(
+            np.asarray([0, 0, 1, 1]),
+            np.asarray([0.1, 0.4, 0.45, 0.9]),
+        )
+
+        self.assertGreater(threshold, 0.4)
+        self.assertLessEqual(threshold, 0.45)
+        self.assertEqual(metrics["balanced_accuracy"], 1.0)
+
+    def test_quality_recorder_is_optional_and_follows_record_eeg(self) -> None:
+        config = {
+            "hardware": {"quality": {"enabled": True, "required_for_run": False}},
+            "processes": {"quality_recorder": {"enabled": True, "backend": "lsl_csv"}},
+        }
+
+        enabled = normalize_processes(config, record_eeg=True)["quality_recorder"]
+        disabled = normalize_processes(config, record_eeg=False)["quality_recorder"]
+
+        self.assertTrue(enabled["enabled"])
+        self.assertFalse(enabled["required"])
+        self.assertFalse(disabled["enabled"])
+        self.assertEqual(disabled["backend"], "disabled")
+
+    def test_multi_session_loso_evaluates_all_reference_variants(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = []
+            times = np.arange(101, dtype=float) / 100.0 - 0.2
+            channels = np.asarray(["Fz", "Cz", "Pz", "C3", "C4", "P3", "P4", "Oz"], dtype=object)
+            for session_index in range(2):
+                rng = np.random.default_rng(100 + session_index)
+                labels = np.asarray([0, 1] * 10, dtype=int)
+                epochs = rng.normal(0.0, 0.5, size=(labels.size, channels.size, times.size))
+                epochs[np.ix_(labels == 1, np.asarray([2]), (times >= 0.3) & (times <= 0.6))] += 2.0
+                path = root / f"session-{session_index}.npz"
+                np.savez(
+                    path,
+                    X=epochs,
+                    y=labels,
+                    trials=np.arange(1, labels.size + 1),
+                    times=times,
+                    channel_names=channels,
+                    sample_rate_hz=np.asarray([100.0]),
+                )
+                files.append(path)
+
+            merged = merge_epoch_files(files, root / "merged.npz")
+            result = evaluate_preprocessing_loso(
+                files,
+                ["erp_roi_logreg"],
+                {"notch_hz": None, "quality_gate": {"minimum_channel_std_uv": 0.0}},
+                root / "loso.json",
+            )
+
+            self.assertEqual(np.load(merged, allow_pickle=True)["X"].shape[0], 40)
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(
+                set(result["variants"]),
+                {"no_reference_0p5_30", "robust_reference_0p5_30", "average_reference_0p5_30"},
+            )
 
 
 def _prediction(trial: int, condition: str, probability: float) -> dict[str, object]:

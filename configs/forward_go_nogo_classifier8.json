@@ -1,221 +1,332 @@
 {
-  "runtime": {
-    "project_name": "eegle",
-    "session_root": "data",
-    "runtime_cache_dir": ".runtime"
+  "analysis": {
+    "alpha": {
+      "enabled": false
+    },
+    "erp": {
+      "baseline_seconds": [
+        -0.2,
+        0.0
+      ],
+      "dashboard_montage_times_ms": [
+        -200,
+        0,
+        100,
+        200,
+        300,
+        400,
+        500,
+        600,
+        700,
+        800
+      ],
+      "dashboard_px_per_second": 220,
+      "enabled": true,
+      "filter_high_hz": 30.0,
+      "filter_low_hz": 0.1,
+      "input_units": "microvolts",
+      "n2_roi_channels": [
+        "Fz",
+        "Cz"
+      ],
+      "n2_window_seconds": [
+        0.2,
+        0.35
+      ],
+      "notch_hz": 60.0,
+      "p300_window_seconds": [
+        0.3,
+        0.6
+      ],
+      "roi_channels": [
+        "Cz",
+        "Pz",
+        "P3",
+        "P4"
+      ],
+      "task": "go_nogo",
+      "tmax_seconds": 0.8,
+      "tmin_seconds": -0.2
+    },
+    "html": {
+      "enabled": true,
+      "max_alpha_points": 12000,
+      "max_raw_points": 120000
+    },
+    "reports": {
+      "behavior": true,
+      "raw_eeg_summary": true
+    },
+    "quality": {
+      "drift_window_seconds": 5.0,
+      "flat_step_uv": 1e-09,
+      "line_noise_hz": 60.0,
+      "transient_derivative_threshold_uv": 100.0,
+      "transient_threshold_uv": 250.0
+    }
   },
-  "telemetry": {
-    "console_level": "default",
-    "file_level": "realtime",
-    "trace_enabled": false,
-    "heartbeat_seconds": 5.0
+  "experiment": {
+    "components": {
+      "analysis": "minimal",
+      "eeg_recorder": "lsl_csv",
+      "feedback": "disabled",
+      "preflight": "default",
+      "realtime_processor": "lsl",
+      "task": "go_nogo"
+    },
+    "experiment_id": "go_nogo_eeg_condition_classifier",
+    "mode": "forward",
+    "output_formats": [
+      "csv",
+      "jsonl",
+      "triggers_txt",
+      "raw_json"
+    ],
+    "participant_id": "example-participant",
+    "task": "go_nogo"
   },
   "hardware": {
+    "display": {
+      "allow_gui": true,
+      "background_color": "black",
+      "expected_refresh_rate_hz": 60.0,
+      "fixed_display_latency_ms": 0.0,
+      "full_screen": false,
+      "photodiode_patch": false,
+      "screen_index": 0,
+      "size": [
+        1000,
+        700
+      ],
+      "units": "height",
+      "win_type": "pyglet"
+    },
     "eeg": {
-      "family": "Enobio",
-      "profile": "enobio8_inhibition",
-      "expected_channel_counts": [8],
-      "expected_sample_rate_hz": 500,
-      "lsl_stream_type": "EEG",
-      "lsl_name_patterns": ["enobio", "nic", "neuroelectrics", "LSLOutletStreamName-EEG"],
       "allow_type_only_fallback": false,
-      "stream_timeout_seconds": 5.0,
+      "expected_channel_counts": [
+        8
+      ],
+      "expected_sample_rate_hz": 500,
+      "family": "Enobio",
+      "lsl_name_patterns": [
+        "enobio",
+        "nic",
+        "neuroelectrics",
+        "LSLOutletStreamName-EEG"
+      ],
+      "lsl_stream_type": "EEG",
+      "profile": "enobio8_inhibition",
+      "required_for_run": true,
       "sample_probe_seconds": 2.0,
-      "required_for_run": true
+      "stream_timeout_seconds": 5.0
     },
     "markers": {
       "lsl_stream_name": "EEGleMarkers",
       "lsl_stream_type": "Markers",
       "required_for_realtime": true
     },
-    "display": {
-      "screen_index": 0,
-      "full_screen": false,
-      "win_type": "pyglet",
-      "allow_gui": true,
-      "size": [1000, 700],
-      "units": "height",
-      "background_color": "black",
-      "photodiode_patch": false,
-      "expected_refresh_rate_hz": 60.0,
-      "fixed_display_latency_ms": 0.0
+    "quality": {
+      "allow_type_only_fallback": true,
+      "enabled": true,
+      "lsl_name_patterns": [
+        "quality",
+        "LSLOutletStreamName-Quality"
+      ],
+      "lsl_stream_type": "Quality",
+      "required_for_run": false,
+      "stream_timeout_seconds": 5.0,
+      "value_semantics": "contact_quality_or_impedance_proxy"
     }
   },
-  "experiment": {
-    "experiment_id": "go_nogo_eeg_condition_classifier",
-    "participant_id": "example-participant",
-    "task": "go_nogo",
-    "mode": "forward",
-    "components": {
-      "preflight": "default",
-      "task": "go_nogo",
-      "eeg_recorder": "lsl_csv",
-      "realtime_processor": "lsl",
-      "feedback": "disabled",
-      "analysis": "minimal"
-    },
-    "output_formats": ["csv", "jsonl", "triggers_txt", "raw_json"]
-  },
   "processes": {
-    "recorder": {
-      "enabled": true,
-      "backend": "lsl_csv",
-      "csv_mirror": true,
-      "startup_timeout_seconds": 8.0
-    },
-    "realtime_processor": {
-      "enabled": true,
-      "backend": "lsl",
-      "preprocessor": "causal_bandpass_notch",
-      "model": "erp_roi_logreg",
-      "startup_timeout_seconds": 8.0
-    },
-    "feedback": {
-      "enabled": false,
-      "backend": "disabled"
-    },
     "dashboard": {
-      "enabled": false,
       "backend": "http",
+      "enabled": false,
       "host": "127.0.0.1",
       "port": 8765,
       "startup_timeout_seconds": 4.0
     },
+    "feedback": {
+      "backend": "disabled",
+      "enabled": false
+    },
     "offline_analyzer": {
-      "enabled": true,
       "backend": "minimal",
+      "enabled": true,
       "timeout_seconds": 120.0
-    }
-  },
-  "tasks": {
-    "go_nogo": {
-      "trials": 240,
-      "go_probability": 0.7,
-      "no_go_probability": 0.3,
-      "stimulus_seconds": 0.8,
-      "isi_seconds": 0.7,
-      "practice_enabled": true,
-      "practice_message_min_seconds": 1.0,
-      "countdown_seconds": 3,
-      "countdown_step_seconds": 1.0,
-      "response_keys": ["space"],
-      "escape_keys": ["escape"],
-      "completion_auto_close_seconds": 30.0,
-      "shapes": ["circle", "square", "triangle", "star", "hexagon"],
-      "colors": ["red", "blue", "green", "yellow", "magenta"],
-      "no_go": {
-        "shape": "x",
-        "color": "white",
-        "randomize": false
-      }
+    },
+    "realtime_processor": {
+      "backend": "lsl",
+      "enabled": true,
+      "model": "erp_roi_logreg",
+      "preprocessor": "causal_bandpass_notch",
+      "startup_timeout_seconds": 8.0
+    },
+    "recorder": {
+      "backend": "lsl_csv",
+      "csv_mirror": true,
+      "enabled": true,
+      "startup_timeout_seconds": 8.0
+    },
+    "quality_recorder": {
+      "backend": "lsl_csv",
+      "enabled": true,
+      "required": false,
+      "startup_timeout_seconds": 8.0
     }
   },
   "realtime": {
-    "enabled": true,
-    "max_chunk_samples": 32,
-    "max_pull_samples": 128,
-    "pull_timeout_seconds": 0.01,
-    "clock_error_threshold_seconds": 60.0,
-    "inference": {
+    "alpha": {
       "enabled": false
-    },
-    "classifier": {
-      "enabled": true
     },
     "capture": {
       "enabled": true
     },
+    "classifier": {
+      "enabled": true
+    },
+    "clock_error_threshold_seconds": 60.0,
     "dashboard": {
       "enabled": false,
       "host": "127.0.0.1",
       "port": 8765
     },
-    "epoching": {
-      "enabled": true,
-      "marker_prefix": "go_nogo_stimulus_onset",
-      "tmin_seconds": -0.2,
-      "tmax_seconds": 0.8,
-      "timebase": "lsl",
-      "sample_tolerance_seconds": 0.01,
-      "drop_incomplete": true,
-      "include_practice_trials": false
-    },
-    "preprocessing": {
-      "notch_hz": 60.0,
-      "bandpass_low_hz": 1.0,
-      "bandpass_high_hz": 45.0,
-      "downsample_factor": 1,
-      "reference": "average"
-    },
-    "quality_gate": {
-      "minimum_finite_fraction": 1.0,
-      "minimum_channel_std_uv": 0.01,
-      "max_abs_uv": 250.0,
-      "max_peak_to_peak_uv": 400.0
-    },
-    "model": {
-      "kind": "erp_roi_logreg",
-      "bundle_path": null,
-      "artifact_path": null,
-      "input_layout": "samples_x_channels",
-      "input_units": "microvolts",
-      "required_channels": ["Fz", "Cz", "Pz", "C3", "C4", "P3", "P4", "Oz"],
-      "baseline_seconds": [-0.2, 0.0],
-      "decision_probability": 0.5,
-      "seed": 42
-    },
-    "shadow_models": [],
     "decision_policy": {
-      "kind": "observe_only",
+      "actions": [
+        "observe_only"
+      ],
+      "allow_task_adaptation": false,
       "enabled": true,
-      "allow_task_adaptation": false,
-      "actions": ["observe_only"]
+      "kind": "observe_only"
     },
-    "feedback": {
-      "mode": "observe_only",
-      "allow_task_adaptation": false,
-      "allow_stimulation": false,
-      "client": {
-        "enabled": false,
-        "backend": "disabled"
-      }
-    },
-    "alpha": {
-      "enabled": false
+    "enabled": true,
+    "epoching": {
+      "drop_incomplete": true,
+      "enabled": true,
+      "include_practice_trials": false,
+      "marker_prefix": "go_nogo_stimulus_onset",
+      "sample_tolerance_seconds": 0.01,
+      "timebase": "lsl",
+      "tmax_seconds": 0.8,
+      "tmin_seconds": -0.2
     },
     "event_features": {
       "enabled": false
-    }
-  },
-  "analysis": {
-    "erp": {
-      "enabled": true,
-      "task": "go_nogo",
-      "tmin_seconds": -0.2,
-      "tmax_seconds": 0.8,
-      "baseline_seconds": [-0.2, 0.0],
-      "n2_window_seconds": [0.2, 0.35],
-      "p300_window_seconds": [0.3, 0.6],
-      "filter_low_hz": 0.1,
-      "filter_high_hz": 30.0,
-      "notch_hz": 60.0,
-      "input_units": "microvolts",
-      "roi_channels": ["Cz", "Pz", "P3", "P4"],
-      "n2_roi_channels": ["Fz", "Cz"],
-      "dashboard_montage_times_ms": [-200, 0, 100, 200, 300, 400, 500, 600, 700, 800],
-      "dashboard_px_per_second": 220
     },
-    "alpha": {
+    "feedback": {
+      "allow_stimulation": false,
+      "allow_task_adaptation": false,
+      "client": {
+        "backend": "disabled",
+        "enabled": false
+      },
+      "mode": "observe_only"
+    },
+    "inference": {
       "enabled": false
     },
-    "html": {
-      "enabled": true,
-      "max_raw_points": 120000,
-      "max_alpha_points": 12000
+    "max_chunk_samples": 32,
+    "max_pull_samples": 128,
+    "model": {
+      "artifact_path": null,
+      "average_reference": true,
+      "baseline_seconds": [
+        -0.2,
+        0.0
+      ],
+      "bundle_path": null,
+      "decision_probability": 0.5,
+      "filter_high_hz": null,
+      "filter_low_hz": null,
+      "filter_order": 2,
+      "input_layout": "samples_x_channels",
+      "input_units": "microvolts",
+      "kind": "erp_roi_logreg",
+      "notch_hz": 60.0,
+      "notch_q": 30.0,
+      "required_channels": [
+        "Fz",
+        "Cz",
+        "Pz",
+        "C3",
+        "C4",
+        "P3",
+        "P4",
+        "Oz"
+      ],
+      "reference": "average",
+      "seed": 42
     },
-    "reports": {
-      "behavior": true,
-      "raw_eeg_summary": true
+    "preprocessing": {
+      "bandpass_high_hz": 45.0,
+      "bandpass_low_hz": 1.0,
+      "downsample_factor": 1,
+      "notch_hz": 60.0,
+      "reference": "average"
+    },
+    "pull_timeout_seconds": 0.01,
+    "quality_gate": {
+      "always_reject_reasons": [
+        "invalid_shape",
+        "non_finite",
+        "quality_preparation_failed"
+      ],
+      "max_abs_uv": 250.0,
+      "max_peak_to_peak_uv": 400.0,
+      "minimum_channel_std_uv": 0.01,
+      "minimum_finite_fraction": 1.0,
+      "reject_predictions": false
+    },
+    "shadow_models": []
+  },
+  "runtime": {
+    "project_name": "eegle",
+    "runtime_cache_dir": ".runtime",
+    "session_root": "data"
+  },
+  "tasks": {
+    "go_nogo": {
+      "colors": [
+        "red",
+        "blue",
+        "green",
+        "yellow",
+        "magenta"
+      ],
+      "completion_auto_close_seconds": 30.0,
+      "countdown_seconds": 3,
+      "countdown_step_seconds": 1.0,
+      "escape_keys": [
+        "escape"
+      ],
+      "go_probability": 0.7,
+      "isi_seconds": 0.7,
+      "no_go": {
+        "color": "white",
+        "randomize": false,
+        "shape": "x"
+      },
+      "no_go_probability": 0.3,
+      "practice_enabled": true,
+      "practice_message_min_seconds": 1.0,
+      "response_keys": [
+        "space"
+      ],
+      "shapes": [
+        "circle",
+        "square",
+        "triangle",
+        "star",
+        "hexagon"
+      ],
+      "stimulus_seconds": 0.8,
+      "trials": 240
     }
+  },
+  "telemetry": {
+    "console_level": "default",
+    "file_level": "realtime",
+    "heartbeat_seconds": 5.0,
+    "trace_enabled": false
   }
 }

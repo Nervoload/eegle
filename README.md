@@ -319,9 +319,10 @@ the post-stimulus EEG epoch; it is not an inhibition-decoding claim.
 
 ```bash
 classify8 collect --participant sub-001 --trials 240
-classify8 train --session-dir <calibration-session>
+classify8 train --session-dir <calibration-session-1> --session-dir <calibration-session-2> --quality-check
 classify8 online --participant sub-001 --model-dir <calibration-session>/models/classifier \
-  --primary erp_roi_logreg --shadow pyriemann_erp_cov --shadow torch_eegnet --trials 160
+  --primary erp_roi_logreg --shadow pyriemann_erp_cov --trials 160 \
+  --calibration-trials 40 --calibration-no-go-probability 0.5
 classify8 evaluate --session-dir <online-session>
 ```
 
@@ -331,6 +332,16 @@ are observe-only, and canonical truth is joined from
 `events/stimulus_manifest.json` only for display and scoring. Predictions are
 written to `realtime/model_predictions.jsonl`, frozen bundles are copied into
 the online session, and reports are written under `reports/classification/`.
+When enabled, the managed Quality recorder writes the Enobio/NIC2 `Quality`
+outlet to `raw/quality.csv`. Per-channel DC offset, drift, 60 Hz ratio,
+flatness, and transient metrics are written to
+`reports/quality/channel_quality.json`.
+
+`train --quality-check` evaluates no reference, robust median reference, and
+average reference with 0.5-30 Hz preprocessing using leave-one-session-out
+validation. Online threshold calibration accepts repeated
+`--calibration-session-dir` values and/or records a short labeled block before
+the main run.
 
 The optional dashboard binds only to `127.0.0.1`; it does not auto-open a
 browser or interact with PsychoPy. Training requires the `ml` extra for ROI

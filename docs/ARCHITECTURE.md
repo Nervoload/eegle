@@ -142,6 +142,12 @@ markers. Training writes versioned frozen model bundles. Online testing loads a
 primary model plus optional shadows, applies a shared quality gate, removes
 condition/stimulus/response metadata before inference, and writes normalized
 rows to `realtime/model_predictions.jsonl`. Feedback remains observe-only.
+The live and replay quality gate assesses the full model-prepared epoch using
+the runtime input layout. Optional Enobio Quality-stream capture and raw EEG
+channel diagnostics are recorded beside canonical outputs. Multi-session
+training can compare reference strategies with leave-one-session-out
+validation, while a labeled pre-online block recalibrates decision thresholds
+without retraining the frozen model.
 
 Supported classifier training paths are baseline-corrected ERP ROI logistic
 regression, pyRiemann xDAWN covariance plus tangent-space logistic regression,

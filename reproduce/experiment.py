@@ -127,6 +127,7 @@ class ForwardExperimentRunner:
             try:
                 if self.calibration_suite:
                     manager.start_recorder()
+                    manager.start_quality_recorder()
                     with self.telemetry.span(
                         "calibration",
                         component="experiment",

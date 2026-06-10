@@ -18,13 +18,11 @@ from reproduce.lsl import inlet_time_correction, lsl_processing_flags
 from reproduce.realtime.alpha import AlphaPowerEstimator, load_alpha_config
 from reproduce.realtime.buffer import RingBuffer
 from reproduce.realtime.classification import (
-    EpochQualityResult,
-    assess_classifier_epoch_quality,
+    assess_epoch_quality,
     load_model_bundle,
     model_prediction_row,
     model_rejection_row,
     sanitize_model_metadata,
-    should_block_classifier_prediction,
     snapshot_model_bundle,
 )
 from reproduce.realtime.epoching import EpochingConfig, MarkerEvent, RealtimeEpocher, expected_sample_count
@@ -415,32 +413,16 @@ def main(argv: list[str] | None = None) -> int:
                     append_jsonl(paths.realtime_epochs_jsonl, epoch_payload)
                     if not inference_enabled:
                         continue
-                    full_model_metadata = {**epoch_payload, "relative_times": epoch.relative_times.astype(float).tolist()}
-                    model_metadata = sanitize_model_metadata(full_model_metadata) if classifier_mode else full_model_metadata
-                    quality = (
-                        _classifier_epoch_quality(
-                            epoch.data,
-                            sample_rate,
-                            channel_names,
-                            model_metadata,
-                            model_entries,
-                            quality_config,
-                        )
-                        if classifier_mode
-                        else None
-                    )
-                    if quality is not None and _should_block_classifier_prediction(quality, quality_config):
+                    quality = assess_epoch_quality(epoch.data, quality_config) if classifier_mode else None
+                    if quality is not None and not quality.valid:
                         assert model_prediction_writer is not None
                         rejection = model_rejection_row(epoch_payload, ",".join(quality.reasons), quality.payload())
                         model_prediction_writer.write(rejection)
                         classifier_rejected_epoch_count += 1
-                        telemetry.emit(
-                            "realtime.epoch_rejected",
-                            level="realtime",
-                            message="Classifier epoch rejected",
-                            metadata=rejection,
-                        )
+                        telemetry.emit("realtime.epoch_rejected", level="realtime", message="Classifier epoch rejected", metadata=rejection)
                         continue
+                    full_model_metadata = {**epoch_payload, "relative_times": epoch.relative_times.astype(float).tolist()}
+                    model_metadata = sanitize_model_metadata(full_model_metadata) if classifier_mode else full_model_metadata
                     for model_entry in model_entries:
                         processing_started = monotonic()
                         prediction = model_entry["adapter"].predict_epoch(epoch.data, sample_rate, channel_names, model_metadata)
@@ -758,41 +740,6 @@ def _reference_for_artifact_gate(data: np.ndarray, preprocessing_config: dict[st
     return values
 
 
-def _classifier_epoch_quality(
-    epoch_data: np.ndarray,
-    sample_rate_hz: float,
-    channel_names: list[str],
-    metadata: dict[str, Any],
-    model_entries: list[dict[str, Any]],
-    quality_config: dict[str, Any],
-) -> EpochQualityResult:
-    return assess_classifier_epoch_quality(
-        epoch_data,
-        sample_rate_hz,
-        channel_names,
-        metadata,
-        model_entries,
-        quality_config,
-    )
-
-
-def _should_block_classifier_prediction(
-    quality: EpochQualityResult,
-    quality_config: dict[str, Any],
-) -> bool:
-    """Decide whether quality should block prediction.
-
-    Default behavior is warn-only for artifact thresholds. This keeps live
-    classifier instrumentation usable while still recording quality payloads.
-
-    Set realtime.quality_gate.reject_predictions=true to restore strict
-    blocking. Non-finite/invalid/preparation-failed epochs still block by
-    default because they are likely to crash the model or corrupt outputs.
-    """
-
-    return should_block_classifier_prediction(quality, quality_config)
-
-
 def _load_classifier_models(
     primary_kind: str,
     primary_config: dict[str, Any],
@@ -811,22 +758,15 @@ def _load_classifier_models(
         role = str(value.get("role", "shadow"))
         model_id = str(value.get("id", f"{role}-{kind}"))
         adapter_config = {key: item for key, item in value.items() if key not in {"id", "role", "kind"}}
-        contract: dict[str, Any] = {}
         if adapter_config.get("bundle_path"):
             snapshot = snapshot_model_bundle(adapter_config["bundle_path"], paths.realtime_model_snapshots, model_id)
             adapter_config["bundle_path"] = snapshot["bundle_dir"]
-            try:
-                bundle = load_model_bundle(adapter_config["bundle_path"])
-                contract = dict(bundle.get("contract") or {})
-            except Exception:
-                contract = {}
         entries.append(
             {
                 "id": model_id,
                 "role": role,
                 "kind": kind,
                 "config": adapter_config,
-                "contract": contract,
                 "adapter": make_model(kind, adapter_config),
             }
         )

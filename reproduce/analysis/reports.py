@@ -13,6 +13,7 @@ from reproduce.analysis.classification import evaluate_classifier_session, repla
 from reproduce.analysis.erp import run_erp_analysis
 from reproduce.analysis.html_summary import generate_experiment_html_report
 from reproduce.analysis.inhibition8 import run_feature_behavior_analysis
+from reproduce.analysis.signal_quality import analyze_signal_quality
 
 
 def analyze_session(session_dir: str | Path) -> dict[str, Any]:
@@ -32,6 +33,7 @@ def analyze_session(session_dir: str | Path) -> dict[str, Any]:
     )
     erp = run_erp_analysis(root, erp_config)
     alpha = run_alpha_validation(root, alpha_config)
+    signal_quality = analyze_signal_quality(root, parameters.get("analysis", {}).get("quality", {}))
     replay = _load_json(root / "reports" / "realtime_features" / "replay_summary.json") or {"status": "missing"}
     inhibition8_behavior = run_feature_behavior_analysis(
         root,
@@ -59,6 +61,7 @@ def analyze_session(session_dir: str | Path) -> dict[str, Any]:
         "behavior_file": str(behavior),
         "behavior": _behavior_summary(behavior),
         "raw_eeg": _raw_eeg_summary(root / "raw" / "eeg.csv", root / "raw" / "eeg_metadata.json"),
+        "signal_quality": signal_quality,
         "realtime": _realtime_summary(root / "realtime" / "decisions.jsonl", root / "realtime" / "markers.jsonl"),
         "epochs": epochs,
         "processes": _process_summary(root / "logs" / "processes"),
@@ -75,6 +78,7 @@ def analyze_session(session_dir: str | Path) -> dict[str, Any]:
             "bids_export": "pending_raw_eeg",
             "erp": erp.get("status"),
             "alpha": alpha.get("status"),
+            "signal_quality": signal_quality.get("status"),
             "html_report": html_report.get("status"),
             "epochs": epochs.get("status"),
             "realtime_feature_replay": replay.get("status"),

@@ -40,7 +40,7 @@ DEFAULT_ROI_CONFIG: dict[str, Any] = {
 class EpochQualityResult:
     valid: bool
     reasons: tuple[str, ...]
-    metrics: dict[str, Any]
+    metrics: dict[str, float]
 
     def payload(self) -> dict[str, Any]:
         return {"valid": self.valid, "reasons": list(self.reasons), "metrics": self.metrics}
@@ -104,44 +104,20 @@ def model_rejection_row(
     }
 
 
-
 def assess_epoch_quality(epoch: np.ndarray, config: dict[str, Any] | None = None) -> EpochQualityResult:
-    """Assess an epoch after removing stable per-channel offsets.
-
-    The expected layout is samples x channels. This matches the realtime
-    epoch payloads and the training call site, which passes channels x samples
-    epochs as epoch.T.
-
-    The old implementation measured max_abs and peak-to-peak over the raw
-    full matrix. With Enobio/NIC2 raw exports, stable electrode/reference
-    offsets can be tens of millivolts even when the event-locked EEG variation
-    is normal. This gate therefore centers each channel before artifact checks.
-    """
-
     cfg = dict(config or {})
     values = np.asarray(epoch, dtype=float)
     reasons: list[str] = []
-
     if values.ndim != 2 or values.size == 0:
         return EpochQualityResult(False, ("invalid_shape",), {})
-
     finite_fraction = float(np.mean(np.isfinite(values)))
-
-    with np.errstate(invalid="ignore"):
-        centered = values - np.nanmedian(values, axis=0, keepdims=True)
-        finite_centered = centered[np.isfinite(centered)]
-        channel_std = np.nanstd(centered, axis=0)
-        channel_ptp = np.nanmax(centered, axis=0) - np.nanmin(centered, axis=0)
-
+    finite = values[np.isfinite(values)]
     metrics = {
-        "sample_count": int(values.shape[0]),
-        "channel_count": int(values.shape[1]),
         "finite_fraction": finite_fraction,
-        "max_abs_uv": float(np.nanmax(np.abs(finite_centered))) if finite_centered.size else float("inf"),
-        "peak_to_peak_uv": float(np.nanmax(channel_ptp)) if channel_ptp.size else float("inf"),
-        "minimum_channel_std_uv": float(np.nanmin(channel_std)) if channel_std.size else 0.0,
+        "max_abs_uv": float(np.max(np.abs(finite))) if finite.size else float("inf"),
+        "peak_to_peak_uv": float(np.ptp(finite)) if finite.size else float("inf"),
+        "minimum_channel_std_uv": float(np.min(np.nanstd(values, axis=0))) if values.shape[0] > 1 else 0.0,
     }
-
     if finite_fraction < float(cfg.get("minimum_finite_fraction", 1.0)):
         reasons.append("non_finite")
     if metrics["minimum_channel_std_uv"] < float(cfg.get("minimum_channel_std_uv", 0.01)):
@@ -150,129 +126,7 @@ def assess_epoch_quality(epoch: np.ndarray, config: dict[str, Any] | None = None
         reasons.append("max_abs_exceeded")
     if metrics["peak_to_peak_uv"] > float(cfg.get("max_peak_to_peak_uv", 400.0)):
         reasons.append("peak_to_peak_exceeded")
-
     return EpochQualityResult(not reasons, tuple(reasons), metrics)
-
-
-def _as_bool(value: Any, default: bool = False) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
-
-
-def _contract_float(contract: dict[str, Any], *keys: str, default: float | None = None) -> float | None:
-    for key in keys:
-        if key in contract and contract[key] is not None:
-            value = contract[key]
-            if value in {"", "none", "None"}:
-                return None
-            return float(value)
-    return default
-
-
-def _sosfiltfilt_safe(sos: np.ndarray, values: np.ndarray) -> np.ndarray:
-    from scipy import signal
-
-    sample_count = int(values.shape[1])
-    if sample_count < 8:
-        return values
-
-    # scipy's default padlen can be too long for short ERP epochs.
-    padlen = min(max(0, sample_count - 1), 3 * (2 * sos.shape[0] + 1))
-    return signal.sosfiltfilt(sos, values, axis=1, padlen=padlen)
-
-
-def _filtfilt_safe(b: np.ndarray, a: np.ndarray, values: np.ndarray) -> np.ndarray:
-    from scipy import signal
-
-    sample_count = int(values.shape[1])
-    if sample_count < 8:
-        return values
-
-    padlen = min(max(0, sample_count - 1), 3 * (max(len(a), len(b)) - 1))
-    return signal.filtfilt(b, a, values, axis=1, padlen=padlen)
-
-
-def filter_classifier_epoch(
-    channels_samples: np.ndarray,
-    sample_rate_hz: float,
-    contract: dict[str, Any],
-) -> np.ndarray:
-    """Apply optional zero-phase epoch filtering for post-window classification.
-
-    This is used after the full stimulus-locked window is available. It is not
-    a causal rolling filter. For classifier mode, that is acceptable because
-    prediction only happens after tmax has elapsed.
-    """
-
-    values = np.asarray(channels_samples, dtype=float)
-    if values.ndim != 2 or values.size == 0:
-        return values
-
-    try:
-        from scipy import signal
-    except Exception:
-        # Keep the system usable if scipy is absent, although runtime/ml envs
-        # should already provide it.
-        return values
-
-    fs = float(sample_rate_hz)
-    nyquist = fs / 2.0
-    output = np.asarray(values, dtype=float)
-
-    notch_hz = _contract_float(contract, "notch_hz", "line_noise_hz", default=None)
-    if notch_hz is not None and 0.0 < notch_hz < nyquist:
-        q = float(contract.get("notch_q", 30.0))
-        b, a = signal.iirnotch(w0=notch_hz, Q=q, fs=fs)
-        output = _filtfilt_safe(b, a, output)
-
-    low = _contract_float(contract, "filter_low_hz", "bandpass_low_hz", default=None)
-    high = _contract_float(contract, "filter_high_hz", "bandpass_high_hz", default=None)
-    order = int(contract.get("filter_order", 2))
-
-    if low is not None or high is not None:
-        if low is not None and high is not None and 0.0 < low < high < nyquist:
-            sos = signal.butter(order, [low, high], btype="bandpass", fs=fs, output="sos")
-            output = _sosfiltfilt_safe(sos, output)
-        elif high is not None and 0.0 < high < nyquist:
-            sos = signal.butter(order, high, btype="lowpass", fs=fs, output="sos")
-            output = _sosfiltfilt_safe(sos, output)
-        elif low is not None and 0.0 < low < nyquist:
-            sos = signal.butter(order, low, btype="highpass", fs=fs, output="sos")
-            output = _sosfiltfilt_safe(sos, output)
-
-    return output
-
-
-def average_reference(channels_samples: np.ndarray) -> np.ndarray:
-    values = np.asarray(channels_samples, dtype=float)
-    if values.ndim != 2 or values.shape[0] < 2:
-        return values
-    return values - np.nanmean(values, axis=0, keepdims=True)
-
-
-def robust_reference(channels_samples: np.ndarray) -> np.ndarray:
-    values = np.asarray(channels_samples, dtype=float)
-    if values.ndim != 2 or values.shape[0] < 2:
-        return values
-    return values - np.nanmedian(values, axis=0, keepdims=True)
-
-
-def reference_classifier_epoch(channels_samples: np.ndarray, contract: dict[str, Any]) -> np.ndarray:
-    mode = contract.get("reference")
-    if mode is None:
-        mode = "average" if _as_bool(contract.get("average_reference"), default=True) else "none"
-    normalized = str(mode).strip().lower().replace("-", "_")
-    if normalized in {"none", "off", "disabled"}:
-        return np.asarray(channels_samples, dtype=float)
-    if normalized in {"average", "mean", "common_average"}:
-        return average_reference(channels_samples)
-    if normalized in {"robust", "median", "robust_median"}:
-        return robust_reference(channels_samples)
-    raise ValueError(f"unsupported classifier reference mode: {mode}")
-
 
 
 def baseline_correct(
@@ -321,64 +175,8 @@ def prepare_classifier_epoch(
         tolerance = float(contract.get("epoch_window_tolerance_seconds", 0.01))
         if any(abs(float(a) - float(b)) > tolerance for a, b in zip(actual_window, expected_window)):
             raise ValueError(f"model epoch window {expected_window} does not match runtime window {actual_window}")
-    values = filter_classifier_epoch(values, sample_rate_hz, contract)
     baseline = contract.get("baseline_seconds", [-0.2, 0.0])
-    values = baseline_correct(values, times, baseline)
-
-    values = reference_classifier_epoch(values, contract)
-
-    if not np.all(np.isfinite(values)):
-        raise ValueError("prepared classifier epoch contains non-finite values")
-
-    return values, required, times
-
-
-def assess_classifier_epoch_quality(
-    epoch: np.ndarray,
-    sample_rate_hz: float,
-    channel_names: list[str],
-    metadata: dict[str, Any],
-    model_entries: list[dict[str, Any]],
-    quality_config: dict[str, Any] | None = None,
-) -> EpochQualityResult:
-    """Assess the exact prepared representation consumed by the primary model."""
-    primary = next((entry for entry in model_entries if entry.get("role") == "primary"), model_entries[0] if model_entries else {})
-    runtime_config = dict(primary.get("config") or {})
-    contract = {
-        **dict(primary.get("contract") or {}),
-        **runtime_config,
-    }
-    contract.setdefault("input_layout", "samples_x_channels")
-    contract.setdefault("input_units", "microvolts")
-    contract.setdefault("channel_names", list(channel_names))
-    contract.setdefault("required_channels", list(channel_names))
-    contract.setdefault("sample_rate_hz", float(sample_rate_hz))
-    contract.setdefault("baseline_seconds", [-0.2, 0.0])
-    contract.setdefault("average_reference", True)
-    try:
-        prepared, _, _ = prepare_classifier_epoch(epoch, sample_rate_hz, channel_names, metadata, contract)
-    except Exception as exc:
-        return EpochQualityResult(
-            False,
-            ("quality_preparation_failed",),
-            {"exception_type": type(exc).__name__, "exception": str(exc)},
-        )
-    return assess_epoch_quality(prepared.T, quality_config)
-
-
-def should_block_classifier_prediction(quality: EpochQualityResult, quality_config: dict[str, Any]) -> bool:
-    if quality.valid:
-        return False
-    if bool(quality_config.get("reject_predictions", False)):
-        return True
-    blocking = {
-        str(reason)
-        for reason in quality_config.get(
-            "always_reject_reasons",
-            ["invalid_shape", "non_finite", "quality_preparation_failed"],
-        )
-    }
-    return bool(set(quality.reasons) & blocking)
+    return baseline_correct(values, times, baseline), required, times
 
 
 def extract_erp_roi_features(

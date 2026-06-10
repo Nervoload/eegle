@@ -437,35 +437,31 @@ def train_epoch_model(
     y = y[valid]
     trials = trials[valid]
     eligible_training_epochs = int(x.shape[0])
-    contract = training_contract(data, cfg)
-    times = np.asarray(npz_value(data, "times", []), dtype=float)
-    channel_names = [str(value) for value in contract["channel_names"]]
     quality_config = dict(cfg.get("quality_gate", {}))
-
-    prepared_epochs: list[np.ndarray] = []
-    quality_valid: list[bool] = []
-    for epoch in x:
-        prepared = prepare_classifier_epoch(
-            epoch,
-            float(contract["sample_rate_hz"]),
-            channel_names,
-            {"relative_times": times.tolist(), "epoch_window_seconds": contract["epoch_window_seconds"]},
-            contract,
-        )[0]
-        prepared_epochs.append(prepared)
-        quality_valid.append(assess_epoch_quality(prepared.T, quality_config).valid)
-
-    quality_mask = np.asarray(quality_valid, dtype=bool)
-    corrected_all = np.stack(prepared_epochs, axis=0)
-    corrected = corrected_all[quality_mask]
-    x = x[quality_mask]
-    y = y[quality_mask]
-    trials = trials[quality_mask]
-
-    if corrected.shape[0] == 0:
+    quality_valid = np.asarray([assess_epoch_quality(epoch.T, quality_config).valid for epoch in x], dtype=bool)
+    x = x[quality_valid]
+    y = y[quality_valid]
+    trials = trials[quality_valid]
+    if x.shape[0] == 0:
         raise ValueError("all training epochs were rejected by the quality gate")
     if len(set(y.tolist())) < 2:
         raise ValueError("training requires both GO and NO-GO labels")
+    contract = training_contract(data, cfg)
+    times = np.asarray(npz_value(data, "times", []), dtype=float)
+    channel_names = [str(value) for value in contract["channel_names"]]
+    corrected = np.stack(
+        [
+            prepare_classifier_epoch(
+                epoch,
+                float(contract["sample_rate_hz"]),
+                channel_names,
+                {"relative_times": times.tolist(), "epoch_window_seconds": contract["epoch_window_seconds"]},
+                contract,
+            )[0]
+            for epoch in x
+        ],
+        axis=0,
+    )
     blocked = blocked_validation_metrics(normalized, corrected, y, trials, data, cfg, contract)
     final_config = dict(cfg)
     if normalized == "torch_eegnet" and blocked.get("best_epoch"):
@@ -659,14 +655,7 @@ def train_pyriemann_erp_cov(
 
     pipeline = Pipeline(
         [
-            (
-                "xdawn_cov",
-                XdawnCovariances(
-                    nfilter=int(config.get("nfilter", 2)),
-                    estimator=str(config.get("cov_estimator", config.get("estimator", "oas"))),
-                    xdawn_estimator=str(config.get("xdawn_estimator", config.get("cov_estimator", "oas"))),
-                ),
-            ),
+            ("xdawn_cov", XdawnCovariances(nfilter=int(config.get("nfilter", 4)))),
             ("tangent", TangentSpace()),
             (
                 "classifier",
@@ -838,13 +827,6 @@ def training_contract(data: Any, config: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("epochs.npz does not contain a valid sample_rate_hz")
     if times.size == 0:
         raise ValueError("epochs.npz does not contain relative epoch times")
-    notch_hz = config.get("notch_hz", 60.0)
-    filter_low_hz = config.get("filter_low_hz", None)
-    filter_high_hz = config.get("filter_high_hz", None)
-    average_reference_enabled = bool(config.get("average_reference", True))
-    reference = str(config.get("reference", "average" if average_reference_enabled else "none"))
-    baseline_seconds = [float(value) for value in config.get("baseline_seconds", [-0.2, 0.0])]
-
     return {
         "input_layout": "channels_x_samples",
         "input_units": str(config.get("input_units", "microvolts")),
@@ -852,27 +834,8 @@ def training_contract(data: Any, config: dict[str, Any]) -> dict[str, Any]:
         "required_channels": [str(value) for value in npz_value(data, "channel_names", [])],
         "sample_rate_hz": sample_rate,
         "epoch_window_seconds": [float(times[0]), float(times[-1])],
-        "baseline_seconds": baseline_seconds,
-        "notch_hz": None if notch_hz in {"", "none", "None"} else notch_hz,
-        "notch_q": float(config.get("notch_q", 30.0)),
-        "filter_low_hz": filter_low_hz,
-        "filter_high_hz": filter_high_hz,
-        "filter_order": int(config.get("filter_order", 2)),
-        "average_reference": average_reference_enabled,
-        "reference": reference,
-        "preprocessing": {
-            "kind": "notch_then_bandpass_then_baseline_then_reference",
-            "input_units": str(config.get("input_units", "microvolts")),
-            "notch_hz": None if notch_hz in {"", "none", "None"} else notch_hz,
-            "notch_q": float(config.get("notch_q", 30.0)),
-            "filter_low_hz": filter_low_hz,
-            "filter_high_hz": filter_high_hz,
-            "filter_order": int(config.get("filter_order", 2)),
-            "baseline_seconds": baseline_seconds,
-            "average_reference": average_reference_enabled,
-            "reference": reference,
-            "resampling": "none",
-        },
+        "baseline_seconds": [float(value) for value in config.get("baseline_seconds", [-0.2, 0.0])],
+        "preprocessing": {"kind": "as_recorded_microvolts_then_baseline_correction", "resampling": "none"},
     }
 
 
@@ -986,15 +949,10 @@ def _stratified_block_folds(
     return folds
 
 
-def binary_classification_metrics(
-    y_true: np.ndarray,
-    probabilities: np.ndarray,
-    *,
-    threshold: float = 0.5,
-) -> dict[str, Any]:
+def binary_classification_metrics(y_true: np.ndarray, probabilities: np.ndarray) -> dict[str, Any]:
     truth = np.asarray(y_true, dtype=int)
     probs = np.clip(np.asarray(probabilities, dtype=float), 0.0, 1.0)
-    predicted = (probs >= float(threshold)).astype(int)
+    predicted = (probs >= 0.5).astype(int)
     tn = int(np.sum((truth == 0) & (predicted == 0)))
     fp = int(np.sum((truth == 0) & (predicted == 1)))
     fn = int(np.sum((truth == 1) & (predicted == 0)))

@@ -10,10 +10,11 @@ from typing import Any
 import numpy as np
 
 from reproduce.realtime.classification import (
-    assess_epoch_quality,
+    assess_classifier_epoch_quality,
     model_prediction_row,
     model_rejection_row,
     sanitize_model_metadata,
+    should_block_classifier_prediction,
 )
 from reproduce.realtime.epoching import EpochingConfig, extract_epoch_from_arrays, should_epoch_marker
 from reproduce.realtime.event_features import read_engine_capture
@@ -131,8 +132,15 @@ def replay_classifier_session(session_dir: str | Path) -> dict[str, Any]:
             continue
         epoch = attempt.epoch
         epoch_payload = epoch.metadata_payload()
-        quality = assess_epoch_quality(epoch.data, quality_cfg)
-        if not quality.valid:
+        quality = assess_classifier_epoch_quality(
+            epoch.data,
+            sample_rate,
+            channels,
+            {**epoch_payload, "relative_times": epoch.relative_times.astype(float).tolist()},
+            models,
+            quality_cfg,
+        )
+        if should_block_classifier_prediction(quality, quality_cfg):
             replay_rows.append(model_rejection_row(epoch_payload, ",".join(quality.reasons), quality.payload()))
             continue
         model_metadata = sanitize_model_metadata(

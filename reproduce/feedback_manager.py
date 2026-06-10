@@ -65,6 +65,7 @@ class FeedbackManager:
         self.paths.realtime.mkdir(parents=True, exist_ok=True)
         self._patch_manifest()
         self.start_recorder()
+        self.start_quality_recorder()
         self.start_realtime_processor()
         self.start_dashboard()
 
@@ -110,6 +111,24 @@ class FeedbackManager:
                 "realtime processor disabled by experiment settings",
             )
 
+    def start_quality_recorder(self) -> None:
+        """Start the optional low-rate Enobio contact/impedance stream recorder."""
+        quality = self.processes["quality_recorder"]
+        if not quality["enabled"]:
+            self._write_disabled_status("quality_recorder", quality["backend"], "quality recorder disabled")
+            return
+        try:
+            self._start_worker(
+                "quality_recorder",
+                "reproduce.workers.quality_recorder",
+                ["--backend", quality["backend"]],
+                wait_states={"recording", "failed", "unsupported", "stopped"},
+                timeout_seconds=float(quality.get("startup_timeout_seconds", 8.0)),
+            )
+        except Exception:
+            if quality.get("required"):
+                raise
+
     def start_dashboard(self) -> None:
         """Start the optional non-critical localhost classifier dashboard."""
         dashboard = self.processes["dashboard"]
@@ -141,7 +160,7 @@ class FeedbackManager:
 
     def stop_after_task(self) -> None:
         self.telemetry.emit("manager.stop", level="default", message="Feedback manager stopping processes")
-        for name in ("dashboard", "realtime_processor", "recorder"):
+        for name in ("dashboard", "realtime_processor", "quality_recorder", "recorder"):
             worker = self._workers.get(name)
             if worker is not None:
                 self._stop_worker(worker)
@@ -407,7 +426,7 @@ class FeedbackManager:
 
     def _write_summary(self) -> None:
         statuses = {}
-        for name in ("recorder", "realtime_processor", "dashboard", "offline_analyzer"):
+        for name in ("recorder", "quality_recorder", "realtime_processor", "dashboard", "offline_analyzer"):
             statuses[name] = load_status(self.paths.process_logs / f"{name}.status.json") or {
                 "name": name,
                 "status": "missing",
@@ -415,8 +434,11 @@ class FeedbackManager:
         failed = [
             name
             for name, status in statuses.items()
-            if name != "dashboard" and status.get("status") in {"failed", "killed", "unsupported"}
+            if name not in {"dashboard", "quality_recorder"} and status.get("status") in {"failed", "killed", "unsupported"}
         ]
+        quality_status = statuses["quality_recorder"].get("status")
+        if self.processes["quality_recorder"].get("required") and quality_status in {"failed", "killed", "unsupported", "missing"}:
+            failed.append("quality_recorder")
         validity_failures = _pipeline_validity_failures(statuses, self.processes, self.config)
         failed.extend(name for name in validity_failures if name not in failed)
         overall = "failed" if failed else "complete"
@@ -478,6 +500,12 @@ def normalize_processes(config: dict[str, Any], record_eeg: bool = True) -> dict
     recorder_enabled = bool(recorder.get("enabled", recorder_backend not in {"disabled", "none"})) and record_eeg
     if not record_eeg:
         recorder_backend = "disabled"
+    quality = dict(process_config.get("quality_recorder", {}))
+    quality_config = dict(config.get("hardware", {}).get("quality", {}))
+    quality_backend = str(quality.get("backend", "lsl_csv"))
+    quality_enabled = bool(quality.get("enabled", quality_config.get("enabled", False))) and record_eeg
+    if not record_eeg:
+        quality_backend = "disabled"
 
     realtime_proc = dict(process_config.get("realtime_processor", {}))
     realtime_component = components.get("realtime_processor", "disabled")
@@ -508,6 +536,12 @@ def normalize_processes(config: dict[str, Any], record_eeg: bool = True) -> dict
             "backend": recorder_backend,
             "csv_mirror": bool(recorder.get("csv_mirror", recorder_backend == "lsl_csv")),
             "startup_timeout_seconds": float(recorder.get("startup_timeout_seconds", 8.0)),
+        },
+        "quality_recorder": {
+            "enabled": quality_enabled,
+            "backend": quality_backend,
+            "required": bool(quality.get("required", quality_config.get("required_for_run", False))),
+            "startup_timeout_seconds": float(quality.get("startup_timeout_seconds", 8.0)),
         },
         "realtime_processor": {
             "enabled": realtime_enabled,
@@ -545,6 +579,13 @@ def _pipeline_validity_failures(
     recorder = statuses.get("recorder", {})
     if processes.get("recorder", {}).get("enabled") and _status_metric(recorder, "sample_count") <= 0:
         failures["recorder"] = "recorder produced no EEG samples"
+    quality = statuses.get("quality_recorder", {})
+    if (
+        processes.get("quality_recorder", {}).get("enabled")
+        and processes.get("quality_recorder", {}).get("required")
+        and _status_metric(quality, "sample_count") <= 0
+    ):
+        failures["quality_recorder"] = "required quality recorder produced no samples"
 
     realtime = statuses.get("realtime_processor", {})
     if not processes.get("realtime_processor", {}).get("enabled"):
