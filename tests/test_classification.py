@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import random
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
 from reproduce.analysis.classification import evaluate_classifier_session, replay_classifier_session
 from reproduce.config import load_config
+from reproduce.hardware.system import CheckResult
+from reproduce.pipelines.classify8 import _validate_online_model_bundles, build_parser, train as classify8_train
 from reproduce.realtime.classification import (
     assess_epoch_quality,
     baseline_correct,
@@ -19,11 +24,13 @@ from reproduce.realtime.classification import (
     sanitize_model_metadata,
     write_model_bundle,
 )
+from reproduce.realtime.demo_classifier import DEMO_DISCLOSURE, demo_config_from, demo_prediction_from_marker
 from reproduce.realtime.epoching import EpochingConfig, MarkerEvent, RealtimeEpocher
 from reproduce.realtime.event_features import EngineInputCaptureWriter
 from reproduce.realtime.models import prepare_artifact_epoch, train_epoch_model
 from reproduce.session import create_session
-from reproduce.workers.dashboard import dashboard_snapshot
+from reproduce.telemetry import Telemetry
+from reproduce.workers.dashboard import DASHBOARD_HTML, DemoPredictionBridge, dashboard_snapshot
 from reproduce.workers.realtime_processor import _load_classifier_models
 
 
@@ -137,6 +144,105 @@ class ClassificationTests(unittest.TestCase):
             (root / "bundle" / "source.joblib").write_bytes(b"changed")
             with self.assertRaisesRegex(ValueError, "hash mismatch"):
                 load_model_bundle(root / "bundle")
+
+    def test_online_model_dir_is_validated_before_startup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaisesRegex(ValueError, "--model-dir must be the parent directory"):
+                _validate_online_model_bundles(root, ["erp_roi_logreg"])
+
+    def test_demo_prediction_is_delayed_marker_truth_with_configured_errors(self) -> None:
+        config = {
+            "prediction_delay_seconds": 1.4,
+            "error_rate": 0.0,
+            "seed": 8,
+            "marker_prefix": "go_nogo_stimulus_onset",
+            "shapes": ["circle", "square"],
+            "colors": ["blue", "green"],
+            "no_go": {"shape": "x", "color": "white"},
+        }
+        correct = demo_prediction_from_marker(
+            "go_nogo_stimulus_onset_4_go_circle_blue",
+            12.5,
+            config,
+            random.Random(3),
+        )
+        wrong = demo_prediction_from_marker(
+            "go_nogo_stimulus_onset_5_nogo_x_white",
+            13.5,
+            {**config, "error_rate": 1.0},
+            random.Random(3),
+        )
+
+        self.assertEqual(correct["predicted_condition"], "go")
+        self.assertTrue(correct["is_correct"])
+        self.assertEqual(correct["guessed_stimulus"]["shape"], "circle")
+        self.assertEqual(correct["prediction_delay_seconds"], 1.4)
+        self.assertTrue(correct["erp_window"]["not_measured_from_eeg"])
+        self.assertEqual(wrong["actual_condition"], "no_go")
+        self.assertEqual(wrong["predicted_condition"], "go")
+        self.assertFalse(wrong["is_correct"])
+
+    def test_demo_dashboard_snapshot_and_ui_are_explicitly_simulated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "realtime").mkdir()
+            (root / "logs" / "processes").mkdir(parents=True)
+            config = {
+                "realtime": {"dashboard": {"demo": {"enabled": True, "prediction_delay_seconds": 1.1, "error_rate": 0.1}}},
+                "tasks": {"go_nogo": {"no_go": {"shape": "x", "color": "white"}}},
+            }
+            (root / "parameters.json").write_text(json.dumps(config), encoding="utf-8")
+            row = demo_prediction_from_marker(
+                "go_nogo_stimulus_onset_1_go_square_blue",
+                10.0,
+                demo_config_from(config),
+                random.Random(4),
+            )
+            (root / "realtime" / "demo_predictions.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+            snapshot = dashboard_snapshot(root, {"marker_status": "connected", "received_marker_count": 1})
+
+            self.assertEqual(snapshot["mode"], "demo")
+            self.assertEqual(snapshot["marker_status"], "connected")
+            self.assertEqual(snapshot["prediction_count"], 1)
+            self.assertEqual(snapshot["disclosure"], DEMO_DISCLOSURE)
+            self.assertNotIn("Demo disclosure", DASHBOARD_HTML)
+            self.assertIn("not measured from EEG", DASHBOARD_HTML)
+            self.assertNotIn("Thinking", DASHBOARD_HTML)
+            self.assertNotIn("animation:", DASHBOARD_HTML)
+            self.assertIn('"Avenir Next"', DASHBOARD_HTML)
+            self.assertIn("Each guess will remain here until the next one arrives.", DASHBOARD_HTML)
+
+    def test_demo_bridge_writes_a_prediction_after_the_configured_delay(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = {
+                "runtime": {"session_root": tmp},
+                "experiment": {"experiment_id": "test", "participant_id": "p1", "task": "go_nogo"},
+                "realtime": {
+                    "dashboard": {"demo": {"enabled": True, "prediction_delay_seconds": 0.0, "error_rate": 0.0}},
+                    "epoching": {"marker_prefix": "go_nogo_stimulus_onset"},
+                },
+                "tasks": {"go_nogo": {"no_go": {"shape": "x", "color": "white"}}},
+            }
+            paths = create_session(config, root=Path(tmp))
+            telemetry = Telemetry.from_config(config, paths, component="test.demo")
+            bridge = DemoPredictionBridge(config, paths.realtime / "demo_predictions.jsonl", telemetry, threading.Event())
+
+            bridge._schedule_marker("go_nogo_stimulus_onset_1_go_circle_blue", 5.0)
+            bridge._emit_due_predictions()
+
+            row = json.loads((paths.realtime / "demo_predictions.jsonl").read_text(encoding="utf-8"))
+            self.assertEqual(row["trial"], 1)
+            self.assertEqual(row["source"], "psychopy_lsl_marker_demo")
+            self.assertEqual(bridge.snapshot()["pending"], [])
+
+    def test_demo_cli_defaults_to_marker_only_without_eeg_recording(self) -> None:
+        args = build_parser().parse_args(["demo"])
+
+        self.assertFalse(args.record_eeg)
+        self.assertEqual(args.error_rate, 0.1)
+        self.assertEqual(args.prediction_delay_seconds, 1.2)
 
     def test_primary_and_shadow_models_are_created(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -287,6 +393,41 @@ class ClassificationTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "requires"):
                     train_epoch_model(kind, root / "epochs.npz", root / kind)
             self.assertGreaterEqual(checked, 0)
+
+    def test_classify8_train_check_ready_does_not_fit_models(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            args = build_parser().parse_args(
+                ["train", "--session-dir", tmp, "--kind", "torch_eegnet", "--check-ready"]
+            )
+            readiness = CheckResult(
+                "training_ready",
+                "fail",
+                "missing training packages: torch",
+                {"missing": ["torch"], "missing_by_kind": {"torch_eegnet": ["torch"]}},
+            )
+            with patch("reproduce.pipelines.classify8.check_training_ready", return_value=readiness), patch(
+                "reproduce.pipelines.classify8.train_epoch_model"
+            ) as train_model:
+                result = classify8_train(args)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["training_ready"]["status"], "fail")
+        train_model.assert_not_called()
+
+    def test_classify8_train_skips_model_with_structured_missing_dependency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            args = build_parser().parse_args(["train", "--session-dir", tmp, "--kind", "torch_eegnet"])
+            readiness = CheckResult("training_ready", "fail", "missing training packages: torch")
+            with patch("reproduce.pipelines.classify8.check_training_ready", return_value=readiness), patch(
+                "reproduce.pipelines.classify8.missing_training_packages",
+                return_value=["torch"],
+            ), patch("reproduce.pipelines.classify8.train_epoch_model") as train_model:
+                result = classify8_train(args)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["models"]["torch_eegnet"]["reason"], "missing_training_dependencies")
+        self.assertEqual(result["models"]["torch_eegnet"]["missing_packages"], ["torch"])
+        train_model.assert_not_called()
 
     def test_training_excludes_practice_trials_before_model_fit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

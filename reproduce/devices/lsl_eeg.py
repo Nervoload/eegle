@@ -10,7 +10,8 @@ from pathlib import Path
 from time import monotonic
 from typing import Any
 
-from reproduce.hardware.enobio import mapped_channel_names, stream_enobio_score, stream_matches_enobio
+from reproduce.hardware.eeg_device import matching_eeg_streams
+from reproduce.hardware.enobio import mapped_channel_names
 from reproduce.lsl import inlet_time_correction, lsl_processing_flags
 
 
@@ -220,14 +221,12 @@ def probe_eeg_stream(eeg_config: dict[str, Any], seconds: float = 2.0, timeout: 
 def _select_lsl_info(pylsl: Any, eeg_config: dict[str, Any], timeout: float) -> tuple[Any | None, dict[str, Any] | None]:
     infos = pylsl.resolve_streams(wait_time=timeout)
     stream_infos = [_stream_dict(info) for info in infos]
-    scored = [
-        (stream_enobio_score(stream, eeg_config), info, stream)
-        for info, stream in zip(infos, stream_infos)
-        if stream_matches_enobio(stream, eeg_config)
-    ]
-    if scored:
-        _, info, stream = max(scored, key=lambda item: item[0])
-        return info, stream
+    matches = matching_eeg_streams(stream_infos, eeg_config)
+    if matches:
+        for match in matches:
+            for info, stream in zip(infos, stream_infos):
+                if stream == match:
+                    return info, stream
 
     if bool(eeg_config.get("allow_type_only_fallback", False)):
         expected_type = str(eeg_config.get("lsl_stream_type", "EEG")).lower()

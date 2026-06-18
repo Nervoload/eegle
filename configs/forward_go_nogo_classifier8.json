@@ -128,7 +128,13 @@
     "dashboard": {
       "enabled": false,
       "host": "127.0.0.1",
-      "port": 8765
+      "port": 8765,
+      "demo": {
+        "enabled": false,
+        "prediction_delay_seconds": 1.2,
+        "error_rate": 0.1,
+        "seed": 42
+      }
     },
     "epoching": {
       "enabled": true,

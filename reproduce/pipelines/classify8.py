@@ -13,6 +13,8 @@ from reproduce.analysis.html_summary import generate_experiment_html_report
 from reproduce.analysis.reports import analyze_session
 from reproduce.config import load_config
 from reproduce.experiment import ForwardExperimentRunner
+from reproduce.hardware.capabilities import check_training_ready, missing_training_packages
+from reproduce.realtime.classification import load_model_bundle
 from reproduce.realtime.epoching import extract_epochs_for_session
 from reproduce.realtime.models import train_epoch_model
 
@@ -31,6 +33,8 @@ def main(argv: list[str] | None = None) -> int:
             result = train(args)
         elif args.command == "online":
             result = online(args)
+        elif args.command == "demo":
+            result = demo(args)
         elif args.command == "evaluate":
             result = evaluate(args)
         else:
@@ -51,12 +55,22 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--session-dir", required=True)
     train_parser.add_argument("--kind", action="append", choices=MODEL_KINDS, help="Train one or more kinds; defaults to all")
     train_parser.add_argument("--output-dir", default=None)
+    train_parser.add_argument("--check-ready", action="store_true", help="Only report training dependency readiness")
     online_parser = subparsers.add_parser("online", help="Run observe-only primary plus shadow models")
     _run_arguments(online_parser)
     online_parser.add_argument("--model-dir", required=True, help="Directory containing model-kind bundle directories")
     online_parser.add_argument("--primary", choices=MODEL_KINDS, default="erp_roi_logreg")
     online_parser.add_argument("--shadow", action="append", choices=MODEL_KINDS, default=[])
     online_parser.add_argument("--no-dashboard", action="store_true")
+    demo_parser = subparsers.add_parser("demo", help="Run a transparent marker-driven classroom dashboard demo")
+    demo_parser.add_argument("--config", default=str(DEFAULT_CONFIG))
+    demo_parser.add_argument("--participant", default="classroom-demo")
+    demo_parser.add_argument("--trials", type=int, default=40)
+    demo_parser.add_argument("--record-eeg", action="store_true", help="Also record EEG; demo guesses still come from markers")
+    demo_parser.add_argument("--prediction-delay-seconds", type=float, default=1.2)
+    demo_parser.add_argument("--error-rate", type=float, default=0.1)
+    demo_parser.add_argument("--seed", type=int, default=42)
+    demo_parser.add_argument("--port", type=int, default=8765)
     evaluate_parser = subparsers.add_parser("evaluate", help="Replay, score, and report an online classifier session")
     evaluate_parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     evaluate_parser.add_argument("--session-dir", required=True)
@@ -96,8 +110,27 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     epochs = session / "realtime" / "epochs" / "epochs.npz"
     config = load_config(session / "parameters.json") if (session / "parameters.json").exists() else load_config(args.config)
     output_root = Path(args.output_dir).expanduser().resolve() if args.output_dir else session / "models" / "classifier"
+    kinds = list(args.kind or list(MODEL_KINDS))
+    readiness = check_training_ready(kinds, required=True)
+    if bool(args.check_ready):
+        return {
+            "status": "ok" if readiness.status == "ok" else "failed",
+            "workflow": "classify8.train",
+            "session_dir": str(session),
+            "training_ready": readiness.__dict__,
+        }
     results = {}
-    for kind in args.kind or list(MODEL_KINDS):
+    for kind in kinds:
+        missing = missing_training_packages(kind)
+        if missing:
+            results[kind] = {
+                "status": "failed",
+                "model_kind": kind,
+                "reason": "missing_training_dependencies",
+                "missing_packages": missing,
+                "error": "missing training packages: " + ", ".join(missing),
+            }
+            continue
         kind_config = dict(config.get("realtime", {}).get("model", {}))
         kind_config["kind"] = kind
         try:
@@ -110,6 +143,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         "workflow": "classify8.train",
         "session_dir": str(session),
         "model_dir": str(output_root),
+        "training_ready": readiness.__dict__,
         "models": results,
     }
 
@@ -117,15 +151,19 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
 def online(args: argparse.Namespace) -> dict[str, Any]:
     config = _classifier_config(load_config(args.config))
     model_root = Path(args.model_dir).expanduser().resolve()
+    shadows = list(dict.fromkeys(args.shadow))
+    bundle_paths = _validate_online_model_bundles(
+        model_root,
+        [args.primary, *(kind for kind in shadows if kind != args.primary)],
+    )
     config["realtime"]["inference"]["enabled"] = True
     config["realtime"]["model"] = {
         **dict(config["realtime"].get("model", {})),
         "kind": args.primary,
-        "bundle_path": str(model_root / args.primary),
+        "bundle_path": bundle_paths[args.primary],
     }
-    shadows = list(dict.fromkeys(args.shadow))
     config["realtime"]["shadow_models"] = [
-        {"id": f"shadow-{kind}", "kind": kind, "bundle_path": str(model_root / kind)}
+        {"id": f"shadow-{kind}", "kind": kind, "bundle_path": bundle_paths[kind]}
         for kind in shadows
         if kind != args.primary
     ]
@@ -140,6 +178,54 @@ def online(args: argparse.Namespace) -> dict[str, Any]:
         "primary": args.primary,
         "shadows": shadows,
         "dashboard_url": None if args.no_dashboard else f"http://{config['realtime']['dashboard']['host']}:{config['realtime']['dashboard']['port']}",
+        "forward": result.as_dict(),
+    }
+
+
+def demo(args: argparse.Namespace) -> dict[str, Any]:
+    config = copy.deepcopy(load_config(args.config))
+    config.setdefault("realtime", {})["enabled"] = True
+    config["realtime"].setdefault("inference", {})["enabled"] = False
+    config["realtime"].setdefault("classifier", {})["enabled"] = False
+    config["realtime"].setdefault("dashboard", {}).update(
+        {
+            "enabled": True,
+            "host": "127.0.0.1",
+            "port": int(args.port),
+            "demo": {
+                "enabled": True,
+                "prediction_delay_seconds": max(0.0, float(args.prediction_delay_seconds)),
+                "error_rate": min(1.0, max(0.0, float(args.error_rate))),
+                "seed": int(args.seed),
+            },
+        }
+    )
+    config.setdefault("hardware", {}).setdefault("markers", {})["required_for_realtime"] = True
+    config.setdefault("processes", {}).setdefault("realtime_processor", {}).update(
+        {"enabled": False, "backend": "disabled"}
+    )
+    config["processes"].setdefault("dashboard", {}).update(
+        {"enabled": True, "backend": "http", "host": "127.0.0.1", "port": int(args.port)}
+    )
+    config["processes"].setdefault("offline_analyzer", {})["enabled"] = False
+    config.setdefault("experiment", {}).setdefault("components", {})["realtime_processor"] = "disabled"
+    result = ForwardExperimentRunner(
+        config,
+        task_name="go_nogo",
+        task_mode="psychopy",
+        participant_id=args.participant,
+        trials=args.trials,
+        record_eeg=bool(args.record_eeg),
+        require_eeg=bool(args.record_eeg),
+    ).run()
+    return {
+        "status": result.as_dict()["status"],
+        "workflow": "classify8.demo",
+        "session_dir": str(result.session_dir),
+        "dashboard_url": f"http://127.0.0.1:{int(args.port)}",
+        "prediction_delay_seconds": max(0.0, float(args.prediction_delay_seconds)),
+        "error_rate": min(1.0, max(0.0, float(args.error_rate))),
+        "record_eeg": bool(args.record_eeg),
         "forward": result.as_dict(),
     }
 
@@ -160,6 +246,36 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
         "analysis": analysis,
         "html": html,
     }
+
+
+def _validate_online_model_bundles(model_root: Path, kinds: list[str]) -> dict[str, str]:
+    if not model_root.is_dir():
+        raise ValueError(
+            f"--model-dir does not exist or is not a directory: {model_root}. "
+            "Point it at the directory containing the model-kind bundle directories."
+        )
+
+    validated = {}
+    for kind in kinds:
+        bundle_path = model_root / kind
+        manifest_path = bundle_path / "manifest.json"
+        if not manifest_path.is_file():
+            raise ValueError(
+                f"model bundle for '{kind}' was not found at {bundle_path}. "
+                f"Expected {manifest_path}; --model-dir must be the parent directory containing '{kind}'."
+            )
+        try:
+            bundle = load_model_bundle(bundle_path)
+        except Exception as exc:
+            raise ValueError(
+                f"model bundle for '{kind}' is invalid at {bundle_path}: {type(exc).__name__}: {exc}"
+            ) from exc
+        if bundle.get("kind") != kind:
+            raise ValueError(
+                f"model bundle at {bundle_path} declares kind '{bundle.get('kind')}', expected '{kind}'"
+            )
+        validated[kind] = str(Path(bundle["bundle_dir"]).resolve())
+    return validated
 
 
 def _classifier_config(config: dict[str, Any]) -> dict[str, Any]:

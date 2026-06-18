@@ -131,6 +131,14 @@ class FeedbackManager:
                 wait_states={"running", "failed", "disabled"},
                 timeout_seconds=float(dashboard.get("startup_timeout_seconds", 4.0)),
             )
+            dashboard_status = load_status(self.paths.process_logs / "dashboard.status.json") or {}
+            if dashboard_status.get("url"):
+                self.telemetry.emit(
+                    "dashboard.ready",
+                    level="default",
+                    message=f"Dashboard ready: {dashboard_status['url']}",
+                    metadata=dashboard_status,
+                )
         except Exception as exc:
             self.telemetry.emit(
                 "dashboard.failed_noncritical",
@@ -241,7 +249,7 @@ class FeedbackManager:
             )
         worker.started_at_monotonic = monotonic()
         self._workers[name] = worker
-        ready_status = self._wait_for_status(worker.status_file, wait_states, timeout_seconds)
+        ready_status = self._wait_for_status(worker, wait_states, timeout_seconds)
         if ready_status and ready_status.get("status") in wait_states:
             status_name = ready_status.get("status")
             if status_name in {"failed", "unsupported", "killed"}:
@@ -259,7 +267,8 @@ class FeedbackManager:
                 metadata=ready_status,
             )
             if status_name in {"failed", "unsupported", "killed", "stopped"}:
-                raise RuntimeError(f"{name} failed during startup: {ready_status}")
+                detail = ready_status.get("error") or ready_status.get("reason") or ready_status
+                raise RuntimeError(f"{name} failed during startup: {detail}")
         else:
             self.telemetry.emit(
                 "process.timeout",
@@ -377,13 +386,21 @@ class FeedbackManager:
         ]
         return WorkerHandle(name, backend, module, command, status_file, stdout_file, stderr_file)
 
-    def _wait_for_status(self, path: Path, ready_states: set[str], timeout_seconds: float) -> dict[str, Any] | None:
+    def _wait_for_status(
+        self,
+        worker: WorkerHandle,
+        ready_states: set[str],
+        timeout_seconds: float,
+    ) -> dict[str, Any] | None:
         deadline = monotonic() + timeout_seconds
         latest = None
         while monotonic() < deadline:
-            latest = load_status(path)
+            latest = load_status(worker.status_file)
             if latest and latest.get("status") in ready_states:
                 return latest
+            if worker.process is not None and worker.process.poll() is not None:
+                self._ensure_terminal_worker_status(worker)
+                return load_status(worker.status_file) or latest
             sleep(0.05)
         return latest
 
@@ -393,7 +410,24 @@ class FeedbackManager:
 
     def _write_forced_status(self, worker: WorkerHandle, status: str, reason: str) -> None:
         writer = StatusWriter(worker.status_file, worker.name, worker.backend, self.telemetry)
-        writer.update(status, reason=reason, returncode=None if worker.process is None else worker.process.poll())
+        metadata = {
+            "reason": reason,
+            "returncode": None if worker.process is None else worker.process.poll(),
+        }
+        stderr_tail = self._worker_stderr_tail(worker)
+        if stderr_tail:
+            metadata["error"] = stderr_tail
+        writer.update(status, **metadata)
+
+    @staticmethod
+    def _worker_stderr_tail(worker: WorkerHandle) -> str | None:
+        try:
+            if worker.stderr_handle is not None:
+                worker.stderr_handle.flush()
+            lines = worker.stderr_file.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return None
+        return next((line.strip() for line in reversed(lines) if line.strip()), None)
 
     def _ensure_terminal_worker_status(self, worker: WorkerHandle) -> None:
         if worker.process is None:
@@ -525,6 +559,7 @@ def normalize_processes(config: dict[str, Any], record_eeg: bool = True) -> dict
             "backend": dashboard_backend,
             "host": str(dashboard.get("host", dashboard_config.get("host", "127.0.0.1"))),
             "port": int(dashboard.get("port", dashboard_config.get("port", 8765))),
+            "mode": "demo" if bool(dict(dashboard_config.get("demo", {})).get("enabled", False)) else "classifier",
             "startup_timeout_seconds": float(dashboard.get("startup_timeout_seconds", 4.0)),
         },
         "offline_analyzer": {

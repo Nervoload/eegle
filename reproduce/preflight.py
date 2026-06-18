@@ -7,7 +7,16 @@ from pathlib import Path
 from typing import Any
 
 from reproduce.devices.lsl_eeg import probe_eeg_stream
+from reproduce.hardware.capabilities import (
+    check_command_entrypoints,
+    check_display_ready,
+    check_realtime_ready,
+    check_training_ready,
+    training_model_kinds_from_config,
+)
+from reproduce.hardware.eeg_device import identify_eeg_device
 from reproduce.hardware.enobio import stream_matches_enobio
+from reproduce.hardware.os_support import check_os_support
 from reproduce.hardware.system import CheckResult, check_packages, check_platform, check_python
 from reproduce.lsl import resolve_streams
 
@@ -26,21 +35,32 @@ def run_preflight(config: dict[str, Any], lsl_wait: float = 1.0, require_eeg: bo
     if bool(runtime.get("require_configured_python", False)) and python_check.status != "ok":
         python_check = CheckResult("python", "fail", python_check.detail, python_check.data)
     checks: list[CheckResult] = [
+        check_os_support(),
         check_platform(
             expected_os=computer.get("expected_os"),
             expected_machine=computer.get("expected_machine"),
         ),
         python_check,
+        check_command_entrypoints(),
     ]
     checks.extend(check_packages(REQUIRED_PACKAGES, OPTIONAL_PACKAGES))
+    checks.append(check_display_ready(config))
 
     streams, error = resolve_streams(wait_time=lsl_wait)
     if error:
         checks.append(CheckResult("lsl", "warn", error))
+        device_check = identify_eeg_device([], eeg)
+        checks.append(device_check)
+        checks.append(check_realtime_ready(config, [], error, device_check, require_eeg=required_for_run))
+        checks.append(check_training_ready(training_model_kinds_from_config(config)))
         return checks
 
     stream_dicts = [stream.as_dict() for stream in streams]
     checks.append(CheckResult("lsl", "ok", f"found {len(streams)} streams", {"streams": stream_dicts}))
+    device_check = identify_eeg_device(stream_dicts, eeg)
+    checks.append(device_check)
+    checks.append(check_realtime_ready(config, stream_dicts, None, device_check, require_eeg=required_for_run))
+    checks.append(check_training_ready(training_model_kinds_from_config(config)))
 
     enobio_matches = [stream for stream in stream_dicts if stream_matches_enobio(stream, eeg)]
     if enobio_matches:

@@ -17,7 +17,14 @@ Preflight
 
 ## Layer 0: Preflight
 
-`reproduce.preflight` checks the active or explicitly configured Python interpreter, optional platform expectations, package availability, LSL discovery, and Enobio/NIC2 stream matching.
+`reproduce.preflight` checks the active or explicitly configured Python
+interpreter, shared-codebase OS support, optional platform expectations, package
+availability, LSL discovery, configured EEG device identification, and
+Enobio/NIC2 stream matching. It also emits capability checks for installed
+console commands, display readiness, realtime worker readiness, and
+model-training dependency readiness. OS-specific differences should stay in this
+preflight/support layer or in narrowly guarded runtime workarounds; the operator
+entry points remain the installed console commands on every supported OS.
 
 ## Layer 1: Experiment Setup
 
@@ -115,6 +122,10 @@ Telemetry augments the canonical experiment files. Stimulus timing still lives i
 - `recorder`: `lsl_csv` is implemented; `labrecorder_xdf` is a configured hook only.
 - `realtime_processor`: reads EEG LSL and marker LSL, maintains raw and processed ring buffers, uses causal online preprocessing, runs marker-locked epochs through a registry-backed `ModelAdapter`, converts predictions through `DecisionPolicy`, and logs/emits explicit task actions. It can also run calibrated posterior alpha measurement continuously and write `realtime/alpha_power.jsonl` while marker-locked epoching remains enabled. Rolling-window decisions remain available as a compatibility path.
 - `dashboard`: optional non-critical localhost HTTP worker that reads session artifacts and displays live classifier status without touching the PsychoPy process.
+- `dashboard` demo mode: an explicitly simulated classroom path that subscribes
+  to the run-unique PsychoPy LSL marker stream, emits delayed imperfect guesses
+  to `realtime/demo_predictions.jsonl`, and never alters real classifier
+  predictions or evaluation artifacts.
 - `offline_analyzer`: runs the minimal session report.
 
 `reproduce.realtime` defines the reusable online pieces: ring buffer, marker-locked epoching, causal preprocessing, model registry, model adapters, bounded decision policies, feedback emitters, and the task-side feedback client. The marker epocher waits until the configured post-stimulus window is available before emitting an epoch, so P300 model decisions naturally apply to later stimuli or blocks.
@@ -147,6 +158,8 @@ Supported classifier training paths are baseline-corrected ERP ROI logistic
 regression, pyRiemann xDAWN covariance plus tangent-space logistic regression,
 and TorchScript EEGNet. The old flattened `sklearn_xdawn_lda` name remains a
 compatibility alias for `sklearn_flatten_lda`; it is not an xDAWN model.
+See `MODEL_TRAINING_TESTING_GOALS.md` for the training workflow, quality
+contract, evaluation questions, and near-term model goals.
 
 Classifier replay consumes the same binary capture format used by the staged
 feature replay, reconstructs marker-locked epochs, reloads the session-snapshot

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,7 +11,7 @@ from unittest.mock import patch
 import numpy as np
 
 from reproduce.devices.lsl_eeg import _select_lsl_info
-from reproduce.feedback_manager import _pipeline_validity_failures
+from reproduce.feedback_manager import FeedbackManager, WorkerHandle, _pipeline_validity_failures
 from reproduce.hardware.enobio import mapped_channel_names
 from reproduce.realtime.alpha import AlphaPowerEstimator
 from reproduce.realtime.buffer import RingBuffer
@@ -216,6 +217,49 @@ class RealtimeSynchronyTests(unittest.TestCase):
             source_id = parameters["hardware"]["markers"]["source_id"]
             self.assertIn(paths.root.name, source_id)
             self.assertTrue(parameters["hardware"]["markers"]["required_for_realtime"])
+
+    def test_worker_exit_is_reported_immediately_with_stderr_detail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = {
+                "runtime": {"session_root": tmp},
+                "experiment": {"experiment_id": "test", "participant_id": "p1", "task": "go_nogo"},
+            }
+            paths = create_session(config, root=Path(tmp))
+            manager = FeedbackManager(config, paths, record_eeg=False)
+            stderr_file = paths.process_logs / "realtime_processor.stderr.log"
+            stderr_file.write_text("Traceback omitted\nFileNotFoundError: missing model bundle\n", encoding="utf-8")
+            worker = WorkerHandle(
+                name="realtime_processor",
+                backend="lsl",
+                module="test.worker",
+                command=[],
+                status_file=paths.process_logs / "realtime_processor.status.json",
+                stdout_file=paths.process_logs / "realtime_processor.stdout.log",
+                stderr_file=stderr_file,
+                process=SimpleNamespace(poll=lambda: 1),
+            )
+
+            status = manager._wait_for_status(worker, {"running", "failed"}, timeout_seconds=1.0)
+
+            self.assertEqual(status["status"], "failed")
+            self.assertEqual(status["error"], "FileNotFoundError: missing model bundle")
+
+    def test_worker_command_uses_current_python_module_launch_without_shell(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = {
+                "runtime": {"session_root": tmp},
+                "experiment": {"experiment_id": "test", "participant_id": "p1", "task": "go_nogo"},
+            }
+            paths = create_session(config, root=Path(tmp))
+            worker = FeedbackManager(config, paths, record_eeg=False)._make_worker(
+                "realtime_processor",
+                "reproduce.workers.realtime_processor",
+                ["--backend", "lsl"],
+            )
+
+        self.assertIsInstance(worker.command, list)
+        self.assertEqual(worker.command[0], sys.executable)
+        self.assertEqual(worker.command[1:3], ["-m", "reproduce.workers.realtime_processor"])
 
     def test_enabled_realtime_without_markers_or_alpha_is_invalid(self) -> None:
         failures = _pipeline_validity_failures(

@@ -10,16 +10,28 @@ The primary installed command and package name are both `eegle`.
 
 EEGle currently requires Python 3.10. Start from the repository root:
 
+macOS or Linux:
+
 ```bash
 python3.10 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[runtime]" -c constraints/macos-python310.txt
+python -m pip install -e ".[runtime]"
 ```
 
-On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`. The supplied
-constraints snapshot was captured on macOS; the exact pins in `pyproject.toml`
-are the cross-platform source of truth.
+Windows PowerShell:
+
+```powershell
+py -3.10 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[runtime]"
+```
+
+The supplied constraints snapshot was captured on macOS. Use
+`constraints/macos-python310.txt` only when recreating that exact macOS
+environment; the exact pins in `pyproject.toml` are the cross-platform source of
+truth.
 
 Check the software setup without requiring an EEG device:
 
@@ -73,7 +85,8 @@ The direct dependencies are pinned in `pyproject.toml`.
 `constraints/macos-python310.txt` records the direct package versions from the
 current macOS/Python 3.10 development environment. The optional ML and deep
 learning pins are reproducibility targets but were not installed in that
-snapshot environment.
+snapshot environment. Do not treat the macOS constraints file as a Windows or
+Linux lockfile.
 
 ## Key Dependencies and Imports
 
@@ -93,14 +106,15 @@ snapshot environment.
 ## Command Guide
 
 `eegle check-setup` checks the Python runtime, required and optional packages,
-visible LSL streams, configured Enobio/NIC2 stream match, and whether samples
-can be read. It replaces the less descriptive `doctor` command; `eegle doctor`
-remains as a compatibility alias.
+visible LSL streams, configured Enobio/NIC2 stream match, realtime readiness,
+display readiness, training dependencies, and whether EEG samples can be read.
+It replaces the less descriptive `doctor` command; `eegle doctor` remains as a
+compatibility alias.
 
 Commands such as `run-forward` are `eegle` subcommands, not standalone shell
-executables. Run them as `eegle run-forward ...`. Names such as
-`forward-go-nogo-8` are Makefile targets and must be run as
-`make forward-go-nogo-8` from the repository root.
+executables. Run them as `eegle run-forward ...`. Installed console commands are
+the cross-platform interface. Names such as `forward-go-nogo-8` are Makefile
+targets for POSIX-like development shells, not the Windows-native operator path.
 
 | Command | Purpose |
 | --- | --- |
@@ -127,6 +141,15 @@ alpha8 --help
 inhibition8 --help
 classify8 --help
 ```
+
+## Documentation Guide
+
+- `docs/ARCHITECTURE.md` describes the runtime data path and component
+  boundaries.
+- `docs/MODEL_TRAINING_TESTING_GOALS.md` describes classifier training,
+  testing, evaluation, and current model goals.
+- `AGENTS.md` and scoped `AGENTS.md` files under implementation directories
+  orient AI agents and future contributors before code changes.
 
 Run a 100-trial Go/No-go experiment without the alpha calibration pipeline:
 
@@ -186,9 +209,21 @@ alpha8 full --task-mode dry-run --skip-eeg --allow-missing-eeg --trials 2
 inhibition8 full --task-mode dry-run --skip-eeg --allow-missing-eeg --trials 2
 ```
 
-The Makefile and repository-root `./alpha8` and `./inhibition8` wrappers are
-optional POSIX conveniences. Installed console commands are preferred because
-they work outside the repository root.
+The Makefile and repository-root `./alpha8`, `./inhibition8`, and `./classify8`
+wrappers are optional POSIX conveniences. Installed console commands are
+preferred because they work outside the repository root and on Windows.
+
+## Cross-Platform Support Model
+
+EEGle is intended to run from one shared Python codebase on macOS, Windows, and
+Linux. The places that need OS-specific handling are setup and operator
+environment details: virtual-environment activation syntax, optional POSIX
+wrappers, PsychoPy display validation, external NIC2 installation, LSL/firewall
+settings, and future LabRecorder launching. Preflight reports the current OS as
+`os_support`, installed command visibility as `commands`, PsychoPy readiness as
+`display_ready`, realtime worker readiness as `realtime_ready`, model-training
+dependency readiness as `training_ready`, and the configured EEG device family
+as `eeg_device` when matching LSL streams are visible.
 
 ## Session Output and Data Hygiene
 
@@ -274,9 +309,10 @@ macOS. NIC2 itself is external software and is not installed by EEGle.
      --lsl-wait 5
    ```
 
-   Do not begin the experiment until `enobio_lsl` and `eeg_sample_probe` report
-   `OK`. If discovery fails, verify that NIC2 is actively acquiring, its LSL
-   outlet is enabled, and macOS/network firewall settings allow LSL traffic.
+   Do not begin the experiment until `eeg_device` and `eeg_sample_probe` report
+   `OK`; current Enobio configs also emit the legacy `enobio_lsl` detail check.
+   If discovery fails, verify that NIC2 is actively acquiring, its LSL outlet is
+   enabled, and the local firewall allows LSL traffic.
 
 5. Run the PVT experiment:
 
@@ -319,10 +355,21 @@ the post-stimulus EEG epoch; it is not an inhibition-decoding claim.
 
 ```bash
 classify8 collect --participant sub-001 --trials 240
+classify8 train --session-dir <calibration-session> --check-ready
 classify8 train --session-dir <calibration-session>
 classify8 online --participant sub-001 --model-dir <calibration-session>/models/classifier \
   --primary erp_roi_logreg --shadow pyriemann_erp_cov --shadow torch_eegnet --trials 160
+classify8 demo --participant classroom-demo --trials 40
 classify8 evaluate --session-dir <online-session>
+```
+
+`--model-dir` must point to the parent directory containing each requested
+model bundle, including its `manifest.json`. For example:
+
+```bash
+MODEL_DIR="$PWD/models/pilot_001/classifier_merged_480"
+test -f "$MODEL_DIR/erp_roi_logreg/manifest.json"
+test -f "$MODEL_DIR/pyriemann_erp_cov/manifest.json"
 ```
 
 The online worker runs one primary model plus optional shadow models on each
@@ -335,6 +382,22 @@ the online session, and reports are written under `reports/classification/`.
 The optional dashboard binds only to `127.0.0.1`; it does not auto-open a
 browser or interact with PsychoPy. Training requires the `ml` extra for ROI
 logistic regression and pyRiemann, and the `deep-learning` extra for EEGNet.
+See `docs/MODEL_TRAINING_TESTING_GOALS.md` for the current model contracts,
+evaluation checks, and near-term model goals.
+
+`classify8 demo` runs a classroom-friendly dashboard at
+`http://127.0.0.1:8765`. It connects directly to the run-unique PsychoPy LSL
+marker stream, waits 1.2 seconds, then shows the marked stimulus as a simulated
+guess with a configurable error rate. It does not claim to decode EEG and does
+not write to the real classifier prediction artifact:
+
+```bash
+classify8 demo --prediction-delay-seconds 1.5 --error-rate 0.1
+classify8 demo --record-eeg
+```
+
+Demo guesses and illustrative ERP windows are written separately to
+`realtime/demo_predictions.jsonl`.
 
 ## Current Scope
 
