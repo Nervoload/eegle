@@ -153,14 +153,16 @@ def replay_classifier_session(session_dir: str | Path) -> dict[str, Any]:
     replay_path = outdir / "replay_predictions.jsonl"
     _write_jsonl(replay_path, replay_rows)
     online_rows = _load_jsonl(root / "realtime" / "model_predictions.jsonl")
-    differences = _prediction_differences(online_rows, replay_rows)
-    status = "pass" if not differences and online_rows else "analytically_invalid"
+    comparable_online_rows = _replay_comparable_rows(online_rows)
+    differences = _prediction_differences(comparable_online_rows, replay_rows)
+    status = "pass" if not differences and comparable_online_rows else "analytically_invalid"
     return _write_json(
         summary_path,
         {
             "schema_version": 1,
             "status": status,
-            "online_prediction_count": len(online_rows),
+            "online_prediction_count": len(comparable_online_rows),
+            "online_skipped_count": len(online_rows) - len(comparable_online_rows),
             "replay_prediction_count": len(replay_rows),
             "difference_count": len(differences),
             "differences": differences[:100],
@@ -169,6 +171,10 @@ def replay_classifier_session(session_dir: str | Path) -> dict[str, Any]:
             "online_file": str(root / "realtime" / "model_predictions.jsonl"),
         },
     )
+
+
+def _replay_comparable_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [row for row in rows if row.get("status") != "skipped"]
 
 
 def _prediction_differences(online: list[dict[str, Any]], replay: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -95,6 +95,11 @@ ENOBIO_PROFILES: dict[str, EnobioProfile] = {
             "TRG",
         ),
     ),
+    "enobio64": EnobioProfile(
+        "enobio64",
+        64,
+        (),
+    ),
 }
 
 

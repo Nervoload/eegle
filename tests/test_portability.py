@@ -95,6 +95,33 @@ class PortabilityTests(unittest.TestCase):
         self.assertEqual(result.data["detector"], "enobio_lsl")
         self.assertEqual(result.data["matches"][0]["channel_count"], 8)
 
+    def test_preflight_identifies_32_and_64_channel_enobio_streams(self) -> None:
+        for channel_count in (32, 64):
+            with self.subTest(channel_count=channel_count):
+                result = identify_eeg_device(
+                    [
+                        {
+                            "name": "NIC2 EEG",
+                            "type": "EEG",
+                            "channel_count": channel_count,
+                            "nominal_srate": 500.0,
+                            "source_id": "enobio",
+                            "channel_names": [f"E{index:02d}" for index in range(1, channel_count + 1)],
+                        }
+                    ],
+                    {
+                        "family": "Enobio",
+                        "profile": f"enobio{channel_count}",
+                        "expected_channel_counts": [32, 64],
+                        "expected_sample_rate_hz": 500,
+                        "lsl_stream_type": "EEG",
+                        "lsl_name_patterns": ["enobio", "nic"],
+                    },
+                )
+
+                self.assertEqual(result.status, "ok")
+                self.assertEqual(result.data["matches"][0]["channel_count"], channel_count)
+
     def test_preflight_names_configured_device_when_lsl_is_unavailable(self) -> None:
         config = {
             "hardware": {

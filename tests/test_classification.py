@@ -27,7 +27,7 @@ from reproduce.realtime.classification import (
 from reproduce.realtime.demo_classifier import DEMO_DISCLOSURE, demo_config_from, demo_prediction_from_marker
 from reproduce.realtime.epoching import EpochingConfig, MarkerEvent, RealtimeEpocher
 from reproduce.realtime.event_features import EngineInputCaptureWriter
-from reproduce.realtime.models import prepare_artifact_epoch, train_epoch_model
+from reproduce.realtime.models import PreparedEpochCache, prepare_artifact_epoch, train_epoch_model
 from reproduce.session import create_session
 from reproduce.telemetry import Telemetry
 from reproduce.workers.dashboard import DASHBOARD_HTML, DemoPredictionBridge, dashboard_snapshot
@@ -96,6 +96,33 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(corrected.shape, (2, 101))
         with self.assertRaisesRegex(ValueError, "sample rate"):
             prepare_classifier_epoch(samples_channels, 250.0, ["Oz", "Cz", "Fz"], {}, contract)
+
+    def test_prepared_epoch_cache_reuses_compatible_contract_preparation(self) -> None:
+        times = np.arange(101, dtype=float) / 100.0 - 0.2
+        epoch = np.column_stack([np.ones(times.size), np.full(times.size, 2.0)])
+        contract = {
+            "channel_names": ["Fz", "Cz"],
+            "sample_rate_hz": 100.0,
+            "epoch_window_seconds": [-0.2, 0.8],
+            "baseline_seconds": [-0.2, 0.0],
+        }
+        prepared = PreparedEpochCache(
+            epoch,
+            100.0,
+            ["Fz", "Cz"],
+            {"relative_times": times.tolist(), "epoch_window_seconds": [-0.2, 0.8]},
+        )
+        expected = (np.zeros((2, times.size)), ["Fz", "Cz"], times)
+
+        with patch("reproduce.realtime.models.prepare_classifier_epoch", return_value=expected) as prepare:
+            first = prepared.classifier(contract, "samples_x_channels")
+            second = prepared.classifier(dict(contract), "samples_x_channels")
+            raw_first = prepared.raw_channels_samples("samples_x_channels")
+            raw_second = prepared.raw_channels_samples("samples_x_channels")
+
+        self.assertIs(first, second)
+        self.assertIs(raw_first, raw_second)
+        prepare.assert_called_once()
 
     def test_bare_artifacts_preserve_legacy_uncontracted_input(self) -> None:
         epoch = np.asarray([[3.0, 4.0], [5.0, 6.0]])

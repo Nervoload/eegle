@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from time import monotonic
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -15,9 +16,21 @@ from reproduce.feedback_manager import FeedbackManager, WorkerHandle, _pipeline_
 from reproduce.hardware.enobio import mapped_channel_names
 from reproduce.realtime.alpha import AlphaPowerEstimator
 from reproduce.realtime.buffer import RingBuffer
+from reproduce.realtime.models import ModelPrediction
+from reproduce.realtime.performance import RealtimePerformanceConfig, RealtimePerformanceStats, performance_config_from
 from reproduce.session import create_session
 from reproduce.tasks.go_nogo import _mark
-from reproduce.workers.realtime_processor import _advance_deadline, _reference_for_artifact_gate, _try_open_marker_inlet
+from reproduce.workers.common import QueuedJsonlWriter
+from reproduce.workers.realtime_processor import (
+    InferenceWorkItem,
+    _advance_deadline,
+    _ordered_model_entries,
+    _process_inference_item,
+    _reference_for_artifact_gate,
+    _shadow_skip_reason,
+    _should_skip_shadow,
+    _try_open_marker_inlet,
+)
 
 
 class _FakeInfo:
@@ -86,6 +99,50 @@ class _FakeOutlet:
 
     def push(self, label: str, timestamp: float | None = None) -> None:
         self.markers.append((label, timestamp))
+
+
+class _MemoryWriter:
+    def __init__(self) -> None:
+        self.rows: list[dict[str, object]] = []
+
+    def write(self, payload: dict[str, object]) -> None:
+        self.rows.append(payload)
+
+
+class _FakeTelemetry:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, object]]] = []
+
+    def emit(self, event: str, **kwargs: object) -> None:
+        self.events.append((event, kwargs))
+
+
+class _FakeEmitter:
+    def __init__(self) -> None:
+        self.payloads: list[dict[str, object]] = []
+
+    def emit(self, payload: dict[str, object]) -> None:
+        self.payloads.append(payload)
+
+
+class _FakePolicy:
+    def decide(self, prediction: ModelPrediction, metadata: dict[str, object]) -> list[object]:
+        return []
+
+
+class _FakeAdapter:
+    def __init__(self, name: str, calls: list[str]) -> None:
+        self.name = name
+        self.calls = calls
+
+    def predict_prepared_epoch(self, prepared: object) -> ModelPrediction:
+        self.calls.append(self.name)
+        return ModelPrediction(
+            label="go",
+            score=0.25,
+            probability=0.25,
+            model_kind="fake",
+        )
 
 
 class RealtimeSynchronyTests(unittest.TestCase):
@@ -198,6 +255,134 @@ class RealtimeSynchronyTests(unittest.TestCase):
 
         np.testing.assert_array_equal(timestamps, np.arange(3, 8, dtype=float))
         np.testing.assert_array_equal(data[:, 0], np.arange(3, 8, dtype=float))
+
+    def test_ring_buffer_window_remains_copy_safe_and_scratch_reads_latest_order(self) -> None:
+        buffer = RingBuffer(5, 2)
+        buffer.append_chunk(np.arange(7, dtype=float), np.column_stack([np.arange(7), np.arange(7) + 10]))
+        timestamps, data = buffer.window(3)
+        timestamps[0] = -99.0
+        data[0, 0] = -99.0
+        scratch_ts = np.empty(5, dtype=float)
+        scratch_data = np.empty((5, 2), dtype=float)
+
+        scratch_timestamps, scratch_values = buffer.window_into(3, scratch_ts, scratch_data)
+        copied_timestamps, copied_values = buffer.window(3)
+
+        self.assertAlmostEqual(buffer.latest_timestamp or 0.0, 6.0)
+        np.testing.assert_array_equal(scratch_timestamps, np.asarray([4.0, 5.0, 6.0]))
+        np.testing.assert_array_equal(scratch_values[:, 0], np.asarray([4.0, 5.0, 6.0]))
+        np.testing.assert_array_equal(copied_timestamps, scratch_timestamps)
+        np.testing.assert_array_equal(copied_values, scratch_values)
+
+    def test_queued_jsonl_writer_flushes_all_records_on_close(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rows.jsonl"
+            writer = QueuedJsonlWriter(path, flush_every=50, flush_interval_seconds=60.0)
+            writer.write({"row": 1})
+            writer.write({"row": 2})
+
+            self.assertEqual(path.read_text(encoding="utf-8") if path.exists() else "", "")
+            writer.close()
+            rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(rows, [{"row": 1}, {"row": 2}])
+
+    def test_realtime_performance_defaults_and_shadow_skip_policy(self) -> None:
+        config = performance_config_from({"realtime": {"performance": {}}}, channel_count=64)
+
+        self.assertTrue(config.large_cap_detected)
+        self.assertEqual(config.primary_latency_budget_ms, 50.0)
+        self.assertTrue(_should_skip_shadow(2, 10.0, config))
+        self.assertEqual(_shadow_skip_reason(2, 10.0, config), "shadow_skipped_inference_queue_backlog")
+        self.assertTrue(_should_skip_shadow(0, 51.0, config))
+        self.assertEqual(_shadow_skip_reason(0, 51.0, config), "shadow_skipped_primary_latency_budget")
+        self.assertFalse(_should_skip_shadow(0, 10.0, config))
+
+    def test_primary_model_entries_are_ordered_before_shadows(self) -> None:
+        entries = [
+            {"id": "shadow-a", "role": "shadow"},
+            {"id": "primary", "role": "primary"},
+            {"id": "shadow-b", "role": "shadow"},
+        ]
+
+        self.assertEqual([entry["id"] for entry in _ordered_model_entries(entries)], ["primary", "shadow-a", "shadow-b"])
+
+    def test_inference_stage_emits_primary_before_skipping_shadow_under_budget_pressure(self) -> None:
+        calls: list[str] = []
+        prediction_writer = _MemoryWriter()
+        decision_writer = _MemoryWriter()
+        stats = RealtimePerformanceStats()
+        item = InferenceWorkItem(
+            epoch_payload={
+                "epoch_index": 1,
+                "trial": 1,
+                "epoch_window_seconds": [-0.2, 0.8],
+                "marker": {"timestamp": 10.0},
+            },
+            epoch=SimpleNamespace(epoch_index=1, data=np.zeros((100, 2), dtype=float)),
+            model_metadata={"relative_times": np.linspace(-0.2, 0.8, 100).tolist()},
+            quality={"valid": True, "reasons": [], "metrics": {}},
+            queued_at_monotonic=monotonic() - 0.1,
+        )
+
+        result = _process_inference_item(
+            item,
+            queue_depth=0,
+            model_entries=[
+                {"id": "shadow", "role": "shadow", "kind": "fake", "adapter": _FakeAdapter("shadow", calls)},
+                {"id": "primary", "role": "primary", "kind": "fake", "adapter": _FakeAdapter("primary", calls)},
+            ],
+            sample_rate=100.0,
+            channel_names=["Fz", "Cz"],
+            classifier_mode=True,
+            model_prediction_writer=prediction_writer,
+            decision_writer=decision_writer,
+            emitter=_FakeEmitter(),
+            policy=_FakePolicy(),
+            sample_count=100,
+            processed_count=100,
+            marker_count=1,
+            epoch_count=1,
+            performance_config=RealtimePerformanceConfig(primary_latency_budget_ms=1.0),
+            performance_stats=stats,
+            telemetry=_FakeTelemetry(),
+        )
+
+        self.assertEqual(calls, ["primary"])
+        self.assertEqual(result.primary_prediction_count, 1)
+        self.assertEqual(result.skipped_shadow_count, 1)
+        self.assertEqual([row["status"] for row in prediction_writer.rows], ["predicted", "skipped"])
+        self.assertEqual(decision_writer.rows[0]["prediction_label"], "go")
+
+    def test_enobio64_profile_preserves_lsl_channel_labels(self) -> None:
+        labels = [f"E{index:02d}" for index in range(1, 65)]
+
+        mapped, source = mapped_channel_names(labels, {"profile": "enobio64"})
+
+        self.assertEqual(mapped, labels)
+        self.assertEqual(source, "lsl_metadata")
+
+    def test_custom_performance_config_accepts_non_large_cap_streams(self) -> None:
+        config = performance_config_from(
+            {
+                "realtime": {
+                    "performance": {
+                        "primary_latency_budget_ms": 25,
+                        "writer_flush_every": 7,
+                        "writer_flush_interval_ms": 40,
+                        "inference_queue_max_epochs": 3,
+                        "skip_shadows_when_queue_depth_gte": 1,
+                        "large_cap_channel_threshold": 64,
+                    }
+                }
+            },
+            channel_count=32,
+        )
+
+        self.assertIsInstance(config, RealtimePerformanceConfig)
+        self.assertFalse(config.large_cap_detected)
+        self.assertEqual(config.primary_latency_budget_ms, 25.0)
+        self.assertEqual(config.writer_flush_every, 7)
 
     def test_periodic_deadline_does_not_accumulate_runtime_drift(self) -> None:
         self.assertAlmostEqual(_advance_deadline(10.0, 0.1, 10.06), 10.1)

@@ -5,7 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import threading
-from dataclasses import asdict
+from collections import deque
+from dataclasses import asdict, dataclass
 from time import monotonic, sleep
 from typing import Any
 
@@ -22,15 +23,40 @@ from reproduce.realtime.classification import (
     load_model_bundle,
     model_prediction_row,
     model_rejection_row,
+    model_skip_row,
     sanitize_model_metadata,
     snapshot_model_bundle,
 )
 from reproduce.realtime.epoching import EpochingConfig, MarkerEvent, RealtimeEpocher, expected_sample_count
 from reproduce.realtime.event_features import EngineInputCaptureWriter, RealtimeEventEngine
+from reproduce.realtime.models import PreparedEpochCache
+from reproduce.realtime.performance import (
+    RealtimePerformanceConfig,
+    RealtimePerformanceStats,
+    buffer_utilization,
+    elapsed_ms,
+    performance_config_from,
+)
 from reproduce.realtime.registry import make_feedback_emitter, make_model, make_policy, make_stream_preprocessor
 from reproduce.session import paths_for_existing_session
 from reproduce.telemetry import Telemetry, telemetry_config_from
-from reproduce.workers.common import JsonlWriter, StatusWriter, append_jsonl, install_stop_signal_handlers
+from reproduce.workers.common import JsonlWriter, QueuedJsonlWriter, StatusWriter, install_stop_signal_handlers
+
+
+@dataclass
+class InferenceWorkItem:
+    epoch_payload: dict[str, Any]
+    epoch: Any
+    model_metadata: dict[str, Any]
+    quality: dict[str, Any] | None
+    queued_at_monotonic: float
+
+
+@dataclass
+class InferenceProcessResult:
+    prediction_count: int = 0
+    primary_prediction_count: int = 0
+    skipped_shadow_count: int = 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -93,10 +119,13 @@ def main(argv: list[str] | None = None) -> int:
 
     sample_rate = float(info.nominal_srate() or eeg_config.get("expected_sample_rate_hz", 500.0))
     channel_count = int(info.channel_count())
+    performance_config = performance_config_from(config, channel_count)
+    performance_stats = RealtimePerformanceStats()
     stream_info = _stream_dict(info)
     channel_names, mapping_source = _channel_names(stream_info, channel_count, eeg_config)
     stream_info["channel_names"] = channel_names
     stream_info["channel_mapping_source"] = mapping_source
+    stream_info["large_cap_detected"] = performance_config.large_cap_detected
     stream_info["lsl_processing"] = ["clocksync", "dejitter", "monotonize"]
     inlet = pylsl.StreamInlet(
         info,
@@ -181,6 +210,9 @@ def main(argv: list[str] | None = None) -> int:
     raw_epoch_samples = expected_sample_count(sample_rate, epoching_config)
     raw_buffer_samples = max(raw_epoch_samples * 5, int(round(sample_rate * 30)))
     raw_buffer = None if event_features_enabled else RingBuffer(raw_buffer_samples, channel_count)
+    raw_timestamp_scratch = np.empty(raw_buffer_samples, dtype=float) if raw_buffer is not None else None
+    raw_data_scratch = np.empty((raw_buffer_samples, channel_count), dtype=float) if raw_buffer is not None else None
+    inference_queue: deque[InferenceWorkItem] = deque()
     epocher = RealtimeEpocher(epoching_config) if epoching_enabled else None
     event_engine = RealtimeEventEngine(event_features_config, sample_rate, channel_names) if event_features_enabled else None
     quality_config = dict(realtime_config.get("quality_gate", {}))
@@ -222,11 +254,39 @@ def main(argv: list[str] | None = None) -> int:
         else None
     )
     event_feature_writer = JsonlWriter(paths.realtime_event_features_jsonl, flush_every=1) if event_features_enabled else None
+    queued_writers: list[QueuedJsonlWriter] = []
+    marker_writer = QueuedJsonlWriter(
+        paths.realtime_markers_jsonl,
+        flush_every=performance_config.writer_flush_every,
+        flush_interval_seconds=performance_config.writer_flush_interval_seconds,
+    )
+    epoch_writer = QueuedJsonlWriter(
+        paths.realtime_epochs_jsonl,
+        flush_every=performance_config.writer_flush_every,
+        flush_interval_seconds=performance_config.writer_flush_interval_seconds,
+    )
+    window_writer = QueuedJsonlWriter(
+        paths.realtime_windows_jsonl,
+        flush_every=performance_config.writer_flush_every,
+        flush_interval_seconds=performance_config.writer_flush_interval_seconds,
+    )
+    decision_writer = QueuedJsonlWriter(
+        paths.realtime_decisions_jsonl,
+        flush_every=performance_config.writer_flush_every,
+        flush_interval_seconds=performance_config.writer_flush_interval_seconds,
+    )
+    queued_writers.extend([marker_writer, epoch_writer, window_writer, decision_writer])
     model_prediction_writer = (
-        JsonlWriter(paths.realtime_model_predictions_jsonl, flush_every=1)
+        QueuedJsonlWriter(
+            paths.realtime_model_predictions_jsonl,
+            flush_every=performance_config.writer_flush_every,
+            flush_interval_seconds=performance_config.writer_flush_interval_seconds,
+        )
         if epoching_enabled and classifier_mode
         else None
     )
+    if model_prediction_writer is not None:
+        queued_writers.append(model_prediction_writer)
     capture_writer = (
         EngineInputCaptureWriter(
             paths.realtime_engine_capture,
@@ -271,10 +331,21 @@ def main(argv: list[str] | None = None) -> int:
             alpha_config=alpha_config if alpha_enabled else None,
             event_features_enabled=event_features_enabled,
             event_feature_schema=None if event_engine is None else event_engine.metadata_payload().get("feature_schema_version"),
+            performance=performance_stats.snapshot(
+                writer_backlog=_writer_backlog(queued_writers),
+                inference_queue_depth=len(inference_queue),
+                buffer_utilization=buffer_utilization(buffer),
+                raw_buffer_utilization=buffer_utilization(raw_buffer),
+            ),
+            performance_config=performance_config.payload(),
         )
         while not stop_event.is_set():
+            loop_started = monotonic()
+            pull_started = monotonic()
             samples, timestamps = inlet.pull_chunk(timeout=pull_timeout_seconds, max_samples=int(realtime_config.get("max_pull_samples", 128)))
+            performance_stats.eeg_pull_time_ms = elapsed_ms(pull_started)
             if samples:
+                preprocessing_started = monotonic()
                 raw = np.asarray(samples, dtype=float)
                 ts = np.asarray(timestamps, dtype=float)
                 sample_count += raw.shape[0]
@@ -300,6 +371,7 @@ def main(argv: list[str] | None = None) -> int:
                         alpha_estimator.process_chunk(processed_ts, processed, artifact_result=alpha_artifact)
                 else:
                     processed_count += raw.shape[0]
+                performance_stats.preprocessing_time_ms = elapsed_ms(preprocessing_started)
 
             if marker_inlet is None and monotonic() >= next_marker_resolve_at:
                 marker_inlet, marker_stream = _try_open_marker_inlet(pylsl, config)
@@ -315,7 +387,7 @@ def main(argv: list[str] | None = None) -> int:
                 next_marker_resolve_at = monotonic() + 1.0
             if marker_inlet is not None:
                 try:
-                    marker_events = _pull_markers(marker_inlet, paths.realtime_markers_jsonl, telemetry)
+                    marker_events = _pull_markers(marker_inlet, marker_writer, telemetry)
                 except Exception as exc:
                     telemetry.emit(
                         "lsl.marker_disconnected",
@@ -375,26 +447,29 @@ def main(argv: list[str] | None = None) -> int:
                 next_alpha_at = _advance_deadline(next_alpha_at, alpha_step_seconds, monotonic())
 
             if epocher is not None and raw_buffer is not None and epocher.pending_count > 0 and len(raw_buffer) > 0:
-                latest_timestamp = float(raw_buffer.window(1)[0][-1])
+                epoch_extraction_started = monotonic()
+                latest_timestamp = raw_buffer.latest_timestamp
                 oldest_marker = epocher.oldest_pending_timestamp
                 required_seconds = epoching_config.duration_seconds
-                if oldest_marker is not None:
+                if latest_timestamp is not None and oldest_marker is not None:
                     required_seconds = max(
                         required_seconds,
                         latest_timestamp - (oldest_marker + epoching_config.tmin_seconds) + epoching_config.sample_tolerance_seconds,
                     )
                 required_samples = max(raw_epoch_samples, int(np.ceil(required_seconds * sample_rate)) + 2)
-                raw_timestamps, raw_data = raw_buffer.window(required_samples)
+                assert raw_timestamp_scratch is not None and raw_data_scratch is not None
+                raw_timestamps, raw_data = raw_buffer.window_into(required_samples, raw_timestamp_scratch, raw_data_scratch)
                 ready_epochs, rejected_epochs = epocher.extract_ready(
                     raw_timestamps,
                     raw_data,
                     sample_rate,
                     channel_names,
                 )
+                performance_stats.epoch_extraction_time_ms = elapsed_ms(epoch_extraction_started)
                 for attempt in rejected_epochs:
                     rejected_epoch_count += 1
                     rejected_payload = attempt.payload(epoching_config)
-                    append_jsonl(paths.realtime_epochs_jsonl, rejected_payload)
+                    epoch_writer.write(rejected_payload)
                     if inference_enabled and classifier_mode:
                         assert model_prediction_writer is not None
                         model_prediction_writer.write(
@@ -410,7 +485,7 @@ def main(argv: list[str] | None = None) -> int:
                 for epoch in ready_epochs:
                     epoch_count += 1
                     epoch_payload = epoch.metadata_payload()
-                    append_jsonl(paths.realtime_epochs_jsonl, epoch_payload)
+                    epoch_writer.write(epoch_payload)
                     if not inference_enabled:
                         continue
                     quality = assess_epoch_quality(epoch.data, quality_config) if classifier_mode else None
@@ -423,64 +498,59 @@ def main(argv: list[str] | None = None) -> int:
                         continue
                     full_model_metadata = {**epoch_payload, "relative_times": epoch.relative_times.astype(float).tolist()}
                     model_metadata = sanitize_model_metadata(full_model_metadata) if classifier_mode else full_model_metadata
-                    for model_entry in model_entries:
-                        processing_started = monotonic()
-                        prediction = model_entry["adapter"].predict_epoch(epoch.data, sample_rate, channel_names, model_metadata)
-                        latency_ms = (monotonic() - processing_started) * 1000.0
-                        prediction.latency_ms = latency_ms
-                        row = None
+                    if len(inference_queue) >= performance_config.inference_queue_max_epochs:
                         if classifier_mode:
-                            assert quality is not None and model_prediction_writer is not None
-                            row = model_prediction_row(
+                            assert model_prediction_writer is not None
+                            rejection = model_rejection_row(
                                 epoch_payload,
-                                prediction.to_payload(),
-                                model_id=model_entry["id"],
-                                role=model_entry["role"],
-                                latency_ms=latency_ms,
-                                quality=quality.payload(),
+                                "inference_queue_full",
+                                None if quality is None else quality.payload(),
                             )
-                            model_prediction_writer.write(row)
-                            classifier_prediction_count += 1
-                            if model_entry["role"] == "primary":
-                                classifier_predicted_epoch_count += 1
-                        if model_entry["role"] != "primary":
-                            telemetry.emit(
-                                "model.shadow_prediction",
-                                level="realtime",
-                                message=f"Shadow prediction {model_entry['id']}: {prediction.label} ({prediction.score:.3f})",
-                                metadata=row or prediction.to_payload(),
-                            )
-                            continue
-                        assert policy is not None
-                        actions = policy.decide(prediction, epoch_payload)
-                        payload = {
-                            "schema_version": 1,
-                            "decision_source": "event_epoch",
-                            "window_index": None,
-                            "epoch_index": epoch.epoch_index,
-                            "created_at_monotonic": monotonic(),
-                            "sample_count": sample_count,
-                            "processed_sample_count": processed_count,
-                            "marker_count": marker_count,
-                            "epoch_count": epoch_count,
-                            "prediction_label": prediction.label,
-                            "prediction_score": prediction.score,
-                            "prediction_probability": prediction.probability,
-                            "features": prediction.features,
-                            "prediction": prediction.to_payload(),
-                            "actions": [action.to_payload() for action in actions],
-                            "feedback": actions[0].to_payload() if actions else None,
-                            "processing_latency_ms": latency_ms,
-                            "epoch": epoch_payload,
-                        }
-                        append_jsonl(paths.realtime_decisions_jsonl, payload)
-                        emitter.emit(payload)
+                            model_prediction_writer.write(rejection)
+                            classifier_rejected_epoch_count += 1
                         telemetry.emit(
-                            "model.prediction",
-                            level="realtime",
-                            message=f"Realtime epoch prediction: {prediction.label} ({prediction.score:.3f})",
-                            metadata=payload,
+                            "realtime.inference_queue_full",
+                            level="default",
+                            message="Realtime inference queue is full; rejecting epoch",
+                            metadata={
+                                "epoch": epoch_payload,
+                                "queue_depth": len(inference_queue),
+                                "queue_limit": performance_config.inference_queue_max_epochs,
+                            },
                         )
+                        continue
+                    inference_queue.append(
+                        InferenceWorkItem(
+                            epoch_payload=epoch_payload,
+                            epoch=epoch,
+                            model_metadata=model_metadata,
+                            quality=None if quality is None else quality.payload(),
+                            queued_at_monotonic=monotonic(),
+                        )
+                    )
+
+            if inference_queue:
+                result = _process_inference_item(
+                    inference_queue.popleft(),
+                    queue_depth=len(inference_queue),
+                    model_entries=model_entries,
+                    sample_rate=sample_rate,
+                    channel_names=channel_names,
+                    classifier_mode=classifier_mode,
+                    model_prediction_writer=model_prediction_writer,
+                    decision_writer=decision_writer,
+                    emitter=emitter,
+                    policy=policy,
+                    sample_count=sample_count,
+                    processed_count=processed_count,
+                    marker_count=marker_count,
+                    epoch_count=epoch_count,
+                    performance_config=performance_config,
+                    performance_stats=performance_stats,
+                    telemetry=telemetry,
+                )
+                classifier_prediction_count += result.prediction_count
+                classifier_predicted_epoch_count += result.primary_prediction_count
 
             if not epoching_enabled and not event_features_enabled and buffer is not None and len(buffer) >= window_samples and monotonic() >= next_process_at:
                 window_count += 1
@@ -515,8 +585,8 @@ def main(argv: list[str] | None = None) -> int:
                     "feedback": actions[0].to_payload() if actions else None,
                     "processing_latency_ms": latency_ms,
                 }
-                append_jsonl(paths.realtime_windows_jsonl, payload)
-                append_jsonl(paths.realtime_decisions_jsonl, payload)
+                window_writer.write(payload)
+                decision_writer.write(payload)
                 emitter.emit(payload)
                 telemetry.emit(
                     "model.prediction",
@@ -526,9 +596,16 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 next_process_at = _advance_deadline(next_process_at, step_seconds, monotonic())
 
+            _drain_writers(queued_writers)
             if monotonic() >= next_status_at:
                 if capture_writer is not None:
                     capture_writer.flush()
+                performance_payload = performance_stats.snapshot(
+                    writer_backlog=_writer_backlog(queued_writers),
+                    inference_queue_depth=len(inference_queue),
+                    buffer_utilization=buffer_utilization(buffer),
+                    raw_buffer_utilization=buffer_utilization(raw_buffer),
+                )
                 status.update(
                     "running",
                     eeg_stream=stream_info,
@@ -551,9 +628,17 @@ def main(argv: list[str] | None = None) -> int:
                     pending_epoch_count=0 if epocher is None else epocher.pending_count,
                     buffer_samples=0 if buffer is None else len(buffer),
                     raw_buffer_samples=0 if raw_buffer is None else len(raw_buffer),
+                    performance=performance_payload,
+                    performance_config=performance_config.payload(),
                 )
                 next_status_at = _advance_deadline(next_status_at, 1.0, monotonic())
             if monotonic() >= next_health_event_at:
+                performance_payload = performance_stats.snapshot(
+                    writer_backlog=_writer_backlog(queued_writers),
+                    inference_queue_depth=len(inference_queue),
+                    buffer_utilization=buffer_utilization(buffer),
+                    raw_buffer_utilization=buffer_utilization(raw_buffer),
+                )
                 telemetry.emit(
                     "eeg.sample_heartbeat",
                     level="realtime",
@@ -575,9 +660,12 @@ def main(argv: list[str] | None = None) -> int:
                         "event_feature_packet_count": event_feature_packet_count,
                         "buffer_samples": 0 if buffer is None else len(buffer),
                         "raw_buffer_samples": 0 if raw_buffer is None else len(raw_buffer),
+                        "performance": performance_payload,
                     },
                 )
                 next_health_event_at = _advance_deadline(next_health_event_at, heartbeat_seconds, monotonic())
+            performance_stats.record_loop(loop_started)
+            _drain_writers(queued_writers)
             sleep(0.001)
     except Exception as exc:
         telemetry.emit(
@@ -590,18 +678,28 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     finally:
         if inference_enabled and classifier_mode and epocher is not None and model_prediction_writer is not None:
+            while inference_queue:
+                pending = inference_queue.popleft()
+                classifier_rejected_epoch_count += 1
+                model_prediction_writer.write(
+                    model_rejection_row(
+                        pending.epoch_payload,
+                        "worker_stopped_before_inference_completed",
+                        pending.quality,
+                    )
+                )
             for attempt in epocher.reject_pending("worker_stopped_before_epoch_completed"):
                 rejected_epoch_count += 1
                 classifier_rejected_epoch_count += 1
                 rejected_payload = attempt.payload(epoching_config)
-                append_jsonl(paths.realtime_epochs_jsonl, rejected_payload)
+                epoch_writer.write(rejected_payload)
                 model_prediction_writer.write(model_rejection_row(rejected_payload, attempt.reason))
+        for writer in queued_writers:
+            writer.close()
         if alpha_writer is not None:
             alpha_writer.close()
         if event_feature_writer is not None:
             event_feature_writer.close()
-        if model_prediction_writer is not None:
-            model_prediction_writer.close()
         if capture_writer is not None:
             capture_writer.close()
         if marker_inlet is not None:
@@ -629,6 +727,13 @@ def main(argv: list[str] | None = None) -> int:
         event_features_enabled=event_features_enabled,
         event_feature_packet_count=event_feature_packet_count,
         pending_epoch_count=0 if epocher is None else epocher.pending_count,
+        performance=performance_stats.snapshot(
+            writer_backlog=_writer_backlog(queued_writers),
+            inference_queue_depth=len(inference_queue),
+            buffer_utilization=buffer_utilization(buffer),
+            raw_buffer_utilization=buffer_utilization(raw_buffer),
+        ),
+        performance_config=performance_config.payload(),
     )
     return 0
 
@@ -663,13 +768,13 @@ def _try_open_marker_inlet(pylsl: Any, config: dict[str, Any]) -> tuple[Any | No
     }
 
 
-def _pull_markers(marker_inlet: Any, path: str, telemetry: Telemetry | None = None) -> list[MarkerEvent]:
+def _pull_markers(marker_inlet: Any, writer: QueuedJsonlWriter, telemetry: Telemetry | None = None) -> list[MarkerEvent]:
     samples, timestamps = marker_inlet.pull_chunk(timeout=0.0, max_samples=32)
     markers: list[MarkerEvent] = []
     for sample, timestamp in zip(samples, timestamps):
         label = sample[0] if isinstance(sample, list) else sample
         payload = {"lsl_timestamp": float(timestamp), "label": str(label)}
-        append_jsonl(path, payload)
+        writer.write(payload)
         if telemetry is not None:
             telemetry.emit(
                 "realtime.marker_received",
@@ -679,6 +784,171 @@ def _pull_markers(marker_inlet: Any, path: str, telemetry: Telemetry | None = No
             )
         markers.append(MarkerEvent(label=str(label), timestamp=float(timestamp), timebase="lsl", source="lsl"))
     return markers
+
+
+def _process_inference_item(
+    item: InferenceWorkItem,
+    *,
+    queue_depth: int,
+    model_entries: list[dict[str, Any]],
+    sample_rate: float,
+    channel_names: list[str],
+    classifier_mode: bool,
+    model_prediction_writer: QueuedJsonlWriter | None,
+    decision_writer: QueuedJsonlWriter,
+    emitter: Any,
+    policy: Any,
+    sample_count: int,
+    processed_count: int,
+    marker_count: int,
+    epoch_count: int,
+    performance_config: RealtimePerformanceConfig,
+    performance_stats: RealtimePerformanceStats,
+    telemetry: Telemetry,
+) -> InferenceProcessResult:
+    result = InferenceProcessResult()
+    prepared = PreparedEpochCache(item.epoch.data, sample_rate, channel_names, item.model_metadata)
+    primary_latency_ms: float | None = None
+    max_shadow_latency_ms = 0.0
+    for model_entry in _ordered_model_entries(model_entries):
+        role = str(model_entry.get("role", "shadow"))
+        model_id = str(model_entry.get("id", role))
+        model_kind = str(model_entry.get("kind", "unknown"))
+        if role != "primary" and _should_skip_shadow(queue_depth, primary_latency_ms, performance_config):
+            if classifier_mode and model_prediction_writer is not None:
+                model_prediction_writer.write(
+                    model_skip_row(
+                        item.epoch_payload,
+                        model_id=model_id,
+                        role=role,
+                        model_kind=model_kind,
+                        reason=_shadow_skip_reason(queue_depth, primary_latency_ms, performance_config),
+                        quality=item.quality,
+                        queue_depth=queue_depth,
+                        primary_latency_ms=primary_latency_ms,
+                    )
+                )
+            result.skipped_shadow_count += 1
+            performance_stats.skipped_shadow_count += 1
+            telemetry.emit(
+                "model.shadow_skipped",
+                level="realtime",
+                message=f"Skipped shadow model {model_id}",
+                metadata={
+                    "model_id": model_id,
+                    "model_kind": model_kind,
+                    "queue_depth": queue_depth,
+                    "primary_latency_ms": primary_latency_ms,
+                },
+            )
+            continue
+
+        processing_started = monotonic()
+        adapter = model_entry["adapter"]
+        if hasattr(adapter, "predict_prepared_epoch"):
+            prediction = adapter.predict_prepared_epoch(prepared)
+        else:
+            prediction = adapter.predict_epoch(item.epoch.data, sample_rate, channel_names, item.model_metadata)
+        model_latency_ms = elapsed_ms(processing_started)
+        prediction.latency_ms = model_latency_ms
+        row = None
+        if classifier_mode:
+            assert item.quality is not None and model_prediction_writer is not None
+            row = model_prediction_row(
+                item.epoch_payload,
+                prediction.to_payload(),
+                model_id=model_id,
+                role=role,
+                latency_ms=model_latency_ms,
+                quality=item.quality,
+            )
+            model_prediction_writer.write(row)
+            result.prediction_count += 1
+            if role == "primary":
+                result.primary_prediction_count += 1
+        if role != "primary":
+            max_shadow_latency_ms = max(max_shadow_latency_ms, model_latency_ms)
+            telemetry.emit(
+                "model.shadow_prediction",
+                level="realtime",
+                message=f"Shadow prediction {model_id}: {prediction.label} ({prediction.score:.3f})",
+                metadata=row or prediction.to_payload(),
+            )
+            continue
+
+        primary_latency_ms = elapsed_ms(item.queued_at_monotonic)
+        performance_stats.primary_latency_ms = primary_latency_ms
+        assert policy is not None
+        actions = policy.decide(prediction, item.epoch_payload)
+        payload = {
+            "schema_version": 1,
+            "decision_source": "event_epoch",
+            "window_index": None,
+            "epoch_index": item.epoch.epoch_index,
+            "created_at_monotonic": monotonic(),
+            "sample_count": sample_count,
+            "processed_sample_count": processed_count,
+            "marker_count": marker_count,
+            "epoch_count": epoch_count,
+            "prediction_label": prediction.label,
+            "prediction_score": prediction.score,
+            "prediction_probability": prediction.probability,
+            "features": prediction.features,
+            "prediction": prediction.to_payload(),
+            "actions": [action.to_payload() for action in actions],
+            "feedback": actions[0].to_payload() if actions else None,
+            "processing_latency_ms": model_latency_ms,
+            "primary_latency_ms": primary_latency_ms,
+            "inference_queue_depth": queue_depth,
+            "epoch": item.epoch_payload,
+        }
+        decision_writer.write(payload)
+        emitter.emit(payload)
+        telemetry.emit(
+            "model.prediction",
+            level="realtime",
+            message=f"Realtime epoch prediction: {prediction.label} ({prediction.score:.3f})",
+            metadata=payload,
+        )
+    performance_stats.shadow_latency_ms = max_shadow_latency_ms
+    return result
+
+
+def _ordered_model_entries(model_entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(model_entries, key=lambda entry: 0 if str(entry.get("role")) == "primary" else 1)
+
+
+def _should_skip_shadow(
+    queue_depth: int,
+    primary_latency_ms: float | None,
+    performance_config: RealtimePerformanceConfig,
+) -> bool:
+    if int(queue_depth) >= performance_config.skip_shadows_when_queue_depth_gte:
+        return True
+    if primary_latency_ms is not None and primary_latency_ms >= performance_config.primary_latency_budget_ms:
+        return True
+    return False
+
+
+def _shadow_skip_reason(
+    queue_depth: int,
+    primary_latency_ms: float | None,
+    performance_config: RealtimePerformanceConfig,
+) -> str:
+    if int(queue_depth) >= performance_config.skip_shadows_when_queue_depth_gte:
+        return "shadow_skipped_inference_queue_backlog"
+    if primary_latency_ms is not None and primary_latency_ms >= performance_config.primary_latency_budget_ms:
+        return "shadow_skipped_primary_latency_budget"
+    return "shadow_skipped"
+
+
+def _drain_writers(writers: list[QueuedJsonlWriter]) -> None:
+    for writer in writers:
+        writer.drain()
+
+
+def _writer_backlog(writers: list[QueuedJsonlWriter]) -> int:
+    return sum(writer.backlog for writer in writers)
 
 
 def _stream_dict(info: Any) -> dict[str, Any]:

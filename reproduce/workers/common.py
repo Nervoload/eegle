@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import signal
 import threading
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from time import monotonic
@@ -85,6 +86,60 @@ class JsonlWriter:
 
     def close(self) -> None:
         self.flush()
+        self._handle.close()
+
+
+class QueuedJsonlWriter:
+    """Bounded JSONL writer queue drained from the worker loop."""
+
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        flush_every: int = 50,
+        flush_interval_seconds: float = 0.1,
+        max_backlog: int = 1000,
+    ) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._handle = self.path.open("a", encoding="utf-8")
+        self._flush_every = max(1, int(flush_every))
+        self._flush_interval_seconds = max(0.001, float(flush_interval_seconds))
+        self._queue: deque[dict[str, Any]] = deque()
+        self._max_backlog = max(self._flush_every, int(max_backlog))
+        self._pending_since_flush = 0
+        self._last_flush_at = monotonic()
+
+    @property
+    def backlog(self) -> int:
+        return len(self._queue)
+
+    def write(self, payload: dict[str, Any]) -> None:
+        if len(self._queue) >= self._max_backlog:
+            self.drain(force=True)
+        if len(self._queue) >= self._max_backlog:
+            raise BufferError(f"writer backlog exceeded for {self.path}")
+        self._queue.append(dict(payload))
+
+    def drain(self, *, force: bool = False) -> None:
+        if not self._queue and not force:
+            return
+        now = monotonic()
+        due = force or len(self._queue) >= self._flush_every or (now - self._last_flush_at) >= self._flush_interval_seconds
+        if not due:
+            return
+        while self._queue:
+            self._handle.write(json.dumps(self._queue.popleft(), sort_keys=True) + "\n")
+            self._pending_since_flush += 1
+        self.flush()
+
+    def flush(self) -> None:
+        self._handle.flush()
+        self._pending_since_flush = 0
+        self._last_flush_at = monotonic()
+
+    def close(self) -> None:
+        self.drain(force=True)
         self._handle.close()
 
 

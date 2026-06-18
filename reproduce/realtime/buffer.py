@@ -55,6 +55,34 @@ class RingBuffer:
         indices = (start + np.arange(count)) % self.max_samples
         return self._timestamps[indices].copy(), self._data[indices].copy()
 
+    def window_into(
+        self,
+        samples: int,
+        timestamp_scratch: np.ndarray,
+        data_scratch: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Copy the latest window into caller-owned scratch arrays."""
+        count = min(max(0, int(samples)), self._size)
+        if timestamp_scratch.shape[0] < count:
+            raise ValueError("timestamp scratch buffer is too small")
+        if data_scratch.shape[0] < count or data_scratch.shape[1] != self.channel_count:
+            raise ValueError("data scratch buffer has incompatible shape")
+        if count == 0:
+            return timestamp_scratch[:0], data_scratch[:0]
+        start = (self._write_index - count) % self.max_samples
+        if start < self._write_index and self._size < self.max_samples:
+            timestamp_scratch[:count] = self._timestamps[start : self._write_index]
+            data_scratch[:count] = self._data[start : self._write_index]
+            return timestamp_scratch[:count], data_scratch[:count]
+        first = min(count, self.max_samples - start)
+        timestamp_scratch[:first] = self._timestamps[start : start + first]
+        data_scratch[:first] = self._data[start : start + first]
+        remaining = count - first
+        if remaining:
+            timestamp_scratch[first:count] = self._timestamps[:remaining]
+            data_scratch[first:count] = self._data[:remaining]
+        return timestamp_scratch[:count], data_scratch[:count]
+
     def range(self, start_timestamp: float, end_timestamp: float) -> tuple[np.ndarray, np.ndarray]:
         """Return samples inside an inclusive timestamp range."""
         if self._size == 0:

@@ -104,6 +104,39 @@ def model_rejection_row(
     }
 
 
+def model_skip_row(
+    epoch_payload: dict[str, Any],
+    *,
+    model_id: str,
+    role: str,
+    model_kind: str,
+    reason: str,
+    quality: dict[str, Any] | None = None,
+    queue_depth: int | None = None,
+    primary_latency_ms: float | None = None,
+) -> dict[str, Any]:
+    """Build an explicit row for budget-driven shadow inference skipping."""
+    marker = dict(epoch_payload.get("marker") or {})
+    parsed = dict(marker.get("metadata") or {})
+    return {
+        "schema": PREDICTION_SCHEMA,
+        "status": "skipped",
+        "trial": epoch_payload.get("trial", parsed.get("trial")),
+        "epoch_index": epoch_payload.get("epoch_index"),
+        "marker_timestamp_lsl": marker.get("timestamp"),
+        "epoch_window_seconds": epoch_payload.get("epoch_window_seconds"),
+        "model_id": model_id,
+        "model_role": role,
+        "model_kind": model_kind,
+        "reason": reason,
+        "quality": quality or {},
+        "queue_depth": queue_depth,
+        "primary_latency_ms": primary_latency_ms,
+        "ground_truth_joined_during_inference": False,
+        "observe_only": True,
+    }
+
+
 def assess_epoch_quality(epoch: np.ndarray, config: dict[str, Any] | None = None) -> EpochQualityResult:
     cfg = dict(config or {})
     values = np.asarray(epoch, dtype=float)

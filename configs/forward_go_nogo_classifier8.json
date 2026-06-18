@@ -116,6 +116,14 @@
     "max_pull_samples": 128,
     "pull_timeout_seconds": 0.01,
     "clock_error_threshold_seconds": 60.0,
+    "performance": {
+      "primary_latency_budget_ms": 50,
+      "writer_flush_every": 50,
+      "writer_flush_interval_ms": 100,
+      "inference_queue_max_epochs": 4,
+      "skip_shadows_when_queue_depth_gte": 2,
+      "large_cap_channel_threshold": 32
+    },
     "inference": {
       "enabled": false
     },

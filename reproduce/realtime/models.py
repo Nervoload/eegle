@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -58,6 +59,57 @@ class ModelAdapter(Protocol):
         ...
 
 
+class PreparedEpochCache:
+    """Reusable prepared views for one realtime epoch."""
+
+    def __init__(
+        self,
+        epoch: np.ndarray,
+        sample_rate_hz: float,
+        channel_names: list[str],
+        metadata: dict[str, Any],
+    ) -> None:
+        self.epoch = np.asarray(epoch, dtype=float)
+        self.sample_rate_hz = float(sample_rate_hz)
+        self.channel_names = list(channel_names)
+        self.metadata = dict(metadata)
+        self._raw_channels_cache: dict[str, np.ndarray] = {}
+        self._classifier_cache: dict[str, tuple[np.ndarray, list[str], np.ndarray]] = {}
+
+    def raw_channels_samples(self, input_layout: str) -> np.ndarray:
+        layout = str(input_layout or "auto")
+        if layout not in self._raw_channels_cache:
+            self._raw_channels_cache[layout] = epoch_to_channels_samples(self.epoch, self.channel_names, layout)
+        return self._raw_channels_cache[layout]
+
+    def raw_samples_channels(self, input_layout: str) -> np.ndarray:
+        return self.raw_channels_samples(input_layout).T
+
+    def classifier(
+        self,
+        contract: dict[str, Any],
+        input_layout: str,
+    ) -> tuple[np.ndarray, list[str], np.ndarray]:
+        key = _prepared_epoch_key(contract, input_layout)
+        if key not in self._classifier_cache:
+            self._classifier_cache[key] = prepare_classifier_epoch(
+                self.epoch,
+                self.sample_rate_hz,
+                self.channel_names,
+                self.metadata,
+                {**dict(contract), "input_layout": str(input_layout or "auto")},
+            )
+        return self._classifier_cache[key]
+
+    def artifact(self, contract: dict[str, Any], input_layout: str) -> np.ndarray:
+        if not contract:
+            return self.raw_channels_samples(input_layout)
+        return self.classifier(contract, input_layout)[0]
+
+    def times(self, sample_count: int) -> np.ndarray:
+        return relative_times(self.metadata, sample_count, self.sample_rate_hz)
+
+
 class BaseModelAdapter:
     kind = "base"
 
@@ -71,6 +123,14 @@ class BaseModelAdapter:
         channel_names = [f"ch_{idx + 1:03d}" for idx in range(np.asarray(data).shape[1])]
         metadata = {"source": "rolling_window", "input_layout": "samples_x_channels"}
         return self.predict_epoch(data, sample_rate_hz, channel_names, metadata)
+
+    def predict_prepared_epoch(self, prepared: PreparedEpochCache) -> ModelPrediction:
+        return self.predict_epoch(
+            prepared.epoch,
+            prepared.sample_rate_hz,
+            prepared.channel_names,
+            prepared.metadata,
+        )
 
 
 class ERPPeakBaselineAdapter(BaseModelAdapter):
@@ -95,7 +155,10 @@ class ERPPeakBaselineAdapter(BaseModelAdapter):
         channel_names: list[str],
         metadata: dict[str, Any],
     ) -> ModelPrediction:
-        channels_samples = epoch_to_channels_samples(epoch, channel_names, self.input_layout)
+        return self.predict_prepared_epoch(PreparedEpochCache(epoch, sample_rate_hz, channel_names, metadata))
+
+    def predict_prepared_epoch(self, prepared: PreparedEpochCache) -> ModelPrediction:
+        channels_samples = prepared.raw_channels_samples(self.input_layout)
         if channels_samples.size == 0:
             return ModelPrediction(
                 label="no_p300",
@@ -106,12 +169,12 @@ class ERPPeakBaselineAdapter(BaseModelAdapter):
                 model_version=self.model_version,
             )
 
-        times = relative_times(metadata, channels_samples.shape[1], sample_rate_hz)
+        times = prepared.times(channels_samples.shape[1])
         data_uv = channels_samples.astype(float)
         if self.input_units in {"v", "volt", "volts"}:
             data_uv = data_uv * 1e6
 
-        roi_indices = resolve_roi_indices(channel_names, self.roi_channels, channels_samples.shape[0])
+        roi_indices = resolve_roi_indices(prepared.channel_names, self.roi_channels, channels_samples.shape[0])
         roi_wave = data_uv[roi_indices].mean(axis=0)
         baseline_mask = (times >= self.baseline_seconds[0]) & (times <= self.baseline_seconds[1])
         if baseline_mask.any():
@@ -140,7 +203,7 @@ class ERPPeakBaselineAdapter(BaseModelAdapter):
             features=features,
             model_kind=self.kind,
             model_version=self.model_version,
-            metadata={"roi_channels": [channel_names[index] for index in roi_indices if index < len(channel_names)]},
+            metadata={"roi_channels": [prepared.channel_names[index] for index in roi_indices if index < len(prepared.channel_names)]},
         )
 
 
@@ -165,8 +228,11 @@ class BandPowerThresholdModel(BaseModelAdapter):
         channel_names: list[str],
         metadata: dict[str, Any],
     ) -> ModelPrediction:
-        samples_channels = epoch_to_samples_channels(epoch, channel_names, self.input_layout)
-        features = band_power_features(samples_channels, sample_rate_hz, self.bands)
+        return self.predict_prepared_epoch(PreparedEpochCache(epoch, sample_rate_hz, channel_names, metadata))
+
+    def predict_prepared_epoch(self, prepared: PreparedEpochCache) -> ModelPrediction:
+        samples_channels = prepared.raw_samples_channels(self.input_layout)
+        features = band_power_features(samples_channels, prepared.sample_rate_hz, self.bands)
         theta = features.get("theta", 0.0)
         alpha = features.get("alpha", 0.0)
         ratio = alpha / theta if theta > 0 else 0.0
@@ -195,11 +261,12 @@ class SklearnXdawnLdaAdapter(BaseModelAdapter):
         channel_names: list[str],
         metadata: dict[str, Any],
     ) -> ModelPrediction:
+        return self.predict_prepared_epoch(PreparedEpochCache(epoch, sample_rate_hz, channel_names, metadata))
+
+    def predict_prepared_epoch(self, prepared: PreparedEpochCache) -> ModelPrediction:
         artifact = self._load_artifact()
         contract = artifact.get("contract", {}) if isinstance(artifact, dict) else {}
-        channels_samples = prepare_artifact_epoch(
-            epoch, sample_rate_hz, channel_names, metadata, contract, self.input_layout
-        )
+        channels_samples = prepared.artifact(contract, self.input_layout)
         estimator = artifact.get("pipeline") if isinstance(artifact, dict) else artifact
         probability = estimator_probability(estimator, channels_samples.reshape(1, -1))
         label = classifier_label(probability, self.config)
@@ -235,11 +302,12 @@ class ErpRoiLogisticRegressionAdapter(BaseModelAdapter):
         channel_names: list[str],
         metadata: dict[str, Any],
     ) -> ModelPrediction:
+        return self.predict_prepared_epoch(PreparedEpochCache(epoch, sample_rate_hz, channel_names, metadata))
+
+    def predict_prepared_epoch(self, prepared: PreparedEpochCache) -> ModelPrediction:
         artifact = self._load_artifact()
         contract = artifact.get("contract", {}) if isinstance(artifact, dict) else {}
-        corrected, selected_channels, times = prepare_classifier_epoch(
-            epoch, sample_rate_hz, channel_names, metadata, {**contract, "input_layout": self.input_layout}
-        )
+        corrected, selected_channels, times = prepared.classifier(contract, self.input_layout)
         roi_config = artifact.get("roi_config", DEFAULT_ROI_CONFIG) if isinstance(artifact, dict) else DEFAULT_ROI_CONFIG
         features = extract_erp_roi_features(corrected, times, selected_channels, roi_config)
         vector, _ = feature_vector(features, artifact.get("feature_names") if isinstance(artifact, dict) else None)
@@ -273,11 +341,12 @@ class PyriemannErpCovAdapter(BaseModelAdapter):
         channel_names: list[str],
         metadata: dict[str, Any],
     ) -> ModelPrediction:
+        return self.predict_prepared_epoch(PreparedEpochCache(epoch, sample_rate_hz, channel_names, metadata))
+
+    def predict_prepared_epoch(self, prepared: PreparedEpochCache) -> ModelPrediction:
         artifact = self._load_artifact()
         contract = artifact.get("contract", {}) if isinstance(artifact, dict) else {}
-        channels_samples = prepare_artifact_epoch(
-            epoch, sample_rate_hz, channel_names, metadata, contract, self.input_layout
-        )
+        channels_samples = prepared.artifact(contract, self.input_layout)
         estimator = artifact.get("pipeline") if isinstance(artifact, dict) else artifact
         probability = estimator_probability(estimator, channels_samples[np.newaxis, :, :])
         label = classifier_label(probability, self.config)
@@ -309,6 +378,9 @@ class TorchEpochAdapter(BaseModelAdapter):
         channel_names: list[str],
         metadata: dict[str, Any],
     ) -> ModelPrediction:
+        return self.predict_prepared_epoch(PreparedEpochCache(epoch, sample_rate_hz, channel_names, metadata))
+
+    def predict_prepared_epoch(self, prepared: PreparedEpochCache) -> ModelPrediction:
         bundle = configured_bundle(self.config)
         artifact_path = Path(bundle["artifact_path"]) if bundle else require_artifact_path(self.config, self.kind)
         try:
@@ -317,9 +389,7 @@ class TorchEpochAdapter(BaseModelAdapter):
             raise RuntimeError(f"{self.kind} requires torch for inference") from exc
 
         contract = bundle.get("contract", {}) if bundle else {}
-        channels_samples = prepare_artifact_epoch(
-            epoch, sample_rate_hz, channel_names, metadata, contract, self.input_layout
-        )
+        channels_samples = prepared.artifact(contract, self.input_layout)
         tensor = torch.as_tensor(torch_input_array(channels_samples, self.config), dtype=torch.float32)
         model = self._load_torch_model(torch, artifact_path)
         model.eval()
@@ -364,13 +434,16 @@ class OnnxP300Adapter(BaseModelAdapter):
         channel_names: list[str],
         metadata: dict[str, Any],
     ) -> ModelPrediction:
+        return self.predict_prepared_epoch(PreparedEpochCache(epoch, sample_rate_hz, channel_names, metadata))
+
+    def predict_prepared_epoch(self, prepared: PreparedEpochCache) -> ModelPrediction:
         artifact_path = require_artifact_path(self.config, self.kind)
         try:
             import onnxruntime as ort
         except Exception as exc:
             raise RuntimeError(f"{self.kind} requires onnxruntime for inference") from exc
 
-        channels_samples = epoch_to_channels_samples(epoch, channel_names, self.input_layout)
+        channels_samples = prepared.raw_channels_samples(self.input_layout)
         array = torch_input_array(channels_samples, self.config).astype(np.float32)
         session = self._load_session(ort, artifact_path)
         input_name = str(self.config.get("input_name") or session.get_inputs()[0].name)
@@ -1154,6 +1227,14 @@ def prepare_artifact_epoch(
         metadata,
         {**contract, "input_layout": input_layout},
     )[0]
+
+
+def _prepared_epoch_key(contract: dict[str, Any], input_layout: str) -> str:
+    return json.dumps(
+        {"contract": dict(contract), "input_layout": str(input_layout or "auto")},
+        sort_keys=True,
+        default=str,
+    )
 
 
 def estimator_probability(estimator: Any, x: np.ndarray) -> float:
