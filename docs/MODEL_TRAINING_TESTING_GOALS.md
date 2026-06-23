@@ -78,8 +78,8 @@ ground truth only later for dashboard summaries and scoring.
 ## Quality and Label Safety
 
 The shared quality and model-preparation contracts live in
-`reproduce/realtime/classification.py`. The shared training and inference
-adapters live in `reproduce/realtime/models.py`.
+`eegle/realtime/classification.py`. The shared training and inference
+adapters live in `eegle/realtime/models.py`.
 
 Important invariants:
 
@@ -117,7 +117,7 @@ Use focused tests first when changing the classifier path:
 
 ```bash
 python3 -m unittest tests.test_classification
-python3 -m compileall -q reproduce/realtime/classification.py reproduce/realtime/models.py reproduce/pipelines/classify8.py tests/test_classification.py
+python3 -m compileall -q eegle/realtime/classification.py eegle/realtime/models.py eegle/pipelines/classify8.py tests/test_classification.py
 ```
 
 Use broader suites when changing shared orchestration, config loading, or worker

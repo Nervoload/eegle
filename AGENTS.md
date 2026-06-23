@@ -13,24 +13,24 @@ Start here before changing code:
 2. `docs/ARCHITECTURE.md` for the runtime data path and component boundaries.
 3. `docs/MODEL_TRAINING_TESTING_GOALS.md` for classifier training, evaluation,
    and current model goals.
-4. `reproduce/AGENTS.md` for package-level implementation guidance.
+4. `eegle/AGENTS.md` for package-level implementation guidance.
 5. `configs/AGENTS.md` before changing JSON experiment configs.
 6. `tests/AGENTS.md` before deciding which tests to run.
 
 ## Code Map
 
-- `reproduce/cli.py`: installed `eegle` command and generic subcommands.
-- `reproduce/pipelines/`: specialized operator workflows such as `alpha8`,
+- `eegle/cli.py`: installed `eegle` command and generic subcommands.
+- `eegle/pipelines/`: specialized operator workflows such as `alpha8`,
   `inhibition8`, and `classify8`.
-- `reproduce/experiment.py`: forward experiment orchestration.
-- `reproduce/feedback_manager.py`: managed recorder, realtime, dashboard, and
+- `eegle/experiment.py`: forward experiment orchestration.
+- `eegle/feedback_manager.py`: managed recorder, realtime, dashboard, and
   analyzer worker lifecycle.
-- `reproduce/tasks/`: PsychoPy and dry-run task implementations.
-- `reproduce/realtime/`: ring buffers, preprocessing, epoching, model adapters,
+- `eegle/tasks/`: PsychoPy and dry-run task implementations.
+- `eegle/realtime/`: ring buffers, preprocessing, epoching, model adapters,
   classifier contracts, policies, and feedback emitters.
-- `reproduce/workers/`: process entrypoints for recorder, realtime processor,
+- `eegle/workers/`: process entrypoints for recorder, realtime processor,
   dashboard, and offline analyzer.
-- `reproduce/analysis/`: post-session reports, ERP/P300 analysis, classifier
+- `eegle/analysis/`: post-session reports, ERP/P300 analysis, classifier
   scoring, replay, and HTML summaries.
 - `configs/`: JSON experiment presets.
 - `tests/`: focused unittest coverage for realtime, classifier, portability, and
@@ -82,7 +82,7 @@ Focused verification while editing classifier or dashboard behavior:
 
 ```bash
 python3 -m unittest tests.test_classification
-python3 -m compileall -q reproduce tests
+python3 -m compileall -q eegle tests
 ```
 
 Broader verification:
@@ -95,7 +95,7 @@ python3 -m unittest discover -s tests
 
 Use scoped `AGENTS.md` files when a directory has local contracts that future
 agents should read before editing. The useful scopes today are the repository
-root, `reproduce/`, `configs/`, and `tests/`. Avoid adding agent guidance under
+root, `eegle/`, `configs/`, and `tests/`. Avoid adding agent guidance under
 generated data directories.
 
 Use `docs/` for durable human-facing explanations. Model-training, evaluation,

@@ -6,19 +6,19 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from reproduce.cli import build_parser, cmd_check_setup
-from reproduce.config import DEFAULT_CONFIG
-from reproduce.hardware.capabilities import (
+from eegle.cli import build_parser, cmd_check_setup
+from eegle.config import DEFAULT_CONFIG
+from eegle.hardware.capabilities import (
     check_command_entrypoints,
     check_realtime_ready,
     check_training_ready,
 )
-from reproduce.hardware.eeg_device import identify_eeg_device
-from reproduce.hardware.os_support import check_os_support
-from reproduce.hardware.system import CheckResult, check_platform, check_python
-from reproduce.preflight import run_preflight
-from reproduce.runtime import _disable_psychopy_glfw
-from reproduce.session import create_session
+from eegle.hardware.eeg_device import identify_eeg_device
+from eegle.hardware.os_support import check_os_support
+from eegle.hardware.system import CheckResult, check_platform, check_python
+from eegle.preflight import run_preflight
+from eegle.runtime import _disable_psychopy_glfw
+from eegle.session import create_session
 
 
 class PortabilityTests(unittest.TestCase):
@@ -42,13 +42,13 @@ class PortabilityTests(unittest.TestCase):
     def test_macos_psychopy_workaround_does_not_modify_other_platforms(self) -> None:
         for platform_name in ("linux", "win32"):
             with self.subTest(platform=platform_name):
-                with patch("reproduce.runtime.sys.platform", platform_name), patch.dict(sys.modules, {}, clear=False):
+                with patch("eegle.runtime.sys.platform", platform_name), patch.dict(sys.modules, {}, clear=False):
                     sys.modules.pop("glfw", None)
                     _disable_psychopy_glfw()
                     self.assertNotIn("glfw", sys.modules)
 
     def test_unknown_os_is_warning_not_a_separate_codebase_requirement(self) -> None:
-        with patch("reproduce.hardware.system.platform.system", return_value="Plan9"):
+        with patch("eegle.hardware.system.platform.system", return_value="Plan9"):
             result = check_os_support()
         self.assertEqual(result.status, "warn")
         self.assertFalse(result.data["requires_separate_codebase"])
@@ -56,18 +56,18 @@ class PortabilityTests(unittest.TestCase):
     def test_known_os_support_is_single_codebase(self) -> None:
         for system_name in ("Darwin", "Windows", "Linux"):
             with self.subTest(system=system_name):
-                with patch("reproduce.hardware.system.platform.system", return_value=system_name):
+                with patch("eegle.hardware.system.platform.system", return_value=system_name):
                     result = check_os_support()
                 self.assertEqual(result.status, "ok")
                 self.assertFalse(result.data["requires_separate_codebase"])
 
     def test_console_command_visibility_is_reported_without_failing_preflight(self) -> None:
-        with patch("reproduce.hardware.capabilities.shutil.which", return_value=None):
+        with patch("eegle.hardware.capabilities.shutil.which", return_value=None):
             result = check_command_entrypoints(("eegle", "classify8"))
         self.assertEqual(result.status, "warn")
         self.assertEqual(result.data["missing"], ["eegle", "classify8"])
 
-        with patch("reproduce.hardware.capabilities.shutil.which", side_effect=lambda command: f"/bin/{command}"):
+        with patch("eegle.hardware.capabilities.shutil.which", side_effect=lambda command: f"/bin/{command}"):
             ready = check_command_entrypoints(("eegle", "classify8"))
         self.assertEqual(ready.status, "ok")
 
@@ -135,8 +135,8 @@ class PortabilityTests(unittest.TestCase):
                 }
             }
         }
-        with patch("reproduce.preflight.check_packages", return_value=[]), patch(
-            "reproduce.preflight.resolve_streams",
+        with patch("eegle.preflight.check_packages", return_value=[]), patch(
+            "eegle.preflight.resolve_streams",
             return_value=([], "pylsl import failed: missing liblsl"),
         ):
             results = run_preflight(config, lsl_wait=0, require_eeg=False)
@@ -158,7 +158,7 @@ class PortabilityTests(unittest.TestCase):
             },
         }
         device = CheckResult("eeg_device", "warn", "missing", {"matches": [], "candidate_eeg_streams": []})
-        with patch("reproduce.hardware.capabilities.util.find_spec", return_value=None):
+        with patch("eegle.hardware.capabilities.util.find_spec", return_value=None):
             result = check_realtime_ready(config, [], "pylsl import failed", device, require_eeg=False)
         self.assertEqual(result.status, "fail")
         self.assertIn("pylsl is not importable", result.data["failures"])
@@ -168,13 +168,13 @@ class PortabilityTests(unittest.TestCase):
         def missing_torch_and_pyriemann(package: str) -> object | None:
             return None if package in {"torch", "pyriemann"} else object()
 
-        with patch("reproduce.hardware.capabilities.util.find_spec", side_effect=missing_torch_and_pyriemann):
+        with patch("eegle.hardware.capabilities.util.find_spec", side_effect=missing_torch_and_pyriemann):
             result = check_training_ready(["torch_eegnet", "pyriemann_erp_cov"], required=True)
         self.assertEqual(result.status, "fail")
         self.assertEqual(result.data["missing_by_kind"]["torch_eegnet"], ["torch"])
         self.assertEqual(result.data["missing_by_kind"]["pyriemann_erp_cov"], ["pyriemann"])
 
-        with patch("reproduce.hardware.capabilities.util.find_spec", return_value=object()):
+        with patch("eegle.hardware.capabilities.util.find_spec", return_value=object()):
             ready = check_training_ready(["erp_roi_logreg", "pyriemann_erp_cov", "torch_eegnet"], required=True)
         self.assertEqual(ready.status, "ok")
 

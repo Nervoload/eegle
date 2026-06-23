@@ -37,7 +37,7 @@ python3 -m unittest discover -s tests
 Compile check after structural edits:
 
 ```bash
-python3 -m compileall -q reproduce tests
+python3 -m compileall -q eegle tests
 ```
 
 If the full suite fails because of environment-only dependencies, preserve the

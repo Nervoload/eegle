@@ -33,13 +33,13 @@ deep-learning = [
 ]
 
 [project.scripts]
-eegle = "reproduce.cli:main"
-alpha8 = "reproduce.pipelines.alpha8:main"
-inhibition8 = "reproduce.pipelines.inhibition8:main"
-classify8 = "reproduce.pipelines.classify8:main"
+eegle = "eegle.cli:main"
+alpha8 = "eegle.pipelines.alpha8:main"
+inhibition8 = "eegle.pipelines.inhibition8:main"
+classify8 = "eegle.pipelines.classify8:main"
 
 [tool.setuptools.packages.find]
-include = ["configs*", "reproduce*"]
+include = ["configs*", "eegle*"]
 
 [tool.setuptools.package-data]
 configs = ["*.json"]

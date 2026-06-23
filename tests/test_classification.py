@@ -11,11 +11,11 @@ from unittest.mock import patch
 
 import numpy as np
 
-from reproduce.analysis.classification import evaluate_classifier_session, replay_classifier_session
-from reproduce.config import load_config
-from reproduce.hardware.system import CheckResult
-from reproduce.pipelines.classify8 import _validate_online_model_bundles, build_parser, train as classify8_train
-from reproduce.realtime.classification import (
+from eegle.analysis.classification import evaluate_classifier_session, replay_classifier_session
+from eegle.config import load_config
+from eegle.hardware.system import CheckResult
+from eegle.pipelines.classify8 import _validate_online_model_bundles, build_parser, train as classify8_train
+from eegle.realtime.classification import (
     assess_epoch_quality,
     baseline_correct,
     extract_erp_roi_features,
@@ -24,14 +24,14 @@ from reproduce.realtime.classification import (
     sanitize_model_metadata,
     write_model_bundle,
 )
-from reproduce.realtime.demo_classifier import DEMO_DISCLOSURE, demo_config_from, demo_prediction_from_marker
-from reproduce.realtime.epoching import EpochingConfig, MarkerEvent, RealtimeEpocher
-from reproduce.realtime.event_features import EngineInputCaptureWriter
-from reproduce.realtime.models import PreparedEpochCache, prepare_artifact_epoch, train_epoch_model
-from reproduce.session import create_session
-from reproduce.telemetry import Telemetry
-from reproduce.workers.dashboard import DASHBOARD_HTML, DemoPredictionBridge, dashboard_snapshot
-from reproduce.workers.realtime_processor import _load_classifier_models
+from eegle.realtime.demo_classifier import DEMO_DISCLOSURE, demo_config_from, demo_prediction_from_marker
+from eegle.realtime.epoching import EpochingConfig, MarkerEvent, RealtimeEpocher
+from eegle.realtime.event_features import EngineInputCaptureWriter
+from eegle.realtime.models import PreparedEpochCache, prepare_artifact_epoch, train_epoch_model
+from eegle.session import create_session
+from eegle.telemetry import Telemetry
+from eegle.workers.dashboard import DASHBOARD_HTML, DemoPredictionBridge, dashboard_snapshot
+from eegle.workers.realtime_processor import _load_classifier_models
 
 
 class ClassificationTests(unittest.TestCase):
@@ -114,7 +114,7 @@ class ClassificationTests(unittest.TestCase):
         )
         expected = (np.zeros((2, times.size)), ["Fz", "Cz"], times)
 
-        with patch("reproduce.realtime.models.prepare_classifier_epoch", return_value=expected) as prepare:
+        with patch("eegle.realtime.models.prepare_classifier_epoch", return_value=expected) as prepare:
             first = prepared.classifier(contract, "samples_x_channels")
             second = prepared.classifier(dict(contract), "samples_x_channels")
             raw_first = prepared.raw_channels_samples("samples_x_channels")
@@ -432,8 +432,8 @@ class ClassificationTests(unittest.TestCase):
                 "missing training packages: torch",
                 {"missing": ["torch"], "missing_by_kind": {"torch_eegnet": ["torch"]}},
             )
-            with patch("reproduce.pipelines.classify8.check_training_ready", return_value=readiness), patch(
-                "reproduce.pipelines.classify8.train_epoch_model"
+            with patch("eegle.pipelines.classify8.check_training_ready", return_value=readiness), patch(
+                "eegle.pipelines.classify8.train_epoch_model"
             ) as train_model:
                 result = classify8_train(args)
 
@@ -445,10 +445,10 @@ class ClassificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             args = build_parser().parse_args(["train", "--session-dir", tmp, "--kind", "torch_eegnet"])
             readiness = CheckResult("training_ready", "fail", "missing training packages: torch")
-            with patch("reproduce.pipelines.classify8.check_training_ready", return_value=readiness), patch(
-                "reproduce.pipelines.classify8.missing_training_packages",
+            with patch("eegle.pipelines.classify8.check_training_ready", return_value=readiness), patch(
+                "eegle.pipelines.classify8.missing_training_packages",
                 return_value=["torch"],
-            ), patch("reproduce.pipelines.classify8.train_epoch_model") as train_model:
+            ), patch("eegle.pipelines.classify8.train_epoch_model") as train_model:
                 result = classify8_train(args)
 
         self.assertEqual(result["status"], "failed")

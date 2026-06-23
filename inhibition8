@@ -3,4 +3,4 @@ set -eu
 
 PYTHON_BIN="${PYTHON:-python3}"
 
-exec "$PYTHON_BIN" -m reproduce.pipelines.inhibition8 "$@"
+exec "$PYTHON_BIN" -m eegle.pipelines.inhibition8 "$@"

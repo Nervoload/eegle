@@ -4,7 +4,9 @@ EEGle is a Python toolkit for reproducible realtime EEG experiments. It combines
 PsychoPy tasks, Lab Streaming Layer (LSL) acquisition, Enobio/NIC2 setup checks,
 structured session output, realtime processing, and post-session analysis.
 
-The primary installed command and package name are both `eegle`.
+The source CLI is `eegle.cli:main`. Installing this project creates an
+`eegle` console script in that Python environment; `eegle` is not a global or
+operating-system-provided command.
 
 ## Quick Start: Complete a Two-Trial Dry Run
 
@@ -19,7 +21,7 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[runtime]"
 ```
 
-Windows PowerShell:
+Windows PowerShell (Windows x64):
 
 ```powershell
 py -3.10 -m venv .venv
@@ -27,6 +29,54 @@ py -3.10 -m venv .venv
 python -m pip install --upgrade pip
 python -m pip install -e ".[runtime]"
 ```
+
+If PowerShell blocks the activation script, allow it only for the current
+PowerShell window, then activate the environment again:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.venv\Scripts\Activate.ps1
+```
+
+Activation is convenient but not required. This is the activation-free Windows
+equivalent, which is also useful for an operator runbook or a locked-down
+machine:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e ".[runtime]"
+.\.venv\Scripts\eegle.exe check-setup --allow-missing-eeg
+```
+
+After activating the environment, verify that the console script was actually
+created before using the shorter `eegle ...` examples below:
+
+macOS or Linux:
+
+```bash
+command -v eegle
+eegle --help
+```
+
+Windows PowerShell:
+
+```powershell
+Get-Command eegle
+eegle --help
+```
+
+If that verification fails, the project has not been installed into the active
+environment (or that environment is not activated). From the repository root,
+the source-level equivalent is always explicit:
+
+```bash
+python -m eegle.cli --help
+python -m eegle.cli check-setup --allow-missing-eeg
+```
+
+This module form still needs the project dependencies installed in the Python
+environment, but it does not depend on the `eegle` console script being on
+`PATH`.
 
 The supplied constraints snapshot was captured on macOS. Use
 `constraints/macos-python310.txt` only when recreating that exact macOS
@@ -49,6 +99,13 @@ eegle run-task \
   --mode dry-run \
   --trials 2 \
   --participant demo
+```
+
+Windows PowerShell (after activation) uses the same installed `eegle` command.
+The one-line form avoids fragile PowerShell line-continuation characters:
+
+```powershell
+eegle run-task --config configs\default_experiment.json --task pvt --mode dry-run --trials 2 --participant demo
 ```
 
 A successful run prints its session path and writes output under:
@@ -111,36 +168,63 @@ display readiness, training dependencies, and whether EEG samples can be read.
 It replaces the less descriptive `doctor` command; `eegle doctor` remains as a
 compatibility alias.
 
-Commands such as `run-forward` are `eegle` subcommands, not standalone shell
-executables. Run them as `eegle run-forward ...`. Installed console commands are
-the cross-platform interface. Names such as `forward-go-nogo-8` are Makefile
-targets for POSIX-like development shells, not the Windows-native operator path.
+Commands such as `run-forward` are CLI subcommands, not standalone shell
+executables. `eegle run-forward ...` works only after the package installation
+has created `eegle` in the active environment. The checkout-based equivalent is
+`python -m eegle.cli run-forward ...`, which calls the same `main()`
+function directly. Names such as `forward-go-nogo-8` are Makefile targets for
+POSIX-like development shells, not the Windows-native operator path.
 
-| Command | Purpose |
-| --- | --- |
-| `eegle check-setup` | Validate software, LSL discovery, and configured hardware |
-| `eegle list-tasks` | Show available experiment tasks |
-| `eegle run-task` | Run only a task, usually for development or display testing |
-| `eegle run-forward` | Run setup checks, task, optional EEG recording, and analysis |
-| `eegle simulate-eeg` | Start a development-only simulated EEG LSL outlet |
-| `eegle analyze` | Generate a post-session summary |
-| `eegle report-html` | Generate an interactive HTML session report |
-| `eegle replay-realtime` | Replay captured realtime inputs and validate features |
-| `eegle extract-epochs` | Extract marker-locked EEG epochs |
-| `eegle train-model` | Train a supported classical epoch classifier |
-| `eegle evaluate-model` | Score classifier predictions against the stimulus manifest |
-| `eegle replay-classifier` | Reproduce classifier predictions from captured EEG and markers |
+| Installed command | Source-module equivalent | Purpose |
+| --- | --- | --- |
+| `eegle check-setup` | `python -m eegle.cli check-setup` | Validate software, LSL discovery, and configured hardware |
+| `eegle list-tasks` | `python -m eegle.cli list-tasks` | Show available experiment tasks |
+| `eegle run-task` | `python -m eegle.cli run-task` | Run only a task, usually for development or display testing |
+| `eegle run-forward` | `python -m eegle.cli run-forward` | Run setup checks, task, optional EEG recording, and analysis |
+| `eegle simulate-eeg` | `python -m eegle.cli simulate-eeg` | Start a development-only simulated EEG LSL outlet |
+| `eegle analyze` | `python -m eegle.cli analyze` | Generate a post-session summary |
+| `eegle report-html` | `python -m eegle.cli report-html` | Generate an interactive HTML session report |
+| `eegle replay-realtime` | `python -m eegle.cli replay-realtime` | Replay captured realtime inputs and validate features |
+| `eegle extract-epochs` | `python -m eegle.cli extract-epochs` | Extract marker-locked EEG epochs |
+| `eegle train-model` | `python -m eegle.cli train-model` | Train a supported classical epoch classifier |
+| `eegle evaluate-model` | `python -m eegle.cli evaluate-model` | Score classifier predictions against the stimulus manifest |
+| `eegle replay-classifier` | `python -m eegle.cli replay-classifier` | Replay classifier predictions from captured EEG and markers |
 
-The standalone `alpha8` command runs the posterior-alpha Enobio8 Go/No-go
-pipeline. `inhibition8` runs the separate observe-only response-inhibition
-pipeline. `classify8` runs participant-specific GO/NO-GO EEG condition
-classification:
+The `alpha8`, `inhibition8`, and `classify8` installed scripts have equivalent
+source-module forms. They run the posterior-alpha, response-inhibition, and
+participant-specific GO/NO-GO classification pipelines respectively:
 
 ```bash
 alpha8 --help
 inhibition8 --help
 classify8 --help
+python -m eegle.pipelines.alpha8 --help
+python -m eegle.pipelines.inhibition8 --help
+python -m eegle.pipelines.classify8 --help
 ```
+
+### Windows PowerShell Command Forms
+
+After activating `.venv`, the installed `eegle`, `alpha8`, `inhibition8`, and
+`classify8` commands work directly in PowerShell. Do not use repository-root
+`./alpha8`-style shell wrappers or Makefile targets on Windows; they require a
+POSIX-like shell. Use these equivalents instead:
+
+| POSIX-oriented form | Windows PowerShell form |
+| --- | --- |
+| `source .venv/bin/activate` | `.venv\Scripts\Activate.ps1` |
+| `python3.10 -m eegle.cli ...` | `py -3.10 -m eegle.cli ...` |
+| `./alpha8 full` | `alpha8 full` |
+| `./inhibition8 full` | `inhibition8 full` |
+| `./classify8 collect ...` | `classify8 collect ...` |
+| `make forward-dry-run` | `eegle run-forward --config configs\default_experiment.json --task pvt --task-mode dry-run --skip-eeg --allow-missing-eeg` |
+
+If activation is unavailable, prefix the console executable with
+`.\.venv\Scripts\`, for example
+`.\.venv\Scripts\classify8.exe --help`. Use `py -3.10 -m ...` when invoking a
+package module directly; it guarantees that the requested Python 3.10 runtime
+is used. The activation-free generic CLI form is
+`.\.venv\Scripts\python.exe -m eegle.cli check-setup --allow-missing-eeg`.
 
 ## Documentation Guide
 
@@ -166,6 +250,13 @@ eegle run-forward \
 Run the complete posterior-alpha calibration plus 100-trial Go/No-go pipeline:
 
 ```bash
+alpha8 full --participant sub-001
+```
+
+Windows PowerShell forms (after activation):
+
+```powershell
+eegle run-forward --config configs\forward_go_nogo_enobio8.json --task go_nogo --task-mode psychopy --trials 100 --participant sub-001 --require-eeg
 alpha8 full --participant sub-001
 ```
 
@@ -205,6 +296,15 @@ eegle run-forward \
 Smoke-test the specialized pipelines:
 
 ```bash
+alpha8 full --task-mode dry-run --skip-eeg --allow-missing-eeg --trials 2
+inhibition8 full --task-mode dry-run --skip-eeg --allow-missing-eeg --trials 2
+```
+
+The Windows PowerShell software-only verification is:
+
+```powershell
+eegle check-setup --allow-missing-eeg
+eegle run-forward --config configs\default_experiment.json --task pvt --task-mode dry-run --trials 2 --participant demo --skip-eeg --allow-missing-eeg
 alpha8 full --task-mode dry-run --skip-eeg --allow-missing-eeg --trials 2
 inhibition8 full --task-mode dry-run --skip-eeg --allow-missing-eeg --trials 2
 ```
@@ -347,6 +447,55 @@ Fz, Cz, Pz, C3, C4, P3, P4, Oz
 LabRecorder/XDF launch is not implemented. EEGle currently records the matched
 LSL EEG stream to its own session output.
 
+## Windows PowerShell Setup and NIC2 Enobio 8 Run
+
+Use 64-bit CPython 3.10 and PowerShell for the supported Windows x64 operator
+path. The Python package and command layer are shared with macOS and Linux;
+NIC2, the Enobio driver connection, Windows Firewall permissions, and
+PsychoPy's display setup remain machine-specific checks. Windows on ARM is not
+validated; confirm compatible LSL and device-driver binaries before using it.
+
+1. Create and install the runtime environment:
+
+   ```powershell
+   py -3.10 -m venv .venv
+   .venv\Scripts\Activate.ps1
+   python -m pip install --upgrade pip
+   python -m pip install -e ".[runtime]"
+   ```
+
+   Do not use `constraints/macos-python310.txt` on Windows. It is a captured
+   macOS environment, not a cross-platform lockfile.
+
+2. Connect the Enobio device, open NIC2, start acquisition, and enable NIC2's
+   LSL EEG outlet. Allow NIC2 and Python through Windows Firewall if LSL stream
+   discovery is blocked.
+
+3. Confirm that NIC2 publishes an EEG stream with eight channels at 500 Hz and
+   a name containing `enobio`, `nic`, `neuroelectrics`, or
+   `LSLOutletStreamName-EEG`.
+
+4. Validate the actual stream before collecting a session:
+
+   ```powershell
+   eegle check-setup --config configs\forward_pvt_enobio8.json --require-eeg --lsl-wait 5
+   ```
+
+   Continue only when `eeg_device` and `eeg_sample_probe` report `OK`. If they
+   do not, resolve NIC2 acquisition, its LSL outlet, and firewall visibility
+   before retrying.
+
+5. Run the PVT experiment:
+
+   ```powershell
+   eegle run-forward --config configs\forward_pvt_enobio8.json --task pvt --task-mode psychopy --participant sub-001 --require-eeg
+   ```
+
+6. Verify the printed session path contains `raw\eeg.csv`,
+   `raw\eeg_metadata.json`, `events\behavior.csv`, `events\events.jsonl`,
+   `triggers.txt`, and worker status files before treating the run as usable
+   data.
+
 ## GO/NO-GO EEG Classification
 
 `classify8` implements a participant-specific calibration, frozen-model, and
@@ -370,6 +519,15 @@ model bundle, including its `manifest.json`. For example:
 MODEL_DIR="$PWD/models/pilot_001/classifier_merged_480"
 test -f "$MODEL_DIR/erp_roi_logreg/manifest.json"
 test -f "$MODEL_DIR/pyriemann_erp_cov/manifest.json"
+```
+
+Windows PowerShell version:
+
+```powershell
+$ModelDir = Join-Path $PWD "models\pilot_001\classifier_merged_480"
+Test-Path "$ModelDir\erp_roi_logreg\manifest.json"
+Test-Path "$ModelDir\pyriemann_erp_cov\manifest.json"
+classify8 online --participant sub-001 --model-dir $ModelDir --primary erp_roi_logreg --shadow pyriemann_erp_cov --shadow torch_eegnet --trials 160
 ```
 
 The online worker runs one primary model plus optional shadow models on each

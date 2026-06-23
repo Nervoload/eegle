@@ -8,23 +8,23 @@ from pathlib import Path
 
 import numpy as np
 
-from reproduce.analysis.alpha import run_alpha_validation
-from reproduce.analysis.html_summary import generate_experiment_html_report
-from reproduce.calibration.posterior_alpha import PosteriorAlphaCalibrationSuite
-from reproduce.pipelines.alpha8 import Alpha8PipelineOptions, run_full_pipeline
-from reproduce.realtime.alpha import (
+from eegle.analysis.alpha import run_alpha_validation
+from eegle.analysis.html_summary import generate_experiment_html_report
+from eegle.calibration.posterior_alpha import PosteriorAlphaCalibrationSuite
+from eegle.pipelines.alpha8 import Alpha8PipelineOptions, run_full_pipeline
+from eegle.realtime.alpha import (
     AlphaPowerEstimator,
     ArtifactGate,
     bounded_alpha_band,
     fallback_alpha_band,
     spectral_peak_candidates,
 )
-from reproduce.realtime.models import ModelPrediction, make_model_adapter
-from reproduce.realtime.policy import ConservativeDecisionPolicy, TaskAction
-from reproduce.realtime.registry import make_model
-from reproduce.realtime.task_feedback import TaskFeedbackClient
-from reproduce.session import create_session
-from reproduce.tasks.go_nogo import GoNoGoTask
+from eegle.realtime.models import ModelPrediction, make_model_adapter
+from eegle.realtime.policy import ConservativeDecisionPolicy, TaskAction
+from eegle.realtime.registry import make_model
+from eegle.realtime.task_feedback import TaskFeedbackClient
+from eegle.session import create_session
+from eegle.tasks.go_nogo import GoNoGoTask
 
 
 class ClosedLoopModelSystemTests(unittest.TestCase):

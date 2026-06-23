@@ -17,7 +17,7 @@ Preflight
 
 ## Layer 0: Preflight
 
-`reproduce.preflight` checks the active or explicitly configured Python
+`eegle.preflight` checks the active or explicitly configured Python
 interpreter, shared-codebase OS support, optional platform expectations, package
 availability, LSL discovery, configured EEG device identification, and
 Enobio/NIC2 stream matching. It also emits capability checks for installed
@@ -55,7 +55,7 @@ When `--calibration-suite posterior_alpha` is selected for Go/No-go, the runner 
 
 `alpha8 full` is the top-level Enobio8 posterior-alpha orchestration command. It runs a required Enobio8 setup/preflight check, then invokes the existing forward runner with `posterior_alpha`, 100 main Go/No-go stimuli, realtime alpha measurement, post-analysis, and `reports/experiment_summary.html` generation in strict sequence. The dry validation form is `alpha8 full --task-mode dry-run --skip-eeg --allow-missing-eeg --trials 2`.
 
-`reproduce.session` creates a BciPy-inspired session layout:
+`eegle.session` creates a BciPy-inspired session layout:
 
 ```text
 data/participants/<participant-id>/sessions/<date>/<experiment-id>/<task>/run-<timestamp>/
@@ -106,7 +106,7 @@ data/participants/<participant-id>/sessions/<date>/<experiment-id>/<task>/run-<t
       offline_analyzer.status.json
 ```
 
-`reproduce.telemetry` is the observability side-channel for this layout. It writes structured JSONL records with `timestamp_wall`, `timestamp_monotonic`, `session_id`, `session_dir`, `component`, `event`, `level`, `message`, and `metadata`. Console routing has four levels:
+`eegle.telemetry` is the observability side-channel for this layout. It writes structured JSONL records with `timestamp_wall`, `timestamp_monotonic`, `session_id`, `session_dir`, `component`, `event`, `level`, `message`, and `metadata`. Console routing has four levels:
 
 - `quiet`: suppress console telemetry while preserving files.
 - `default`: sparse operator-visible lifecycle and failure messages.
@@ -117,7 +117,7 @@ Telemetry augments the canonical experiment files. Stimulus timing still lives i
 
 ## Layer 2: Realtime Closed Loop
 
-`reproduce.feedback_manager.FeedbackManager` owns the managed Architecture C lifecycle. It can start the recorder before calibration, reconfigure after calibration, launch enabled realtime workers before the task, stop long-running workers after the task, and run offline analysis after recording ends. The current workers are:
+`eegle.feedback_manager.FeedbackManager` owns the managed Architecture C lifecycle. It can start the recorder before calibration, reconfigure after calibration, launch enabled realtime workers before the task, stop long-running workers after the task, and run offline analysis after recording ends. The current workers are:
 
 - `recorder`: `lsl_csv` is implemented; `labrecorder_xdf` is a configured hook only.
 - `realtime_processor`: reads EEG LSL and marker LSL, maintains raw and processed ring buffers, uses causal online preprocessing, runs marker-locked epochs through a registry-backed `ModelAdapter`, converts predictions through `DecisionPolicy`, and logs/emits explicit task actions. It can also run calibrated posterior alpha measurement continuously and write `realtime/alpha_power.jsonl` while marker-locked epoching remains enabled. Rolling-window decisions remain available as a compatibility path.
@@ -128,7 +128,7 @@ Telemetry augments the canonical experiment files. Stimulus timing still lives i
   predictions or evaluation artifacts.
 - `offline_analyzer`: runs the minimal session report.
 
-`reproduce.realtime` defines the reusable online pieces: ring buffer, marker-locked epoching, causal preprocessing, model registry, model adapters, bounded decision policies, feedback emitters, and the task-side feedback client. The marker epocher waits until the configured post-stimulus window is available before emitting an epoch, so P300 model decisions naturally apply to later stimuli or blocks.
+`eegle.realtime` defines the reusable online pieces: ring buffer, marker-locked epoching, causal preprocessing, model registry, model adapters, bounded decision policies, feedback emitters, and the task-side feedback client. The marker epocher waits until the configured post-stimulus window is available before emitting an epoch, so P300 model decisions naturally apply to later stimuli or blocks.
 
 The feedback contract is action-oriented: model predictions become `TaskAction` records such as `increase_no_go_probability`, `adjust_isi`, `repeat_condition`, `show_reward`, or `set_visual_alpha`. The PsychoPy Go/No-go task consumes these through `TaskFeedbackClient` only at deterministic boundaries and writes received/accepted/rejected/applied action records into task events and the stimulus manifest.
 
@@ -138,7 +138,7 @@ The `FeedbackManager` reports worker `process.start`, `process.ready`, `process.
 
 ## Layer 3: Post-Experiment Analysis
 
-`reproduce.analysis` summarizes task behavior, process state, realtime logs, raw EEG metadata, alpha validation, and Go/No-go ERP/P300 outputs when a Go/No-go stimulus manifest and EEG CSV are present. The ERP path uses MNE to build stimulus-locked epochs, ROI waveforms, P300 metrics, per-trial P300 CSVs, and a static HTML dashboard made of fixed-width stimulus-locked interval cards. Each card shows the saved stimulus, the single-trial ROI waveform with the detected P3 point, and montage frames across that stimulus interval.
+`eegle.analysis` summarizes task behavior, process state, realtime logs, raw EEG metadata, alpha validation, and Go/No-go ERP/P300 outputs when a Go/No-go stimulus manifest and EEG CSV are present. The ERP path uses MNE to build stimulus-locked epochs, ROI waveforms, P300 metrics, per-trial P300 CSVs, and a static HTML dashboard made of fixed-width stimulus-locked interval cards. Each card shows the saved stimulus, the single-trial ROI waveform with the detected P3 point, and montage frames across that stimulus interval.
 
 Alpha validation joins `realtime/alpha_power.jsonl` to Go/No-go trial timing, writes `reports/alpha/trial_alpha.csv`, computes `reports/alpha/offline_alpha_timeseries.csv` from raw EEG, and summarizes whether pre-stimulus alpha predicts reaction time or accuracy in `reports/alpha/alpha_summary.json`. `reports/experiment_summary.html` embeds a decimated replay view with raw channel traces, marker toggles, live alpha estimates, and the offline alpha overlay.
 

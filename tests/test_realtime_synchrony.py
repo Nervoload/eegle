@@ -11,17 +11,17 @@ from unittest.mock import patch
 
 import numpy as np
 
-from reproduce.devices.lsl_eeg import _select_lsl_info
-from reproduce.feedback_manager import FeedbackManager, WorkerHandle, _pipeline_validity_failures
-from reproduce.hardware.enobio import mapped_channel_names
-from reproduce.realtime.alpha import AlphaPowerEstimator
-from reproduce.realtime.buffer import RingBuffer
-from reproduce.realtime.models import ModelPrediction
-from reproduce.realtime.performance import RealtimePerformanceConfig, RealtimePerformanceStats, performance_config_from
-from reproduce.session import create_session
-from reproduce.tasks.go_nogo import _mark
-from reproduce.workers.common import QueuedJsonlWriter
-from reproduce.workers.realtime_processor import (
+from eegle.devices.lsl_eeg import _select_lsl_info
+from eegle.feedback_manager import FeedbackManager, WorkerHandle, _pipeline_validity_failures
+from eegle.hardware.enobio import mapped_channel_names
+from eegle.realtime.alpha import AlphaPowerEstimator
+from eegle.realtime.buffer import RingBuffer
+from eegle.realtime.models import ModelPrediction
+from eegle.realtime.performance import RealtimePerformanceConfig, RealtimePerformanceStats, performance_config_from
+from eegle.session import create_session
+from eegle.tasks.go_nogo import _mark
+from eegle.workers.common import QueuedJsonlWriter
+from eegle.workers.realtime_processor import (
     InferenceWorkItem,
     _advance_deadline,
     _ordered_model_entries,
@@ -203,7 +203,7 @@ class RealtimeSynchronyTests(unittest.TestCase):
     def test_flip_marker_uses_modeled_visual_timestamp_before_logging(self) -> None:
         logger = _FakeLogger()
         outlet = _FakeOutlet()
-        with patch("reproduce.tasks.go_nogo.lsl_local_clock", return_value=100.0):
+        with patch("eegle.tasks.go_nogo.lsl_local_clock", return_value=100.0):
             record = _mark(
                 logger,
                 outlet,
@@ -438,13 +438,13 @@ class RealtimeSynchronyTests(unittest.TestCase):
             paths = create_session(config, root=Path(tmp))
             worker = FeedbackManager(config, paths, record_eeg=False)._make_worker(
                 "realtime_processor",
-                "reproduce.workers.realtime_processor",
+                "eegle.workers.realtime_processor",
                 ["--backend", "lsl"],
             )
 
         self.assertIsInstance(worker.command, list)
         self.assertEqual(worker.command[0], sys.executable)
-        self.assertEqual(worker.command[1:3], ["-m", "reproduce.workers.realtime_processor"])
+        self.assertEqual(worker.command[1:3], ["-m", "eegle.workers.realtime_processor"])
 
     def test_enabled_realtime_without_markers_or_alpha_is_invalid(self) -> None:
         failures = _pipeline_validity_failures(

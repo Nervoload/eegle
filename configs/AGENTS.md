@@ -1,7 +1,7 @@
 # Config Guidance
 
 The JSON files in this directory are experiment presets. They are loaded by
-`reproduce.config.load_config` and then refined by CLI flags or pipeline helpers.
+`eegle.config.load_config` and then refined by CLI flags or pipeline helpers.
 
 ## Presets
 
@@ -25,7 +25,7 @@ The JSON files in this directory are experiment presets. They are loaded by
   change.
 - For classifier work, keep `realtime.quality_gate`, `realtime.epoching`,
   `realtime.preprocessing`, and `realtime.model` aligned with the contracts in
-  `reproduce/realtime/classification.py` and `reproduce/realtime/models.py`.
+  `eegle/realtime/classification.py` and `eegle/realtime/models.py`.
 - Config changes that affect generated artifacts should also update the README
   or `docs/MODEL_TRAINING_TESTING_GOALS.md` when operator commands change.
 

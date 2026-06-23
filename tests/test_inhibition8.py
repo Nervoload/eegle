@@ -8,23 +8,23 @@ from unittest.mock import patch
 
 import numpy as np
 
-from reproduce.analysis.inhibition8 import replay_realtime_session, run_feature_behavior_analysis
-from reproduce.analysis.alpha import run_alpha_validation
-from reproduce.analysis.html_summary import _build_segments, _load_staged_features, _render_html
-from reproduce.analysis.reports import _behavior_summary
-from reproduce.calibration.posterior_alpha import _draw_practice_stimulus
-from reproduce.hardware.enobio import expected_profile, mapped_channel_names
-from reproduce.config import load_config
-from reproduce.pipelines.inhibition8 import _config_contract_issues
-from reproduce.realtime.epoching import MarkerEvent
-from reproduce.realtime.event_features import (
+from eegle.analysis.inhibition8 import replay_realtime_session, run_feature_behavior_analysis
+from eegle.analysis.alpha import run_alpha_validation
+from eegle.analysis.html_summary import _build_segments, _load_staged_features, _render_html
+from eegle.analysis.reports import _behavior_summary
+from eegle.calibration.posterior_alpha import _draw_practice_stimulus
+from eegle.hardware.enobio import expected_profile, mapped_channel_names
+from eegle.config import load_config
+from eegle.pipelines.inhibition8 import _config_contract_issues
+from eegle.realtime.epoching import MarkerEvent
+from eegle.realtime.event_features import (
     ERP_BASELINE_WINDOW,
     FEATURE_DEFINITIONS,
     EngineInputCaptureWriter,
     FeatureRegistry,
     RealtimeEventEngine,
 )
-from reproduce.tasks.go_nogo import _draw_stimulus, _run_practice, _shape_options
+from eegle.tasks.go_nogo import _draw_stimulus, _run_practice, _shape_options
 
 
 CHANNELS = ["Fz", "Cz", "Pz", "C3", "C4", "P3", "P4", "Oz"]
@@ -135,9 +135,9 @@ class Inhibition8Tests(unittest.TestCase):
 
     def test_task_practice_uses_only_negative_trial_indices(self) -> None:
         with (
-            patch("reproduce.tasks.go_nogo._show_practice_message", return_value=True),
-            patch("reproduce.tasks.go_nogo._present_stimulus", return_value=({}, False)) as present,
-            patch("reproduce.tasks.go_nogo._safe_wait"),
+            patch("eegle.tasks.go_nogo._show_practice_message", return_value=True),
+            patch("eegle.tasks.go_nogo._present_stimulus", return_value=({}, False)) as present,
+            patch("eegle.tasks.go_nogo._safe_wait"),
         ):
             aborted = _run_practice(
                 None,
