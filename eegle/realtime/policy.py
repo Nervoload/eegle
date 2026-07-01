@@ -15,6 +15,7 @@ DEFAULT_ACTIONS = (
     "repeat_condition",
     "show_reward",
     "set_visual_alpha",
+    "stimulation_candidate",
     "observe_only",
 )
 
@@ -195,12 +196,77 @@ class ObserveOnlyPolicy(ConservativeDecisionPolicy):
         super().__init__({**dict(config or {}), "allow_task_adaptation": False})
 
 
+class AttentionLapseStimulationPolicy(ConservativeDecisionPolicy):
+    """Gate stimulation-candidate actions behind explicit research controls."""
+
+    kind = "attention_lapse_stimulation"
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        super().__init__(config)
+        self.allow_stimulation = bool(self.config.get("allow_stimulation", False))
+        self.research_safety_ack = bool(self.config.get("research_safety_ack", False))
+        self.probability_threshold = float(self.config.get("probability_threshold", 0.7))
+        self.refractory_seconds = float(self.config.get("refractory_seconds", 10.0))
+        self.require_valid_quality = bool(self.config.get("require_valid_quality", True))
+        self.stimulation_modality = str(self.config.get("stimulation_modality", "unspecified"))
+        self._last_candidate_monotonic: float | None = None
+
+    def decide(self, prediction: ModelPrediction, epoch_metadata: dict[str, Any]) -> list[TaskAction]:
+        source_trial = _optional_int(epoch_metadata.get("trial"))
+        probability = _prediction_probability(prediction)
+        if not self.allow_stimulation:
+            return [self._observe(prediction, epoch_metadata, "stimulation disabled")]
+        if not self.research_safety_ack:
+            return [self._observe(prediction, epoch_metadata, "research safety acknowledgement missing")]
+        if source_trial is None or source_trial < 1:
+            return [self._observe(prediction, epoch_metadata, "practice or unknown trial excluded")]
+        quality = dict(epoch_metadata.get("quality") or {})
+        if self.require_valid_quality and not bool(quality.get("valid", False)):
+            return [self._observe(prediction, epoch_metadata, "epoch quality gate invalid")]
+        now = monotonic()
+        if self._last_candidate_monotonic is not None and now - self._last_candidate_monotonic < self.refractory_seconds:
+            return [self._observe(prediction, epoch_metadata, "stimulation refractory period active")]
+        if probability < self.probability_threshold:
+            return [self._observe(prediction, epoch_metadata, "attention lapse probability below threshold")]
+        if not self._cooldown_ok("stimulation_candidate", source_trial):
+            return [self._observe(prediction, epoch_metadata, "stimulation trial cooldown active")]
+        self._last_candidate_monotonic = now
+        self._last_action_trial["stimulation_candidate"] = source_trial
+        self._sequence += 1
+        return [
+            TaskAction(
+                action="stimulation_candidate",
+                boundary=self.boundary,
+                reason=f"attention lapse probability {probability:.3f}",
+                action_id=self._action_id(prediction, epoch_metadata, "stimulation_candidate"),
+                value=True,
+                parameters={
+                    "probability_threshold": self.probability_threshold,
+                    "refractory_seconds": self.refractory_seconds,
+                    "modality": self.stimulation_modality,
+                    "requires_external_stimulator_confirmation": True,
+                },
+                source_model=prediction.model_kind,
+                source_label=prediction.label,
+                source_score=prediction.score,
+                source_probability=prediction.probability,
+                source_epoch_index=_optional_int(epoch_metadata.get("epoch_index")),
+                source_trial=source_trial,
+                target_trial_index=source_trial + 1,
+                created_at_monotonic=now,
+                metadata={"policy": self.kind, "research_gated": True},
+            )
+        ]
+
+
 def make_decision_policy(kind: str, config: dict[str, Any] | None = None) -> ConservativeDecisionPolicy:
     normalized = (kind or "conservative_p300").lower()
     if normalized in {"default", "conservative_p300"}:
         return ConservativeDecisionPolicy(config)
     if normalized in {"observe_only", "disabled"}:
         return ObserveOnlyPolicy(config)
+    if normalized == "attention_lapse_stimulation":
+        return AttentionLapseStimulationPolicy(config)
     raise NotImplementedError(f"decision policy '{kind}' is not implemented")
 
 

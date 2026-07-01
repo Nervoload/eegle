@@ -16,6 +16,8 @@ from eegle.analysis.reports import analyze_session
 from eegle.config import DEFAULT_CONFIG, load_config
 from eegle.experiment import ForwardExperimentRunner
 from eegle.factory import make_task_component
+from eegle.ml.registry import list_model_kinds, list_model_specs
+from eegle.ml.targets import SUPPORTED_TARGETS
 from eegle.preflight import run_preflight, write_preflight_report
 from eegle.realtime.controller import ClosedLoopController
 from eegle.realtime.epoching import extract_epochs_for_session
@@ -58,6 +60,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_config_arg(tasks)
     _add_telemetry_args(tasks)
     tasks.set_defaults(func=cmd_list_tasks)
+
+    model_list = subparsers.add_parser("model-list", help="List registered EEG model kinds")
+    _add_config_arg(model_list)
+    _add_telemetry_args(model_list)
+    model_list.add_argument("--json", action="store_true", help="Emit JSON instead of a table")
+    model_list.set_defaults(func=cmd_model_list)
 
     init = subparsers.add_parser("init-session", help="Create a session directory without running a task")
     _add_config_arg(init)
@@ -172,10 +180,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_telemetry_args(train_model)
     train_model.add_argument(
         "--kind",
-        choices=["erp_roi_logreg", "sklearn_flatten_lda", "sklearn_xdawn_lda", "pyriemann_erp_cov", "torch_eegnet"],
+        choices=list_model_kinds(include_aliases=True, trainable=True),
         default=None,
     )
-    train_model.add_argument("--epochs-npz", required=True, help="Path to realtime/epochs/epochs.npz")
+    train_model.add_argument("--target", choices=SUPPORTED_TARGETS, default="condition")
+    train_model.add_argument("--epochs-npz", action="append", default=[], help="Path to realtime/epochs/epochs.npz; repeat for multi-session training")
+    train_model.add_argument("--session-dir", action="append", default=[], help="Session containing realtime/epochs/epochs.npz; repeat for multi-session training")
     train_model.add_argument("--output", required=True, help="Output artifact path, or suffix-free model-bundle directory")
     train_model.set_defaults(func=cmd_train_model)
 
@@ -235,6 +245,22 @@ def cmd_list_tasks(args: argparse.Namespace, config: dict[str, Any]) -> int:
         print(f"  {spec.description}")
         for note in spec.notes:
             print(f"  note: {note}")
+    return 0
+
+
+def cmd_model_list(args: argparse.Namespace, config: dict[str, Any]) -> int:
+    specs = [spec.payload() for spec in list_model_specs()]
+    if args.json:
+        print(json.dumps({"models": specs}, indent=2, sort_keys=True))
+        return 0
+    print("kind                 family          train  realtime  primary  dependencies             targets")
+    for spec in specs:
+        print(
+            f"{str(spec['kind']):20} {str(spec['family']):15} "
+            f"{str(bool(spec['trainable'])):5} {str(bool(spec['realtime_supported'])):8} "
+            f"{str(bool(spec['primary_realtime_allowed'])):7} "
+            f"{','.join(spec['dependencies']) or '-':24} {','.join(spec['supported_targets'])}"
+        )
     return 0
 
 
@@ -422,9 +448,12 @@ def cmd_extract_epochs(args: argparse.Namespace, config: dict[str, Any]) -> int:
 
 def cmd_train_model(args: argparse.Namespace, config: dict[str, Any]) -> int:
     model_config = dict(config.get("realtime", {}).get("model", {}))
+    model_config["target"] = args.target
+    model_config["session_dirs"] = [str(Path(value).expanduser().resolve()) for value in args.session_dir]
     kind = args.kind or str(model_config.get("kind", "sklearn_xdawn_lda"))
     try:
-        manifest = train_epoch_model(kind, Path(args.epochs_npz), Path(args.output), model_config)
+        epoch_inputs = _training_epoch_inputs(args)
+        manifest = train_epoch_model(kind, epoch_inputs, Path(args.output), model_config)
     except Exception as exc:
         manifest = {
             "status": "failed",
@@ -433,6 +462,15 @@ def cmd_train_model(args: argparse.Namespace, config: dict[str, Any]) -> int:
         }
     print(json.dumps(manifest, indent=2, sort_keys=True))
     return 0 if manifest.get("status") == "ok" else 1
+
+
+def _training_epoch_inputs(args: argparse.Namespace) -> list[Path]:
+    paths = [Path(value).expanduser().resolve() for value in args.epochs_npz]
+    for session_dir in args.session_dir:
+        paths.append(Path(session_dir).expanduser().resolve() / "realtime" / "epochs" / "epochs.npz")
+    if not paths:
+        raise ValueError("--epochs-npz or --session-dir is required")
+    return paths
 
 
 def cmd_evaluate_model(args: argparse.Namespace, config: dict[str, Any]) -> int:

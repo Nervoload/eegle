@@ -14,6 +14,8 @@ from typing import Any
 
 import numpy as np
 
+from eegle.ml.contracts import normalize_input_contract, select_contract_channels, validate_supported_resampling
+
 
 BUNDLE_SCHEMA = "eegle.model_bundle.v1"
 PREDICTION_SCHEMA = "eegle.model_prediction.v1"
@@ -61,6 +63,11 @@ def model_prediction_row(
     quality: dict[str, Any],
 ) -> dict[str, Any]:
     """Build the label-blind normalized realtime prediction record."""
+    metadata_value = dict(prediction.get("metadata") or {})
+    target = str(metadata_value.get("target", "condition"))
+    probability = prediction.get("probability")
+    probability_no_go = probability if target == "condition" else None
+    probability_attention_lapse = probability if target.startswith("attention_lapse") else None
     return {
         "schema": PREDICTION_SCHEMA,
         "status": "predicted",
@@ -72,9 +79,15 @@ def model_prediction_row(
         "model_role": role,
         "model_kind": prediction.get("model_kind"),
         "model_version": prediction.get("model_version"),
-        "bundle_hash": dict(prediction.get("metadata") or {}).get("bundle_hash"),
-        "predicted_condition": prediction.get("label"),
-        "probability_no_go": prediction.get("probability"),
+        "model_family": metadata_value.get("model_family"),
+        "bundle_hash": metadata_value.get("bundle_hash"),
+        "target": target,
+        "prediction_label": prediction.get("label"),
+        "predicted_condition": prediction.get("label") if target == "condition" else None,
+        "probability_no_go": probability_no_go,
+        "probability_attention_lapse": probability_attention_lapse,
+        "calibrated_threshold": metadata_value.get("calibrated_threshold"),
+        "calibration_id": metadata_value.get("calibration_id"),
         "score": prediction.get("score"),
         "features": prediction.get("features", {}),
         "processing_latency_ms": latency_ms,
@@ -188,27 +201,28 @@ def prepare_classifier_epoch(
     """Validate, reorder, convert units, and baseline-correct one epoch."""
     from eegle.realtime.models import epoch_to_channels_samples, relative_times
 
-    values = epoch_to_channels_samples(epoch, channel_names, str(contract.get("input_layout", "auto")))
-    required = [str(value) for value in contract.get("channel_names", contract.get("required_channels", channel_names))]
-    missing = [name for name in required if name not in channel_names]
-    if missing:
-        raise ValueError("model-required channels missing from epoch: " + ", ".join(missing))
-    expected_rate = float(contract.get("sample_rate_hz", sample_rate_hz) or sample_rate_hz)
-    if abs(expected_rate - float(sample_rate_hz)) > float(contract.get("sample_rate_tolerance_hz", 0.01)):
+    normalized_contract = normalize_input_contract(contract, fallback_channel_names=channel_names)
+    validate_supported_resampling(normalized_contract)
+    values = epoch_to_channels_samples(epoch, channel_names, str(normalized_contract.get("input_layout", "auto")))
+    indices, required = select_contract_channels(channel_names, normalized_contract)
+    expected_rate = float(normalized_contract.get("sample_rate_hz", sample_rate_hz) or sample_rate_hz)
+    if abs(expected_rate - float(sample_rate_hz)) > float(normalized_contract.get("sample_rate_tolerance_hz", 0.01)):
         raise ValueError(f"model sample rate {expected_rate:g} Hz does not match stream {sample_rate_hz:g} Hz")
-    indices = [channel_names.index(name) for name in required]
     values = np.asarray(values[indices], dtype=float)
-    input_units = str(contract.get("input_units", "microvolts")).lower()
+    expected_samples = int(normalized_contract.get("sample_count", values.shape[1]) or values.shape[1])
+    if values.shape[1] != expected_samples:
+        raise ValueError(f"model sample count {expected_samples} does not match epoch sample count {values.shape[1]}")
+    input_units = str(normalized_contract.get("input_units", "microvolts")).lower()
     if input_units in {"v", "volt", "volts"}:
         values = values * 1e6
     times = relative_times(metadata_value, values.shape[1], sample_rate_hz)
-    expected_window = contract.get("epoch_window_seconds")
+    expected_window = normalized_contract.get("epoch_window_seconds")
     if expected_window:
         actual_window = metadata_value.get("epoch_window_seconds", [float(times[0]), float(times[-1])])
-        tolerance = float(contract.get("epoch_window_tolerance_seconds", 0.01))
+        tolerance = float(normalized_contract.get("epoch_window_tolerance_seconds", 0.01))
         if any(abs(float(a) - float(b)) > tolerance for a, b in zip(actual_window, expected_window)):
             raise ValueError(f"model epoch window {expected_window} does not match runtime window {actual_window}")
-    baseline = contract.get("baseline_seconds", [-0.2, 0.0])
+    baseline = normalized_contract.get("baseline_seconds", [-0.2, 0.0])
     return baseline_correct(values, times, baseline), required, times
 
 

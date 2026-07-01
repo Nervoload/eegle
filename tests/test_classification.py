@@ -323,6 +323,38 @@ class ClassificationTests(unittest.TestCase):
             self.assertAlmostEqual(evaluated["metrics"]["primary"]["coverage"], 2.0 / 3.0)
             self.assertTrue((root / "reports" / "classification" / "predictions.csv").exists())
 
+    def test_evaluation_and_dashboard_use_calibrated_threshold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "realtime").mkdir()
+            (root / "events").mkdir()
+            (root / "logs" / "processes").mkdir(parents=True)
+            manifest = {
+                "trials": [
+                    {"trial": 1, "stimulus": {"is_no_go": False}},
+                    {"trial": 2, "stimulus": {"is_no_go": True}},
+                ]
+            }
+            (root / "events" / "stimulus_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            rows = [
+                {**_prediction(1, "go", 0.30), "calibrated_threshold": 0.40, "calibration_id": "cal-1"},
+                {**_prediction(2, "no_go", 0.45), "calibrated_threshold": 0.40, "calibration_id": "cal-1"},
+            ]
+            (root / "realtime" / "model_predictions.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in rows),
+                encoding="utf-8",
+            )
+
+            live = dashboard_snapshot(root)
+            evaluated = evaluate_classifier_session(root)
+
+        self.assertEqual(evaluated["metrics"]["primary"]["operating_threshold"], 0.40)
+        self.assertEqual(evaluated["metrics"]["primary"]["threshold_source"], "prediction_row_calibrated_threshold")
+        self.assertEqual(evaluated["metrics"]["primary"]["confusion_matrix"], [[1, 0], [0, 1]])
+        self.assertEqual(evaluated["metrics"]["primary"]["default_threshold_metrics"]["confusion_matrix"], [[1, 0], [1, 0]])
+        self.assertEqual(live["metrics"]["primary"]["operating_threshold"], 0.40)
+        self.assertEqual(live["metrics"]["primary"]["confusion_matrix"], [[1, 0], [0, 1]])
+
     def test_classifier_capture_replay_matches_online_predictions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

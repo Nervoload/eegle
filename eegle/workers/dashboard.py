@@ -19,7 +19,7 @@ from eegle.config import load_config
 from eegle.lsl import inlet_time_correction, lsl_processing_flags
 from eegle.realtime.demo_classifier import DEMO_DISCLOSURE, demo_config_from, demo_prediction_from_marker
 from eegle.realtime.epoching import parse_marker_label
-from eegle.realtime.models import binary_classification_metrics
+from eegle.realtime.models import binary_classification_metrics, positive_label_for_target
 from eegle.session import paths_for_existing_session
 from eegle.telemetry import Telemetry
 from eegle.workers.common import StatusWriter, append_jsonl, install_stop_signal_handlers
@@ -35,11 +35,12 @@ def dashboard_snapshot(session_dir: str | Path, demo_state: dict[str, Any] | Non
 
     predictions = _load_jsonl(root / "realtime" / "model_predictions.jsonl")
     manifest = _load_json(root / "events" / "stimulus_manifest.json") or {}
-    truth = {
+    condition_truth = {
         int(row["trial"]): int(bool(dict(row.get("stimulus") or {}).get("is_no_go")))
         for row in manifest.get("trials", [])
         if int(row.get("trial", 0) or 0) >= 1
     }
+    lapse_truth = _manifest_lapse_truth(manifest)
     model_ids = sorted({str(row.get("model_id")) for row in predictions if row.get("model_id")})
     metrics: dict[str, Any] = {}
     latest: dict[str, Any] = {}
@@ -47,13 +48,33 @@ def dashboard_snapshot(session_dir: str | Path, demo_state: dict[str, Any] | Non
         rows = [row for row in predictions if row.get("model_id") == model_id and row.get("status") == "predicted"]
         if rows:
             latest[model_id] = rows[-1]
-        scored = [row for row in rows if int(row.get("trial", -1) or -1) in truth]
+        target = str((rows[-1].get("target") if rows else "condition") or "condition")
+        truth = lapse_truth if target.startswith("attention_lapse") else condition_truth
+        probability_field = "probability_attention_lapse" if target.startswith("attention_lapse") else "probability_no_go"
+        scored = [
+            row for row in rows
+            if int(row.get("trial", -1) or -1) in truth
+            and row.get(probability_field) is not None
+        ]
         if scored:
+            threshold_info = _operating_threshold_from_rows(scored)
+            positive_label = positive_label_for_target(target)
             metrics[model_id] = binary_classification_metrics(
                 np.asarray([truth[int(row["trial"])] for row in scored], dtype=int),
-                np.asarray([float(row["probability_no_go"]) for row in scored], dtype=float),
+                np.asarray([float(row[probability_field]) for row in scored], dtype=float),
+                threshold=threshold_info["threshold"],
+                positive_label=positive_label,
             )
             metrics[model_id]["coverage"] = len(scored) / max(1, len(truth))
+            metrics[model_id]["default_threshold_metrics"] = binary_classification_metrics(
+                np.asarray([truth[int(row["trial"])] for row in scored], dtype=int),
+                np.asarray([float(row[probability_field]) for row in scored], dtype=float),
+                threshold=0.5,
+                positive_label=positive_label,
+            )
+            metrics[model_id]["target"] = target
+            metrics[model_id]["evaluation_level"] = "online_dashboard"
+            metrics[model_id]["threshold_source"] = threshold_info["source"]
         latencies = [float(row["processing_latency_ms"]) for row in rows if row.get("processing_latency_ms") is not None]
         metrics.setdefault(model_id, {})["mean_latency_ms"] = float(np.mean(latencies)) if latencies else None
     predicted = [row for row in predictions if row.get("status") == "predicted"]
@@ -71,7 +92,7 @@ def dashboard_snapshot(session_dir: str | Path, demo_state: dict[str, Any] | Non
         "predictions": predicted[-500:],
         "prediction_count": len(predicted),
         "rejected_epoch_count": len(rejected),
-        "truth_count": len(truth),
+        "truth_count": len(condition_truth),
         "primary_shadow_agreement": agreement,
         "processes": statuses,
     }
@@ -137,7 +158,9 @@ def _primary_shadow_agreement(predictions: list[dict[str, Any]]) -> dict[str, An
         item = by_shadow.setdefault(model_id, {"comparisons": 0, "agreements": 0})
         item["comparisons"] += 1
         comparisons += 1
-        if row.get("predicted_condition") == reference.get("predicted_condition"):
+        row_label = row.get("predicted_condition") if row.get("predicted_condition") is not None else row.get("prediction_label")
+        reference_label = reference.get("predicted_condition") if reference.get("predicted_condition") is not None else reference.get("prediction_label")
+        if row_label == reference_label:
             item["agreements"] += 1
             agreements += 1
     for item in by_shadow.values():
@@ -148,6 +171,71 @@ def _primary_shadow_agreement(predictions: list[dict[str, Any]]) -> dict[str, An
         "rate": agreements / max(1, comparisons) if comparisons else None,
         "by_shadow": by_shadow,
     }
+
+
+def _manifest_lapse_truth(manifest: dict[str, Any]) -> dict[int, int]:
+    trials = [
+        row for row in manifest.get("trials", [])
+        if int(row.get("trial", 0) or 0) >= 1
+    ]
+    correct_go_rts = [
+        float(dict(row.get("response") or {}).get("reaction_time_seconds"))
+        for row in trials
+        if not bool(dict(row.get("stimulus") or {}).get("is_no_go"))
+        and bool(dict(row.get("response") or {}).get("correct_press"))
+        and dict(row.get("response") or {}).get("reaction_time_seconds") is not None
+    ]
+    slow_threshold = float(np.quantile(correct_go_rts, 0.75)) if correct_go_rts else float("inf")
+    rows = []
+    for row in trials:
+        response = dict(row.get("response") or {})
+        stimulus = dict(row.get("stimulus") or {})
+        rt = _optional_float(response.get("reaction_time_seconds"))
+        is_no_go = bool(stimulus.get("is_no_go"))
+        rows.append(
+            {
+                "trial": int(row["trial"]),
+                "is_no_go": int(is_no_go),
+                "reaction_time_seconds": rt,
+                "commission_error": int(is_no_go and int(response.get("button_press_count", 0) or 0) > 0),
+                "omission_error": int(not is_no_go and int(response.get("button_press_count", 0) or 0) == 0),
+                "slow_trial": int(not is_no_go and bool(response.get("correct_press")) and rt is not None and rt >= slow_threshold),
+            }
+        )
+    _add_lapse_scores(rows)
+    return {row["trial"]: int(float(row["lapse_score"]) >= 0.5) for row in rows}
+
+
+def _add_lapse_scores(rows: list[dict[str, Any]]) -> None:
+    go_rts = [row["reaction_time_seconds"] for row in rows if not row["is_no_go"] and row["reaction_time_seconds"] is not None]
+    ordered = sorted(float(value) for value in go_rts)
+    for index, row in enumerate(rows):
+        window = rows[max(0, index - 9) : index + 1]
+        components: list[float] = []
+        for item in window:
+            rt = item.get("reaction_time_seconds")
+            if not item["is_no_go"] and rt is not None and ordered:
+                components.append(sum(value <= float(rt) for value in ordered) / len(ordered))
+            components.append(float(item["omission_error"]))
+            components.append(float(item["commission_error"]))
+        row["lapse_score"] = float(np.mean(components)) if components else 0.0
+
+
+def _operating_threshold_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    values = [_optional_float(row.get("calibrated_threshold")) for row in rows]
+    finite = [float(value) for value in values if value is not None]
+    if not finite:
+        return {"threshold": 0.5, "source": "default_0.5"}
+    return {"threshold": finite[-1], "source": "prediction_row_calibrated_threshold"}
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 class DemoPredictionBridge:
@@ -453,7 +541,7 @@ function shapeHtml(s,mini=false){if(!s)return '<div class="waiting-mark">?</div>
 function stat(label,value){return `<div class="stat"><div class="stat-label">${esc(label)}</div><div class="stat-value">${esc(value)}</div></div>`}
 function erpSvg(windowData){const svg=document.getElementById('erpChart'),times=windowData?.times_ms||[],amps=windowData?.amplitude_uv||[];if(!times.length){svg.innerHTML='<text x="360" y="125" text-anchor="middle" class="axis-label">Waiting for the first illustrative window</text>';return}const x=t=>55+(t+200)/1000*630,min=Math.min(...amps,-8),max=Math.max(...amps,8),y=a=>205-(a-min)/(max-min)*175,path=times.map((t,i)=>`${i?'L':'M'} ${x(t).toFixed(1)} ${y(amps[i]).toFixed(1)}`).join(' ');let grid='';[-200,0,200,400,600,800].forEach(t=>grid+=`<line class="erp-grid" x1="${x(t)}" y1="25" x2="${x(t)}" y2="205"/><text class="axis-label" x="${x(t)}" y="225" text-anchor="middle">${t}</text>`);[-5,0,5].forEach(a=>grid+=`<line class="${a===0?'erp-axis':'erp-grid'}" x1="55" y1="${y(a)}" x2="685" y2="${y(a)}"/><text class="axis-label" x="43" y="${y(a)+3}" text-anchor="end">${a}</text>`);svg.innerHTML=`<defs><linearGradient id="signalGradient"><stop stop-color="#d49a00"/><stop offset="1" stop-color="#e96b18"/></linearGradient></defs><rect class="p3-zone" x="${x(300)}" y="25" width="${x(600)-x(300)}" height="180" rx="7"/>${grid}<path class="erp-line" d="${path}"/><text class="axis-label" x="370" y="242" text-anchor="middle">time from stimulus (ms)</text><text class="axis-label" x="14" y="118" transform="rotate(-90 14 118)" text-anchor="middle">amplitude (uV)</text>`}
 function renderDemo(d){document.getElementById('demoView').classList.remove('hidden');document.getElementById('classifierView').classList.add('hidden');const p=d.latest;document.getElementById('stats').innerHTML=stat('LSL marker link',String(d.marker_status||'starting').replaceAll('_',' '))+stat('Guesses made',d.prediction_count)+stat('Demo accuracy',pct(d.accuracy))+stat('Prediction delay',`${Number(d.prediction_delay_seconds||0).toFixed(1)} s`);document.getElementById('markerPill').innerHTML=`<span class="dot"></span>${esc(String(d.marker_status||'starting').replaceAll('_',' '))}`;if(p){const g=p.guessed_stimulus||{};document.getElementById('guessStage').innerHTML=`<div class="state">Latest prediction, trial ${esc(p.trial)}</div>${shapeHtml(g)}<div class="guess-label">${esc(String(p.predicted_condition).replace('_','-').toUpperCase())}</div><div class="guess-meta">${esc(g.color)} ${esc(g.shape)} | ${pct(p.confidence)} confidence</div><div class="confidence"><span style="width:${Number(p.confidence||0)*100}%"></span></div><div class="guess-meta ${p.is_correct?'ok':'miss'}">${p.is_correct?'Matched the marker':'Intentional demo miss'}</div>`}else{document.getElementById('guessStage').innerHTML=`<div class="state">Waiting for the first delayed prediction</div>${shapeHtml(null)}<div class="guess-label" style="font-size:24px">Ready to guess</div><div class="guess-meta">Each guess will remain here until the next one arrives.</div>`}erpSvg(p?.erp_window);document.getElementById('accuracyPill').textContent=d.accuracy==null?'Waiting':`${d.correct_count} / ${d.prediction_count} correct`;document.getElementById('demoHistory').innerHTML=(d.predictions||[]).slice(-12).reverse().map(row=>{const g=row.guessed_stimulus||{},a=row.actual_stimulus||{};return `<div class="history-item">${shapeHtml(g,true)}<div><div class="history-name">${esc(String(row.predicted_condition).replace('_','-'))}</div><div class="history-sub">Trial ${esc(row.trial)} | saw ${esc(a.color)} ${esc(a.shape)}</div></div><div class="result ${row.is_correct?'ok':'miss'}">${row.is_correct?'match':'miss'}</div></div>`}).join('')||'<div class="empty">Guesses will appear here after the first stimulus.</div>'}
-function renderClassifier(d){document.getElementById('classifierView').classList.remove('hidden');document.getElementById('demoView').classList.add('hidden');const agreement=d.primary_shadow_agreement?.rate;document.getElementById('stats').innerHTML=stat('Predictions',d.prediction_count)+stat('Rejected epochs',d.rejected_epoch_count)+stat('Scored trials',d.truth_count)+stat('Model agreement',pct(agreement));document.getElementById('models').innerHTML=(d.model_ids||[]).map(id=>{const p=d.latest[id]||{},m=d.metrics[id]||{},v=Number(p.probability_no_go||0);return `<div class="model-card"><div class="eyebrow">${esc(id)}</div><div class="guess-label" style="font-size:27px;margin-top:8px">${esc(p.predicted_condition||'waiting')}</div><div class="meter"><span style="width:${v*100}%"></span></div><div class="history-sub">P(NO-GO) ${v.toFixed(3)} | balanced accuracy ${m.balanced_accuracy==null?'waiting':Number(m.balanced_accuracy).toFixed(3)} | mean latency ${m.mean_latency_ms==null?'waiting':Number(m.mean_latency_ms).toFixed(1)+' ms'}</div></div>`}).join('');document.getElementById('rows').innerHTML=(d.predictions||[]).slice(-30).reverse().map(p=>`<tr><td>${esc(p.trial)}</td><td>${esc(p.model_id)}</td><td>${esc(p.model_role)}</td><td>${esc(p.predicted_condition)}</td><td>${Number(p.probability_no_go||0).toFixed(3)}</td><td>${Number(p.processing_latency_ms||0).toFixed(1)} ms</td></tr>`).join('')}
+function renderClassifier(d){document.getElementById('classifierView').classList.remove('hidden');document.getElementById('demoView').classList.add('hidden');const agreement=d.primary_shadow_agreement?.rate;document.getElementById('stats').innerHTML=stat('Predictions',d.prediction_count)+stat('Rejected epochs',d.rejected_epoch_count)+stat('Scored trials',d.truth_count)+stat('Model agreement',pct(agreement));document.getElementById('models').innerHTML=(d.model_ids||[]).map(id=>{const p=d.latest[id]||{},m=d.metrics[id]||{},target=String(m.target||p.target||'condition'),prob=target.startsWith('attention_lapse')?p.probability_attention_lapse:p.probability_no_go,v=Number(prob||0),probLabel=target.startsWith('attention_lapse')?'P(LAPSE)':'P(NO-GO)',label=p.predicted_condition||p.prediction_label||'waiting';return `<div class="model-card"><div class="eyebrow">${esc(id)}</div><div class="guess-label" style="font-size:27px;margin-top:8px">${esc(label)}</div><div class="meter"><span style="width:${v*100}%"></span></div><div class="history-sub">${probLabel} ${v.toFixed(3)} | threshold ${m.operating_threshold==null?'0.500':Number(m.operating_threshold).toFixed(3)} | balanced accuracy ${m.balanced_accuracy==null?'waiting':Number(m.balanced_accuracy).toFixed(3)} | mean latency ${m.mean_latency_ms==null?'waiting':Number(m.mean_latency_ms).toFixed(1)+' ms'}</div></div>`}).join('');document.getElementById('rows').innerHTML=(d.predictions||[]).slice(-30).reverse().map(p=>{const target=String(p.target||'condition'),prob=target.startsWith('attention_lapse')?p.probability_attention_lapse:p.probability_no_go,label=p.predicted_condition||p.prediction_label;return `<tr><td>${esc(p.trial)}</td><td>${esc(p.model_id)}</td><td>${esc(p.model_role)}</td><td>${esc(label)}</td><td>${Number(prob||0).toFixed(3)}</td><td>${Number(p.processing_latency_ms||0).toFixed(1)} ms</td></tr>`}).join('')}
 async function refresh(){try{const d=await fetch('/api/snapshot',{cache:'no-store'}).then(r=>r.json());document.getElementById('title').textContent=d.title||'EEGle Realtime Classifier';document.getElementById('modeText').textContent=d.mode==='demo'?'LSL marker demo':'Live EEG classifier';document.getElementById('disclosure').innerHTML=d.mode==='demo'?`<span>${esc(d.disclosure||'')}</span>`:`<strong>How this works</strong><span>${esc(d.disclosure||'')}</span>`;d.mode==='demo'?renderDemo(d):renderClassifier(d)}catch(e){document.getElementById('modeText').textContent='Reconnecting'}}refresh();setInterval(refresh,250);
 </script></body></html>"""
 

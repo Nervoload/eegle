@@ -169,26 +169,52 @@
     },
     "model": {
       "kind": "erp_roi_logreg",
+      "family": "classical",
+      "target": "condition",
       "bundle_path": null,
       "artifact_path": null,
       "input_layout": "samples_x_channels",
       "input_units": "microvolts",
       "required_channels": ["Fz", "Cz", "Pz", "C3", "C4", "P3", "P4", "Oz"],
+      "input_contract": {
+        "input_layout": "samples_x_channels",
+        "input_units": "microvolts",
+        "channel_order": ["Fz", "Cz", "Pz", "C3", "C4", "P3", "P4", "Oz"],
+        "required_channels": ["Fz", "Cz", "Pz", "C3", "C4", "P3", "P4", "Oz"],
+        "optional_channels": [],
+        "channel_groups": {
+          "frontal": ["Fz"],
+          "central": ["Cz", "C3", "C4"],
+          "posterior": ["Pz", "P3", "P4", "Oz"]
+        },
+        "missing_channel_policy": "error",
+        "resampling": "none",
+        "tensor_layout": "batch_1_channels_samples"
+      },
       "baseline_seconds": [-0.2, 0.0],
       "decision_probability": 0.5,
       "seed": 42
     },
     "shadow_models": [],
+    "calibration": {
+      "threshold_metric": "balanced_accuracy",
+      "allow_multi_session": true
+    },
     "decision_policy": {
       "kind": "observe_only",
       "enabled": true,
       "allow_task_adaptation": false,
+      "allow_stimulation": false,
+      "research_safety_ack": false,
+      "probability_threshold": 0.7,
+      "refractory_seconds": 10.0,
       "actions": ["observe_only"]
     },
     "feedback": {
       "mode": "observe_only",
       "allow_task_adaptation": false,
       "allow_stimulation": false,
+      "research_safety_ack": false,
       "client": {
         "enabled": false,
         "backend": "disabled"

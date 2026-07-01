@@ -21,6 +21,7 @@ from eegle.realtime.models import (
     binary_classification_metrics,
     make_model_adapter,
     performance_warnings,
+    positive_label_for_target,
     prediction_permutation_p_value,
 )
 
@@ -31,47 +32,79 @@ def evaluate_classifier_session(session_dir: str | Path) -> dict[str, Any]:
     outdir.mkdir(parents=True, exist_ok=True)
     online = _load_jsonl(root / "realtime" / "model_predictions.jsonl")
     truth = _manifest_truth(root / "events" / "stimulus_manifest.json")
+    lapse_truth = _manifest_lapse_truth(root / "events" / "stimulus_manifest.json")
     joined = []
     for row in online:
         trial = _optional_int(row.get("trial"))
         canonical = truth.get(trial) if trial is not None else None
+        lapse = lapse_truth.get(trial) if trial is not None else None
         joined.append(
             {
                 **row,
                 "canonical_condition": None if canonical is None else canonical["condition"],
                 "canonical_label": None if canonical is None else canonical["label"],
+                "canonical_attention_lapse_label": None if lapse is None else lapse["label"],
+                "canonical_attention_lapse_score": None if lapse is None else lapse["score"],
             }
         )
     _write_predictions_csv(outdir / "predictions.csv", joined)
     _write_probability_csv(outdir / "probability_by_trial.csv", joined)
     metrics: dict[str, Any] = {}
     for model_id in sorted({str(row.get("model_id")) for row in joined if row.get("model_id")}):
+        model_rows = [row for row in joined if row.get("model_id") == model_id and row.get("status") == "predicted"]
+        target = str((model_rows[0].get("target") if model_rows else "condition") or "condition")
+        label_field = "canonical_attention_lapse_label" if target.startswith("attention_lapse") else "canonical_label"
+        probability_field = "probability_attention_lapse" if target.startswith("attention_lapse") else "probability_no_go"
         rows = [
-            row for row in joined
-            if row.get("model_id") == model_id
-            and row.get("status") == "predicted"
-            and row.get("canonical_label") is not None
-            and row.get("probability_no_go") is not None
+            row for row in model_rows
+            if row.get(label_field) is not None
+            and row.get(probability_field) is not None
         ]
         if not rows:
             metrics[model_id] = {"status": "missing_predictions"}
             _write_json(outdir / f"metrics_{_safe_name(model_id)}.json", metrics[model_id])
             continue
+        truth_values = np.asarray([int(row[label_field]) for row in rows], dtype=int)
+        probabilities = np.asarray([float(row[probability_field]) for row in rows], dtype=float)
+        threshold_info = _operating_threshold_from_rows(rows)
+        positive_label = positive_label_for_target(target)
         values = binary_classification_metrics(
-            np.asarray([int(row["canonical_label"]) for row in rows], dtype=int),
-            np.asarray([float(row["probability_no_go"]) for row in rows], dtype=float),
+            truth_values,
+            probabilities,
+            threshold=threshold_info["threshold"],
+            positive_label=positive_label,
+        )
+        values["default_threshold_metrics"] = binary_classification_metrics(
+            truth_values,
+            probabilities,
+            threshold=0.5,
+            positive_label=positive_label,
         )
         values["permutation_p_value"] = prediction_permutation_p_value(
-            np.asarray([int(row["canonical_label"]) for row in rows], dtype=int),
-            np.asarray([float(row["probability_no_go"]) for row in rows], dtype=float),
+            truth_values,
+            probabilities,
+            threshold=threshold_info["threshold"],
+            positive_label=positive_label,
         )
-        predicted_trials = {int(row["trial"]) for row in rows if _optional_int(row.get("trial")) in truth}
-        values["coverage"] = len(predicted_trials) / max(1, len(truth))
+        truth_source = lapse_truth if target.startswith("attention_lapse") else truth
+        predicted_trials = {int(row["trial"]) for row in rows if _optional_int(row.get("trial")) in truth_source}
+        values["coverage"] = len(predicted_trials) / max(1, len(truth_source))
+        values["target"] = target
+        values["evaluation_level"] = "full_inference"
+        values["threshold_source"] = threshold_info["source"]
+        values["threshold_values_seen"] = threshold_info["values_seen"]
+        values["calibration_id"] = threshold_info["calibration_id"]
         values["warnings"] = performance_warnings(values)
         values["status"] = "ok"
         metrics[model_id] = values
         _write_json(outdir / f"metrics_{_safe_name(model_id)}.json", values)
         _write_confusion_matrix(outdir / f"confusion_matrix_{_safe_name(model_id)}.png", values["confusion_matrix"], model_id)
+        if abs(float(values["operating_threshold"]) - 0.5) > 1e-12:
+            _write_confusion_matrix(
+                outdir / f"confusion_matrix_default_threshold_{_safe_name(model_id)}.png",
+                values["default_threshold_metrics"]["confusion_matrix"],
+                f"{model_id} @ 0.5",
+            )
     summary = {
         "schema_version": 1,
         "status": "ok" if metrics else "missing",
@@ -190,17 +223,47 @@ def _prediction_differences(online: list[dict[str, Any]], replay: list[dict[str,
         if left is None or right is None:
             differences.append({"key": list(item_key), "reason": "missing_row"})
             continue
-        if left.get("predicted_condition") != right.get("predicted_condition"):
+        left_label = left.get("predicted_condition") if left.get("predicted_condition") is not None else left.get("prediction_label")
+        right_label = right.get("predicted_condition") if right.get("predicted_condition") is not None else right.get("prediction_label")
+        if left_label != right_label:
             differences.append({"key": list(item_key), "reason": "label_difference"})
             continue
         left_probability = left.get("probability_no_go")
         right_probability = right.get("probability_no_go")
+        if left_probability is None and right_probability is None:
+            left_probability = left.get("probability_attention_lapse")
+            right_probability = right.get("probability_attention_lapse")
         if left_probability is not None and right_probability is not None:
             tolerance = 1e-6 if left.get("model_kind") == "torch_eegnet" else 1e-9
             difference = abs(float(left_probability) - float(right_probability))
             if difference > tolerance:
                 differences.append({"key": list(item_key), "reason": "probability_difference", "difference": difference})
     return differences
+
+
+def _operating_threshold_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    values = []
+    calibration_ids = []
+    for row in rows:
+        threshold = _optional_float(row.get("calibrated_threshold"))
+        if threshold is not None:
+            values.append(float(threshold))
+        if row.get("calibration_id"):
+            calibration_ids.append(str(row.get("calibration_id")))
+    if not values:
+        return {
+            "threshold": 0.5,
+            "source": "default_0.5",
+            "values_seen": [],
+            "calibration_id": None,
+        }
+    unique = sorted({round(value, 12) for value in values})
+    return {
+        "threshold": float(values[-1]),
+        "source": "prediction_row_calibrated_threshold",
+        "values_seen": unique[:10],
+        "calibration_id": calibration_ids[-1] if calibration_ids else None,
+    }
 
 
 def _manifest_truth(path: Path) -> dict[int, dict[str, Any]]:
@@ -213,6 +276,52 @@ def _manifest_truth(path: Path) -> dict[int, dict[str, Any]]:
         is_no_go = bool(dict(row.get("stimulus") or {}).get("is_no_go"))
         truth[trial] = {"condition": "no_go" if is_no_go else "go", "label": int(is_no_go)}
     return truth
+
+
+def _manifest_lapse_truth(path: Path) -> dict[int, dict[str, Any]]:
+    manifest = _load_json(path) or {}
+    trials = [row for row in manifest.get("trials", []) if _optional_int(row.get("trial")) is not None]
+    correct_go_rts = [
+        float(dict(row.get("response") or {}).get("reaction_time_seconds"))
+        for row in trials
+        if not bool(dict(row.get("stimulus") or {}).get("is_no_go"))
+        and bool(dict(row.get("response") or {}).get("correct_press"))
+        and dict(row.get("response") or {}).get("reaction_time_seconds") is not None
+    ]
+    threshold = float(np.quantile(correct_go_rts, 0.75)) if correct_go_rts else float("inf")
+    rows = []
+    for row in trials:
+        trial = int(row.get("trial"))
+        stimulus = dict(row.get("stimulus") or {})
+        response = dict(row.get("response") or {})
+        is_no_go = bool(stimulus.get("is_no_go"))
+        rt = _optional_float(response.get("reaction_time_seconds"))
+        correct = bool(response.get("correct_press"))
+        rows.append(
+            {
+                "trial": trial,
+                "is_no_go": int(is_no_go),
+                "reaction_time_seconds": rt,
+                "commission_error": int(is_no_go and int(response.get("button_press_count", 0) or 0) > 0),
+                "omission_error": int(not is_no_go and int(response.get("button_press_count", 0) or 0) == 0),
+                "slow_trial": int(not is_no_go and correct and rt is not None and rt >= threshold),
+            }
+        )
+    go_rts = [row["reaction_time_seconds"] for row in rows if not row["is_no_go"] and row["reaction_time_seconds"] is not None]
+    ordered = sorted(float(value) for value in go_rts)
+    result = {}
+    for index, row in enumerate(rows):
+        window = rows[max(0, index - 9) : index + 1]
+        components: list[float] = []
+        for item in window:
+            rt = item.get("reaction_time_seconds")
+            if not item["is_no_go"] and rt is not None and ordered:
+                components.append(sum(value <= float(rt) for value in ordered) / len(ordered))
+            components.append(float(item["omission_error"]))
+            components.append(float(item["commission_error"]))
+        score = float(np.mean(components)) if components else 0.0
+        result[int(row["trial"])] = {"score": score, "label": int(score >= 0.5)}
+    return result
 
 
 def _replay_model_config(config: dict[str, Any], root: Path) -> dict[str, Any]:
@@ -228,15 +337,19 @@ def _replay_model_config(config: dict[str, Any], root: Path) -> dict[str, Any]:
 
 def _write_predictions_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     fields = [
-        "trial", "epoch_index", "model_id", "model_role", "model_kind", "status",
-        "predicted_condition", "probability_no_go", "canonical_condition", "canonical_label",
+        "trial", "epoch_index", "model_id", "model_role", "model_kind", "target", "status",
+        "prediction_label", "predicted_condition", "probability_no_go", "probability_attention_lapse",
+        "canonical_condition", "canonical_label", "canonical_attention_lapse_label",
         "processing_latency_ms", "reason",
     ]
     _write_csv(path, rows, fields)
 
 
 def _write_probability_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    fields = ["trial", "model_id", "model_role", "model_kind", "probability_no_go", "canonical_label"]
+    fields = [
+        "trial", "model_id", "model_role", "model_kind", "target",
+        "probability_no_go", "probability_attention_lapse", "canonical_label", "canonical_attention_lapse_label",
+    ]
     _write_csv(path, [row for row in rows if row.get("status") == "predicted"], fields)
 
 
@@ -299,6 +412,13 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
 def _optional_int(value: Any) -> int | None:
     try:
         return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        return float(value)
     except (TypeError, ValueError):
         return None
 

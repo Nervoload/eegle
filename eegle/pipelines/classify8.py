@@ -14,13 +14,17 @@ from eegle.analysis.reports import analyze_session
 from eegle.config import load_config
 from eegle.experiment import ForwardExperimentRunner
 from eegle.hardware.capabilities import check_training_ready, missing_training_packages
+from eegle.ml.registry import get_model_spec, list_model_kinds, resolve_model_kind
+from eegle.ml.targets import SUPPORTED_TARGETS
 from eegle.realtime.classification import load_model_bundle
 from eegle.realtime.epoching import extract_epochs_for_session
 from eegle.realtime.models import train_epoch_model
 
 
 DEFAULT_CONFIG = Path("configs/forward_go_nogo_classifier8.json")
-MODEL_KINDS = ("erp_roi_logreg", "pyriemann_erp_cov", "torch_eegnet")
+DEFAULT_MODEL_KINDS = ("erp_roi_logreg", "pyriemann_erp_cov", "torch_eegnet")
+MODEL_KINDS = tuple(list_model_kinds(include_aliases=True))
+TRAINABLE_MODEL_KINDS = tuple(list_model_kinds(include_aliases=True, trainable=True))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -52,8 +56,9 @@ def build_parser() -> argparse.ArgumentParser:
     _run_arguments(collect_parser)
     train_parser = subparsers.add_parser("train", help="Train frozen participant model bundles")
     train_parser.add_argument("--config", default=str(DEFAULT_CONFIG))
-    train_parser.add_argument("--session-dir", required=True)
-    train_parser.add_argument("--kind", action="append", choices=MODEL_KINDS, help="Train one or more kinds; defaults to all")
+    train_parser.add_argument("--session-dir", action="append", required=True)
+    train_parser.add_argument("--kind", action="append", choices=TRAINABLE_MODEL_KINDS, help="Train one or more kinds; defaults to the classifier trio")
+    train_parser.add_argument("--target", choices=SUPPORTED_TARGETS, default="condition")
     train_parser.add_argument("--output-dir", default=None)
     train_parser.add_argument("--check-ready", action="store_true", help="Only report training dependency readiness")
     online_parser = subparsers.add_parser("online", help="Run observe-only primary plus shadow models")
@@ -106,17 +111,18 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def train(args: argparse.Namespace) -> dict[str, Any]:
-    session = Path(args.session_dir).expanduser().resolve()
-    epochs = session / "realtime" / "epochs" / "epochs.npz"
+    sessions = [Path(value).expanduser().resolve() for value in args.session_dir]
+    session = sessions[0]
+    epochs = [value / "realtime" / "epochs" / "epochs.npz" for value in sessions]
     config = load_config(session / "parameters.json") if (session / "parameters.json").exists() else load_config(args.config)
     output_root = Path(args.output_dir).expanduser().resolve() if args.output_dir else session / "models" / "classifier"
-    kinds = list(args.kind or list(MODEL_KINDS))
+    kinds = [resolve_model_kind(kind) for kind in (args.kind or list(DEFAULT_MODEL_KINDS))]
     readiness = check_training_ready(kinds, required=True)
     if bool(args.check_ready):
         return {
             "status": "ok" if readiness.status == "ok" else "failed",
             "workflow": "classify8.train",
-            "session_dir": str(session),
+            "session_dirs": [str(value) for value in sessions],
             "training_ready": readiness.__dict__,
         }
     results = {}
@@ -133,6 +139,8 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             continue
         kind_config = dict(config.get("realtime", {}).get("model", {}))
         kind_config["kind"] = kind
+        kind_config["target"] = args.target
+        kind_config["session_dirs"] = [str(value) for value in sessions]
         try:
             results[kind] = train_epoch_model(kind, epochs, output_root / kind, kind_config)
         except Exception as exc:
@@ -142,6 +150,8 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         "status": "ok" if len(complete) == len(results) else ("degraded" if complete else "failed"),
         "workflow": "classify8.train",
         "session_dir": str(session),
+        "session_dirs": [str(value) for value in sessions],
+        "target": args.target,
         "model_dir": str(output_root),
         "training_ready": readiness.__dict__,
         "models": results,
@@ -151,23 +161,25 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
 def online(args: argparse.Namespace) -> dict[str, Any]:
     config = _classifier_config(load_config(args.config))
     model_root = Path(args.model_dir).expanduser().resolve()
-    shadows = list(dict.fromkeys(args.shadow))
+    primary = resolve_model_kind(args.primary)
+    shadows = [resolve_model_kind(kind) for kind in dict.fromkeys(args.shadow)]
+    _validate_realtime_roles(primary, shadows)
     bundle_paths = _validate_online_model_bundles(
         model_root,
-        [args.primary, *(kind for kind in shadows if kind != args.primary)],
+        [primary, *(kind for kind in shadows if kind != primary)],
     )
     config["realtime"]["inference"]["enabled"] = True
     config["realtime"]["model"] = {
         **dict(config["realtime"].get("model", {})),
-        "kind": args.primary,
-        "bundle_path": bundle_paths[args.primary],
+        "kind": primary,
+        "bundle_path": bundle_paths[primary],
     }
     config["realtime"]["shadow_models"] = [
         {"id": f"shadow-{kind}", "kind": kind, "bundle_path": bundle_paths[kind]}
         for kind in shadows
-        if kind != args.primary
+        if kind != primary
     ]
-    config["processes"]["realtime_processor"]["model"] = args.primary
+    config["processes"]["realtime_processor"]["model"] = primary
     config["realtime"]["dashboard"]["enabled"] = not bool(args.no_dashboard)
     config["processes"]["dashboard"]["enabled"] = not bool(args.no_dashboard)
     result = _run_forward(config, args)
@@ -175,7 +187,7 @@ def online(args: argparse.Namespace) -> dict[str, Any]:
         "status": result.as_dict()["status"],
         "workflow": "classify8.online",
         "session_dir": str(result.session_dir),
-        "primary": args.primary,
+        "primary": primary,
         "shadows": shadows,
         "dashboard_url": None if args.no_dashboard else f"http://{config['realtime']['dashboard']['host']}:{config['realtime']['dashboard']['port']}",
         "forward": result.as_dict(),
@@ -256,7 +268,8 @@ def _validate_online_model_bundles(model_root: Path, kinds: list[str]) -> dict[s
         )
 
     validated = {}
-    for kind in kinds:
+    for requested_kind in kinds:
+        kind = resolve_model_kind(requested_kind)
         bundle_path = model_root / kind
         manifest_path = bundle_path / "manifest.json"
         if not manifest_path.is_file():
@@ -276,6 +289,16 @@ def _validate_online_model_bundles(model_root: Path, kinds: list[str]) -> dict[s
             )
         validated[kind] = str(Path(bundle["bundle_dir"]).resolve())
     return validated
+
+
+def _validate_realtime_roles(primary: str, shadows: list[str]) -> None:
+    primary_spec = get_model_spec(primary)
+    if not primary_spec.primary_realtime_allowed:
+        raise ValueError(f"model '{primary}' is not allowed as the primary realtime model")
+    for kind in [primary, *shadows]:
+        spec = get_model_spec(kind)
+        if not spec.realtime_supported:
+            raise ValueError(f"model '{kind}' is not declared realtime_supported")
 
 
 def _classifier_config(config: dict[str, Any]) -> dict[str, Any]:

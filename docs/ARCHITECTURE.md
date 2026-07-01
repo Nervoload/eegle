@@ -146,18 +146,28 @@ The current ERP alignment path estimates event samples from task monotonic times
 
 The `extract-epochs` CLI replays the same marker-locked extraction offline and writes model-ready derived data to `realtime/epochs/epochs.npz` without modifying `raw/eeg.csv`. Its manifest hashes the raw EEG file before and after export and records marker-source hashes, epoch config, data shape, channel names, and label mapping.
 
-The `classify8` workflow layers participant-specific GO/NO-GO condition
-decoding on the marker-locked epoch path. Calibration collection can run with
-`realtime.inference.enabled=false` while still capturing exact EEG chunks and
-markers. Training writes versioned frozen model bundles. Online testing loads a
-primary model plus optional shadows, applies a shared quality gate, removes
-condition/stimulus/response metadata before inference, and writes normalized
-rows to `realtime/model_predictions.jsonl`. Feedback remains observe-only.
+The `classify8` workflow layers participant-specific condition and
+attention-lapse decoding on the marker-locked epoch path. Calibration collection
+can run with `realtime.inference.enabled=false` while still capturing exact EEG
+chunks and markers. Training writes versioned frozen model bundles. Online
+testing loads a primary model plus optional shadows, applies a shared quality
+gate, removes condition/stimulus/response metadata before inference, and writes
+normalized rows to `realtime/model_predictions.jsonl`. Feedback remains
+observe-only unless a research-gated stimulation-candidate policy is explicitly
+enabled.
 
-Supported classifier training paths are baseline-corrected ERP ROI logistic
-regression, pyRiemann xDAWN covariance plus tangent-space logistic regression,
-and TorchScript EEGNet. The old flattened `sklearn_xdawn_lda` name remains a
-compatibility alias for `sklearn_flatten_lda`; it is not an xDAWN model.
+`eegle.ml` owns the model registry, model-family specs, channel/input
+contracts, behavior-derived attention-lapse targets, and threshold calibration.
+Multi-session behavior targets preserve per-epoch source-session identity and
+refuse ambiguous trial-only joins. Evaluation helpers report threshold-sensitive
+metrics at the calibrated operating point while preserving default-threshold
+comparisons. Supported trainable paths include
+baseline-corrected ERP ROI logistic regression, pyRiemann xDAWN covariance plus
+tangent-space logistic regression, and TorchScript EEGNet. External
+CNN/foundation entries such as BENDR, LaBraM, and sequence decoders are
+registry/checkpoint adapter targets; checkpoints are user-supplied and hashed.
+The old flattened `sklearn_xdawn_lda` name remains a compatibility alias for
+`sklearn_flatten_lda`; it is not an xDAWN model.
 See `MODEL_TRAINING_TESTING_GOALS.md` for the training workflow, quality
 contract, evaluation questions, and near-term model goals.
 

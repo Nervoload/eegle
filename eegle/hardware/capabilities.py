@@ -7,16 +7,13 @@ import sys
 from importlib import util
 from typing import Any
 
+from eegle.ml.registry import get_model_spec, list_model_specs, resolve_model_kind
 from eegle.hardware.system import CheckResult
 
 CONSOLE_COMMANDS = ("eegle", "alpha8", "inhibition8", "classify8")
 
 TRAINING_REQUIREMENTS: dict[str, tuple[str, ...]] = {
-    "erp_roi_logreg": ("sklearn", "joblib"),
-    "sklearn_flatten_lda": ("sklearn", "joblib"),
-    "sklearn_xdawn_lda": ("sklearn", "joblib"),
-    "pyriemann_erp_cov": ("sklearn", "joblib", "pyriemann"),
-    "torch_eegnet": ("torch",),
+    spec.kind: spec.dependencies for spec in list_model_specs() if spec.trainable
 }
 
 
@@ -149,7 +146,11 @@ def training_model_kinds_from_config(config: dict[str, Any]) -> list[str]:
 
 
 def training_requirements(kind: str) -> tuple[str, ...]:
-    return TRAINING_REQUIREMENTS.get(_normalize_model_kind(kind), ())
+    try:
+        spec = get_model_spec(kind)
+    except NotImplementedError:
+        return ()
+    return spec.dependencies if spec.trainable else ()
 
 
 def missing_training_packages(kind: str) -> list[str]:
@@ -157,8 +158,7 @@ def missing_training_packages(kind: str) -> list[str]:
 
 
 def _normalize_model_kind(kind: str) -> str:
-    value = str(kind).strip().lower()
-    return "sklearn_flatten_lda" if value == "sklearn_xdawn_lda" else value
+    return resolve_model_kind(str(kind).strip().lower())
 
 
 def _importable(package: str) -> bool:

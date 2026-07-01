@@ -179,6 +179,7 @@ POSIX-like development shells, not the Windows-native operator path.
 | --- | --- | --- |
 | `eegle check-setup` | `python -m eegle.cli check-setup` | Validate software, LSL discovery, and configured hardware |
 | `eegle list-tasks` | `python -m eegle.cli list-tasks` | Show available experiment tasks |
+| `eegle model-list` | `python -m eegle.cli model-list` | Show registered classical, CNN, and EEG foundation model kinds |
 | `eegle run-task` | `python -m eegle.cli run-task` | Run only a task, usually for development or display testing |
 | `eegle run-forward` | `python -m eegle.cli run-forward` | Run setup checks, task, optional EEG recording, and analysis |
 | `eegle simulate-eeg` | `python -m eegle.cli simulate-eeg` | Start a development-only simulated EEG LSL outlet |
@@ -186,7 +187,7 @@ POSIX-like development shells, not the Windows-native operator path.
 | `eegle report-html` | `python -m eegle.cli report-html` | Generate an interactive HTML session report |
 | `eegle replay-realtime` | `python -m eegle.cli replay-realtime` | Replay captured realtime inputs and validate features |
 | `eegle extract-epochs` | `python -m eegle.cli extract-epochs` | Extract marker-locked EEG epochs |
-| `eegle train-model` | `python -m eegle.cli train-model` | Train a supported classical epoch classifier |
+| `eegle train-model` | `python -m eegle.cli train-model` | Train a registered epoch classifier |
 | `eegle evaluate-model` | `python -m eegle.cli evaluate-model` | Score classifier predictions against the stimulus manifest |
 | `eegle replay-classifier` | `python -m eegle.cli replay-classifier` | Replay classifier predictions from captured EEG and markers |
 
@@ -506,6 +507,7 @@ the post-stimulus EEG epoch; it is not an inhibition-decoding claim.
 classify8 collect --participant sub-001 --trials 240
 classify8 train --session-dir <calibration-session> --check-ready
 classify8 train --session-dir <calibration-session>
+classify8 train --session-dir <run-a> --session-dir <run-b> --target attention_lapse_binary
 classify8 online --participant sub-001 --model-dir <calibration-session>/models/classifier \
   --primary erp_roi_logreg --shadow pyriemann_erp_cov --shadow torch_eegnet --trials 160
 classify8 demo --participant classroom-demo --trials 40
@@ -536,6 +538,26 @@ are observe-only, and canonical truth is joined from
 `events/stimulus_manifest.json` only for display and scoring. Predictions are
 written to `realtime/model_predictions.jsonl`, frozen bundles are copied into
 the online session, and reports are written under `reports/classification/`.
+
+Model kinds are registry-backed. `eegle model-list` shows classical models,
+CNNs such as `torch_eegnet` / `cnn_eegnet`, and external EEG foundation-model
+adapter targets such as `foundation_bendr`, `foundation_labram`, and
+`sequence_external`. Foundation and sequence entries require user-supplied
+checkpoints; EEGle records artifact hashes but does not download checkpoints.
+
+Training targets can be `condition`, `attention_lapse_binary`, or
+`attention_lapse_score`. Attention-lapse targets are derived from task behavior
+first: slow correct GO reaction times, omissions, commission errors, and a
+trailing lapse score. Multi-session lapse training joins behavior by
+source-session index plus trial number, and refuses ambiguous trial-only joins.
+`attention_lapse_score` is currently a score-derived binary target, not
+regression learning. Stimulation-moment actions are disabled by default and
+require the `attention_lapse_stimulation` policy plus explicit
+`allow_stimulation` and `research_safety_ack` config gates.
+
+Training summaries, live dashboard metrics, and offline classifier reports use
+the calibrated operating threshold when a bundle or prediction row provides one;
+the default `0.5` metrics are kept separately for comparison.
 
 The optional dashboard binds only to `127.0.0.1`; it does not auto-open a
 browser or interact with PsychoPy. Training requires the `ml` extra for ROI

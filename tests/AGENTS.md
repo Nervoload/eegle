@@ -7,6 +7,9 @@ broader discovery when touching shared orchestration.
 
 - `test_classification.py`: classify8 workflow contracts, label-blind metadata,
   model bundles, epoch quality, dashboard/demo behavior, replay, and scoring.
+- `test_ml_infrastructure.py`: model registry, channel contracts,
+  attention-lapse targets, threshold calibration, external checkpoint adapters,
+  and stimulation policy gates.
 - `test_closed_loop_model_system.py`: closed-loop model system and realtime
   integration behavior.
 - `test_realtime_synchrony.py`: marker timing, realtime synchrony, and process
@@ -20,6 +23,7 @@ Classifier path:
 
 ```bash
 python3 -m unittest tests.test_classification
+python3 -m unittest tests.test_ml_infrastructure
 ```
 
 Realtime/worker path:

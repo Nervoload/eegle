@@ -16,6 +16,8 @@ from eegle.config import load_config
 from eegle.devices.lsl_eeg import _select_lsl_info
 from eegle.hardware.enobio import mapped_channel_names
 from eegle.lsl import inlet_time_correction, lsl_processing_flags
+from eegle.ml.contracts import normalize_input_contract, validate_supported_resampling
+from eegle.ml.registry import get_model_spec, resolve_model_kind
 from eegle.realtime.alpha import AlphaPowerEstimator, load_alpha_config
 from eegle.realtime.buffer import RingBuffer
 from eegle.realtime.classification import (
@@ -162,7 +164,8 @@ def main(argv: list[str] | None = None) -> int:
     alpha_config = load_alpha_config(config, paths.root)
     alpha_enabled = bool(alpha_config.get("enabled", False))
     model_config = realtime_config.get("model", {})
-    required_channels = [str(name) for name in model_config.get("required_channels", [])]
+    model_input_contract = normalize_input_contract(model_config, fallback_channel_names=channel_names)
+    required_channels = [str(name) for name in model_input_contract.get("required_channels", [])]
     missing_required_channels = [name for name in required_channels if name not in channel_names]
     if epoching_enabled and missing_required_channels:
         error = "realtime EEG montage is missing model-required channels: " + ", ".join(missing_required_channels)
@@ -197,6 +200,8 @@ def main(argv: list[str] | None = None) -> int:
     model = None if not model_entries else model_entries[0]["adapter"]
     policy_config = dict(realtime_config.get("decision_policy", {}))
     policy_config.setdefault("allow_task_adaptation", bool(feedback_config.get("allow_task_adaptation", True)))
+    policy_config.setdefault("allow_stimulation", bool(feedback_config.get("allow_stimulation", False)))
+    policy_config.setdefault("research_safety_ack", bool(feedback_config.get("research_safety_ack", False)))
     policy_kind = "observe_only" if event_features_enabled else str(policy_config.get("kind", "conservative_p300"))
     policy = None if event_features_enabled or not inference_enabled else make_policy(policy_kind, policy_config)
     feedback_backend = "disabled" if event_features_enabled else args.feedback_backend
@@ -879,7 +884,7 @@ def _process_inference_item(
         primary_latency_ms = elapsed_ms(item.queued_at_monotonic)
         performance_stats.primary_latency_ms = primary_latency_ms
         assert policy is not None
-        actions = policy.decide(prediction, item.epoch_payload)
+        actions = policy.decide(prediction, {**item.epoch_payload, "quality": item.quality})
         payload = {
             "schema_version": 1,
             "decision_source": "event_epoch",
@@ -1024,9 +1029,12 @@ def _load_classifier_models(
         shadow["role"] = "shadow"
         configured.append(shadow)
     for value in configured:
-        kind = str(value.get("kind", "erp_roi_logreg"))
+        raw_kind = str(value.get("kind", "erp_roi_logreg"))
+        kind = raw_kind if raw_kind in {"erp_peak_baseline", "band_power_threshold"} else resolve_model_kind(raw_kind)
         role = str(value.get("role", "shadow"))
         model_id = str(value.get("id", f"{role}-{kind}"))
+        if role == "primary":
+            _validate_primary_model_allowed(kind)
         adapter_config = {key: item for key, item in value.items() if key not in {"id", "role", "kind"}}
         if adapter_config.get("bundle_path"):
             snapshot = snapshot_model_bundle(adapter_config["bundle_path"], paths.realtime_model_snapshots, model_id)
@@ -1092,17 +1100,35 @@ def _validate_model_entries(
             continue
         bundle = load_model_bundle(bundle_path)
         contract = dict(bundle.get("contract") or {})
-        missing = [name for name in contract.get("required_channels", []) if name not in channel_names]
+        normalized_contract = normalize_input_contract(contract, fallback_channel_names=channel_names)
+        validate_supported_resampling(normalized_contract)
+        missing = [name for name in normalized_contract.get("required_channels", []) if name not in channel_names]
         if missing:
             raise ValueError(f"{entry['id']} model-required channels missing from stream: {', '.join(missing)}")
-        expected_rate = float(contract.get("sample_rate_hz", sample_rate_hz))
-        if abs(expected_rate - sample_rate_hz) > float(contract.get("sample_rate_tolerance_hz", 0.01)):
+        expected_rate = float(normalized_contract.get("sample_rate_hz", sample_rate_hz))
+        if abs(expected_rate - sample_rate_hz) > float(normalized_contract.get("sample_rate_tolerance_hz", 0.01)):
             raise ValueError(f"{entry['id']} model sample rate {expected_rate:g} does not match stream {sample_rate_hz:g}")
-        expected_window = contract.get("epoch_window_seconds")
+        expected_window = normalized_contract.get("epoch_window_seconds")
         if expected_window and any(abs(float(a) - float(b)) > 0.01 for a, b in zip(expected_window, runtime_window)):
             raise ValueError(f"{entry['id']} model epoch window {expected_window} does not match runtime {runtime_window}")
-        if str(contract.get("input_units", "microvolts")).lower() not in {"microvolts", "uv", "µv", "v", "volt", "volts"}:
-            raise ValueError(f"{entry['id']} model declares unsupported input units {contract.get('input_units')}")
+        expected_samples = normalized_contract.get("sample_count")
+        if expected_samples is not None:
+            actual_samples = expected_sample_count(sample_rate_hz, epoching_config)
+            if int(expected_samples) != int(actual_samples):
+                raise ValueError(
+                    f"{entry['id']} model sample count {int(expected_samples)} does not match runtime {actual_samples}"
+                )
+        if str(normalized_contract.get("input_units", "microvolts")).lower() not in {"microvolts", "uv", "µv", "v", "volt", "volts"}:
+            raise ValueError(f"{entry['id']} model declares unsupported input units {normalized_contract.get('input_units')}")
+
+
+def _validate_primary_model_allowed(kind: str) -> None:
+    try:
+        spec = get_model_spec(kind)
+    except NotImplementedError:
+        return
+    if not spec.primary_realtime_allowed:
+        raise ValueError(f"model '{kind}' is not allowed as the primary realtime model")
 
 
 if __name__ == "__main__":

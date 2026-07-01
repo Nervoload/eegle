@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from dataclasses import asdict, dataclass, field
@@ -10,6 +11,10 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from eegle.ml.calibration import binary_metrics_at_threshold, select_binary_threshold
+from eegle.ml.contracts import contract_hash, normalize_input_contract, validate_supported_resampling
+from eegle.ml.registry import get_model_spec, resolve_model_kind
+from eegle.ml.targets import build_training_target
 from eegle.realtime.classification import (
     DEFAULT_ROI_CONFIG,
     assess_epoch_quality,
@@ -269,7 +274,7 @@ class SklearnXdawnLdaAdapter(BaseModelAdapter):
         channels_samples = prepared.artifact(contract, self.input_layout)
         estimator = artifact.get("pipeline") if isinstance(artifact, dict) else artifact
         probability = estimator_probability(estimator, channels_samples.reshape(1, -1))
-        label = classifier_label(probability, self.config)
+        label = classifier_label(probability, artifact if isinstance(artifact, dict) else self.config)
         return ModelPrediction(
             label=label,
             score=probability,
@@ -314,7 +319,7 @@ class ErpRoiLogisticRegressionAdapter(BaseModelAdapter):
         estimator = artifact.get("pipeline") if isinstance(artifact, dict) else artifact
         probability = estimator_probability(estimator, vector.reshape(1, -1))
         return ModelPrediction(
-            label=classifier_label(probability, self.config),
+            label=classifier_label(probability, artifact if isinstance(artifact, dict) else self.config),
             score=probability,
             probability=probability,
             features={**features, "probability_no_go": probability},
@@ -349,7 +354,7 @@ class PyriemannErpCovAdapter(BaseModelAdapter):
         channels_samples = prepared.artifact(contract, self.input_layout)
         estimator = artifact.get("pipeline") if isinstance(artifact, dict) else artifact
         probability = estimator_probability(estimator, channels_samples[np.newaxis, :, :])
-        label = classifier_label(probability, self.config)
+        label = classifier_label(probability, artifact if isinstance(artifact, dict) else self.config)
         return ModelPrediction(
             label=label,
             score=probability,
@@ -396,7 +401,10 @@ class TorchEpochAdapter(BaseModelAdapter):
         with torch.no_grad():
             output = model(tensor)
         probability = tensor_probability(output.detach().cpu().numpy())
-        label = classifier_label(probability, self.config)
+        label_config = dict(self.config)
+        if bundle is not None:
+            label_config.update({"calibration": bundle.get("calibration"), "target": bundle.get("target")})
+        label = classifier_label(probability, label_config)
         return ModelPrediction(
             label=label,
             score=probability,
@@ -404,7 +412,7 @@ class TorchEpochAdapter(BaseModelAdapter):
             features={"probability_no_go": probability},
             model_kind=self.kind,
             model_version=self.model_version,
-            metadata={} if bundle is None else {"bundle_hash": bundle.get("bundle_hash")},
+            metadata={} if bundle is None else bundle_prediction_metadata(bundle),
         )
 
     def _load_torch_model(self, torch: Any, artifact_path: Path) -> Any:
@@ -420,6 +428,18 @@ class TorchEEGNetAdapter(TorchEpochAdapter):
 
 class TorchShallowConvNetAdapter(TorchEpochAdapter):
     kind = "torch_shallowconvnet"
+
+
+class FoundationBendrAdapter(TorchEpochAdapter):
+    kind = "foundation_bendr"
+
+
+class FoundationLabramAdapter(TorchEpochAdapter):
+    kind = "foundation_labram"
+
+
+class SequenceExternalAdapter(TorchEpochAdapter):
+    kind = "sequence_external"
 
 
 class OnnxP300Adapter(BaseModelAdapter):
@@ -466,13 +486,14 @@ class OnnxP300Adapter(BaseModelAdapter):
 
 
 def make_model_adapter(kind: str, config: dict[str, Any] | None = None) -> BaseModelAdapter:
-    normalized = (kind or "default").lower()
-    if normalized in {"default", "erp_peak_baseline"}:
+    raw_kind = str(kind or "default").lower()
+    if raw_kind in {"default", "erp_peak_baseline"}:
         return ERPPeakBaselineAdapter(config)
+    if raw_kind == "sklearn_xdawn_lda":
+        return SklearnXdawnLdaAdapter(config)
+    normalized = resolve_model_kind(raw_kind)
     if normalized == "band_power_threshold":
         return BandPowerThresholdModel(config)
-    if normalized == "sklearn_xdawn_lda":
-        return SklearnXdawnLdaAdapter(config)
     if normalized == "sklearn_flatten_lda":
         return SklearnFlattenLdaAdapter(config)
     if normalized == "erp_roi_logreg":
@@ -483,6 +504,12 @@ def make_model_adapter(kind: str, config: dict[str, Any] | None = None) -> BaseM
         return TorchEEGNetAdapter(config)
     if normalized == "torch_shallowconvnet":
         return TorchShallowConvNetAdapter(config)
+    if normalized == "foundation_bendr":
+        return FoundationBendrAdapter(config)
+    if normalized == "foundation_labram":
+        return FoundationLabramAdapter(config)
+    if normalized == "sequence_external":
+        return SequenceExternalAdapter(config)
     if normalized == "onnx_p300":
         return OnnxP300Adapter(config)
     raise NotImplementedError(f"realtime model adapter '{kind}' is not implemented")
@@ -490,22 +517,26 @@ def make_model_adapter(kind: str, config: dict[str, Any] | None = None) -> BaseM
 
 def train_epoch_model(
     kind: str,
-    epochs_npz: str | Path,
+    epochs_npz: str | Path | list[str | Path] | tuple[str | Path, ...],
     output_path: str | Path,
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Train an epoch classifier and write a bare artifact or model bundle."""
     cfg = dict(config or {})
-    normalized = kind.lower()
-    if normalized == "sklearn_xdawn_lda":
-        normalized = "sklearn_flatten_lda"
-    data = np.load(Path(epochs_npz), allow_pickle=True)
+    spec = get_model_spec(kind)
+    if not spec.trainable or spec.train_kind is None:
+        raise NotImplementedError(f"training for model '{kind}' is not implemented")
+    normalized = spec.train_kind
+    cfg.setdefault("kind", normalized)
+    cfg.setdefault("family", spec.family)
+    data, source_paths = load_epoch_dataset(epochs_npz)
     x = np.asarray(data["X"], dtype=float)
-    y = np.asarray(data["y"], dtype=int)
+    training_target = build_training_target(data, cfg)
+    y = np.asarray(training_target.y, dtype=int)
     trials = np.asarray(npz_value(data, "trials", np.arange(y.size) + 1), dtype=int)
-    valid = (y >= 0) & (trials >= 1)
+    valid = np.asarray(training_target.eligible, dtype=bool) & (y >= 0) & (trials >= 1)
     if not valid.any():
-        raise ValueError("epochs.npz does not contain eligible non-practice training labels")
+        raise ValueError(f"epochs.npz does not contain eligible non-practice training labels for {training_target.name}")
     x = x[valid]
     y = y[valid]
     trials = trials[valid]
@@ -518,16 +549,16 @@ def train_epoch_model(
     if x.shape[0] == 0:
         raise ValueError("all training epochs were rejected by the quality gate")
     if len(set(y.tolist())) < 2:
-        raise ValueError("training requires both GO and NO-GO labels")
+        raise ValueError(f"training requires both classes for target {training_target.name}")
     contract = training_contract(data, cfg)
     times = np.asarray(npz_value(data, "times", []), dtype=float)
-    channel_names = [str(value) for value in contract["channel_names"]]
+    source_channel_names = [str(value) for value in contract.get("source_channel_names", contract["channel_names"])]
     corrected = np.stack(
         [
             prepare_classifier_epoch(
                 epoch,
                 float(contract["sample_rate_hz"]),
-                channel_names,
+                source_channel_names,
                 {"relative_times": times.tolist(), "epoch_window_seconds": contract["epoch_window_seconds"]},
                 contract,
             )[0]
@@ -558,13 +589,32 @@ def train_epoch_model(
     else:
         raise NotImplementedError(f"training for model '{kind}' is not implemented")
 
-    target = Path(output_path).expanduser().resolve()
-    bundle_output = target.suffix == ""
+    probabilities = training_probabilities(normalized, artifact, corrected, data, cfg, contract)
+    calibration_cfg = dict(cfg.get("calibration", {}))
+    positive_label = positive_label_for_target(training_target.name)
+    threshold_calibration = _training_threshold_calibration(
+        y,
+        probabilities,
+        blocked,
+        metric=str(calibration_cfg.get("threshold_metric", "balanced_accuracy")),
+        max_candidates=int(calibration_cfg.get("threshold_max_candidates", 512)),
+        positive_label=positive_label,
+    )
+    selected_threshold = float(threshold_calibration.get("selected_threshold", 0.5))
+    if isinstance(artifact, dict):
+        artifact["decision_probability"] = selected_threshold
+        artifact["target"] = training_target.name
+        artifact["target_spec"] = training_target.metadata
+        artifact["calibration"] = threshold_calibration
+        artifact["model_spec"] = spec.payload()
+
+    output_target = Path(output_path).expanduser().resolve()
+    bundle_output = output_target.suffix == ""
     if bundle_output:
-        target.mkdir(parents=True, exist_ok=True)
-        artifact_target = target / f"model{extension}"
+        output_target.mkdir(parents=True, exist_ok=True)
+        artifact_target = output_target / f"model{extension}"
     else:
-        artifact_target = target
+        artifact_target = output_target
         artifact_target.parent.mkdir(parents=True, exist_ok=True)
     if artifact_format == "joblib":
         try:
@@ -574,19 +624,37 @@ def train_epoch_model(
         joblib.dump(artifact, artifact_target)
     else:
         artifact["scripted_model"].save(str(artifact_target))
-    probabilities = training_probabilities(normalized, artifact, corrected, data, cfg, contract)
-    metrics = binary_classification_metrics(y, probabilities)
+    metrics = binary_classification_metrics(
+        y,
+        probabilities,
+        threshold=selected_threshold,
+        positive_label=positive_label,
+    )
+    metrics["default_threshold_metrics"] = binary_classification_metrics(
+        y,
+        probabilities,
+        threshold=0.5,
+        positive_label=positive_label,
+    )
     metrics["permutation_p_value"] = prediction_permutation_p_value(
         y,
         probabilities,
+        threshold=selected_threshold,
         permutations=int(cfg.get("permutations", 100)),
         seed=int(cfg.get("seed", 42)),
+        positive_label=positive_label,
     )
     warning_source = blocked.get("metrics", metrics) if isinstance(blocked, dict) else metrics
     metrics.update(
         {
             "coverage": int(x.shape[0]) / max(1, eligible_training_epochs),
             "blocked_validation": blocked,
+            "target": training_target.name,
+            "target_spec": training_target.metadata,
+            "evaluation_level": "training_fit",
+            "threshold_source": threshold_calibration.get("source"),
+            "threshold_calibration": threshold_calibration,
+            "selected_threshold_metrics": threshold_calibration.get("selected_metrics"),
             "warnings": performance_warnings(warning_source),
         }
     )
@@ -596,33 +664,43 @@ def train_epoch_model(
     bundle_manifest = None
     if bundle_output:
         bundle_manifest = write_model_bundle(
-            target,
+            output_target,
             kind=normalized,
             artifact_path=artifact_target,
             artifact_format=artifact_format,
             contract=contract,
             metrics=metrics,
             training_source={
-                "epochs_npz": str(Path(epochs_npz).expanduser().resolve()),
-                "epochs_npz_sha256": file_sha256(Path(epochs_npz)),
+                **training_source_provenance(data, source_paths),
                 "training_epochs": int(x.shape[0]),
                 "eligible_training_epochs": eligible_training_epochs,
                 "quality_rejected_epochs": eligible_training_epochs - int(x.shape[0]),
             },
-            extra={"model_version": str(cfg.get("model_version", "trained"))},
+            extra={
+                "model_version": str(cfg.get("model_version", "trained")),
+                "model_spec": spec.payload(),
+                "model_family": spec.family,
+                "target": training_target.name,
+                "target_spec": training_target.metadata,
+                "label_mapping": training_target.label_mapping,
+                "calibration": threshold_calibration,
+            },
         )
     return {
         "status": "ok",
         "model_kind": normalized,
+        "model_family": spec.family,
+        "target": training_target.name,
         "artifact_path": str(artifact_target),
-        "bundle_path": str(target) if bundle_output else None,
+        "bundle_path": str(output_target) if bundle_output else None,
         "bundle_hash": None if bundle_manifest is None else bundle_manifest["bundle_hash"],
         "training_epochs": int(x.shape[0]),
         "classes": sorted(int(value) for value in set(y.tolist())),
-        "channel_names": channel_names,
+        "channel_names": [str(value) for value in contract["channel_names"]],
         "sample_rate_hz": float(contract["sample_rate_hz"]),
         "epoch_window_seconds": contract["epoch_window_seconds"],
-        "label_mapping": {"go": 0, "no_go": 1},
+        "label_mapping": training_target.label_mapping,
+        "calibration": threshold_calibration,
         "metrics": metrics,
     }
 
@@ -900,15 +978,39 @@ def training_contract(data: Any, config: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("epochs.npz does not contain a valid sample_rate_hz")
     if times.size == 0:
         raise ValueError("epochs.npz does not contain relative epoch times")
+    source_channel_names = [str(value) for value in npz_value(data, "channel_names", [])]
+    spec = get_model_spec(config.get("kind", "erp_roi_logreg"))
+    input_contract = normalize_input_contract(config, fallback_channel_names=source_channel_names)
+    validate_supported_resampling(input_contract)
+    selected_channels = [name for name in input_contract["channel_order"] if name in source_channel_names]
+    if not selected_channels:
+        selected_channels = source_channel_names
+    preprocessing = {
+        "kind": "as_recorded_microvolts_then_baseline_correction",
+        "resampling": input_contract.get("resampling", "none"),
+        "resampling_supported": False,
+    }
     return {
         "input_layout": "channels_x_samples",
-        "input_units": str(config.get("input_units", "microvolts")),
-        "channel_names": [str(value) for value in npz_value(data, "channel_names", [])],
-        "required_channels": [str(value) for value in npz_value(data, "channel_names", [])],
+        "input_units": str(input_contract.get("input_units", "microvolts")),
+        "source_channel_names": source_channel_names,
+        "channel_names": selected_channels,
+        "channel_order": selected_channels,
+        "required_channels": [str(value) for value in input_contract.get("required_channels", selected_channels)],
+        "optional_channels": [str(value) for value in input_contract.get("optional_channels", [])],
+        "channel_groups": dict(input_contract.get("channel_groups", {})),
+        "missing_channel_policy": str(input_contract.get("missing_channel_policy", "error")),
         "sample_rate_hz": sample_rate,
+        "sample_count": int(times.size),
         "epoch_window_seconds": [float(times[0]), float(times[-1])],
+        "epoch_duration_seconds": float(times[-1] - times[0]) if times.size > 1 else 0.0,
         "baseline_seconds": [float(value) for value in config.get("baseline_seconds", [-0.2, 0.0])],
-        "preprocessing": {"kind": "as_recorded_microvolts_then_baseline_correction", "resampling": "none"},
+        "preprocessing": preprocessing,
+        "preprocessing_hash": contract_hash(preprocessing),
+        "tensor_layout": str(input_contract.get("tensor_layout", "batch_1_channels_samples")),
+        "model_family": spec.family,
+        "target": str(config.get("target", "condition")),
+        "input_contract_version": 1,
     }
 
 
@@ -981,15 +1083,45 @@ def blocked_validation_metrics(
     mask = np.isfinite(probabilities)
     if not mask.any():
         return {"status": "not_run", "reason": "blocked_folds_did_not_contain_both_classes"}
-    metrics = binary_classification_metrics(y[mask], probabilities[mask])
+    calibration_cfg = dict(config.get("calibration", {}))
+    positive_label = positive_label_for_target(str(config.get("target", "condition")))
+    threshold_calibration = select_binary_threshold(
+        y[mask],
+        probabilities[mask],
+        metric=str(calibration_cfg.get("threshold_metric", "balanced_accuracy")),
+        max_candidates=int(calibration_cfg.get("threshold_max_candidates", 512)),
+        positive_label=positive_label,
+    )
+    selected_threshold = float(threshold_calibration.get("selected_threshold", 0.5))
+    metrics = binary_classification_metrics(
+        y[mask],
+        probabilities[mask],
+        threshold=selected_threshold,
+        positive_label=positive_label,
+    )
+    metrics["default_threshold_metrics"] = binary_classification_metrics(
+        y[mask],
+        probabilities[mask],
+        threshold=0.5,
+        positive_label=positive_label,
+    )
     metrics["coverage"] = float(np.mean(mask))
+    metrics["evaluation_level"] = "calibration_blocked_validation"
+    metrics["threshold_source"] = "blocked_validation"
     metrics["permutation_p_value"] = prediction_permutation_p_value(
         y[mask],
         probabilities[mask],
+        threshold=selected_threshold,
         permutations=int(config.get("permutations", 100)),
         seed=int(config.get("seed", 42)),
+        positive_label=positive_label,
     )
-    result = {"status": "ok", "fold_count": fold_count, "metrics": metrics}
+    result = {
+        "status": "ok",
+        "fold_count": fold_count,
+        "metrics": metrics,
+        "threshold_calibration": {**threshold_calibration, "source": "blocked_validation"},
+    }
     if best_epochs:
         result["fold_best_epochs"] = best_epochs
         result["best_epoch"] = max(1, int(round(float(np.median(best_epochs)))))
@@ -1022,34 +1154,19 @@ def _stratified_block_folds(
     return folds
 
 
-def binary_classification_metrics(y_true: np.ndarray, probabilities: np.ndarray) -> dict[str, Any]:
-    truth = np.asarray(y_true, dtype=int)
-    probs = np.clip(np.asarray(probabilities, dtype=float), 0.0, 1.0)
-    predicted = (probs >= 0.5).astype(int)
-    tn = int(np.sum((truth == 0) & (predicted == 0)))
-    fp = int(np.sum((truth == 0) & (predicted == 1)))
-    fn = int(np.sum((truth == 1) & (predicted == 0)))
-    tp = int(np.sum((truth == 1) & (predicted == 1)))
-    recall_go = tn / max(1, tn + fp)
-    recall_no_go = tp / max(1, tp + fn)
-    precision_no_go = tp / max(1, tp + fp)
-    f1 = 2.0 * precision_no_go * recall_no_go / max(1e-12, precision_no_go + recall_no_go)
-    positives = probs[truth == 1]
-    negatives = probs[truth == 0]
-    auc = None
-    if positives.size and negatives.size:
-        auc = float(np.mean([(p > n) + 0.5 * (p == n) for p in positives for n in negatives]))
-    return {
-        "accuracy": float(np.mean(predicted == truth)),
-        "balanced_accuracy": float((recall_go + recall_no_go) / 2.0),
-        "roc_auc": auc,
-        "no_go_precision": float(precision_no_go),
-        "no_go_recall": float(recall_no_go),
-        "no_go_f1": float(f1),
-        "brier_score": float(np.mean((probs - truth) ** 2)),
-        "confusion_matrix": [[tn, fp], [fn, tp]],
-        "sample_count": int(truth.size),
-    }
+def binary_classification_metrics(
+    y_true: np.ndarray,
+    probabilities: np.ndarray,
+    *,
+    threshold: float = 0.5,
+    positive_label: str = "no_go",
+) -> dict[str, Any]:
+    return binary_metrics_at_threshold(
+        y_true,
+        probabilities,
+        threshold,
+        positive_label=positive_label,
+    )
 
 
 def performance_warnings(metrics: dict[str, Any]) -> list[str]:
@@ -1062,19 +1179,65 @@ def performance_warnings(metrics: dict[str, Any]) -> list[str]:
     return warnings
 
 
+def positive_label_for_target(target: str) -> str:
+    return "attention_lapse" if str(target).startswith("attention_lapse") else "no_go"
+
+
+def _training_threshold_calibration(
+    y_true: np.ndarray,
+    probabilities: np.ndarray,
+    blocked: dict[str, Any],
+    *,
+    metric: str,
+    max_candidates: int,
+    positive_label: str,
+) -> dict[str, Any]:
+    blocked_calibration = dict(blocked.get("threshold_calibration") or {})
+    if blocked.get("status") == "ok" and blocked_calibration.get("status") == "ok":
+        return {**blocked_calibration, "source": "blocked_validation"}
+    calibration = select_binary_threshold(
+        y_true,
+        probabilities,
+        metric=metric,
+        max_candidates=max_candidates,
+        positive_label=positive_label,
+    )
+    return {
+        **calibration,
+        "source": "training_fit",
+        "fallback_reason": blocked.get("reason", "blocked_validation_unavailable"),
+    }
+
+
 def prediction_permutation_p_value(
     y_true: np.ndarray,
     probabilities: np.ndarray,
     *,
+    threshold: float = 0.5,
     permutations: int = 100,
     seed: int = 42,
+    positive_label: str = "no_go",
 ) -> float | None:
     if permutations < 1 or len(set(np.asarray(y_true, dtype=int).tolist())) < 2:
         return None
-    observed = float(binary_classification_metrics(y_true, probabilities)["balanced_accuracy"])
+    observed = float(
+        binary_classification_metrics(
+            y_true,
+            probabilities,
+            threshold=threshold,
+            positive_label=positive_label,
+        )["balanced_accuracy"]
+    )
     rng = np.random.default_rng(seed)
     null = [
-        float(binary_classification_metrics(rng.permutation(y_true), probabilities)["balanced_accuracy"])
+        float(
+            binary_classification_metrics(
+                rng.permutation(y_true),
+                probabilities,
+                threshold=threshold,
+                positive_label=positive_label,
+            )["balanced_accuracy"]
+        )
         for _ in range(permutations)
     ]
     return float((1 + sum(value >= observed for value in null)) / (permutations + 1))
@@ -1184,6 +1347,11 @@ def load_joblib_artifact(config: dict[str, Any], kind: str) -> Any:
             "bundle_hash": bundle.get("bundle_hash"),
             "bundle_path": bundle.get("bundle_dir"),
             "contract": dict(bundle.get("contract") or artifact.get("contract") or {}),
+            "calibration": bundle.get("calibration") or artifact.get("calibration"),
+            "target": bundle.get("target") or artifact.get("target"),
+            "target_spec": bundle.get("target_spec") or artifact.get("target_spec"),
+            "model_family": bundle.get("model_family") or artifact.get("model_family"),
+            "model_spec": bundle.get("model_spec") or artifact.get("model_spec"),
         }
     return artifact
 
@@ -1198,15 +1366,50 @@ def configured_bundle(config: dict[str, Any]) -> dict[str, Any] | None:
 def artifact_prediction_metadata(artifact: Any) -> dict[str, Any]:
     if not isinstance(artifact, dict):
         return {}
-    return {
+    payload = {
         key: artifact[key]
         for key in ("bundle_hash", "bundle_path")
         if artifact.get(key) is not None
     }
+    payload.update(_model_artifact_metadata(artifact))
+    return payload
 
 
 def classifier_label(probability_no_go: float, config: dict[str, Any]) -> str:
-    return "no_go" if probability_no_go >= float(config.get("decision_probability", 0.5)) else "go"
+    calibration = dict(config.get("calibration") or {})
+    threshold = float(
+        config.get(
+            "decision_probability",
+            calibration.get("selected_threshold", config.get("calibrated_threshold", 0.5)),
+        )
+    )
+    target = str(config.get("target", dict(config.get("target_spec") or {}).get("target", "condition")))
+    if target.startswith("attention_lapse"):
+        return "attention_lapse" if probability_no_go >= threshold else "attentive"
+    return "no_go" if probability_no_go >= threshold else "go"
+
+
+def bundle_prediction_metadata(bundle: dict[str, Any]) -> dict[str, Any]:
+    payload = {
+        "bundle_hash": bundle.get("bundle_hash"),
+        "bundle_path": bundle.get("bundle_dir"),
+    }
+    payload.update(_model_artifact_metadata(bundle))
+    return {key: value for key, value in payload.items() if value is not None}
+
+
+def _model_artifact_metadata(value: dict[str, Any]) -> dict[str, Any]:
+    calibration = dict(value.get("calibration") or {})
+    model_spec = dict(value.get("model_spec") or {})
+    payload = {
+        "target": value.get("target", dict(value.get("target_spec") or {}).get("target", "condition")),
+        "target_spec": value.get("target_spec"),
+        "model_family": value.get("model_family", model_spec.get("family")),
+        "model_spec": model_spec or None,
+        "calibrated_threshold": calibration.get("selected_threshold", value.get("decision_probability")),
+        "calibration_id": calibration.get("calibration_id"),
+    }
+    return {key: item for key, item in payload.items() if item is not None}
 
 
 def prepare_artifact_epoch(
@@ -1274,3 +1477,100 @@ def tensor_probability(output: np.ndarray) -> float:
 
 def npz_value(data: Any, key: str, default: Any) -> Any:
     return data[key] if key in data.files else default
+
+
+class EpochDataset:
+    """In-memory npz-like container used for multi-session training."""
+
+    def __init__(self, values: dict[str, Any]) -> None:
+        self._values = dict(values)
+        self.files = tuple(self._values)
+
+    def __getitem__(self, key: str) -> Any:
+        return self._values[key]
+
+
+def load_epoch_dataset(
+    epochs_npz: str | Path | list[str | Path] | tuple[str | Path, ...],
+) -> tuple[Any, list[Path]]:
+    paths = _epoch_dataset_paths(epochs_npz)
+    if len(paths) == 1:
+        return np.load(paths[0], allow_pickle=True), paths
+    loaded = []
+    for path in paths:
+        with np.load(path, allow_pickle=True) as data:
+            loaded.append({key: np.asarray(data[key]) for key in data.files})
+    reference = loaded[0]
+    sample_counts = [_epoch_sample_count(values, path) for values, path in zip(loaded, paths)]
+    for values in loaded[1:]:
+        for key in ("times", "channel_names", "sample_rate_hz"):
+            if key in reference and key in values and not np.array_equal(reference[key], values[key]):
+                raise ValueError(f"cannot combine epoch datasets with different {key}")
+    combined: dict[str, Any] = {}
+    sample_keys = {"X", "y", "trials", "conditions", "epoch_timestamps", "marker_timestamps", "attention_lapse_binary", "attention_lapse_score", "lapse_score"}
+    for key in sample_keys:
+        present = [key in values for values in loaded]
+        if any(present) and not all(present):
+            raise ValueError(f"cannot combine epoch datasets with partial per-epoch field {key}")
+    for key in sorted(set().union(*(set(values) for values in loaded))):
+        if key in {"source_session_index", "source_epoch_index"}:
+            continue
+        arrays = [values[key] for values in loaded if key in values]
+        if key in sample_keys and len(arrays) == len(loaded):
+            combined[key] = np.concatenate(arrays, axis=0)
+        else:
+            combined[key] = reference[key]
+    combined["source_session_index"] = np.concatenate(
+        [np.full(count, index, dtype=int) for index, count in enumerate(sample_counts)],
+        axis=0,
+    )
+    combined["source_epoch_index"] = np.concatenate(
+        [np.arange(count, dtype=int) for count in sample_counts],
+        axis=0,
+    )
+    combined["source_epoch_counts"] = np.asarray(sample_counts, dtype=int)
+    combined["source_epoch_path_sha256"] = np.asarray([_string_sha256(str(path)) for path in paths], dtype=object)
+    return EpochDataset(combined), paths
+
+
+def _epoch_dataset_paths(
+    epochs_npz: str | Path | list[str | Path] | tuple[str | Path, ...],
+) -> list[Path]:
+    values = epochs_npz if isinstance(epochs_npz, (list, tuple)) else [epochs_npz]
+    paths = [Path(value).expanduser().resolve() for value in values]
+    if not paths:
+        raise ValueError("at least one epochs.npz path is required")
+    if len(set(paths)) != len(paths):
+        raise ValueError("duplicate epochs.npz inputs are not allowed for multi-session training")
+    for path in paths:
+        if not path.exists():
+            raise ValueError(f"epochs.npz does not exist: {path}")
+    return paths
+
+
+def _epoch_sample_count(values: dict[str, Any], path: Path) -> int:
+    for key in ("X", "y", "trials", "conditions", "epoch_timestamps", "marker_timestamps"):
+        if key in values:
+            return int(np.asarray(values[key]).shape[0])
+    raise ValueError(f"epochs.npz does not contain per-epoch arrays: {path}")
+
+
+def training_source_provenance(data: Any, source_paths: list[Path]) -> dict[str, Any]:
+    """Return reproducible, path-redacted provenance for bundle manifests."""
+    source_counts = np.asarray(npz_value(data, "source_epoch_counts", []), dtype=int)
+    if source_counts.size == 0:
+        x = np.asarray(data["X"]) if "X" in data.files else np.asarray([])
+        source_counts = np.asarray([int(x.shape[0])], dtype=int)
+    path_hashes = [_string_sha256(str(path)) for path in source_paths]
+    return {
+        "epochs_npz_count": len(source_paths),
+        "epochs_npz_path_sha256": path_hashes,
+        "epochs_npz_sha256": [file_sha256(path) for path in source_paths],
+        "source_epoch_counts": [int(value) for value in source_counts.tolist()],
+        "path_values_redacted": True,
+        "source_index_contract": "per-epoch source_session_index maps to session_dirs order during target generation",
+    }
+
+
+def _string_sha256(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
