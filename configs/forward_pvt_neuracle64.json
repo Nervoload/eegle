@@ -1,0 +1,189 @@
+{
+  "runtime": {
+    "project_name": "eegle",
+    "session_root": "data",
+    "runtime_cache_dir": ".runtime"
+  },
+  "telemetry": {
+    "console_level": "default",
+    "file_level": "realtime",
+    "trace_enabled": false,
+    "heartbeat_seconds": 5.0
+  },
+  "hardware": {
+    "eeg": {
+      "family": "Neuracle",
+      "profile": "neuracle64",
+      "expected_channel_counts": [64],
+      "expected_sample_rate_hz": 1000,
+      "lsl_stream_type": "EEG",
+      "lsl_name_patterns": ["neuracle", "neuracleeeg", "neuracle-eeg", "neuracle_lsl"],
+      "allow_type_only_fallback": false,
+      "stream_timeout_seconds": 5.0,
+      "sample_probe_seconds": 2.0,
+      "required_for_run": true
+    },
+    "markers": {
+      "lsl_stream_name": "EEGleMarkers",
+      "lsl_stream_type": "Markers"
+    },
+    "display": {
+      "screen_index": 0,
+      "full_screen": false,
+      "win_type": "pyglet",
+      "allow_gui": true,
+      "units": "height",
+      "background_color": "black",
+      "photodiode_patch": false
+    }
+  },
+  "experiment": {
+    "experiment_id": "pvt_neuracle64_lsl",
+    "participant_id": "example-participant",
+    "task": "pvt",
+    "mode": "forward",
+    "components": {
+      "preflight": "default",
+      "task": "pvt",
+      "eeg_recorder": "lsl_csv",
+      "realtime_processor": "disabled",
+      "feedback": "disabled",
+      "analysis": "minimal"
+    },
+    "output_formats": ["csv", "jsonl", "triggers_txt"],
+    "procedures": [
+      "preflight",
+      "eeg_recording",
+      "task",
+      "post_analysis"
+    ]
+  },
+  "processes": {
+    "recorder": {
+      "enabled": true,
+      "backend": "lsl_csv",
+      "csv_mirror": true,
+      "startup_timeout_seconds": 8.0
+    },
+    "realtime_processor": {
+      "enabled": false,
+      "backend": "disabled",
+      "preprocessor": "causal_bandpass_notch",
+      "model": "erp_peak_baseline",
+      "startup_timeout_seconds": 8.0
+    },
+    "feedback": {
+      "enabled": false,
+      "backend": "disabled"
+    },
+    "offline_analyzer": {
+      "enabled": true,
+      "backend": "minimal",
+      "timeout_seconds": 120.0
+    }
+  },
+  "tasks": {
+    "pvt": {
+      "trials": 20,
+      "fixation_seconds": 1.0,
+      "foreperiod_min_seconds": 2.0,
+      "foreperiod_max_seconds": 10.0,
+      "response_deadline_seconds": 2.0,
+      "minimum_valid_rt_seconds": 0.1,
+      "instruction_required": true,
+      "completion_auto_close_seconds": 30.0,
+      "target_radius": 0.09,
+      "feedback_seconds": 0.5,
+      "response_keys": ["space"],
+      "escape_keys": ["escape"]
+    }
+  },
+  "realtime": {
+    "enabled": false,
+    "epoching": {
+      "enabled": true,
+      "marker_prefix": "go_nogo_stimulus_onset",
+      "tmin_seconds": -0.2,
+      "tmax_seconds": 0.8,
+      "timebase": "lsl",
+      "sample_tolerance_seconds": 0.01,
+      "drop_incomplete": true,
+      "include_practice_trials": false
+    },
+    "preprocessing": {
+      "notch_hz": 60.0,
+      "bandpass_low_hz": 1.0,
+      "bandpass_high_hz": 45.0,
+      "downsample_factor": 1,
+      "reference": "average"
+    },
+    "model": {
+      "kind": "erp_peak_baseline",
+      "artifact_path": null,
+      "input_layout": "samples_x_channels",
+      "preprocessing": {
+        "kind": "raw_epoch"
+      },
+      "required_channels": ["Pz", "Cz", "P3", "P4"],
+      "roi_channels": ["Pz", "Cz", "CPz", "P3", "P4"],
+      "baseline_seconds": [-0.2, 0.0],
+      "p300_window_seconds": [0.25, 0.6],
+      "input_units": "microvolts",
+      "amplitude_threshold_uv": 3.0,
+      "amplitude_slope_uv": 2.0,
+      "decision_probability": 0.6
+    },
+    "decision_policy": {
+      "kind": "conservative_p300",
+      "enabled": true,
+      "allow_task_adaptation": true,
+      "probability_threshold": 0.6,
+      "lower_probability_threshold": 0.4,
+      "no_go_probability_step": 0.05,
+      "isi_step_seconds": 0.05,
+      "visual_alpha_value": 0.85,
+      "actions": ["increase_no_go_probability", "adjust_isi", "set_visual_alpha", "show_reward", "repeat_condition", "observe_only"],
+      "bounds": {
+        "no_go_probability": [0.15, 0.45],
+        "isi_seconds": [0.5, 1.25],
+        "visual_alpha": [0.5, 1.0]
+      },
+      "cooldowns": {
+        "trials": 2
+      }
+    },
+    "feedback": {
+      "mode": "visual_adaptation",
+      "lsl_stream_name": "EEGleFeedback",
+      "allow_task_adaptation": true,
+      "allow_stimulation": false,
+      "client": {
+        "enabled": false,
+        "backend": "auto",
+        "lsl_stream_name": "EEGleFeedback",
+        "jsonl_path": null
+      }
+    }
+  },
+  "analysis": {
+    "erp": {
+      "enabled": false,
+      "task": "go_nogo",
+      "tmin_seconds": -0.2,
+      "tmax_seconds": 0.8,
+      "baseline_seconds": [-0.2, 0.0],
+      "p300_window_seconds": [0.25, 0.6],
+      "filter_low_hz": 0.1,
+      "filter_high_hz": 30.0,
+      "notch_hz": 60.0,
+      "input_units": "microvolts",
+      "roi_channels": ["Pz", "Cz", "CPz", "P3", "P4"],
+      "dashboard_montage_times_ms": [-200, 0, 100, 200, 300, 400, 500, 600, 700, 800],
+      "dashboard_px_per_second": 220
+    },
+    "reports": {
+      "behavior": true,
+      "raw_eeg_summary": true
+    }
+  }
+}

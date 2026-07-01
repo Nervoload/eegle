@@ -14,8 +14,7 @@ from eegle.hardware.capabilities import (
     check_training_ready,
     training_model_kinds_from_config,
 )
-from eegle.hardware.eeg_device import identify_eeg_device
-from eegle.hardware.enobio import stream_matches_enobio
+from eegle.hardware.eeg_device import identify_eeg_device, matching_eeg_streams
 from eegle.hardware.os_support import check_os_support
 from eegle.hardware.system import CheckResult, check_packages, check_platform, check_python
 from eegle.lsl import resolve_streams
@@ -62,10 +61,12 @@ def run_preflight(config: dict[str, Any], lsl_wait: float = 1.0, require_eeg: bo
     checks.append(check_realtime_ready(config, stream_dicts, None, device_check, require_eeg=required_for_run))
     checks.append(check_training_ready(training_model_kinds_from_config(config)))
 
-    enobio_matches = [stream for stream in stream_dicts if stream_matches_enobio(stream, eeg)]
-    if enobio_matches:
-        detail = ", ".join(f"{stream['name']} ({stream['channel_count']} ch)" for stream in enobio_matches)
-        checks.append(CheckResult("enobio_lsl", "ok", detail, {"matches": enobio_matches}))
+    eeg_matches = matching_eeg_streams(stream_dicts, eeg)
+    device_check_name = _device_stream_check_name(eeg)
+    device_label = _device_stream_label(eeg)
+    if eeg_matches:
+        detail = ", ".join(f"{stream['name']} ({stream['channel_count']} ch)" for stream in eeg_matches)
+        checks.append(CheckResult(device_check_name, "ok", detail, {"matches": eeg_matches}))
         probe = probe_eeg_stream(
             eeg,
             seconds=float(eeg.get("sample_probe_seconds", 2.0)),
@@ -79,8 +80,24 @@ def run_preflight(config: dict[str, Any], lsl_wait: float = 1.0, require_eeg: bo
             checks.append(CheckResult("eeg_sample_probe", "warn", str(probe.get("error", "no samples read")), probe))
     else:
         status = "fail" if required_for_run else "warn"
-        checks.append(CheckResult("enobio_lsl", status, "no Enobio/NIC2 EEG LSL stream matched", {"streams": stream_dicts}))
+        checks.append(CheckResult(device_check_name, status, f"no {device_label} EEG LSL stream matched", {"streams": stream_dicts}))
     return checks
+
+
+def _device_stream_check_name(eeg_config: dict[str, Any]) -> str:
+    family = str(eeg_config.get("family") or "").strip().lower()
+    if family == "enobio":
+        return "enobio_lsl"
+    if family == "neuracle":
+        return "neuracle_lsl"
+    return "eeg_lsl"
+
+
+def _device_stream_label(eeg_config: dict[str, Any]) -> str:
+    family = str(eeg_config.get("family") or "").strip()
+    if family.lower() == "enobio":
+        return "Enobio/NIC2"
+    return family or "configured"
 
 
 def write_preflight_report(results: list[CheckResult], path: str | Path) -> None:

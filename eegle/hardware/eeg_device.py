@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from eegle.hardware.enobio import stream_enobio_score, stream_matches_enobio
+from eegle.hardware.neuracle import stream_matches_neuracle, stream_neuracle_score
 from eegle.hardware.system import CheckResult
 
 DeviceDetector = Callable[[list[dict[str, Any]], dict[str, Any], dict[str, Any]], CheckResult]
@@ -43,6 +44,9 @@ def matching_eeg_streams(streams: list[dict[str, Any]], eeg_config: dict[str, An
     if family == "enobio":
         matches = [stream for stream in streams if stream_matches_enobio(stream, eeg_config)]
         return sorted(matches, key=lambda stream: stream_enobio_score(stream, eeg_config), reverse=True)
+    if family == "neuracle":
+        matches = [stream for stream in streams if stream_matches_neuracle(stream, eeg_config)]
+        return sorted(matches, key=lambda stream: stream_neuracle_score(stream, eeg_config), reverse=True)
     return []
 
 
@@ -86,8 +90,28 @@ def _identify_enobio_lsl(
     return CheckResult("eeg_device", "warn", f"{label}; no matching LSL stream detected", data)
 
 
+def _identify_neuracle_lsl(
+    streams: list[dict[str, Any]],
+    eeg_config: dict[str, Any],
+    expected: dict[str, Any],
+) -> CheckResult:
+    matches = matching_eeg_streams(streams, eeg_config)
+    data = {
+        **expected,
+        "detector": "neuracle_lsl",
+        "matches": matches,
+        "candidate_eeg_streams": _candidate_eeg_streams(streams, eeg_config),
+    }
+    label = f"Neuracle LSL profile {expected.get('profile') or 'unspecified'}"
+    if matches:
+        detail = ", ".join(_stream_label(stream) for stream in matches)
+        return CheckResult("eeg_device", "ok", f"{label}; detected {detail}", data)
+    return CheckResult("eeg_device", "warn", f"{label}; no matching LSL stream detected", data)
+
+
 DEVICE_DETECTORS: dict[str, DeviceDetector] = {
     "enobio": _identify_enobio_lsl,
+    "neuracle": _identify_neuracle_lsl,
 }
 
 

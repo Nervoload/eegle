@@ -51,8 +51,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_config_arg(setup_check)
     _add_telemetry_args(setup_check)
     setup_check.add_argument("--lsl-wait", type=float, default=1.0, help="Seconds to wait for LSL stream discovery")
-    setup_check.add_argument("--require-eeg", action="store_true", help="Fail if no Enobio/NIC2 LSL stream is found")
-    setup_check.add_argument("--allow-missing-eeg", action="store_true", help="Warn instead of failing if no Enobio/NIC2 LSL stream is found")
+    setup_check.add_argument("--require-eeg", action="store_true", help="Fail if no configured EEG LSL stream is found")
+    setup_check.add_argument("--allow-missing-eeg", action="store_true", help="Warn instead of failing if no configured EEG LSL stream is found")
     setup_check.add_argument("--save", default=None, help="Optional JSON report path")
     setup_check.set_defaults(func=cmd_check_setup)
 
@@ -92,7 +92,7 @@ def build_parser() -> argparse.ArgumentParser:
     forward.add_argument("--task-mode", choices=["dry-run", "psychopy"], default="psychopy")
     forward.add_argument("--trials", type=int, default=None)
     forward.add_argument("--skip-eeg", action="store_true", help="Do not start the LSL EEG recorder")
-    forward.add_argument("--require-eeg", action="store_true", help="Fail preflight if no Enobio/NIC2 LSL stream is found")
+    forward.add_argument("--require-eeg", action="store_true", help="Fail preflight if no configured EEG LSL stream is found")
     forward.add_argument("--allow-missing-eeg", action="store_true", help="Allow task to run even if no EEG stream is found")
     forward.add_argument(
         "--calibration-suite",

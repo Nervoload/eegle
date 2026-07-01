@@ -200,6 +200,24 @@ class RealtimeSynchronyTests(unittest.TestCase):
         self.assertIsNone(info)
         self.assertIsNone(stream)
 
+    def test_eeg_selection_accepts_configured_neuracle_stream(self) -> None:
+        neuracle = _FakeInfo("Neuracle EEG", "EEG", "neuracle-lsl", channel_count=64, nominal_srate=1000.0)
+        unrelated = _FakeInfo("OtherEEG", "EEG", "other-device", channel_count=64, nominal_srate=1000.0)
+        pylsl = _FakePylsl([unrelated, neuracle])
+        config = {
+            "family": "Neuracle",
+            "profile": "neuracle64",
+            "lsl_stream_type": "EEG",
+            "lsl_name_patterns": ["neuracle"],
+            "expected_channel_counts": [64],
+            "expected_sample_rate_hz": 1000,
+        }
+
+        info, stream = _select_lsl_info(pylsl, config, 0.1)
+
+        self.assertIs(info, neuracle)
+        self.assertEqual(stream["name"], "Neuracle EEG")
+
     def test_flip_marker_uses_modeled_visual_timestamp_before_logging(self) -> None:
         logger = _FakeLogger()
         outlet = _FakeOutlet()

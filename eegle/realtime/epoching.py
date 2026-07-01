@@ -11,7 +11,7 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from eegle.hardware.enobio import expected_profile
+from eegle.hardware.profiles import expected_profile
 
 
 DEFAULT_MARKER_PREFIX = "go_nogo_stimulus_onset"

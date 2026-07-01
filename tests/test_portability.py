@@ -7,15 +7,17 @@ from pathlib import Path
 from unittest.mock import patch
 
 from eegle.cli import build_parser, cmd_check_setup
-from eegle.config import DEFAULT_CONFIG
+from eegle.config import DEFAULT_CONFIG, load_config
 from eegle.hardware.capabilities import (
     check_command_entrypoints,
     check_realtime_ready,
     check_training_ready,
 )
 from eegle.hardware.eeg_device import identify_eeg_device
+from eegle.hardware.profiles import mapped_channel_names as mapped_eeg_channel_names
 from eegle.hardware.os_support import check_os_support
 from eegle.hardware.system import CheckResult, check_platform, check_python
+from eegle.lsl import LslStream
 from eegle.preflight import run_preflight
 from eegle.runtime import _disable_psychopy_glfw
 from eegle.session import create_session
@@ -121,6 +123,79 @@ class PortabilityTests(unittest.TestCase):
 
                 self.assertEqual(result.status, "ok")
                 self.assertEqual(result.data["matches"][0]["channel_count"], channel_count)
+
+    def test_preflight_identifies_configured_neuracle_lsl_device(self) -> None:
+        result = identify_eeg_device(
+            [
+                {
+                    "name": "Neuracle EEG",
+                    "type": "EEG",
+                    "channel_count": 64,
+                    "nominal_srate": 1000.0,
+                    "source_id": "neuracle-lsl",
+                }
+            ],
+            {
+                "family": "Neuracle",
+                "profile": "neuracle64",
+                "expected_channel_counts": [64],
+                "expected_sample_rate_hz": 1000,
+                "lsl_stream_type": "EEG",
+                "lsl_name_patterns": ["neuracle"],
+            },
+        )
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.data["detector"], "neuracle_lsl")
+        self.assertEqual(result.data["matches"][0]["channel_count"], 64)
+
+    def test_neuracle_large_cap_profile_preserves_lsl_channel_labels(self) -> None:
+        labels = [f"NE{index:02d}" for index in range(1, 65)]
+
+        mapped, source = mapped_eeg_channel_names(labels, {"family": "Neuracle", "profile": "neuracle64"})
+
+        self.assertEqual(mapped, labels)
+        self.assertEqual(source, "lsl_metadata")
+
+    def test_neuracle_pvt_preset_is_packaged_for_lsl_csv_recording(self) -> None:
+        config = load_config("configs/forward_pvt_neuracle64.json")
+        eeg = config["hardware"]["eeg"]
+
+        self.assertEqual(eeg["family"], "Neuracle")
+        self.assertEqual(eeg["profile"], "neuracle64")
+        self.assertEqual(eeg["expected_channel_counts"], [64])
+        self.assertEqual(eeg["expected_sample_rate_hz"], 1000)
+        self.assertEqual(config["processes"]["recorder"]["backend"], "lsl_csv")
+
+    def test_preflight_emits_neuracle_stream_check_and_sample_probe(self) -> None:
+        config = {
+            "hardware": {
+                "eeg": {
+                    "family": "Neuracle",
+                    "profile": "neuracle64",
+                    "expected_channel_counts": [64],
+                    "expected_sample_rate_hz": 1000,
+                    "lsl_stream_type": "EEG",
+                    "lsl_name_patterns": ["neuracle"],
+                    "sample_probe_seconds": 0.01,
+                    "stream_timeout_seconds": 0.01,
+                }
+            }
+        }
+        stream = LslStream("Neuracle EEG", "EEG", 64, 1000.0, "neuracle-lsl")
+        with patch("eegle.preflight.check_packages", return_value=[]), patch(
+            "eegle.preflight.resolve_streams",
+            return_value=([stream], None),
+        ), patch(
+            "eegle.preflight.probe_eeg_stream",
+            return_value={"status": "ok", "sample_count": 8},
+        ):
+            results = run_preflight(config, lsl_wait=0, require_eeg=True)
+        by_name = {result.name: result for result in results}
+
+        self.assertEqual(by_name["eeg_device"].status, "ok")
+        self.assertEqual(by_name["eeg_device"].data["detector"], "neuracle_lsl")
+        self.assertEqual(by_name["neuracle_lsl"].status, "ok")
+        self.assertEqual(by_name["eeg_sample_probe"].status, "ok")
 
     def test_preflight_names_configured_device_when_lsl_is_unavailable(self) -> None:
         config = {

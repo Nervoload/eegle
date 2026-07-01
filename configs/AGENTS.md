@@ -8,6 +8,7 @@ The JSON files in this directory are experiment presets. They are loaded by
 - `default_experiment.json`: software development and dry-run PVT defaults.
 - `forward_pvt_enobio.json`: PVT with Enobio/NIC2 stream matching.
 - `forward_pvt_enobio8.json`: PVT tuned for an 8-channel, 500 Hz Enobio stream.
+- `forward_pvt_neuracle64.json`: PVT tuned for a 64-channel, 1000 Hz Neuracle LSL stream.
 - `forward_go_nogo_enobio8.json`: posterior-alpha Go/No-go workflow.
 - `forward_go_nogo_inhibition8.json`: observe-only inhibition workflow.
 - `forward_go_nogo_classifier8.json`: GO/NO-GO condition-classifier capture,

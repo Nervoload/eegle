@@ -14,7 +14,7 @@ import numpy as np
 
 from eegle.config import load_config
 from eegle.devices.lsl_eeg import _select_lsl_info
-from eegle.hardware.enobio import mapped_channel_names
+from eegle.hardware.profiles import mapped_channel_names
 from eegle.lsl import inlet_time_correction, lsl_processing_flags
 from eegle.ml.contracts import normalize_input_contract, validate_supported_resampling
 from eegle.ml.registry import get_model_spec, resolve_model_kind

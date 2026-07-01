@@ -15,7 +15,7 @@ from typing import Any
 import numpy as np
 
 from eegle.config import merged_config, write_config
-from eegle.hardware.enobio import expected_profile, mapped_channel_names
+from eegle.hardware.profiles import expected_profile, mapped_channel_names
 from eegle.lsl import LslMarkerOutlet, NullMarkerOutlet, lsl_local_clock, session_marker_source_id
 from eegle.realtime.alpha import (
     AlphaPeakCandidate,

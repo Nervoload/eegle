@@ -12,7 +12,7 @@ from typing import Any
 
 import numpy as np
 
-from eegle.hardware.enobio import expected_profile
+from eegle.hardware.profiles import expected_profile
 
 
 DEFAULT_ERP_CONFIG: dict[str, Any] = {

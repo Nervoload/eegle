@@ -1,4 +1,4 @@
-"""LSL EEG recorder for Enobio/NIC2 streams."""
+"""LSL EEG recorder for configured EEG streams."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from time import monotonic
 from typing import Any
 
 from eegle.hardware.eeg_device import matching_eeg_streams
-from eegle.hardware.enobio import mapped_channel_names
+from eegle.hardware.profiles import mapped_channel_names
 from eegle.lsl import inlet_time_correction, lsl_processing_flags
 
 

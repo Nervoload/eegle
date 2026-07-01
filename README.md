@@ -1,8 +1,9 @@
 # EEGle
 
 EEGle is a Python toolkit for reproducible realtime EEG experiments. It combines
-PsychoPy tasks, Lab Streaming Layer (LSL) acquisition, Enobio/NIC2 setup checks,
-structured session output, realtime processing, and post-session analysis.
+PsychoPy tasks, Lab Streaming Layer (LSL) acquisition, Enobio/NIC2 and Neuracle
+setup checks, structured session output, realtime processing, and post-session
+analysis.
 
 The source CLI is `eegle.cli:main`. Installing this project creates an
 `eegle` console script in that Python environment; `eegle` is not a global or
@@ -163,8 +164,8 @@ Linux lockfile.
 ## Command Guide
 
 `eegle check-setup` checks the Python runtime, required and optional packages,
-visible LSL streams, configured Enobio/NIC2 stream match, realtime readiness,
-display readiness, training dependencies, and whether EEG samples can be read.
+visible LSL streams, configured EEG stream match, realtime readiness, display
+readiness, training dependencies, and whether EEG samples can be read.
 It replaces the less descriptive `doctor` command; `eegle doctor` remains as a
 compatibility alias.
 
@@ -271,6 +272,7 @@ analysis:
 | `configs/default_experiment.json` | Software development and dry runs |
 | `configs/forward_pvt_enobio.json` | PVT with an 8, 22, or 32-channel Enobio stream |
 | `configs/forward_pvt_enobio8.json` | PVT with an 8-channel, 500 Hz Enobio stream |
+| `configs/forward_pvt_neuracle64.json` | PVT with a 64-channel, 1000 Hz Neuracle LSL stream |
 | `configs/forward_go_nogo_enobio8.json` | Go/No-go with the posterior-alpha 8-channel montage |
 | `configs/forward_go_nogo_inhibition8.json` | Observe-only Go/No-go with the inhibition montage |
 | `configs/forward_go_nogo_classifier8.json` | Capture and observe-only GO/NO-GO EEG condition classification |
@@ -320,11 +322,12 @@ EEGle is intended to run from one shared Python codebase on macOS, Windows, and
 Linux. The places that need OS-specific handling are setup and operator
 environment details: virtual-environment activation syntax, optional POSIX
 wrappers, PsychoPy display validation, external NIC2 installation, LSL/firewall
-settings, and future LabRecorder launching. Preflight reports the current OS as
-`os_support`, installed command visibility as `commands`, PsychoPy readiness as
-`display_ready`, realtime worker readiness as `realtime_ready`, model-training
-dependency readiness as `training_ready`, and the configured EEG device family
-as `eeg_device` when matching LSL streams are visible.
+settings, Neuracle acquisition setup, and future LabRecorder launching.
+Preflight reports the current OS as `os_support`, installed command visibility
+as `commands`, PsychoPy readiness as `display_ready`, realtime worker readiness
+as `realtime_ready`, model-training dependency readiness as `training_ready`,
+and the configured EEG device family as `eeg_device` when matching LSL streams
+are visible.
 
 ## Session Output and Data Hygiene
 
@@ -447,6 +450,49 @@ Fz, Cz, Pz, C3, C4, P3, P4, Oz
 
 LabRecorder/XDF launch is not implemented. EEGle currently records the matched
 LSL EEG stream to its own session output.
+
+## Example Neuracle 64-Channel LSL Setup Check
+
+This first-pass Neuracle preset runs the same preflight, `lsl_csv` recorder,
+PVT task, and session-output path as the Enobio presets. EEGle does not install
+or launch the Neuracle acquisition software.
+
+The shipped preset expects the acquisition computer to publish:
+
+```text
+type: EEG
+channel count: 64
+sample rate: 1000 Hz
+name or source id containing: neuracle
+```
+
+If the lab computer is configured for a different Neuracle channel count or
+sample rate, use `configs/forward_pvt_neuracle64.json` as the starting preset
+and adjust only the `hardware.eeg` expectations before collecting data.
+
+Validate stream discovery and sample delivery:
+
+```bash
+eegle check-setup \
+  --config configs/forward_pvt_neuracle64.json \
+  --require-eeg \
+  --lsl-wait 5
+```
+
+Continue only when `eeg_device`, `neuracle_lsl`, and `eeg_sample_probe` report
+`OK`. If discovery fails, verify that Neuracle acquisition is actively
+streaming, its LSL outlet is enabled, and the local firewall allows LSL traffic.
+
+Run the PVT experiment:
+
+```bash
+eegle run-forward \
+  --config configs/forward_pvt_neuracle64.json \
+  --task pvt \
+  --task-mode psychopy \
+  --participant sub-001 \
+  --require-eeg
+```
 
 ## Windows PowerShell Setup and NIC2 Enobio 8 Run
 
@@ -581,7 +627,7 @@ Demo guesses and illustrative ERP windows are written separately to
 
 ## Current Scope
 
-EEGle currently supports PVT and Go/No-go execution, Enobio/NIC2 LSL checks,
-CSV recording, marker and telemetry logs, posterior-alpha calibration,
+EEGle currently supports PVT and Go/No-go execution, Enobio/NIC2 and Neuracle
+LSL checks, CSV recording, marker and telemetry logs, posterior-alpha calibration,
 realtime/replay scaffolding, ERP analysis, and HTML reports. N-back, Sternberg,
 and anti-VEA remain registered future-task scaffolds.

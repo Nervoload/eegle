@@ -7,7 +7,7 @@ Preflight
   -> optional calibration suite
   -> PsychoPy task
   -> LSL marker stream
-  -> Enobio/NIC2 EEG LSL stream
+  -> configured EEG LSL stream (Enobio/NIC2 or Neuracle)
   -> recorder/session data
   -> realtime buffer
   -> preprocessing/model/alpha measurement
@@ -20,7 +20,7 @@ Preflight
 `eegle.preflight` checks the active or explicitly configured Python
 interpreter, shared-codebase OS support, optional platform expectations, package
 availability, LSL discovery, configured EEG device identification, and
-Enobio/NIC2 stream matching. It also emits capability checks for installed
+configured EEG stream matching. It also emits capability checks for installed
 console commands, display readiness, realtime worker readiness, and
 model-training dependency readiness. OS-specific differences should stay in this
 preflight/support layer or in narrowly guarded runtime workarounds; the operator
