@@ -18,7 +18,7 @@ htmlcov/
 data/
 .runtime/
 artifacts/
-models/
+/models/
 <session_dir>/
 
 # Local logs and editor/OS files
