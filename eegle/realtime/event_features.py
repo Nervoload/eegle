@@ -547,19 +547,28 @@ class EngineInputCaptureWriter:
     def write_eeg(self, timestamps: np.ndarray, data: np.ndarray) -> None:
         ts = np.asarray(timestamps, dtype="<f8")
         values = np.asarray(data, dtype="<f8")
-        self._handle.write(b"E")
-        self._handle.write(struct.pack("<II", ts.size, values.shape[1]))
-        self._handle.write(ts.tobytes(order="C"))
-        self._handle.write(values.tobytes(order="C"))
+        if ts.size == 0:
+            return
+        if values.ndim != 2 or values.shape[0] != ts.size:
+            raise ValueError(f"EEG capture frame shape mismatch: timestamps={ts.size}, data_shape={values.shape}")
+        frame = b"".join(
+            [
+                b"E",
+                struct.pack("<II", ts.size, values.shape[1]),
+                ts.tobytes(order="C"),
+                values.tobytes(order="C"),
+            ]
+        )
+        self._handle.write(frame)
+        self.flush()
 
     def write_marker(self, marker: MarkerEvent) -> None:
         payload = json.dumps(
             {"label": marker.label, "timestamp": marker.timestamp, "timebase": marker.timebase, "source": marker.source},
             sort_keys=True,
         ).encode("utf-8")
-        self._handle.write(b"M")
-        self._handle.write(struct.pack("<I", len(payload)))
-        self._handle.write(payload)
+        self._handle.write(b"M" + struct.pack("<I", len(payload)) + payload)
+        self.flush()
 
     def flush(self) -> None:
         self._handle.flush()
@@ -575,8 +584,8 @@ def read_engine_capture(path: str | Path) -> tuple[dict[str, Any], Iterator[tupl
     if handle.read(len(CAPTURE_MAGIC)) != CAPTURE_MAGIC:
         handle.close()
         raise ValueError("invalid realtime engine capture magic")
-    header_size = struct.unpack("<I", handle.read(4))[0]
-    header = json.loads(handle.read(header_size).decode("utf-8"))
+    header_size = struct.unpack("<I", _read_exact(handle, 4, "capture header size"))[0]
+    header = json.loads(_read_exact(handle, header_size, "capture header").decode("utf-8"))
 
     def records() -> Iterator[tuple[str, Any]]:
         try:
@@ -585,13 +594,23 @@ def read_engine_capture(path: str | Path) -> tuple[dict[str, Any], Iterator[tupl
                 if not kind:
                     break
                 if kind == b"E":
-                    sample_count, channel_count = struct.unpack("<II", handle.read(8))
-                    timestamps = np.frombuffer(handle.read(sample_count * 8), dtype="<f8").copy()
-                    data = np.frombuffer(handle.read(sample_count * channel_count * 8), dtype="<f8").copy()
+                    sample_count, channel_count = struct.unpack("<II", _read_exact(handle, 8, "EEG frame header"))
+                    timestamps = np.frombuffer(
+                        _read_exact(handle, sample_count * 8, f"EEG timestamp payload ({sample_count} samples)"),
+                        dtype="<f8",
+                    ).copy()
+                    data = np.frombuffer(
+                        _read_exact(
+                            handle,
+                            sample_count * channel_count * 8,
+                            f"EEG sample payload ({sample_count}x{channel_count})",
+                        ),
+                        dtype="<f8",
+                    ).copy()
                     yield "eeg", (timestamps, data.reshape(sample_count, channel_count))
                 elif kind == b"M":
-                    size = struct.unpack("<I", handle.read(4))[0]
-                    row = json.loads(handle.read(size).decode("utf-8"))
+                    size = struct.unpack("<I", _read_exact(handle, 4, "marker frame header"))[0]
+                    row = json.loads(_read_exact(handle, size, "marker payload").decode("utf-8"))
                     yield "marker", MarkerEvent(
                         label=str(row["label"]),
                         timestamp=float(row["timestamp"]),
@@ -604,6 +623,13 @@ def read_engine_capture(path: str | Path) -> tuple[dict[str, Any], Iterator[tupl
             handle.close()
 
     return header, records()
+
+
+def _read_exact(handle: Any, size: int, label: str) -> bytes:
+    data = handle.read(size)
+    if len(data) != size:
+        raise ValueError(f"truncated realtime engine capture: {label} expected {size} bytes, got {len(data)}")
+    return data
 
 
 # Neutral names for classifier capture/replay; legacy names remain compatible.

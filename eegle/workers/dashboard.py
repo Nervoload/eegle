@@ -449,7 +449,7 @@ def main(argv: list[str] | None = None) -> int:
         status.update("failed", error="dashboard requires http backend bound to localhost")
         return 2
     stop_event = threading.Event()
-    install_stop_signal_handlers(stop_event)
+    install_stop_signal_handlers(stop_event, paths.process_logs / "dashboard.stop")
     demo_bridge = None
     demo_config = demo_config_from(config)
     if demo_config["enabled"]:

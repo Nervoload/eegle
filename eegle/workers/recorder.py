@@ -26,7 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     telemetry_config = telemetry_config_from(config)
     status = StatusWriter(paths.process_logs / "recorder.status.json", "recorder", args.backend, telemetry)
     stop_event = threading.Event()
-    install_stop_signal_handlers(stop_event)
+    install_stop_signal_handlers(stop_event, paths.process_logs / "recorder.stop")
 
     if args.backend in {"disabled", "none"}:
         status.update("disabled", reason="recorder backend disabled")

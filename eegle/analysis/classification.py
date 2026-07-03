@@ -158,7 +158,21 @@ def replay_classifier_session(session_dir: str | Path) -> dict[str, Any]:
     summary_path = outdir / "replay_summary.json"
     if not capture_path.exists():
         return _write_json(summary_path, {"status": "missing", "reason": "classifier_capture_missing"})
-    header, records = read_engine_capture(capture_path)
+    try:
+        header, records = read_engine_capture(capture_path)
+    except ValueError as exc:
+        if "realtime engine capture" not in str(exc):
+            raise
+        return _write_json(
+            summary_path,
+            {
+                "schema_version": 1,
+                "status": "analytically_invalid",
+                "reason": "classifier_capture_unreadable",
+                "error": str(exc),
+                "capture_file": str(capture_path),
+            },
+        )
     if str(header.get("mode")) != "classifier":
         return _write_json(summary_path, {"status": "missing", "reason": "capture_is_not_classifier_mode"})
     sample_rate = float(header["sample_rate_hz"])

@@ -8,7 +8,7 @@ import threading
 from collections import deque
 from datetime import datetime
 from pathlib import Path
-from time import monotonic
+from time import monotonic, sleep
 from typing import Any
 
 
@@ -143,7 +143,7 @@ class QueuedJsonlWriter:
         self._handle.close()
 
 
-def install_stop_signal_handlers(stop_event: threading.Event) -> None:
+def install_stop_signal_handlers(stop_event: threading.Event, stop_file: str | Path | None = None) -> None:
     def _handle_stop(signum: int, frame: object) -> None:
         stop_event.set()
 
@@ -151,6 +151,19 @@ def install_stop_signal_handlers(stop_event: threading.Event) -> None:
     signal.signal(signal.SIGINT, _handle_stop)
     if hasattr(signal, "SIGBREAK"):
         signal.signal(signal.SIGBREAK, _handle_stop)
+    if stop_file is not None:
+        _start_stop_file_watcher(stop_event, Path(stop_file))
+
+
+def _start_stop_file_watcher(stop_event: threading.Event, stop_file: Path) -> None:
+    def _watch() -> None:
+        while not stop_event.is_set():
+            if stop_file.exists():
+                stop_event.set()
+                return
+            sleep(0.1)
+
+    threading.Thread(target=_watch, name=f"stop-file:{stop_file.name}", daemon=True).start()
 
 
 def load_status(path: str | Path) -> dict[str, Any] | None:

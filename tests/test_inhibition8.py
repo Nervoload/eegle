@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,6 +20,7 @@ from eegle.pipelines.inhibition8 import _config_contract_issues
 from eegle.realtime.epoching import MarkerEvent
 from eegle.realtime.event_features import (
     ERP_BASELINE_WINDOW,
+    CAPTURE_MAGIC,
     FEATURE_DEFINITIONS,
     EngineInputCaptureWriter,
     FeatureRegistry,
@@ -254,6 +256,31 @@ class Inhibition8Tests(unittest.TestCase):
             self.assertEqual(summary["status"], "pass")
             self.assertEqual(summary["online_packet_count"], 4)
             self.assertEqual(summary["material_difference_count"], 0)
+
+    def test_truncated_capture_replay_reports_unreadable_instead_of_reshape_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "realtime").mkdir()
+            header = {
+                "sample_rate_hz": 500.0,
+                "channel_names": CHANNELS,
+                "event_features_config": _engine_config(),
+            }
+            encoded = json.dumps(header, sort_keys=True).encode("utf-8")
+            with (root / "realtime" / "engine_input.bin").open("wb") as handle:
+                handle.write(CAPTURE_MAGIC)
+                handle.write(struct.pack("<I", len(encoded)))
+                handle.write(encoded)
+                handle.write(b"E")
+                handle.write(struct.pack("<II", 13, len(CHANNELS)))
+                handle.write(np.zeros(13, dtype="<f8").tobytes())
+
+            summary = replay_realtime_session(root)
+
+            self.assertEqual(summary["status"], "analytically_invalid")
+            self.assertIn("engine_capture_unreadable", summary["reasons"])
+            self.assertIn("truncated realtime engine capture", summary["error"])
+            self.assertIn("13x8", summary["error"])
 
     def test_replay_rejects_matching_online_and_replay_streams_that_missed_task_trials(self) -> None:
         sample_rate = 100.0

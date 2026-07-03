@@ -26,6 +26,7 @@ class WorkerHandle:
     status_file: Path
     stdout_file: Path
     stderr_file: Path
+    stop_file: Path
     process: subprocess.Popen[bytes] | None = None
     stdout_handle: Any | None = None
     stderr_handle: Any | None = None
@@ -222,6 +223,7 @@ class FeedbackManager:
         worker = self._make_worker(name, module, extra_args)
         worker.stdout_handle = worker.stdout_file.open("ab")
         worker.stderr_handle = worker.stderr_file.open("ab")
+        worker.stop_file.unlink(missing_ok=True)
         self.telemetry.emit(
             "process.start",
             level="default",
@@ -281,6 +283,7 @@ class FeedbackManager:
     def _run_worker_to_completion(self, worker: WorkerHandle, timeout_seconds: float) -> None:
         worker.stdout_handle = worker.stdout_file.open("ab")
         worker.stderr_handle = worker.stderr_file.open("ab")
+        worker.stop_file.unlink(missing_ok=True)
         self.telemetry.emit(
             "process.start",
             level="default",
@@ -342,19 +345,23 @@ class FeedbackManager:
                 message=f"Stopping {worker.name}",
                 metadata={"name": worker.name, "backend": worker.backend},
             )
-            worker.process.terminate()
+            self._request_worker_stop(worker)
             try:
                 worker.process.wait(timeout=5.0)
             except subprocess.TimeoutExpired:
                 self.telemetry.emit(
                     "process.timeout",
                     level="default",
-                    message=f"{worker.name} did not stop after terminate",
+                    message=f"{worker.name} did not stop after cooperative request",
                     metadata={"name": worker.name, "backend": worker.backend},
                 )
-                worker.process.kill()
-                self._write_forced_status(worker, "killed", "worker did not stop after terminate")
-                worker.process.wait(timeout=5.0)
+                worker.process.terminate()
+                try:
+                    worker.process.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    worker.process.kill()
+                    self._write_forced_status(worker, "killed", "worker did not stop after terminate")
+                    worker.process.wait(timeout=5.0)
         self._ensure_terminal_worker_status(worker)
         worker.stopped_at_monotonic = monotonic()
         self.telemetry.emit(
@@ -374,6 +381,7 @@ class FeedbackManager:
         status_file = self.paths.process_logs / f"{name}.status.json"
         stdout_file = self.paths.process_logs / f"{name}.stdout.log"
         stderr_file = self.paths.process_logs / f"{name}.stderr.log"
+        stop_file = self.paths.process_logs / f"{name}.stop"
         command = [
             self._python_executable(),
             "-m",
@@ -384,7 +392,7 @@ class FeedbackManager:
             str(self.paths.root),
             *extra_args,
         ]
-        return WorkerHandle(name, backend, module, command, status_file, stdout_file, stderr_file)
+        return WorkerHandle(name, backend, module, command, status_file, stdout_file, stderr_file, stop_file)
 
     def _wait_for_status(
         self,
@@ -418,6 +426,12 @@ class FeedbackManager:
         if stderr_tail:
             metadata["error"] = stderr_tail
         writer.update(status, **metadata)
+
+    def _request_worker_stop(self, worker: WorkerHandle) -> None:
+        worker.stop_file.parent.mkdir(parents=True, exist_ok=True)
+        with worker.stop_file.open("w", encoding="utf-8") as handle:
+            json.dump({"action": "stop", "worker": worker.name}, handle, sort_keys=True)
+            handle.write("\n")
 
     @staticmethod
     def _worker_stderr_tail(worker: WorkerHandle) -> str | None:

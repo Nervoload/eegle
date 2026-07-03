@@ -6,7 +6,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
-from time import monotonic
+from time import monotonic, sleep
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -163,6 +163,19 @@ class RealtimeSynchronyTests(unittest.TestCase):
             install_stop_signal_handlers(threading.Event())
 
         self.assertEqual(calls, [15, 2, 21])
+
+    def test_stop_file_sets_worker_stop_event_without_process_signal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stop_file = Path(tmp) / "realtime_processor.stop"
+            stop_event = threading.Event()
+
+            install_stop_signal_handlers(stop_event, stop_file)
+            stop_file.write_text('{"action": "stop"}\n', encoding="utf-8")
+            deadline = monotonic() + 1.0
+            while not stop_event.is_set() and monotonic() < deadline:
+                sleep(0.01)
+
+            self.assertTrue(stop_event.is_set())
 
     def test_marker_inlet_requires_exact_session_stream_and_applies_clock_sync(self) -> None:
         pylsl = _FakePylsl(
@@ -457,6 +470,7 @@ class RealtimeSynchronyTests(unittest.TestCase):
                 status_file=paths.process_logs / "realtime_processor.status.json",
                 stdout_file=paths.process_logs / "realtime_processor.stdout.log",
                 stderr_file=stderr_file,
+                stop_file=paths.process_logs / "realtime_processor.stop",
                 process=SimpleNamespace(poll=lambda: 1),
             )
 

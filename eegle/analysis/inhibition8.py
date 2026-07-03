@@ -34,19 +34,36 @@ def replay_realtime_session(session_dir: str | Path, tolerance: float = 1e-9) ->
     if not capture_path.exists():
         return _write_json(summary_path, {"status": "missing", "reason": "engine_capture_missing", "capture_file": str(capture_path)})
 
-    header, records = read_engine_capture(capture_path)
-    engine = RealtimeEventEngine(
-        dict(header.get("event_features_config") or {}),
-        float(header["sample_rate_hz"]),
-        [str(value) for value in header["channel_names"]],
-    )
-    replay_packets: list[dict[str, Any]] = []
-    for kind, payload in records:
-        if kind == "eeg":
-            timestamps, data = payload
-            replay_packets.extend(engine.process_chunk(timestamps, data))
-        else:
-            replay_packets.extend(engine.add_marker(payload))
+    try:
+        header, records = read_engine_capture(capture_path)
+        engine = RealtimeEventEngine(
+            dict(header.get("event_features_config") or {}),
+            float(header["sample_rate_hz"]),
+            [str(value) for value in header["channel_names"]],
+        )
+        replay_packets: list[dict[str, Any]] = []
+        for kind, payload in records:
+            if kind == "eeg":
+                timestamps, data = payload
+                replay_packets.extend(engine.process_chunk(timestamps, data))
+            else:
+                replay_packets.extend(engine.add_marker(payload))
+    except ValueError as exc:
+        if "realtime engine capture" not in str(exc):
+            raise
+        return _write_json(
+            summary_path,
+            {
+                "schema_version": 1,
+                "status": "analytically_invalid",
+                "reasons": ["engine_capture_unreadable"],
+                "reason": "engine_capture_unreadable",
+                "error": str(exc),
+                "session_dir": str(root),
+                "capture_file": str(capture_path),
+                "online_file": str(online_path),
+            },
+        )
     _write_jsonl(replay_path, replay_packets)
     online_packets = _load_jsonl(online_path)
     acceptance_online = _main_task_packets(online_packets)
