@@ -10,6 +10,9 @@ from eegle.hardware.system import CheckResult, system_snapshot
 SUPPORTED_OS: dict[str, dict[str, Any]] = {
     "Darwin": {
         "display_name": "macOS",
+        "command_shells": ["zsh", "bash"],
+        "path_style": "posix",
+        "runtime_cache_env_vars": ["HOME", "MPLCONFIGDIR", "PSYCHOPY_USERAPPDATA", "LSLAPICFG"],
         "notes": [
             "Use installed console scripts or python -m modules.",
             "PsychoPy display validation and LSL firewall settings remain operator checks.",
@@ -17,6 +20,16 @@ SUPPORTED_OS: dict[str, dict[str, Any]] = {
     },
     "Windows": {
         "display_name": "Windows",
+        "command_shells": ["PowerShell", "cmd"],
+        "path_style": "windows",
+        "runtime_cache_env_vars": [
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "MPLCONFIGDIR",
+            "PSYCHOPY_USERAPPDATA",
+            "LSLAPICFG",
+        ],
         "notes": [
             "Use installed console scripts from PowerShell or cmd.",
             "Repository-root sh wrappers and Makefile targets are POSIX conveniences.",
@@ -25,6 +38,9 @@ SUPPORTED_OS: dict[str, dict[str, Any]] = {
     },
     "Linux": {
         "display_name": "Linux",
+        "command_shells": ["bash", "sh"],
+        "path_style": "posix",
+        "runtime_cache_env_vars": ["HOME", "MPLCONFIGDIR", "PSYCHOPY_USERAPPDATA", "LSLAPICFG"],
         "notes": [
             "Use installed console scripts or python -m modules.",
             "PsychoPy display validation, display-server setup, and LSL firewall settings remain operator checks.",
@@ -61,6 +77,9 @@ def check_os_support() -> CheckResult:
             "display_name": display,
             "supported_systems": sorted(SUPPORTED_OS),
             "requires_separate_codebase": False,
+            "command_shells": list(support.get("command_shells", [])),
+            "path_style": str(support.get("path_style", "unknown")),
+            "runtime_cache_env_vars": list(support.get("runtime_cache_env_vars", [])),
             "os_specific_notes": list(support.get("notes", [])),
         },
     )

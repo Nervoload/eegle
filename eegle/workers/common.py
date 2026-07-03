@@ -149,6 +149,8 @@ def install_stop_signal_handlers(stop_event: threading.Event) -> None:
 
     signal.signal(signal.SIGTERM, _handle_stop)
     signal.signal(signal.SIGINT, _handle_stop)
+    if hasattr(signal, "SIGBREAK"):
+        signal.signal(signal.SIGBREAK, _handle_stop)
 
 
 def load_status(path: str | Path) -> dict[str, Any] | None:

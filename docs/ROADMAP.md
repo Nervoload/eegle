@@ -3,8 +3,8 @@
 ## Immediate Foundation
 
 1. Validate `eegle check-setup --require-eeg` with NIC2 streaming Enobio EEG over LSL.
-2. Run `make forward-dry-run` and confirm the BciPy-style session folders are created.
-3. Run `make forward-pvt` with NIC2 streaming and confirm `raw/eeg.csv` receives samples.
+2. Run `eegle run-forward --config configs/default_experiment.json --task pvt --task-mode dry-run --skip-eeg --allow-missing-eeg` and confirm the BciPy-style session folders are created.
+3. Run `eegle run-forward --config configs/forward_pvt_enobio.json --task pvt --task-mode psychopy --require-eeg` with NIC2 streaming and confirm `raw/eeg.csv` receives samples.
 4. Run PVT in PsychoPy mode with no subject, then with a photodiode timing check.
 5. Decide whether LabRecorder/XDF is the canonical raw recording path or whether BciPy-style CSV should also be produced live.
 6. Validate the managed `FeedbackManager` subprocess lifecycle with NIC2, including recorder status files and realtime worker startup.

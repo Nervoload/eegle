@@ -81,8 +81,8 @@ environment, but it does not depend on the `eegle` console script being on
 
 The supplied constraints snapshot was captured on macOS. Use
 `constraints/macos-python310.txt` only when recreating that exact macOS
-environment; the exact pins in `pyproject.toml` are the cross-platform source of
-truth.
+environment. The compatible dependency ranges in `pyproject.toml` are the
+cross-platform packaging source of truth.
 
 Check the software setup without requiring an EEG device:
 
@@ -120,50 +120,63 @@ recordings.
 
 ## Installation Options
 
-The base package includes LSL acquisition and analysis dependencies:
+The base package is intentionally lean. It installs importable session,
+contract, model-bundle, calibration, protocol, and lightweight replay
+primitives:
 
 ```bash
 python -m pip install -e .
 ```
 
-Install the extra needed for PsychoPy experiments and spectral parameterization:
+Install extras for the surfaces you use:
 
 ```bash
 python -m pip install -e ".[runtime]"
+python -m pip install -e ".[analysis]"
+python -m pip install -e ".[ml]"
+python -m pip install -e ".[torch]"
 ```
 
-Optional model stacks are separate:
+The `deep-learning` extra remains as a compatibility alias for the Torch/ONNX
+stack:
 
 ```bash
-python -m pip install -e ".[ml]"
 python -m pip install -e ".[deep-learning]"
 ```
 
-The direct dependencies are pinned in `pyproject.toml`.
+For local development and CI-style tests:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+`pyproject.toml` uses compatible package ranges for pip distribution.
 `constraints/macos-python310.txt` records the direct package versions from the
-current macOS/Python 3.10 development environment. The optional ML and deep
-learning pins are reproducibility targets but were not installed in that
-snapshot environment. Do not treat the macOS constraints file as a Windows or
-Linux lockfile.
+current macOS/Python 3.10 development environment. Use that constraints file
+only when deliberately reproducing the captured macOS lab environment; do not
+treat it as a Windows or Linux lockfile.
 
 ## Key Dependencies and Imports
 
 | Purpose | Package | Common import |
 | --- | --- | --- |
-| Numerical arrays | NumPy `2.2.6` | `import numpy as np` |
-| Scientific signal processing | SciPy `1.14.1` | `from scipy import signal` |
-| Tables and CSV output | pandas `2.3.3` | `import pandas as pd` |
-| Plotting | Matplotlib `3.10.9` | `import matplotlib.pyplot as plt` |
-| EEG analysis | MNE `1.12.1` | `import mne` |
-| Lab Streaming Layer | pylsl `1.18.2` | `import pylsl` |
-| Experiment display | PsychoPy `2026.1.3` | `from psychopy import visual` |
-| Spectral parameterization | specparam `2.0.0rc6` | `import specparam` |
+| Core arrays | NumPy | `import numpy as np` |
+| Scientific signal processing, optional | SciPy | `from scipy import signal` |
+| Tables and CSV output, optional | pandas | `import pandas as pd` |
+| Plotting, optional | Matplotlib | `import matplotlib.pyplot as plt` |
+| EEG analysis, optional | MNE | `import mne` |
+| Lab Streaming Layer, optional | pylsl | `import pylsl` |
+| Experiment display, optional | PsychoPy | `from psychopy import visual` |
+| Spectral parameterization, optional | specparam | `import specparam` |
 | Classical ML, optional | scikit-learn, joblib, pyRiemann | `import sklearn` |
 | Deep learning, optional | PyTorch, ONNX Runtime | `import torch`, `import onnxruntime` |
 
+Public import surfaces are documented in `docs/api/PUBLIC_API.md`. The old
+module paths remain available during the `0.1.x` compatibility window.
+
 ## Command Guide
 
-`eegle check-setup` checks the Python runtime, required and optional packages,
+`eegle check-setup` checks the Python runtime, core and optional packages,
 visible LSL streams, configured EEG stream match, realtime readiness, display
 readiness, training dependencies, and whether EEG samples can be read.
 It replaces the less descriptive `doctor` command; `eegle doctor` remains as a
@@ -322,12 +335,20 @@ EEGle is intended to run from one shared Python codebase on macOS, Windows, and
 Linux. The places that need OS-specific handling are setup and operator
 environment details: virtual-environment activation syntax, optional POSIX
 wrappers, PsychoPy display validation, external NIC2 installation, LSL/firewall
-settings, Neuracle acquisition setup, and future LabRecorder launching.
+settings, Neuracle acquisition setup, Windows user/cache directories, and
+future LabRecorder launching. Runtime cache setup writes Matplotlib, PsychoPy,
+and LSL configuration under `.runtime`; on Windows it also redirects
+`USERPROFILE`, `APPDATA`, and `LOCALAPPDATA` for the process so optional GUI
+libraries do not need to write into the real user profile during a run.
 Preflight reports the current OS as `os_support`, installed command visibility
 as `commands`, PsychoPy readiness as `display_ready`, realtime worker readiness
 as `realtime_ready`, model-training dependency readiness as `training_ready`,
 and the configured EEG device family as `eeg_device` when matching LSL streams
 are visible.
+
+GitHub Actions runs import, compile, and unit-test checks on Linux, macOS, and
+Windows. Hardware validation remains local because NIC2, device drivers, LSL
+network visibility, and PsychoPy display behavior are machine-specific.
 
 ## Session Output and Data Hygiene
 
@@ -508,7 +529,7 @@ validated; confirm compatible LSL and device-driver binaries before using it.
    py -3.10 -m venv .venv
    .venv\Scripts\Activate.ps1
    python -m pip install --upgrade pip
-   python -m pip install -e ".[runtime]"
+   python -m pip install -e ".[runtime,analysis]"
    ```
 
    Do not use `constraints/macos-python310.txt` on Windows. It is a captured
@@ -607,7 +628,8 @@ the default `0.5` metrics are kept separately for comparison.
 
 The optional dashboard binds only to `127.0.0.1`; it does not auto-open a
 browser or interact with PsychoPy. Training requires the `ml` extra for ROI
-logistic regression and pyRiemann, and the `deep-learning` extra for EEGNet.
+logistic regression and pyRiemann, and the `torch` extra for EEGNet
+(`deep-learning` remains a compatibility alias).
 See `docs/MODEL_TRAINING_TESTING_GOALS.md` for the current model contracts,
 evaluation checks, and near-term model goals.
 

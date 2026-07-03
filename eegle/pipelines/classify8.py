@@ -16,7 +16,7 @@ from eegle.experiment import ForwardExperimentRunner
 from eegle.hardware.capabilities import check_training_ready, missing_training_packages
 from eegle.ml.registry import get_model_spec, list_model_kinds, resolve_model_kind
 from eegle.ml.targets import SUPPORTED_TARGETS
-from eegle.realtime.classification import load_model_bundle
+from eegle.models.bundles import load_model_bundle
 from eegle.realtime.epoching import extract_epochs_for_session
 from eegle.realtime.models import train_epoch_model
 

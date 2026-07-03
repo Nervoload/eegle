@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import unittest
@@ -19,7 +20,7 @@ from eegle.hardware.os_support import check_os_support
 from eegle.hardware.system import CheckResult, check_platform, check_python
 from eegle.lsl import LslStream
 from eegle.preflight import run_preflight
-from eegle.runtime import _disable_psychopy_glfw
+from eegle.runtime import _disable_psychopy_glfw, ensure_runtime_environment
 from eegle.session import create_session
 
 
@@ -62,6 +63,39 @@ class PortabilityTests(unittest.TestCase):
                     result = check_os_support()
                 self.assertEqual(result.status, "ok")
                 self.assertFalse(result.data["requires_separate_codebase"])
+
+    def test_windows_os_support_reports_windows_command_and_cache_model(self) -> None:
+        with patch("eegle.hardware.system.platform.system", return_value="Windows"):
+            result = check_os_support()
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.data["path_style"], "windows")
+        self.assertIn("PowerShell", result.data["command_shells"])
+        self.assertIn("USERPROFILE", result.data["runtime_cache_env_vars"])
+        self.assertIn("LOCALAPPDATA", result.data["runtime_cache_env_vars"])
+
+    def test_windows_runtime_environment_redirects_user_cache_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "runtime-cache"
+            with patch("eegle.runtime.sys.platform", "win32"), patch.dict(
+                os.environ,
+                {
+                    "HOME": "C:\\Users\\RealUser",
+                    "USERPROFILE": "C:\\Users\\RealUser",
+                    "APPDATA": "C:\\Users\\RealUser\\AppData\\Roaming",
+                    "LOCALAPPDATA": "C:\\Users\\RealUser\\AppData\\Local",
+                },
+                clear=True,
+            ):
+                root = ensure_runtime_environment(cache)
+
+                self.assertEqual(root, cache.resolve())
+                self.assertEqual(os.environ["HOME"], str(root / "psychopy_home"))
+                self.assertEqual(os.environ["USERPROFILE"], str(root / "psychopy_home"))
+                self.assertEqual(os.environ["APPDATA"], str(root / "appdata"))
+                self.assertEqual(os.environ["LOCALAPPDATA"], str(root / "local_appdata"))
+                self.assertEqual(os.environ["CLOSEDLOOP_ORIGINAL_USERPROFILE"], "C:\\Users\\RealUser")
+                self.assertTrue((root / "lsl_api.cfg").exists())
 
     def test_console_command_visibility_is_reported_without_failing_preflight(self) -> None:
         with patch("eegle.hardware.capabilities.shutil.which", return_value=None):

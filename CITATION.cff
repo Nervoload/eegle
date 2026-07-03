@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use EEGle in research, please cite the software and any model/data dependencies used in your experiment."
+title: "EEGle"
+version: "0.1.0"
+date-released: "2026-07-01"
+authors:
+  - family-names: "Surette"
+    given-names: "John"
+license: "MIT"
+repository-code: "https://github.com/johnsurette/closedloop"
+abstract: "A Python toolkit for reproducible realtime EEG/BCI experiments, model bundles, calibration, and causal replay."
+keywords:
+  - EEG
+  - BCI
+  - realtime
+  - reproducibility
+  - Lab Streaming Layer

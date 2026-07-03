@@ -415,7 +415,7 @@ class AlphaCalibrationAnalyzer:
         self._write_psd(psd_by_phase)
         spectral_summary, candidates = _fit_specparam(combined_freqs, combined_power, self.cfg)
         psd_fallback_candidates: list[Any] = []
-        if not candidates and bool(self.cfg.get("allow_psd_peak_fallback", True)):
+        if not candidates and bool(self.cfg.get("allow_psd_peak_fallback", False)):
             psd_fallback_candidates = _psd_alpha_peak_candidates(combined_freqs, combined_power, self.cfg)
             if psd_fallback_candidates:
                 candidates = psd_fallback_candidates

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from time import monotonic
@@ -20,7 +21,7 @@ from eegle.realtime.models import ModelPrediction
 from eegle.realtime.performance import RealtimePerformanceConfig, RealtimePerformanceStats, performance_config_from
 from eegle.session import create_session
 from eegle.tasks.go_nogo import _mark
-from eegle.workers.common import QueuedJsonlWriter
+from eegle.workers.common import QueuedJsonlWriter, install_stop_signal_handlers
 from eegle.workers.realtime_processor import (
     InferenceWorkItem,
     _advance_deadline,
@@ -146,6 +147,23 @@ class _FakeAdapter:
 
 
 class RealtimeSynchronyTests(unittest.TestCase):
+    def test_worker_stop_handlers_include_windows_sigbreak_when_available(self) -> None:
+        calls: list[int] = []
+
+        def record_signal(signum: int, handler: object) -> None:
+            calls.append(signum)
+
+        with patch("eegle.workers.common.signal.SIGTERM", 15), patch(
+            "eegle.workers.common.signal.SIGINT",
+            2,
+        ), patch("eegle.workers.common.signal.SIGBREAK", 21, create=True), patch(
+            "eegle.workers.common.signal.signal",
+            side_effect=record_signal,
+        ):
+            install_stop_signal_handlers(threading.Event())
+
+        self.assertEqual(calls, [15, 2, 21])
+
     def test_marker_inlet_requires_exact_session_stream_and_applies_clock_sync(self) -> None:
         pylsl = _FakePylsl(
             [

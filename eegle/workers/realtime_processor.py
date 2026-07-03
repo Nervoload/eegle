@@ -22,13 +22,12 @@ from eegle.realtime.alpha import AlphaPowerEstimator, load_alpha_config
 from eegle.realtime.buffer import RingBuffer
 from eegle.realtime.classification import (
     assess_epoch_quality,
-    load_model_bundle,
     model_prediction_row,
     model_rejection_row,
     model_skip_row,
     sanitize_model_metadata,
-    snapshot_model_bundle,
 )
+from eegle.models.bundles import load_model_bundle, snapshot_model_bundle
 from eegle.realtime.epoching import EpochingConfig, MarkerEvent, RealtimeEpocher, expected_sample_count
 from eegle.realtime.event_features import EngineInputCaptureWriter, RealtimeEventEngine
 from eegle.realtime.models import PreparedEpochCache

@@ -349,11 +349,11 @@ class FeedbackManager:
                 self.telemetry.emit(
                     "process.timeout",
                     level="default",
-                    message=f"{worker.name} did not stop after SIGTERM",
+                    message=f"{worker.name} did not stop after terminate",
                     metadata={"name": worker.name, "backend": worker.backend},
                 )
                 worker.process.kill()
-                self._write_forced_status(worker, "killed", "worker did not stop after SIGTERM")
+                self._write_forced_status(worker, "killed", "worker did not stop after terminate")
                 worker.process.wait(timeout=5.0)
         self._ensure_terminal_worker_status(worker)
         worker.stopped_at_monotonic = monotonic()

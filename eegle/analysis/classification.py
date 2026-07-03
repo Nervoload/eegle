@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,33 @@ from eegle.realtime.models import (
     positive_label_for_target,
     prediction_permutation_p_value,
 )
+
+
+@dataclass(frozen=True)
+class ReplayResult:
+    """Typed view of a deterministic classifier replay summary."""
+
+    status: str
+    difference_count: int = 0
+    differences: list[dict[str, Any]] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "ReplayResult":
+        return cls(
+            status=str(payload.get("status", "unknown")),
+            difference_count=int(payload.get("difference_count", 0) or 0),
+            differences=list(payload.get("differences", [])),
+            metadata=dict(payload),
+        )
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            **self.metadata,
+            "status": self.status,
+            "difference_count": self.difference_count,
+            "differences": self.differences,
+        }
 
 
 def evaluate_classifier_session(session_dir: str | Path) -> dict[str, Any]:

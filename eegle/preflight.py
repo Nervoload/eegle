@@ -19,8 +19,21 @@ from eegle.hardware.os_support import check_os_support
 from eegle.hardware.system import CheckResult, check_packages, check_platform, check_python
 from eegle.lsl import resolve_streams
 
-REQUIRED_PACKAGES = ["numpy", "scipy", "pandas", "matplotlib", "mne", "pylsl"]
-OPTIONAL_PACKAGES = ["psychopy", "specparam", "sklearn", "joblib", "pyriemann", "torch", "onnxruntime"]
+REQUIRED_PACKAGES = ["numpy"]
+OPTIONAL_PACKAGES = [
+    "scipy",
+    "pandas",
+    "matplotlib",
+    "mne",
+    "pylsl",
+    "psychopy",
+    "specparam",
+    "sklearn",
+    "joblib",
+    "pyriemann",
+    "torch",
+    "onnxruntime",
+]
 
 
 def run_preflight(config: dict[str, Any], lsl_wait: float = 1.0, require_eeg: bool | None = None) -> list[CheckResult]:

@@ -15,9 +15,13 @@ def ensure_runtime_environment(cache_dir: str | Path = ".runtime") -> Path:
     matplotlib_dir = cache_root / "matplotlib"
     psychopy_home = cache_root / "psychopy_home"
     psychopy_dir = psychopy_home / ".psychopy3"
+    appdata_dir = cache_root / "appdata"
+    local_appdata_dir = cache_root / "local_appdata"
     lsl_config = cache_root / "lsl_api.cfg"
     matplotlib_dir.mkdir(parents=True, exist_ok=True)
     psychopy_dir.mkdir(parents=True, exist_ok=True)
+    appdata_dir.mkdir(parents=True, exist_ok=True)
+    local_appdata_dir.mkdir(parents=True, exist_ok=True)
     if not lsl_config.exists():
         lsl_config.write_text(
             "\n".join(
@@ -37,6 +41,13 @@ def ensure_runtime_environment(cache_dir: str | Path = ".runtime") -> Path:
     os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_dir))
     os.environ.setdefault("CLOSEDLOOP_ORIGINAL_HOME", os.environ.get("HOME", ""))
     os.environ["HOME"] = str(psychopy_home)
+    if sys.platform == "win32":
+        os.environ.setdefault("CLOSEDLOOP_ORIGINAL_USERPROFILE", os.environ.get("USERPROFILE", ""))
+        os.environ.setdefault("CLOSEDLOOP_ORIGINAL_APPDATA", os.environ.get("APPDATA", ""))
+        os.environ.setdefault("CLOSEDLOOP_ORIGINAL_LOCALAPPDATA", os.environ.get("LOCALAPPDATA", ""))
+        os.environ["USERPROFILE"] = str(psychopy_home)
+        os.environ["APPDATA"] = str(appdata_dir)
+        os.environ["LOCALAPPDATA"] = str(local_appdata_dir)
     os.environ.setdefault("PSYCHOPY_USERAPPDATA", str(psychopy_dir))
     os.environ.setdefault("LSLAPICFG", str(lsl_config))
     _disable_psychopy_glfw()
