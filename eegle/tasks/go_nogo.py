@@ -92,18 +92,18 @@ class GoNoGoTask:
                     logger.mark("button_press", trial=index, value=press["key"], rt_seconds=press["rt_seconds"])
                 offset = onset + stimulus_seconds
                 logger.mark(_stim_label("go_nogo_stimulus_offset", index, stimulus), trial=index, **stimulus)
-                records.append(
-                    _make_trial_record(
-                        index,
-                        stimulus,
-                        start,
-                        onset,
-                        offset,
-                        presses,
-                        applied_actions,
-                        state.payload(),
-                    )
+                record = _make_trial_record(
+                    index,
+                    stimulus,
+                    start,
+                    onset,
+                    offset,
+                    presses,
+                    applied_actions,
+                    state.payload(),
                 )
+                records.append(record)
+                _mark_trial_complete(logger, record, paths)
                 _write_go_nogo_outputs(paths, self.task_config, no_go, records)
                 virtual_time = offset + state.isi_seconds
             logger.mark("task_end", event_type="SYSTEM", task="go_nogo")
@@ -210,6 +210,7 @@ class GoNoGoTask:
                             display_timing=display_timing,
                         )
                         records.append(record)
+                        _mark_trial_complete(logger, record, paths)
                         _write_go_nogo_outputs(paths, self.task_config, no_go, records)
                         if aborted:
                             break
@@ -785,6 +786,36 @@ def _make_trial_record(
         "applied_actions": list(applied_actions or []),
         "adaptive_state": dict(adaptive_state or {}),
     }
+
+
+def _mark_trial_complete(logger: EventLogger, record: dict[str, Any], paths: SessionPaths) -> None:
+    is_no_go = bool(record.get("is_no_go"))
+    button_press_count = int(record.get("button_press_count", 0) or 0)
+    correct = bool(record.get("correct_press"))
+    trial = int(record.get("stimulus_number", -1))
+    logger.mark(
+        "go_nogo_trial_complete",
+        event_type="EVENT",
+        trial=trial,
+        schema_version=1,
+        event_type_name="go_nogo_trial_complete",
+        practice=trial < 1,
+        condition="no_go" if is_no_go else "go",
+        is_no_go=is_no_go,
+        reaction_time_seconds=record.get("reaction_time_seconds"),
+        correct=correct,
+        correct_press=int(correct),
+        button_press_count=button_press_count,
+        omission_error=int((not is_no_go) and button_press_count == 0),
+        commission_error=int(is_no_go and button_press_count > 0),
+        stimulus_onset_monotonic=record.get("stimulus_onset_monotonic"),
+        stimulus_offset_monotonic=record.get("stimulus_offset_monotonic"),
+        stimulus_onset_lsl_timestamp=record.get("stimulus_onset_lsl_timestamp"),
+        stimulus_offset_lsl_timestamp=record.get("stimulus_offset_lsl_timestamp"),
+        session_dir=str(paths.root),
+        task="go_nogo",
+        source="task.go_nogo",
+    )
 
 
 def _write_go_nogo_outputs(

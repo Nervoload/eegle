@@ -42,6 +42,8 @@ attention8 train --session-dir <calibration-session> --check-ready
 attention8 train --session-dir <calibration-session> --support-trials 50
 attention8 online --participant sub-001 --model-dir <calibration-session>/models/attention8 \
   --primary causal_bandpower_logreg --shadow foundation_head_logreg --shadow foundation_prototype
+attention8 online --participant sub-001 --model-dir <calibration-session>/models/attention8 \
+  --primary causal_bandpower_logreg --shadow foundation_prototype --enable-adaptation --adapt-shadows
 attention8 evaluate --session-dir <online-session>
 attention8 protocol
 ```
@@ -107,6 +109,22 @@ before splitting; support uses the first `K` eligible main trials and query
 metrics use later trials only. The default online support size is 50, with
 `0, 20, 50, 100` declared as the report grid.
 
+Online adaptation is off by default and must be explicitly enabled with
+`attention8 online --enable-adaptation`. For trial `t`, the worker predicts from
+the causal pre-stimulus epoch and writes `realtime/model_predictions.jsonl`
+before task behavior is consumed. After the response window closes, the Go/No-go
+task writes a delayed `go_nogo_trial_complete` event to `events/events.jsonl`.
+Only then can the realtime worker compute an online label and update adaptive
+state for later trials. Delayed updates are logged to
+`realtime/adaptation_updates.jsonl`; periodic and final state snapshots are
+written under `realtime/adaptation_state/`.
+
+For online `slow_go_rt`, the threshold is causal: it is computed only from prior
+correct GO reaction times. If the configured minimum number of prior correct GO
+RTs is unavailable, the update is skipped with a structured reason. Practice
+trials, unlabeled or ambiguous trials, quality-rejected epochs, and disabled
+model roles are also logged as skipped rather than silently updating state.
+
 ## Supported Models
 
 - `erp_roi_logreg`: interpretable baseline-corrected ERP ROI features with
@@ -117,7 +135,9 @@ metrics use later trials only. The default online support size is 50, with
 - `sklearn_flatten_lda`: flattened-epoch LDA baseline exposed by the generic
   `eegle train-model` command.
 - `causal_bandpower_logreg`: causal pre-stimulus bandpower features with
-  logistic regression; this is the default `attention8` primary baseline.
+  logistic regression; this is the default `attention8` primary baseline. With
+  online adaptation enabled, the fitted logistic model remains fixed while
+  delayed-label threshold/calibration state is updated.
 - `riemann_tangent_logreg`: Riemannian covariance tangent-space logistic
   regression baseline for attention-lapse replay comparisons.
 - `sklearn_xdawn_lda`: compatibility alias for `sklearn_flatten_lda`; despite
@@ -125,9 +145,11 @@ metrics use later trials only. The default online support size is 50, with
 - `torch_shallowconvnet` / `cnn_shallowconvnet`: external TorchScript CNN
   adapter, shadow-only by default.
 - `foundation_head_logreg`: frozen encoder embeddings plus a logistic
-  regression head. EEGle updates the head only; encoder weights stay frozen.
+  regression head. EEGle updates neither the encoder nor the head online in v1.
 - `foundation_prototype`: frozen encoder embeddings plus cosine-distance class
-  prototypes calibrated from the support set.
+  prototypes calibrated from the support set. With online adaptation enabled,
+  only class prototypes are updated by delayed labels; encoder weights and
+  normalizer state stay frozen.
 - `foundation_bendr`, `foundation_labram`, and `sequence_external`: external
   checkpoint adapter targets for EEG foundation or sequence models. They are
   registry entries with explicit dependency and artifact contracts; EEGle does
@@ -180,6 +202,10 @@ Important invariants:
   and replay. Prediction rows carry the prediction window, horizon, support
   size, calibration ID/state hash, source, model/preprocessing latency, quality
   status, and `probability_attention_lapse`.
+- Replayed attention-lapse sessions reconstruct delayed-label adaptation from
+  captured EEG, markers, frozen bundles, task-complete events, and config. When
+  behavior events are absent, replay reports missing adaptation context rather
+  than crashing.
 
 ## Evaluation
 
@@ -203,6 +229,13 @@ the calibrated operating threshold when one is present. Default `0.5` threshold
 metrics are retained under `default_threshold_metrics` for reproducible
 comparison with older bundles and papers.
 
+When online adaptation is enabled, evaluation also summarizes accepted and
+skipped update counts, skipped reasons, final class counts, threshold trajectory,
+final adaptation state hashes, early warmup performance, later-trial
+performance, and performance by trial block. These summaries describe the
+adapted online session; they are not clinical interpretation and they do not
+imply stimulation control.
+
 ## Testing Strategy
 
 Use focused tests first when changing the classifier path:
@@ -210,6 +243,7 @@ Use focused tests first when changing the classifier path:
 ```bash
 python3 -m unittest tests.test_classification
 python3 -m unittest tests.test_ml_infrastructure
+python3 -m unittest tests.test_attention8_online_adaptation
 python3 -m compileall -q eegle/realtime/classification.py eegle/realtime/models.py eegle/pipelines/classify8.py tests/test_classification.py tests/test_ml_infrastructure.py
 ```
 

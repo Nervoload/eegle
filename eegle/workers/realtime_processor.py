@@ -31,6 +31,13 @@ from eegle.models.bundles import load_model_bundle, snapshot_model_bundle
 from eegle.realtime.epoching import EpochingConfig, MarkerEvent, RealtimeEpocher, expected_sample_count
 from eegle.realtime.event_features import EngineInputCaptureWriter, RealtimeEventEngine
 from eegle.realtime.models import PreparedEpochCache
+from eegle.realtime.online_adaptation import (
+    AdaptationEventTailer,
+    apply_delayed_adaptation_update,
+    adaptation_update_row,
+    snapshot_adapter_state,
+)
+from eegle.realtime.online_labels import OnlineAttentionLapseLabeler, trial_complete_from_event_record
 from eegle.realtime.performance import (
     RealtimePerformanceConfig,
     RealtimePerformanceStats,
@@ -221,6 +228,22 @@ def main(argv: list[str] | None = None) -> int:
     epocher = RealtimeEpocher(epoching_config) if epoching_enabled else None
     event_engine = RealtimeEventEngine(event_features_config, sample_rate, channel_names) if event_features_enabled else None
     quality_config = dict(realtime_config.get("quality_gate", {}))
+    adaptation_config = dict(realtime_config.get("adaptation", {}))
+    adaptation_enabled = bool(adaptation_config.get("enabled", False)) and classifier_mode and inference_enabled
+    adaptation_labeler = OnlineAttentionLapseLabeler(
+        {
+            **dict(model_config),
+            **adaptation_config,
+            "label_mode": adaptation_config.get("label_mode", model_config.get("attention_lapse_label", "slow_go_rt")),
+            "slow_rt_quantile": adaptation_config.get("slow_rt_quantile", model_config.get("slow_rt_quantile", 0.8)),
+        }
+    )
+    adaptation_tailer = AdaptationEventTailer(paths.events_jsonl) if adaptation_enabled else None
+    pending_predictions: dict[int, list[dict[str, Any]]] = {}
+    pending_outcomes: dict[int, dict[str, Any]] = {}
+    adaptation_state_dir = paths.realtime / "adaptation_state"
+    if adaptation_enabled:
+        adaptation_state_dir.mkdir(parents=True, exist_ok=True)
     classifier_capture_enabled = (
         classifier_mode
         and bool(realtime_config.get("capture", {}).get("enabled", epoching_enabled))
@@ -292,6 +315,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     if model_prediction_writer is not None:
         queued_writers.append(model_prediction_writer)
+    adaptation_update_writer = (
+        QueuedJsonlWriter(
+            paths.realtime / "adaptation_updates.jsonl",
+            flush_every=1,
+            flush_interval_seconds=performance_config.writer_flush_interval_seconds,
+        )
+        if adaptation_enabled
+        else None
+    )
+    if adaptation_update_writer is not None:
+        queued_writers.append(adaptation_update_writer)
     capture_writer = (
         EngineInputCaptureWriter(
             paths.realtime_engine_capture,
@@ -304,6 +338,7 @@ def main(argv: list[str] | None = None) -> int:
                 preprocessing_config,
                 model_entries,
                 event_features_enabled,
+                adaptation_config,
             ),
         )
         if event_features_enabled or classifier_capture_enabled
@@ -482,9 +517,25 @@ def main(argv: list[str] | None = None) -> int:
                     epoch_writer.write(rejected_payload)
                     if inference_enabled and classifier_mode:
                         assert model_prediction_writer is not None
-                        model_prediction_writer.write(
-                            model_rejection_row(rejected_payload, attempt.reason)
-                        )
+                        rejection = model_rejection_row(rejected_payload, attempt.reason)
+                        model_prediction_writer.write(rejection)
+                        if adaptation_enabled and pending_predictions is not None and rejection.get("trial") is not None:
+                            for model_entry in model_entries:
+                                pending_predictions.setdefault(int(rejection["trial"]), []).append(
+                                    {
+                                        "adapter": model_entry["adapter"],
+                                        "prediction_row": {
+                                            **rejection,
+                                            "model_id": model_entry["id"],
+                                            "model_role": model_entry["role"],
+                                            "model_kind": model_entry["kind"],
+                                        },
+                                        "model_id": model_entry["id"],
+                                        "model_role": model_entry["role"],
+                                        "model_kind": model_entry["kind"],
+                                        "skip_update_reason": f"epoch_{attempt.reason}",
+                                    }
+                                )
                         classifier_rejected_epoch_count += 1
                     telemetry.emit(
                         "realtime.epoch_rejected",
@@ -503,6 +554,37 @@ def main(argv: list[str] | None = None) -> int:
                         assert model_prediction_writer is not None
                         rejection = model_rejection_row(epoch_payload, ",".join(quality.reasons), quality.payload())
                         model_prediction_writer.write(rejection)
+                        if adaptation_enabled and pending_predictions is not None and epoch_payload.get("trial") is not None:
+                            for model_entry in model_entries:
+                                pending_predictions.setdefault(int(epoch_payload["trial"]), []).append(
+                                    {
+                                        "adapter": model_entry["adapter"],
+                                        "prepared": PreparedEpochCache(
+                                            epoch.data,
+                                            epoch_sample_rate,
+                                            channel_names,
+                                            sanitize_model_metadata(
+                                                {
+                                                    **epoch_payload,
+                                                    "relative_times": epoch.relative_times.astype(float).tolist(),
+                                                }
+                                            ),
+                                        ),
+                                        "prediction_row": {
+                                            **rejection,
+                                            "model_id": model_entry["id"],
+                                            "model_role": model_entry["role"],
+                                            "model_kind": model_entry["kind"],
+                                        },
+                                        "model_id": model_entry["id"],
+                                        "model_role": model_entry["role"],
+                                        "model_kind": model_entry["kind"],
+                                        "adaptation_config": dict(adaptation_config or {}),
+                                        "quality_rejected": True,
+                                        "skip_update_reason": "quality_rejected_epoch",
+                                        "skip_reason": "quality_rejected_epoch",
+                                    }
+                                )
                         classifier_rejected_epoch_count += 1
                         telemetry.emit("realtime.epoch_rejected", level="realtime", message="Classifier epoch rejected", metadata=rejection)
                         continue
@@ -517,6 +599,23 @@ def main(argv: list[str] | None = None) -> int:
                                 None if quality is None else quality.payload(),
                             )
                             model_prediction_writer.write(rejection)
+                            if adaptation_enabled and pending_predictions is not None and epoch_payload.get("trial") is not None:
+                                for model_entry in model_entries:
+                                    pending_predictions.setdefault(int(epoch_payload["trial"]), []).append(
+                                        {
+                                            "adapter": model_entry["adapter"],
+                                            "prediction_row": {
+                                                **rejection,
+                                                "model_id": model_entry["id"],
+                                                "model_role": model_entry["role"],
+                                                "model_kind": model_entry["kind"],
+                                            },
+                                            "model_id": model_entry["id"],
+                                            "model_role": model_entry["role"],
+                                            "model_kind": model_entry["kind"],
+                                            "skip_update_reason": "inference_queue_full",
+                                        }
+                                    )
                             classifier_rejected_epoch_count += 1
                         telemetry.emit(
                             "realtime.inference_queue_full",
@@ -557,10 +656,27 @@ def main(argv: list[str] | None = None) -> int:
                     epoch_count=epoch_count,
                     performance_config=performance_config,
                     performance_stats=performance_stats,
+                    adaptation_config=adaptation_config,
+                    pending_predictions=pending_predictions if adaptation_enabled else None,
                     telemetry=telemetry,
                 )
                 classifier_prediction_count += result.prediction_count
                 classifier_predicted_epoch_count += result.primary_prediction_count
+
+            if adaptation_enabled and adaptation_tailer is not None and adaptation_update_writer is not None:
+                for event_record in adaptation_tailer.read_new():
+                    complete = trial_complete_from_event_record(event_record)
+                    if complete is not None and complete.get("trial") is not None:
+                        pending_outcomes[int(complete["trial"])] = complete
+                _process_ready_adaptation_updates(
+                    pending_predictions,
+                    pending_outcomes,
+                    adaptation_labeler,
+                    adaptation_config,
+                    adaptation_update_writer,
+                    adaptation_state_dir,
+                    telemetry,
+                )
 
             if not epoching_enabled and not event_features_enabled and buffer is not None and len(buffer) >= window_samples and monotonic() >= next_process_at:
                 window_count += 1
@@ -815,6 +931,8 @@ def _process_inference_item(
     performance_config: RealtimePerformanceConfig,
     performance_stats: RealtimePerformanceStats,
     telemetry: Telemetry,
+    adaptation_config: dict[str, Any] | None = None,
+    pending_predictions: dict[int, list[dict[str, Any]]] | None = None,
 ) -> InferenceProcessResult:
     result = InferenceProcessResult()
     prepared = PreparedEpochCache(item.epoch.data, sample_rate, channel_names, item.model_metadata)
@@ -874,6 +992,18 @@ def _process_inference_item(
                 preprocessing_latency_ms=performance_stats.preprocessing_time_ms,
             )
             model_prediction_writer.write(row)
+            if pending_predictions is not None and row.get("trial") is not None:
+                pending_predictions.setdefault(int(row["trial"]), []).append(
+                    {
+                        "adapter": adapter,
+                        "prepared": prepared,
+                        "prediction_row": row,
+                        "model_id": model_id,
+                        "model_role": role,
+                        "model_kind": model_kind,
+                        "adaptation_config": dict(adaptation_config or {}),
+                    }
+                )
             result.prediction_count += 1
             if role == "primary":
                 result.primary_prediction_count += 1
@@ -923,6 +1053,68 @@ def _process_inference_item(
         )
     performance_stats.shadow_latency_ms = max_shadow_latency_ms
     return result
+
+
+def _process_ready_adaptation_updates(
+    pending_predictions: dict[int, list[dict[str, Any]]],
+    pending_outcomes: dict[int, dict[str, Any]],
+    labeler: OnlineAttentionLapseLabeler,
+    adaptation_config: dict[str, Any],
+    writer: QueuedJsonlWriter,
+    state_dir: Any,
+    telemetry: Telemetry,
+) -> None:
+    ready_trials = sorted(set(pending_predictions) & set(pending_outcomes))
+    for trial in ready_trials:
+        outcome = pending_outcomes.pop(trial)
+        records = pending_predictions.pop(trial, [])
+        label = labeler.label_trial_complete(outcome).payload()
+        for record in records:
+            adapter = record["adapter"]
+            prediction_row = dict(record["prediction_row"])
+            model_id = str(record["model_id"])
+            role = str(record["model_role"])
+            kind = str(record["model_kind"])
+            update_result = _apply_adaptation_update(
+                adapter,
+                record,
+                label,
+                outcome,
+                adaptation_config,
+            )
+            row = adaptation_update_row(
+                trial=trial,
+                model_id=model_id,
+                model_role=role,
+                model_kind=kind,
+                prediction_row=prediction_row,
+                online_label=label,
+                update_result=update_result,
+                observe_only=True,
+            )
+            writer.write(row)
+            snapshot_every = max(1, int(adaptation_config.get("snapshot_every_updates", 10)))
+            if row.get("update_status") == "updated" and row.get("support_size_after") is not None:
+                if int(row["support_size_after"]) % snapshot_every == 0:
+                    snapshot_adapter_state(adapter, state_dir, model_id)
+            telemetry.emit(
+                "model.adaptation_update",
+                level="realtime",
+                message=f"Adaptation {row['update_status']} for {model_id} trial {trial}",
+                metadata=row,
+            )
+        for record in records:
+            snapshot_adapter_state(record["adapter"], state_dir, str(record["model_id"]))
+
+
+def _apply_adaptation_update(
+    adapter: Any,
+    record: dict[str, Any],
+    label: dict[str, Any],
+    outcome: dict[str, Any],
+    adaptation_config: dict[str, Any],
+) -> Any:
+    return apply_delayed_adaptation_update(adapter, record, label, outcome, adaptation_config)
 
 
 def _ordered_model_entries(model_entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1066,6 +1258,7 @@ def _capture_header(
     preprocessing_config: dict[str, Any],
     model_entries: list[dict[str, Any]],
     event_features_enabled: bool,
+    adaptation_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if event_features_enabled:
         return {
@@ -1083,6 +1276,7 @@ def _capture_header(
         "epoching_config": asdict(epoching_config),
         "preprocessing_config": preprocessing_config,
         "quality_gate": quality_config,
+        "adaptation_config": dict(adaptation_config or {}),
         "models": [
             {
                 "id": entry["id"],

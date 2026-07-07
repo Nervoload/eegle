@@ -179,6 +179,7 @@ def online(args: argparse.Namespace) -> dict[str, Any]:
         for kind in shadows
         if kind != primary
     ]
+    _apply_optional_adaptation_args(config, args)
     config["processes"]["realtime_processor"]["model"] = primary
     config["realtime"]["dashboard"]["enabled"] = not bool(args.no_dashboard)
     config["processes"]["dashboard"]["enabled"] = not bool(args.no_dashboard)
@@ -189,9 +190,38 @@ def online(args: argparse.Namespace) -> dict[str, Any]:
         "session_dir": str(result.session_dir),
         "primary": primary,
         "shadows": shadows,
+        "adaptation": dict(config["realtime"].get("adaptation", {})),
         "dashboard_url": None if args.no_dashboard else f"http://{config['realtime']['dashboard']['host']}:{config['realtime']['dashboard']['port']}",
         "forward": result.as_dict(),
     }
+
+
+def _apply_optional_adaptation_args(config: dict[str, Any], args: argparse.Namespace) -> None:
+    if not any(
+        hasattr(args, name)
+        for name in (
+            "enable_adaptation",
+            "adapt_shadows",
+            "adaptation_label_mode",
+            "min_correct_go_rts_for_threshold",
+            "adaptation_warmup_trials",
+        )
+    ):
+        return
+    adaptation = config.setdefault("realtime", {}).setdefault("adaptation", {})
+    if bool(getattr(args, "enable_adaptation", False)):
+        adaptation["enabled"] = True
+    if bool(getattr(args, "adapt_shadows", False)):
+        adaptation["update_shadows"] = True
+    label_mode = getattr(args, "adaptation_label_mode", None)
+    if label_mode:
+        adaptation["label_mode"] = str(label_mode)
+    min_rts = getattr(args, "min_correct_go_rts_for_threshold", None)
+    if min_rts is not None:
+        adaptation["min_correct_go_rts_for_threshold"] = max(1, int(min_rts))
+    warmup = getattr(args, "adaptation_warmup_trials", None)
+    if warmup is not None:
+        adaptation["warmup_trials"] = max(0, int(warmup))
 
 
 def demo(args: argparse.Namespace) -> dict[str, Any]:

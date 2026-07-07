@@ -207,6 +207,20 @@
       "support_grid": [0, 20, 50, 100],
       "prototype_distance_metric": "cosine"
     },
+    "adaptation": {
+      "enabled": false,
+      "update_primary": true,
+      "update_shadows": false,
+      "label_mode": "slow_go_rt",
+      "slow_rt_quantile": 0.8,
+      "min_correct_go_rts_for_threshold": 20,
+      "warmup_trials": 20,
+      "snapshot_every_updates": 10,
+      "allowed_model_kinds": ["foundation_prototype", "causal_bandpower_logreg"],
+      "strict_no_leakage": true,
+      "threshold_metric": "balanced_accuracy",
+      "min_examples_for_threshold_update": 4
+    },
     "decision_policy": {
       "kind": "observe_only",
       "enabled": true,

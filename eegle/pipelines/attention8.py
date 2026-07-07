@@ -78,6 +78,15 @@ def build_parser() -> argparse.ArgumentParser:
     online_parser.add_argument("--primary", choices=MODEL_KINDS, default="causal_bandpower_logreg")
     online_parser.add_argument("--shadow", action="append", choices=MODEL_KINDS, default=[])
     online_parser.add_argument("--no-dashboard", action="store_true")
+    online_parser.add_argument("--enable-adaptation", action="store_true", help="Opt in to delayed-label online model adaptation")
+    online_parser.add_argument("--adapt-shadows", action="store_true", help="Also adapt shadow models; primary-only is the default")
+    online_parser.add_argument(
+        "--adaptation-label-mode",
+        choices=["slow_go_rt", "go_only_slow_rt", "composite_lapse", "omission_error", "commission_error"],
+        default=None,
+    )
+    online_parser.add_argument("--min-correct-go-rts-for-threshold", type=int, default=None)
+    online_parser.add_argument("--adaptation-warmup-trials", type=int, default=None)
 
     evaluate_parser = subparsers.add_parser("evaluate", help="Replay, score, and report an attention-lapse session")
     evaluate_parser.add_argument("--config", default=str(DEFAULT_CONFIG))

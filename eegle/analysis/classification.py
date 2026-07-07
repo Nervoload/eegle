@@ -19,12 +19,19 @@ from eegle.realtime.classification import (
 from eegle.realtime.epoching import EpochingConfig, extract_epoch_from_arrays, should_epoch_marker
 from eegle.realtime.event_features import read_engine_capture
 from eegle.realtime.models import (
+    PreparedEpochCache,
     binary_classification_metrics,
     make_model_adapter,
     performance_warnings,
     positive_label_for_target,
     prediction_permutation_p_value,
 )
+from eegle.realtime.online_adaptation import (
+    adaptation_update_row,
+    apply_delayed_adaptation_update,
+    snapshot_adapter_state,
+)
+from eegle.realtime.online_labels import OnlineAttentionLapseLabeler, trial_complete_from_event_record
 
 
 @dataclass(frozen=True)
@@ -138,6 +145,7 @@ def evaluate_classifier_session(session_dir: str | Path) -> dict[str, Any]:
                 values["default_threshold_metrics"]["confusion_matrix"],
                 f"{model_id} @ 0.5",
             )
+    adaptation_summary = _adaptation_evaluation_summary(root, joined)
     summary = {
         "schema_version": 1,
         "status": "ok" if metrics else "missing",
@@ -145,10 +153,12 @@ def evaluate_classifier_session(session_dir: str | Path) -> dict[str, Any]:
         "prediction_count": len(online),
         "canonical_trial_count": len(truth),
         "metrics": metrics,
+        "adaptation": adaptation_summary,
         "files": {
             "predictions_csv": str(outdir / "predictions.csv"),
             "probability_by_trial_csv": str(outdir / "probability_by_trial.csv"),
             "metrics_json": str(outdir / "metrics.json"),
+            "adaptation_updates_jsonl": str(root / "realtime" / "adaptation_updates.jsonl"),
         },
     }
     _write_json(outdir / "metrics.json", summary)
@@ -191,6 +201,28 @@ def replay_classifier_session(session_dir: str | Path) -> dict[str, Any]:
         }
         for entry in header.get("models", [])
     ]
+    params = _load_json(root / "parameters.json") or {}
+    realtime_cfg = dict(params.get("realtime", {}) or {})
+    model_cfg = dict(realtime_cfg.get("model", {}) or {})
+    adaptation_config = dict(header.get("adaptation_config") or realtime_cfg.get("adaptation", {}) or {})
+    adaptation_enabled = bool(adaptation_config.get("enabled", False))
+    trial_complete_events = _trial_complete_events(root / "events" / "events.jsonl") if adaptation_enabled else {}
+    adaptation_labeler = (
+        OnlineAttentionLapseLabeler(
+            {
+                **model_cfg,
+                **adaptation_config,
+                "label_mode": adaptation_config.get("label_mode", model_cfg.get("attention_lapse_label", "slow_go_rt")),
+                "slow_rt_quantile": adaptation_config.get("slow_rt_quantile", model_cfg.get("slow_rt_quantile", 0.8)),
+            }
+        )
+        if adaptation_enabled
+        else None
+    )
+    replay_adaptation_rows: list[dict[str, Any]] = []
+    replay_adaptation_state_dir = outdir / "replay_adaptation_state"
+    if adaptation_enabled:
+        replay_adaptation_state_dir.mkdir(parents=True, exist_ok=True)
     timestamps: list[np.ndarray] = []
     samples: list[np.ndarray] = []
     markers = []
@@ -217,35 +249,94 @@ def replay_classifier_session(session_dir: str | Path) -> dict[str, Any]:
     for index, marker in enumerate(markers, start=1):
         attempt = extract_epoch_from_arrays(all_timestamps, all_samples, marker, sample_rate, channels, epoch_cfg, index)
         if attempt.status != "ready" or attempt.epoch is None:
-            replay_rows.append(model_rejection_row(attempt.payload(epoch_cfg), attempt.reason))
+            rejection = model_rejection_row(attempt.payload(epoch_cfg), attempt.reason)
+            replay_rows.append(rejection)
+            if adaptation_enabled and adaptation_labeler is not None:
+                replay_adaptation_rows.extend(
+                    _replay_skipped_adaptation_rows(
+                        trial=_optional_int(rejection.get("trial")),
+                        models=models,
+                        prediction_row=rejection,
+                        events=trial_complete_events,
+                        labeler=adaptation_labeler,
+                        adaptation_config=adaptation_config,
+                        state_dir=replay_adaptation_state_dir,
+                        reason=f"epoch_{attempt.reason}",
+                    )
+                )
             continue
         epoch = attempt.epoch
         epoch_payload = epoch.metadata_payload()
         quality = assess_epoch_quality(epoch.data, quality_cfg)
         if not quality.valid:
-            replay_rows.append(model_rejection_row(epoch_payload, ",".join(quality.reasons), quality.payload()))
+            rejection = model_rejection_row(epoch_payload, ",".join(quality.reasons), quality.payload())
+            replay_rows.append(rejection)
+            if adaptation_enabled and adaptation_labeler is not None:
+                replay_adaptation_rows.extend(
+                    _replay_skipped_adaptation_rows(
+                        trial=_optional_int(rejection.get("trial")),
+                        models=models,
+                        prediction_row=rejection,
+                        events=trial_complete_events,
+                        labeler=adaptation_labeler,
+                        adaptation_config=adaptation_config,
+                        state_dir=replay_adaptation_state_dir,
+                        reason="quality_rejected_epoch",
+                    )
+                )
             continue
         model_metadata = sanitize_model_metadata(
             {**epoch_payload, "relative_times": epoch.relative_times.astype(float).tolist()}
         )
+        prepared = PreparedEpochCache(epoch.data, sample_rate, channels, model_metadata)
+        model_records: list[dict[str, Any]] = []
         for model_entry in models:
-            prediction = model_entry["adapter"].predict_epoch(epoch.data, sample_rate, channels, model_metadata)
-            replay_rows.append(
-                model_prediction_row(
-                    epoch_payload,
-                    prediction.to_payload(),
-                    model_id=str(model_entry["id"]),
-                    role=str(model_entry["role"]),
-                    latency_ms=None,
-                    quality=quality.payload(),
-                    prediction_source="replay",
+            adapter = model_entry["adapter"]
+            if hasattr(adapter, "predict_prepared_epoch"):
+                prediction = adapter.predict_prepared_epoch(prepared)
+            else:
+                prediction = adapter.predict_epoch(epoch.data, sample_rate, channels, model_metadata)
+            row = model_prediction_row(
+                epoch_payload,
+                prediction.to_payload(),
+                model_id=str(model_entry["id"]),
+                role=str(model_entry["role"]),
+                latency_ms=None,
+                quality=quality.payload(),
+                prediction_source="replay",
+            )
+            replay_rows.append(row)
+            model_records.append(
+                {
+                    "adapter": adapter,
+                    "prepared": prepared,
+                    "prediction_row": row,
+                    "model_id": str(model_entry["id"]),
+                    "model_role": str(model_entry["role"]),
+                    "model_kind": str(model_entry["kind"]),
+                    "adaptation_config": dict(adaptation_config),
+                }
+            )
+        if adaptation_enabled and adaptation_labeler is not None:
+            replay_adaptation_rows.extend(
+                _replay_adaptation_rows_for_trial(
+                    _optional_int(epoch_payload.get("trial")),
+                    model_records,
+                    trial_complete_events,
+                    adaptation_labeler,
+                    adaptation_config,
+                    replay_adaptation_state_dir,
                 )
             )
     replay_path = outdir / "replay_predictions.jsonl"
     _write_jsonl(replay_path, replay_rows)
+    replay_adaptation_path = outdir / "replay_adaptation_updates.jsonl"
+    if adaptation_enabled:
+        _write_jsonl(replay_adaptation_path, replay_adaptation_rows)
     online_rows = _load_jsonl(root / "realtime" / "model_predictions.jsonl")
     comparable_online_rows = _replay_comparable_rows(online_rows)
     differences = _prediction_differences(comparable_online_rows, replay_rows)
+    adaptation_summary = _replay_adaptation_summary(root, adaptation_enabled, trial_complete_events, replay_adaptation_rows)
     status = "pass" if not differences and comparable_online_rows else "analytically_invalid"
     return _write_json(
         summary_path,
@@ -257,8 +348,10 @@ def replay_classifier_session(session_dir: str | Path) -> dict[str, Any]:
             "replay_prediction_count": len(replay_rows),
             "difference_count": len(differences),
             "differences": differences[:100],
+            "adaptation_replay": adaptation_summary,
             "capture_file": str(capture_path),
             "replay_file": str(replay_path),
+            "replay_adaptation_file": str(replay_adaptation_path),
             "online_file": str(root / "realtime" / "model_predictions.jsonl"),
         },
     )
@@ -266,6 +359,173 @@ def replay_classifier_session(session_dir: str | Path) -> dict[str, Any]:
 
 def _replay_comparable_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [row for row in rows if row.get("status") != "skipped"]
+
+
+def _trial_complete_events(path: Path) -> dict[int, dict[str, Any]]:
+    events: dict[int, dict[str, Any]] = {}
+    for row in _load_jsonl(path):
+        complete = trial_complete_from_event_record(row)
+        if complete is None:
+            continue
+        trial = _optional_int(complete.get("trial"))
+        if trial is not None:
+            events[trial] = complete
+    return events
+
+
+def _replay_adaptation_rows_for_trial(
+    trial: int | None,
+    records: list[dict[str, Any]],
+    events: dict[int, dict[str, Any]],
+    labeler: OnlineAttentionLapseLabeler,
+    adaptation_config: dict[str, Any],
+    state_dir: Path,
+) -> list[dict[str, Any]]:
+    if trial is None:
+        label = _missing_online_label(None, labeler, "missing_trial")
+    elif trial not in events:
+        label = _missing_online_label(trial, labeler, "missing_trial_complete_event")
+    else:
+        label = labeler.label_trial_complete(events[trial]).payload()
+    rows = []
+    snapshot_every = max(1, int(adaptation_config.get("snapshot_every_updates", 10)))
+    for record in records:
+        update_result = apply_delayed_adaptation_update(
+            record["adapter"],
+            record,
+            label,
+            events.get(trial, {"trial": trial}) if trial is not None else {},
+            adaptation_config,
+        )
+        row = adaptation_update_row(
+            trial=trial,
+            model_id=str(record["model_id"]),
+            model_role=str(record["model_role"]),
+            model_kind=str(record["model_kind"]),
+            prediction_row=dict(record.get("prediction_row") or {}),
+            online_label=label,
+            update_result=update_result,
+            observe_only=True,
+        )
+        rows.append(row)
+        if row.get("update_status") == "updated" and row.get("support_size_after") is not None:
+            if int(row["support_size_after"]) % snapshot_every == 0:
+                snapshot_adapter_state(record["adapter"], state_dir, str(record["model_id"]))
+    for record in records:
+        snapshot_adapter_state(record["adapter"], state_dir, str(record["model_id"]))
+    return rows
+
+
+def _replay_skipped_adaptation_rows(
+    *,
+    trial: int | None,
+    models: list[dict[str, Any]],
+    prediction_row: dict[str, Any],
+    events: dict[int, dict[str, Any]],
+    labeler: OnlineAttentionLapseLabeler,
+    adaptation_config: dict[str, Any],
+    state_dir: Path,
+    reason: str,
+) -> list[dict[str, Any]]:
+    records = [
+        {
+            "adapter": model_entry["adapter"],
+            "prediction_row": {
+                **prediction_row,
+                "model_id": str(model_entry["id"]),
+                "model_role": str(model_entry["role"]),
+                "model_kind": str(model_entry["kind"]),
+            },
+            "model_id": str(model_entry["id"]),
+            "model_role": str(model_entry["role"]),
+            "model_kind": str(model_entry["kind"]),
+            "quality_rejected": True,
+            "skip_reason": reason,
+        }
+        for model_entry in models
+    ]
+    return _replay_adaptation_rows_for_trial(trial, records, events, labeler, adaptation_config, state_dir)
+
+
+def _missing_online_label(trial: int | None, labeler: OnlineAttentionLapseLabeler, reason: str) -> dict[str, Any]:
+    return {
+        "schema": "eegle.online_label.v1",
+        "status": "skipped",
+        "trial": trial,
+        "label": None,
+        "label_name": "attention_lapse",
+        "label_mode": labeler.label_mode,
+        "threshold_value": None,
+        "reason": reason,
+        "used_for_adaptation": False,
+        "metadata": {},
+    }
+
+
+def _replay_adaptation_summary(
+    root: Path,
+    enabled: bool,
+    events: dict[int, dict[str, Any]],
+    replay_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not enabled:
+        return {"status": "disabled"}
+    if not events:
+        return {"status": "missing_behavior_events", "replay_update_count": len(replay_rows)}
+    live_rows = _load_jsonl(root / "realtime" / "adaptation_updates.jsonl")
+    differences = _adaptation_update_differences(live_rows, replay_rows) if live_rows else []
+    if live_rows:
+        status = "pass" if not differences else "mismatch"
+    else:
+        status = "replay_only"
+    return {
+        "status": status,
+        "trial_complete_event_count": len(events),
+        "live_update_count": len(live_rows),
+        "replay_update_count": len(replay_rows),
+        "accepted_replay_update_count": sum(1 for row in replay_rows if row.get("update_status") == "updated"),
+        "difference_count": len(differences),
+        "differences": differences[:100],
+        "final_state_hashes": {
+            str(row.get("model_id")): row.get("calibration_state_hash_after")
+            for row in replay_rows
+            if row.get("model_id") and row.get("calibration_state_hash_after")
+        },
+    }
+
+
+def _adaptation_update_differences(online: list[dict[str, Any]], replay: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def key(row: dict[str, Any]) -> tuple[Any, Any, Any]:
+        return row.get("trial"), row.get("model_id"), row.get("model_role")
+
+    online_map = {key(row): row for row in online}
+    replay_map = {key(row): row for row in replay}
+    differences: list[dict[str, Any]] = []
+    fields = [
+        "label_status",
+        "true_online_label",
+        "update_status",
+        "skip_reason",
+        "support_size_after",
+        "class_counts_after",
+        "calibration_state_hash_after",
+    ]
+    for item_key in sorted(set(online_map) | set(replay_map), key=str):
+        left = online_map.get(item_key)
+        right = replay_map.get(item_key)
+        if left is None or right is None:
+            differences.append({"key": list(item_key), "reason": "missing_adaptation_row"})
+            continue
+        for field in fields:
+            if left.get(field) != right.get(field):
+                differences.append({"key": list(item_key), "reason": "field_difference", "field": field})
+                break
+        else:
+            left_threshold = _optional_float(left.get("calibration_threshold_after"))
+            right_threshold = _optional_float(right.get("calibration_threshold_after"))
+            if left_threshold is not None and right_threshold is not None and abs(left_threshold - right_threshold) > 1e-9:
+                differences.append({"key": list(item_key), "reason": "threshold_difference"})
+    return differences
 
 
 def _prediction_differences(online: list[dict[str, Any]], replay: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -322,6 +582,115 @@ def _operating_threshold_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any]
         "values_seen": unique[:10],
         "calibration_id": calibration_ids[-1] if calibration_ids else None,
     }
+
+
+def _adaptation_evaluation_summary(root: Path, prediction_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    params = _load_json(root / "parameters.json") or {}
+    adaptation_cfg = dict(dict(params.get("realtime", {}) or {}).get("adaptation", {}) or {})
+    enabled = bool(adaptation_cfg.get("enabled", False))
+    updates = _load_jsonl(root / "realtime" / "adaptation_updates.jsonl")
+    if not enabled and not updates:
+        return {"status": "disabled"}
+    if not updates:
+        return {"status": "missing_updates", "enabled": enabled}
+
+    warmup = max(0, int(adaptation_cfg.get("warmup_trials", 20)))
+    summary: dict[str, Any] = {
+        "status": "ok",
+        "enabled": enabled,
+        "update_count": len(updates),
+        "accepted_update_count": sum(1 for row in updates if row.get("update_status") == "updated"),
+        "skipped_update_count": sum(1 for row in updates if row.get("update_status") != "updated"),
+        "skipped_reasons": _count_values(row.get("skip_reason") for row in updates if row.get("skip_reason")),
+        "warmup_trials": warmup,
+        "models": {},
+    }
+    for model_id in sorted({str(row.get("model_id")) for row in updates if row.get("model_id")}):
+        model_updates = [row for row in updates if str(row.get("model_id")) == model_id]
+        model_predictions = [
+            row
+            for row in prediction_rows
+            if row.get("model_id") == model_id
+            and row.get("status") == "predicted"
+            and str(row.get("target", "")).startswith("attention_lapse")
+            and row.get("canonical_attention_lapse_label") is not None
+            and row.get("probability_attention_lapse") is not None
+        ]
+        threshold_values = [
+            float(value)
+            for row in model_updates
+            if (value := _optional_float(row.get("calibration_threshold_after"))) is not None
+        ]
+        model_summary: dict[str, Any] = {
+            "model_kind": model_updates[-1].get("model_kind") if model_updates else None,
+            "model_role": model_updates[-1].get("model_role") if model_updates else None,
+            "update_count": len(model_updates),
+            "accepted_update_count": sum(1 for row in model_updates if row.get("update_status") == "updated"),
+            "skipped_update_count": sum(1 for row in model_updates if row.get("update_status") != "updated"),
+            "skipped_reasons": _count_values(row.get("skip_reason") for row in model_updates if row.get("skip_reason")),
+            "final_class_counts": model_updates[-1].get("class_counts_after") if model_updates else None,
+            "final_calibration_threshold": threshold_values[-1] if threshold_values else None,
+            "threshold_values_seen": sorted({round(value, 12) for value in threshold_values})[:20],
+            "final_adaptation_state_hash": model_updates[-1].get("calibration_state_hash_after") if model_updates else None,
+            "update_acceptance_rate": (
+                sum(1 for row in model_updates if row.get("update_status") == "updated") / max(1, len(model_updates))
+            ),
+            "performance_by_trial_block": _attention_lapse_metrics_by_block(model_predictions),
+            "frozen_initial_performance": _attention_lapse_subset_metrics(
+                [row for row in model_predictions if (_optional_int(row.get("trial")) or 0) <= warmup]
+            ),
+            "adapted_after_warmup_performance": _attention_lapse_subset_metrics(
+                [row for row in model_predictions if (_optional_int(row.get("trial")) or 0) > warmup]
+            ),
+        }
+        summary["models"][model_id] = model_summary
+    return summary
+
+
+def _attention_lapse_metrics_by_block(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    blocks = {
+        "1-20": lambda trial: 1 <= trial <= 20,
+        "21-50": lambda trial: 21 <= trial <= 50,
+        "51-100": lambda trial: 51 <= trial <= 100,
+        "100+": lambda trial: trial > 100,
+    }
+    result = {}
+    for name, predicate in blocks.items():
+        subset = [row for row in rows if (trial := _optional_int(row.get("trial"))) is not None and predicate(trial)]
+        result[name] = _attention_lapse_subset_metrics(subset)
+    return result
+
+
+def _attention_lapse_subset_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {"status": "missing", "prediction_count": 0}
+    truth_values = np.asarray([int(row["canonical_attention_lapse_label"]) for row in rows], dtype=int)
+    probabilities = np.asarray([float(row["probability_attention_lapse"]) for row in rows], dtype=float)
+    if len(set(truth_values.tolist())) < 2:
+        return {
+            "status": "single_class",
+            "prediction_count": len(rows),
+            "class_counts": _count_values(int(value) for value in truth_values.tolist()),
+        }
+    threshold_info = _operating_threshold_from_rows(rows)
+    values = binary_classification_metrics(
+        truth_values,
+        probabilities,
+        threshold=threshold_info["threshold"],
+        positive_label="attention_lapse",
+    )
+    values["status"] = "ok"
+    values["prediction_count"] = len(rows)
+    values["threshold_source"] = threshold_info["source"]
+    return values
+
+
+def _count_values(values: Any) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        key = str(value)
+        counts[key] = counts.get(key, 0) + 1
+    return counts
 
 
 def _manifest_truth(path: Path) -> dict[int, dict[str, Any]]:

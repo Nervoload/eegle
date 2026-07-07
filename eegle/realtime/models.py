@@ -7,6 +7,7 @@ import json
 import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from time import monotonic
 from typing import Any, Protocol
 
 import numpy as np
@@ -17,6 +18,7 @@ from eegle.ml.registry import get_model_spec, resolve_model_kind
 from eegle.ml.targets import build_training_target
 from eegle.models.bundles import file_sha256, load_model_bundle, write_model_bundle
 from eegle.models.calibration import calibration_state_hash, make_prototype_state
+from eegle.realtime.online_adaptation import AdaptationUpdateResult, OnlineAdaptationState
 from eegle.realtime.classification import (
     DEFAULT_ROI_CONFIG,
     assess_epoch_quality,
@@ -116,12 +118,15 @@ class PreparedEpochCache:
 
 class BaseModelAdapter:
     kind = "base"
+    supports_online_update = False
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         self.config = dict(config or {})
         self.model_version = self.config.get("model_version")
         self.input_layout = str(self.config.get("input_layout", "auto"))
         self._artifact_cache: Any | None = None
+        self._online_labels: list[int] = []
+        self._online_probabilities: list[float] = []
 
     def predict_window(self, data: np.ndarray, sample_rate_hz: float) -> ModelPrediction:
         channel_names = [f"ch_{idx + 1:03d}" for idx in range(np.asarray(data).shape[1])]
@@ -135,6 +140,20 @@ class BaseModelAdapter:
             prepared.channel_names,
             prepared.metadata,
         )
+
+    def update_after_trial(
+        self,
+        prepared: PreparedEpochCache,
+        label: int,
+        metadata: dict[str, Any],
+    ) -> AdaptationUpdateResult:
+        return AdaptationUpdateResult(status="skipped", reason="model_not_adaptable")
+
+    def snapshot_adaptation_state(self) -> dict[str, Any] | None:
+        return None
+
+    def load_adaptation_state(self, payload: dict[str, Any]) -> None:
+        return None
 
 
 class ERPPeakBaselineAdapter(BaseModelAdapter):
@@ -374,6 +393,7 @@ class CausalBandpowerLogregAdapter(BaseModelAdapter):
     """Causal bandpower feature logistic-regression adapter."""
 
     kind = "causal_bandpower_logreg"
+    supports_online_update = True
 
     def predict_epoch(
         self,
@@ -411,6 +431,81 @@ class CausalBandpowerLogregAdapter(BaseModelAdapter):
         if self._artifact_cache is None:
             self._artifact_cache = load_joblib_artifact(self.config, self.kind)
         return self._artifact_cache
+
+    def update_after_trial(
+        self,
+        prepared: PreparedEpochCache,
+        label: int,
+        metadata: dict[str, Any],
+    ) -> AdaptationUpdateResult:
+        started = monotonic()
+        artifact = self._load_artifact()
+        before = self._online_state_payload(artifact, metadata)
+        probability = metadata.get("pre_update_probability")
+        if probability is None:
+            return AdaptationUpdateResult(status="skipped", reason="missing_pre_update_probability", state_before=before, state_after=before)
+        self._online_labels.append(int(label))
+        self._online_probabilities.append(float(probability))
+        threshold = before.get("selected_threshold") or dict(artifact.get("calibration") or {}).get("selected_threshold", artifact.get("decision_probability", 0.5))
+        min_examples = int(dict(metadata.get("adaptation_config") or {}).get("min_examples_for_threshold_update", 2))
+        if len(set(self._online_labels)) >= 2 and len(self._online_labels) >= min_examples:
+            calibration = select_binary_threshold(
+                np.asarray(self._online_labels, dtype=int),
+                np.asarray(self._online_probabilities, dtype=float),
+                metric=str(dict(metadata.get("adaptation_config") or {}).get("threshold_metric", "balanced_accuracy")),
+                positive_label="attention_lapse",
+            )
+            if calibration.get("status") == "ok":
+                threshold = float(calibration["selected_threshold"])
+                artifact["calibration"] = _with_calibration_id({**calibration, "source": "online_delayed_labels"})
+                artifact["decision_probability"] = threshold
+        artifact["online_adaptation_state"] = {
+            "labels": list(self._online_labels),
+            "probabilities": list(self._online_probabilities),
+            "selected_threshold": float(threshold),
+        }
+        after = self._online_state_payload(artifact, metadata, accepted_label=int(label), threshold=float(threshold))
+        return AdaptationUpdateResult(
+            status="updated",
+            state_before=before,
+            state_after=after,
+            update_time_ms=(monotonic() - started) * 1000.0,
+            metadata={"update_kind": "threshold_only", "encoder_update_policy": "frozen_or_not_applicable"},
+        )
+
+    def snapshot_adaptation_state(self) -> dict[str, Any] | None:
+        artifact = self._load_artifact()
+        return self._online_state_payload(artifact, {})
+
+    def _online_state_payload(
+        self,
+        artifact: dict[str, Any],
+        metadata: dict[str, Any],
+        *,
+        accepted_label: int | None = None,
+        threshold: float | None = None,
+    ) -> dict[str, Any]:
+        labels = list(self._online_labels)
+        if accepted_label is not None and (not labels or labels[-1] != int(accepted_label)):
+            labels.append(int(accepted_label))
+        class_counts = {"0": int(sum(value == 0 for value in labels)), "1": int(sum(value == 1 for value in labels))}
+        calibration = dict(artifact.get("calibration") or {})
+        state = OnlineAdaptationState(
+            model_kind=self.kind,
+            target=str(artifact.get("target", "attention_lapse_binary")),
+            label_mode=str(metadata.get("label_mode", "slow_go_rt")),
+            model_id=str(metadata.get("model_id", "primary")),
+            model_role=str(metadata.get("model_role", "primary")),
+            support_size=len(labels),
+            total_update_count=len(labels),
+            accepted_update_count=len(labels),
+            class_counts=class_counts,
+            last_updated_trial=metadata.get("trial"),
+            selected_threshold=float(threshold if threshold is not None else calibration.get("selected_threshold", artifact.get("decision_probability", 0.5))),
+            calibration_id=calibration.get("calibration_id"),
+            update_policy={"kind": "threshold_only", "strict_no_leakage": True},
+        )
+        return state.payload()
 
 
 class RiemannTangentLogregAdapter(PyriemannErpCovAdapter):
@@ -452,6 +547,7 @@ class FoundationPrototypeAdapter(FoundationHeadLogregAdapter):
     """Frozen embedding prototype calibration adapter."""
 
     kind = "foundation_prototype"
+    supports_online_update = True
 
     def predict_prepared_epoch(self, prepared: PreparedEpochCache) -> ModelPrediction:
         artifact = self._load_artifact()
@@ -474,6 +570,93 @@ class FoundationPrototypeAdapter(FoundationHeadLogregAdapter):
             model_version=artifact.get("model_version") if isinstance(artifact, dict) else self.model_version,
             metadata=artifact_prediction_metadata(artifact),
         )
+
+    def update_after_trial(
+        self,
+        prepared: PreparedEpochCache,
+        label: int,
+        metadata: dict[str, Any],
+    ) -> AdaptationUpdateResult:
+        started = monotonic()
+        artifact = self._load_artifact()
+        before = self._prototype_online_state_payload(artifact, metadata)
+        contract = artifact.get("contract", {}) if isinstance(artifact, dict) else {}
+        channels_samples = prepared.artifact(contract, self.input_layout)
+        features = frozen_embedding_features(
+            channels_samples,
+            prepared.sample_rate_hz,
+            list(contract.get("channel_names", prepared.channel_names)),
+            artifact.get("embedding_config") if isinstance(artifact, dict) else None,
+        )
+        vector, _ = feature_vector(features, artifact.get("feature_names") if isinstance(artifact, dict) else None)
+        state = dict(artifact.get("prototype_state") or {})
+        params = dict(state.get("parameters") or state)
+        normalizer = dict(params.get("normalizer") or {})
+        mean = np.asarray(normalizer.get("mean", np.zeros_like(vector)), dtype=float)
+        std = np.maximum(np.asarray(normalizer.get("std", np.ones_like(vector)), dtype=float), 1e-9)
+        normalized = (np.asarray(vector, dtype=float) - mean) / std
+        counts = {str(key): int(value) for key, value in dict(params.get("support_counts") or {}).items()}
+        counts.setdefault("attention_lapse", 0)
+        counts.setdefault("attentive", 0)
+        if int(label) == 1:
+            key = "attention_lapse"
+            proto_key = "lapse_prototype"
+        else:
+            key = "attentive"
+            proto_key = "non_lapse_prototype"
+        previous_count = int(counts[key])
+        old_proto = np.asarray(params.get(proto_key), dtype=float)
+        if old_proto.size != normalized.size:
+            return AdaptationUpdateResult(status="skipped", reason="prototype_shape_mismatch", state_before=before, state_after=before)
+        new_proto = (old_proto * previous_count + normalized) / max(1, previous_count + 1)
+        counts[key] = previous_count + 1
+        params[proto_key] = new_proto.tolist()
+        params["support_counts"] = counts
+        if "parameters" in state:
+            state["parameters"] = params
+            state["update_count"] = int(state.get("update_count", 0)) + 1
+            state["metadata"] = {**dict(state.get("metadata") or {}), "encoder_update_policy": "frozen"}
+        else:
+            state = {**params, "update_count": int(state.get("update_count", 0)) + 1}
+        state.pop("calibration_state_hash", None)
+        state["calibration_state_hash"] = calibration_state_hash(state)
+        artifact["prototype_state"] = state
+        self._online_labels.append(int(label))
+        after = self._prototype_online_state_payload(artifact, metadata)
+        return AdaptationUpdateResult(
+            status="updated",
+            state_before=before,
+            state_after=after,
+            update_time_ms=(monotonic() - started) * 1000.0,
+            metadata={"update_kind": "prototype_count_weighted_mean", "encoder_update_policy": "frozen"},
+        )
+
+    def snapshot_adaptation_state(self) -> dict[str, Any] | None:
+        return self._prototype_online_state_payload(self._load_artifact(), {})
+
+    def _prototype_online_state_payload(self, artifact: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
+        prototype_state = dict(artifact.get("prototype_state") or {})
+        params = dict(prototype_state.get("parameters") or prototype_state)
+        counts = {str(key): int(value) for key, value in dict(params.get("support_counts") or {}).items()}
+        total = int(sum(counts.values()))
+        state = OnlineAdaptationState(
+            model_kind=self.kind,
+            target=str(artifact.get("target", "attention_lapse_binary")),
+            label_mode=str(metadata.get("label_mode", "slow_go_rt")),
+            model_id=str(metadata.get("model_id", "primary")),
+            model_role=str(metadata.get("model_role", "primary")),
+            support_size=total,
+            total_update_count=int(prototype_state.get("update_count", len(self._online_labels))),
+            accepted_update_count=len(self._online_labels),
+            class_counts={"0": int(counts.get("attentive", 0)), "1": int(counts.get("attention_lapse", 0))},
+            last_updated_trial=metadata.get("trial"),
+            selected_threshold=params.get("selected_threshold", dict(artifact.get("calibration") or {}).get("selected_threshold")),
+            calibration_id=dict(prototype_state.get("metadata") or {}).get("calibration_id", dict(artifact.get("calibration") or {}).get("calibration_id")),
+            prototype_state=prototype_state,
+            normalizer_state=dict(params.get("normalizer") or {}),
+            update_policy={"kind": "prototype_count_weighted_mean", "encoder_update_policy": "frozen", "strict_no_leakage": True},
+        )
+        return state.payload()
 
 
 class TorchEpochAdapter(BaseModelAdapter):

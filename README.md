@@ -205,17 +205,20 @@ POSIX-like development shells, not the Windows-native operator path.
 | `eegle evaluate-model` | `python -m eegle.cli evaluate-model` | Score classifier predictions against the stimulus manifest |
 | `eegle replay-classifier` | `python -m eegle.cli replay-classifier` | Replay classifier predictions from captured EEG and markers |
 
-The `alpha8`, `inhibition8`, and `classify8` installed scripts have equivalent
-source-module forms. They run the posterior-alpha, response-inhibition, and
-participant-specific GO/NO-GO classification pipelines respectively:
+The `alpha8`, `inhibition8`, `classify8`, and `attention8` installed scripts
+have equivalent source-module forms. They run the posterior-alpha,
+response-inhibition, participant-specific GO/NO-GO classification, and
+attention-lapse system-test pipelines respectively:
 
 ```bash
 alpha8 --help
 inhibition8 --help
 classify8 --help
+attention8 --help
 python -m eegle.pipelines.alpha8 --help
 python -m eegle.pipelines.inhibition8 --help
 python -m eegle.pipelines.classify8 --help
+python -m eegle.pipelines.attention8 --help
 ```
 
 ### Windows PowerShell Command Forms
@@ -661,6 +664,8 @@ attention8 train --session-dir <calibration-session> --check-ready
 attention8 train --session-dir <calibration-session> --support-trials 50
 attention8 online --participant sub-001 --model-dir <calibration-session>/models/attention8 \
   --primary causal_bandpower_logreg --shadow foundation_head_logreg --shadow foundation_prototype
+attention8 online --participant sub-001 --model-dir <calibration-session>/models/attention8 \
+  --primary causal_bandpower_logreg --shadow foundation_prototype --enable-adaptation --adapt-shadows
 attention8 evaluate --session-dir <online-session>
 attention8 protocol
 ```
@@ -686,6 +691,22 @@ eegle model-import --source <eegle-model-runtime.zip> --output <bundle-dir>
 The imported zip must include runtime metadata, the exact input contract,
 license/provenance, and runtime assets. EEGle stores the zip as a
 content-addressed artifact and validates bundle hashes before live inference.
+
+Online adaptation is explicit opt-in with `attention8 online
+--enable-adaptation`. The realtime worker still writes each prediction before
+behavior is available, then consumes the task's delayed
+`go_nogo_trial_complete` event to compute the online label and update eligible
+adapters. Trial condition, reaction time, correctness, omission, and commission
+fields are never passed through prediction-time model metadata. Adaptation rows
+are written to `realtime/adaptation_updates.jsonl`, and state snapshots are
+written under `realtime/adaptation_state/`.
+
+In v1, `foundation_prototype` updates only frozen-embedding class prototypes.
+`causal_bandpower_logreg` keeps the fitted logistic model fixed and updates
+delayed-label threshold/calibration state. `foundation_head_logreg`,
+`riemann_tangent_logreg`, and `torch_eegnet` remain frozen online unless future
+adapters explicitly declare safe delayed-label update support. This still does
+not enable task adaptation or stimulation.
 
 ## Current Scope
 
