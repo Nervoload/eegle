@@ -29,6 +29,7 @@ class EpochingConfig:
     sample_tolerance_seconds: float = 0.01
     drop_incomplete: bool = True
     include_practice_trials: bool = False
+    data_source: str = "raw"
 
     @property
     def duration_seconds(self) -> float:
@@ -46,6 +47,7 @@ class EpochingConfig:
             sample_tolerance_seconds=float(cfg.get("sample_tolerance_seconds", 0.01)),
             drop_incomplete=bool(cfg.get("drop_incomplete", True)),
             include_practice_trials=bool(cfg.get("include_practice_trials", False)),
+            data_source=str(cfg.get("data_source", "raw")),
         )
 
 
@@ -446,12 +448,26 @@ def extract_epochs_for_session(
         parameters_path=root / "parameters.json",
         timebase=timebase,
     )
+    eeg_timestamps = eeg.timestamps
+    eeg_data = eeg.data
+    sample_rate_hz = eeg.sample_rate_hz
+    preprocessing_config = dict(config.get("realtime", {}).get("preprocessing", {}))
+    if epoch_cfg.data_source in {"processed", "causal_preprocessed"}:
+        from eegle.realtime.preprocessing import CausalBandpassNotchPreprocessor
+
+        preprocessor = CausalBandpassNotchPreprocessor(
+            eeg.sample_rate_hz,
+            len(eeg.channel_names),
+            preprocessing_config,
+        )
+        eeg_timestamps, eeg_data = preprocessor.process_chunk(eeg.timestamps, eeg.data)
+        sample_rate_hz = preprocessor.output_sample_rate_hz
     attempts = [
         extract_epoch_from_arrays(
-            timestamps=eeg.timestamps,
-            data=eeg.data,
+            timestamps=eeg_timestamps,
+            data=eeg_data,
             marker=marker,
-            sample_rate_hz=eeg.sample_rate_hz,
+            sample_rate_hz=sample_rate_hz,
             channel_names=eeg.channel_names,
             config=epoch_cfg,
             epoch_index=index,
@@ -471,7 +487,7 @@ def extract_epochs_for_session(
         timestamp_column=eeg.timestamp_column,
         config=epoch_cfg,
         channel_names=eeg.channel_names,
-        sample_rate_hz=eeg.sample_rate_hz,
+        sample_rate_hz=sample_rate_hz,
     )
 
 

@@ -31,6 +31,27 @@ eegle replay-classifier --session-dir <online-session>
 eegle evaluate-model --session-dir <online-session>
 ```
 
+`attention8` is the observe-only attention-lapse system-test workflow. It
+reuses the same Go/No-go task, session layout, epoch extraction, model-bundle,
+online worker, replay, and evaluation primitives, but changes the scientific
+question to causal same-trial lapse-risk prediction:
+
+```bash
+attention8 collect --participant sub-001 --trials 240
+attention8 train --session-dir <calibration-session> --check-ready
+attention8 train --session-dir <calibration-session> --support-trials 50
+attention8 online --participant sub-001 --model-dir <calibration-session>/models/attention8 \
+  --primary causal_bandpower_logreg --shadow foundation_head_logreg --shadow foundation_prototype
+attention8 evaluate --session-dir <online-session>
+attention8 protocol
+```
+
+The protocol declaration is `attention_lapse_go_nogo8_v1`: task `go_nogo`,
+endpoint `attention_lapse_risk`, prediction window `[-2.0, 0.0]`, horizon
+`same_trial_response`, temporal support/query split, and metrics `auprc`,
+`roc_auc`, `brier_score`, `ece`, `false_alarms_per_minute`, `coverage`, and
+`latency_ms`.
+
 ## Data Flow
 
 Calibration collection runs the Go/No-go task and captures EEG plus LSL marker
@@ -78,6 +99,14 @@ Training targets are:
   not regression learning yet; bundle metadata marks it as thresholded binary
   classification.
 
+For `attention8`, the default primary label is `slow_go_rt`: a correct GO
+reaction time at or above the session/subject 80th percentile. Omission,
+commission, and composite-lapse labels are also reported, but the composite is
+not the default training target for the recipe. Practice trials are excluded
+before splitting; support uses the first `K` eligible main trials and query
+metrics use later trials only. The default online support size is 50, with
+`0, 20, 50, 100` declared as the report grid.
+
 ## Supported Models
 
 - `erp_roi_logreg`: interpretable baseline-corrected ERP ROI features with
@@ -87,10 +116,18 @@ Training targets are:
 - `torch_eegnet` / `cnn_eegnet`: trainable TorchScript EEGNet-style epoch model.
 - `sklearn_flatten_lda`: flattened-epoch LDA baseline exposed by the generic
   `eegle train-model` command.
+- `causal_bandpower_logreg`: causal pre-stimulus bandpower features with
+  logistic regression; this is the default `attention8` primary baseline.
+- `riemann_tangent_logreg`: Riemannian covariance tangent-space logistic
+  regression baseline for attention-lapse replay comparisons.
 - `sklearn_xdawn_lda`: compatibility alias for `sklearn_flatten_lda`; despite
   the old name, it is not an xDAWN model.
 - `torch_shallowconvnet` / `cnn_shallowconvnet`: external TorchScript CNN
   adapter, shadow-only by default.
+- `foundation_head_logreg`: frozen encoder embeddings plus a logistic
+  regression head. EEGle updates the head only; encoder weights stay frozen.
+- `foundation_prototype`: frozen encoder embeddings plus cosine-distance class
+  prototypes calibrated from the support set.
 - `foundation_bendr`, `foundation_labram`, and `sequence_external`: external
   checkpoint adapter targets for EEG foundation or sequence models. They are
   registry entries with explicit dependency and artifact contracts; EEGle does
@@ -98,6 +135,19 @@ Training targets are:
 
 Run `eegle model-list` for the current registry, aliases, trainability,
 dependency requirements, realtime support, and supported targets.
+
+Foundation checkpoint work belongs in `eegle-model` or another public-dataset
+workbench. Live EEGle sessions consume only exported runtime bundles. Import a
+workbench export with:
+
+```bash
+eegle model-import --source <eegle-model-runtime.zip> --output <bundle-dir>
+```
+
+The imported artifact remains a single hashed zip inside an EEGle model bundle.
+The zip metadata must declare the runtime assets, exact input contract,
+license/provenance, target, and calibration/head state needed for replayable
+inference.
 
 ## Quality and Label Safety
 
@@ -126,6 +176,10 @@ Important invariants:
   the `attention_lapse_stimulation` policy plus explicit `allow_stimulation`
   and `research_safety_ack` gates, valid quality checks, cooldowns, and
   non-practice trials.
+- `attention8` uses causal pre-stimulus epoching in live, offline extraction,
+  and replay. Prediction rows carry the prediction window, horizon, support
+  size, calibration ID/state hash, source, model/preprocessing latency, quality
+  status, and `probability_attention_lapse`.
 
 ## Evaluation
 

@@ -73,6 +73,10 @@ def evaluate_classifier_session(session_dir: str | Path) -> dict[str, Any]:
                 "canonical_label": None if canonical is None else canonical["label"],
                 "canonical_attention_lapse_label": None if lapse is None else lapse["label"],
                 "canonical_attention_lapse_score": None if lapse is None else lapse["score"],
+                "canonical_slow_go_rt": None if lapse is None else lapse.get("slow_go_rt"),
+                "canonical_omission_error": None if lapse is None else lapse.get("omission_error"),
+                "canonical_commission_error": None if lapse is None else lapse.get("commission_error"),
+                "canonical_composite_lapse": None if lapse is None else lapse.get("composite_lapse"),
             }
         )
     _write_predictions_csv(outdir / "predictions.csv", joined)
@@ -117,6 +121,7 @@ def evaluate_classifier_session(session_dir: str | Path) -> dict[str, Any]:
         truth_source = lapse_truth if target.startswith("attention_lapse") else truth
         predicted_trials = {int(row["trial"]) for row in rows if _optional_int(row.get("trial")) in truth_source}
         values["coverage"] = len(predicted_trials) / max(1, len(truth_source))
+        values["false_alarms_per_minute"] = _false_alarms_per_minute(rows, truth_values, probabilities, threshold_info["threshold"])
         values["target"] = target
         values["evaluation_level"] = "full_inference"
         values["threshold_source"] = threshold_info["source"]
@@ -198,6 +203,16 @@ def replay_classifier_session(session_dir: str | Path) -> dict[str, Any]:
             markers.append(payload)
     all_timestamps = np.concatenate(timestamps) if timestamps else np.empty((0,), dtype=float)
     all_samples = np.concatenate(samples, axis=0) if samples else np.empty((0, len(channels)), dtype=float)
+    if epoch_cfg.data_source in {"processed", "causal_preprocessed"}:
+        from eegle.realtime.preprocessing import CausalBandpassNotchPreprocessor
+
+        preprocessor = CausalBandpassNotchPreprocessor(
+            sample_rate,
+            len(channels),
+            dict(header.get("preprocessing_config") or {}),
+        )
+        all_timestamps, all_samples = preprocessor.process_chunk(all_timestamps, all_samples)
+        sample_rate = preprocessor.output_sample_rate_hz
     replay_rows: list[dict[str, Any]] = []
     for index, marker in enumerate(markers, start=1):
         attempt = extract_epoch_from_arrays(all_timestamps, all_samples, marker, sample_rate, channels, epoch_cfg, index)
@@ -223,6 +238,7 @@ def replay_classifier_session(session_dir: str | Path) -> dict[str, Any]:
                     role=str(model_entry["role"]),
                     latency_ms=None,
                     quality=quality.payload(),
+                    prediction_source="replay",
                 )
             )
     replay_path = outdir / "replay_predictions.jsonl"
@@ -322,6 +338,11 @@ def _manifest_truth(path: Path) -> dict[int, dict[str, Any]]:
 
 def _manifest_lapse_truth(path: Path) -> dict[int, dict[str, Any]]:
     manifest = _load_json(path) or {}
+    params = _load_json(path.parent.parent / "parameters.json") or {}
+    model_cfg = dict(dict(params.get("realtime", {}) or {}).get("model", {}) or {})
+    slow_rt_quantile = float(model_cfg.get("slow_rt_quantile", model_cfg.get("attention_lapse_slow_rt_quantile", 0.75)))
+    primary_label = str(model_cfg.get("attention_lapse_label", model_cfg.get("attention_lapse_mode", "composite_lapse_score")))
+    threshold_value = float(model_cfg.get("attention_lapse_threshold", 0.5))
     trials = [row for row in manifest.get("trials", []) if _optional_int(row.get("trial")) is not None]
     correct_go_rts = [
         float(dict(row.get("response") or {}).get("reaction_time_seconds"))
@@ -330,7 +351,7 @@ def _manifest_lapse_truth(path: Path) -> dict[int, dict[str, Any]]:
         and bool(dict(row.get("response") or {}).get("correct_press"))
         and dict(row.get("response") or {}).get("reaction_time_seconds") is not None
     ]
-    threshold = float(np.quantile(correct_go_rts, 0.75)) if correct_go_rts else float("inf")
+    threshold = float(np.quantile(correct_go_rts, slow_rt_quantile)) if correct_go_rts else float("inf")
     rows = []
     for row in trials:
         trial = int(row.get("trial"))
@@ -347,6 +368,7 @@ def _manifest_lapse_truth(path: Path) -> dict[int, dict[str, Any]]:
                 "commission_error": int(is_no_go and int(response.get("button_press_count", 0) or 0) > 0),
                 "omission_error": int(not is_no_go and int(response.get("button_press_count", 0) or 0) == 0),
                 "slow_trial": int(not is_no_go and correct and rt is not None and rt >= threshold),
+                "slow_go_rt": int(not is_no_go and correct and rt is not None and rt >= threshold),
             }
         )
     go_rts = [row["reaction_time_seconds"] for row in rows if not row["is_no_go"] and row["reaction_time_seconds"] is not None]
@@ -362,8 +384,33 @@ def _manifest_lapse_truth(path: Path) -> dict[int, dict[str, Any]]:
             components.append(float(item["omission_error"]))
             components.append(float(item["commission_error"]))
         score = float(np.mean(components)) if components else 0.0
-        result[int(row["trial"])] = {"score": score, "label": int(score >= 0.5)}
+        composite = int(bool(row.get("slow_go_rt")) or bool(row.get("omission_error")) or bool(row.get("commission_error")))
+        primary_score = _lapse_primary_score({**row, "score": score, "composite_lapse": composite}, primary_label)
+        result[int(row["trial"])] = {
+            "score": score,
+            "label": int(primary_score >= threshold_value),
+            "primary_label": primary_label,
+            "primary_score": float(primary_score),
+            "slow_go_rt": int(row.get("slow_go_rt", 0)),
+            "omission_error": int(row.get("omission_error", 0)),
+            "commission_error": int(row.get("commission_error", 0)),
+            "composite_lapse": composite,
+            "slow_rt_quantile": slow_rt_quantile,
+        }
     return result
+
+
+def _lapse_primary_score(row: dict[str, Any], primary_label: str) -> float:
+    label = str(primary_label)
+    if label in {"slow_go_rt", "slow_trial", "attention_lapse_slow_rt"}:
+        return float(row.get("slow_go_rt", row.get("slow_trial", 0.0)))
+    if label in {"omission", "omission_error"}:
+        return float(row.get("omission_error", 0.0))
+    if label in {"commission", "commission_error"}:
+        return float(row.get("commission_error", 0.0))
+    if label in {"composite", "composite_lapse"}:
+        return float(row.get("composite_lapse", 0.0))
+    return float(row.get("score", 0.0))
 
 
 def _replay_model_config(config: dict[str, Any], root: Path) -> dict[str, Any]:
@@ -382,7 +429,9 @@ def _write_predictions_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "trial", "epoch_index", "model_id", "model_role", "model_kind", "target", "status",
         "prediction_label", "predicted_condition", "probability_no_go", "probability_attention_lapse",
         "canonical_condition", "canonical_label", "canonical_attention_lapse_label",
-        "processing_latency_ms", "reason",
+        "canonical_slow_go_rt", "canonical_omission_error", "canonical_commission_error", "canonical_composite_lapse",
+        "prediction_window_seconds", "prediction_horizon", "prediction_source", "support_size", "calibration_id",
+        "calibration_state_hash", "processing_latency_ms", "preprocessing_latency_ms", "quality_status", "reason",
     ]
     _write_csv(path, rows, fields)
 
@@ -391,6 +440,7 @@ def _write_probability_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     fields = [
         "trial", "model_id", "model_role", "model_kind", "target",
         "probability_no_go", "probability_attention_lapse", "canonical_label", "canonical_attention_lapse_label",
+        "canonical_slow_go_rt", "canonical_omission_error", "canonical_commission_error", "canonical_composite_lapse",
     ]
     _write_csv(path, [row for row in rows if row.get("status") == "predicted"], fields)
 
@@ -463,6 +513,26 @@ def _optional_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _false_alarms_per_minute(
+    rows: list[dict[str, Any]],
+    truth_values: np.ndarray,
+    probabilities: np.ndarray,
+    threshold: float,
+) -> float:
+    predicted = (np.asarray(probabilities, dtype=float) >= float(threshold)).astype(int)
+    false_alarms = int(np.sum((np.asarray(truth_values, dtype=int) == 0) & (predicted == 1)))
+    timestamps = [
+        value
+        for row in rows
+        if (value := _optional_float(row.get("marker_timestamp_lsl"))) is not None
+    ]
+    if len(timestamps) >= 2:
+        minutes = max((max(timestamps) - min(timestamps)) / 60.0, 1e-9)
+    else:
+        minutes = max(len(rows) / 60.0, 1e-9)
+    return float(false_alarms / minutes)
 
 
 def _safe_name(value: str) -> str:

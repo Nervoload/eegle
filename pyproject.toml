@@ -95,6 +95,7 @@ eegle = "eegle.cli:main"
 alpha8 = "eegle.pipelines.alpha8:main"
 inhibition8 = "eegle.pipelines.inhibition8:main"
 classify8 = "eegle.pipelines.classify8:main"
+attention8 = "eegle.pipelines.attention8:main"
 
 [tool.setuptools.packages.find]
 include = ["configs*", "eegle*"]

@@ -7,6 +7,7 @@ import json
 import platform
 import shutil
 import sys
+import zipfile
 from dataclasses import dataclass
 from importlib import metadata
 from pathlib import Path
@@ -121,12 +122,85 @@ def snapshot_model_bundle(bundle_path: str | Path, snapshots_root: str | Path, r
     return load_model_bundle(destination)
 
 
+def import_runtime_bundle(source_zip: str | Path, output_dir: str | Path) -> dict[str, Any]:
+    """Import an eegle-model runtime zip as a content-addressed EEGle bundle."""
+    source = Path(source_zip).expanduser().resolve()
+    if not source.is_file():
+        raise ValueError(f"runtime bundle zip does not exist: {source}")
+    if not zipfile.is_zipfile(source):
+        raise ValueError(f"runtime bundle is not a zip file: {source}")
+    with zipfile.ZipFile(source) as archive:
+        names = set(archive.namelist())
+        metadata_name = _runtime_metadata_name(names)
+        runtime = json.loads(archive.read(metadata_name).decode("utf-8"))
+        _validate_runtime_export(runtime, names)
+    kind = str(runtime["kind"])
+    contract = dict(runtime["contract"])
+    metrics = dict(runtime.get("metrics") or {"status": "imported_without_metrics"})
+    training_source = {
+        "source": "eegle-model-runtime-zip",
+        "runtime_metadata_file": metadata_name,
+        "source_zip_sha256": file_sha256(source),
+        "path_values_redacted": True,
+        **dict(runtime.get("training_source") or {}),
+    }
+    extra = {
+        "model_version": str(runtime.get("model_version", "imported")),
+        "model_family": runtime.get("model_family", "eeg_foundation"),
+        "target": runtime.get("target", dict(runtime.get("target_spec") or {}).get("target", "attention_lapse_binary")),
+        "target_spec": runtime.get("target_spec"),
+        "label_mapping": runtime.get("label_mapping", {"attentive": 0, "attention_lapse": 1}),
+        "calibration": runtime.get("calibration"),
+        "support_query": runtime.get("support_query"),
+        "prototype_state": runtime.get("prototype_state"),
+        "runtime_export": {
+            "metadata_file": metadata_name,
+            "files": sorted(names),
+            "license": runtime.get("license"),
+            "provenance": runtime.get("provenance"),
+        },
+    }
+    return write_model_bundle(
+        output_dir,
+        kind=kind,
+        artifact_path=source,
+        artifact_format="eegle_runtime_zip",
+        contract=contract,
+        metrics=metrics,
+        training_source=training_source,
+        extra=extra,
+    )
+
+
 def file_sha256(path: str | Path) -> str:
     digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _runtime_metadata_name(names: set[str]) -> str:
+    for candidate in ("runtime.json", "eegle_runtime.json", "manifest.runtime.json"):
+        if candidate in names:
+            return candidate
+    raise ValueError("runtime bundle zip must contain runtime.json")
+
+
+def _validate_runtime_export(runtime: dict[str, Any], names: set[str]) -> None:
+    kind = str(runtime.get("kind", "")).strip()
+    if not kind:
+        raise ValueError("runtime export metadata must declare kind")
+    if not isinstance(runtime.get("contract"), dict):
+        raise ValueError("runtime export metadata must include an input contract")
+    contract = dict(runtime["contract"])
+    if not contract.get("channel_names") and not contract.get("channel_order"):
+        raise ValueError("runtime export contract must declare channel_names or channel_order")
+    if not contract.get("sample_rate_hz"):
+        raise ValueError("runtime export contract must declare sample_rate_hz")
+    runtime_files = [name for name in names if not name.endswith("/") and name not in {"runtime.json", "eegle_runtime.json", "manifest.runtime.json"}]
+    if not runtime_files:
+        raise ValueError("runtime bundle zip must contain at least one runtime artifact file")
 
 
 def software_versions() -> dict[str, str]:

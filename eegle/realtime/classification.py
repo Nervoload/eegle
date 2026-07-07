@@ -61,6 +61,8 @@ def model_prediction_row(
     role: str,
     latency_ms: float | None,
     quality: dict[str, Any],
+    preprocessing_latency_ms: float | None = None,
+    prediction_source: str = "live",
 ) -> dict[str, Any]:
     """Build the label-blind normalized realtime prediction record."""
     metadata_value = dict(prediction.get("metadata") or {})
@@ -75,6 +77,9 @@ def model_prediction_row(
         "trial": epoch_payload.get("trial"),
         "marker_timestamp_lsl": dict(epoch_payload.get("marker") or {}).get("timestamp"),
         "epoch_window_seconds": epoch_payload.get("epoch_window_seconds"),
+        "prediction_window_seconds": metadata_value.get("prediction_window_seconds", epoch_payload.get("epoch_window_seconds")),
+        "prediction_horizon": metadata_value.get("prediction_horizon"),
+        "prediction_source": prediction_source,
         "model_id": model_id,
         "model_role": role,
         "model_kind": prediction.get("model_kind"),
@@ -88,10 +93,15 @@ def model_prediction_row(
         "probability_attention_lapse": probability_attention_lapse,
         "calibrated_threshold": metadata_value.get("calibrated_threshold"),
         "calibration_id": metadata_value.get("calibration_id"),
+        "calibration_state_hash": metadata_value.get("calibration_state_hash"),
+        "support_size": metadata_value.get("support_size"),
+        "query_size": metadata_value.get("query_size"),
         "score": prediction.get("score"),
         "features": prediction.get("features", {}),
         "processing_latency_ms": latency_ms,
+        "preprocessing_latency_ms": metadata_value.get("preprocessing_latency_ms", preprocessing_latency_ms),
         "quality": quality,
+        "quality_status": "ok" if bool(quality.get("valid", False)) else "rejected",
         "ground_truth_joined_during_inference": False,
         "observe_only": True,
     }

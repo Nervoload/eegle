@@ -48,13 +48,17 @@ def build_training_target(data: Any, config: dict[str, Any] | None = None) -> Tr
             metadata={"target": target, "source": "epochs_npz_y"},
         )
 
-    score_result = _attention_scores_from_npz(data)
+    label_mode = str(cfg.get("attention_lapse_label", cfg.get("attention_lapse_mode", "composite_lapse_score")))
+    slow_rt_quantile = float(cfg.get("slow_rt_quantile", cfg.get("attention_lapse_slow_rt_quantile", 0.75)))
+    score_result = _attention_scores_from_npz(data, label_mode)
     if score_result is None:
         session_dirs = [Path(value).expanduser().resolve() for value in cfg.get("session_dirs", [])]
         score_result = _attention_scores_from_sessions(
             session_dirs,
             trials,
             _optional_int_array(data, "source_session_index"),
+            label_mode=label_mode,
+            slow_rt_quantile=slow_rt_quantile,
         )
     if score_result is None:
         raise ValueError(
@@ -91,12 +95,22 @@ def build_training_target(data: Any, config: dict[str, Any] | None = None) -> Tr
             "score_target_mode": "thresholded_behavior_score",
             "score_regression_supported": False,
             "label_rule": f"{score_result.score_name} >= {float(threshold):.6g}",
+            "attention_lapse_label": label_mode,
             **score_result.metadata,
         },
     )
 
 
-def _attention_scores_from_npz(data: Any) -> AttentionScores | None:
+def _attention_scores_from_npz(data: Any, label_mode: str = "composite_lapse_score") -> AttentionScores | None:
+    if label_mode == "slow_go_rt":
+        for key in ("slow_go_rt", "slow_trial", "attention_lapse_slow_rt"):
+            if key in data.files:
+                return AttentionScores(
+                    values=np.asarray(data[key], dtype=float),
+                    source="epochs_npz",
+                    score_name=key,
+                    metadata={"score_join": "per_epoch_npz_array", "binary_score_source": True},
+                )
     for key in ("attention_lapse_score", "lapse_score"):
         if key in data.files:
             return AttentionScores(
@@ -119,6 +133,9 @@ def _attention_scores_from_sessions(
     session_dirs: list[Path],
     trials: np.ndarray,
     source_session_index: np.ndarray | None,
+    *,
+    label_mode: str = "composite_lapse_score",
+    slow_rt_quantile: float = 0.75,
 ) -> AttentionScores | None:
     if not session_dirs:
         return None
@@ -133,10 +150,10 @@ def _attention_scores_from_sessions(
     trial_counts: dict[int, int] = {}
     for session_index, session in enumerate(session_dirs):
         manifest = _load_json(session / "events" / "stimulus_manifest.json") or {}
-        rows = _trial_lapse_rows(list(manifest.get("trials", [])))
+        rows = _trial_lapse_rows(list(manifest.get("trials", [])), slow_rt_quantile=slow_rt_quantile)
         trial_counts[session_index] = len(rows)
         for row in rows:
-            by_key[(session_index, int(row["trial"]))] = float(row["lapse_score"])
+            by_key[(session_index, int(row["trial"]))] = float(_score_for_label_mode(row, label_mode))
     scores = np.full(trials.shape, np.nan, dtype=float)
     for index, trial in enumerate(trials):
         session_index = 0 if source_session_index is None else int(source_session_index[index])
@@ -150,17 +167,19 @@ def _attention_scores_from_sessions(
     return AttentionScores(
         values=scores,
         source="session_behavior",
-        score_name="lapse_score",
+        score_name=_score_name_for_label_mode(label_mode),
         metadata={
             "score_join": "session_index_and_trial",
             "session_count": len(session_dirs),
             "source_session_index_present": source_session_index is not None,
             "session_trial_counts": {str(key): value for key, value in trial_counts.items()},
+            "slow_rt_quantile": float(slow_rt_quantile),
+            "primary_label_rule": label_mode,
         },
     )
 
 
-def _trial_lapse_rows(trials: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _trial_lapse_rows(trials: list[dict[str, Any]], *, slow_rt_quantile: float = 0.75) -> list[dict[str, Any]]:
     correct_go_rts = [
         float(dict(trial.get("response") or {}).get("reaction_time_seconds"))
         for trial in trials
@@ -168,7 +187,7 @@ def _trial_lapse_rows(trials: list[dict[str, Any]]) -> list[dict[str, Any]]:
         and bool(dict(trial.get("response") or {}).get("correct_press"))
         and dict(trial.get("response") or {}).get("reaction_time_seconds") is not None
     ]
-    slow_threshold = float(np.quantile(correct_go_rts, 0.75)) if correct_go_rts else math.inf
+    slow_threshold = float(np.quantile(correct_go_rts, float(slow_rt_quantile))) if correct_go_rts else math.inf
     rows = []
     for trial in trials:
         trial_index = int(trial.get("trial", -1))
@@ -185,6 +204,7 @@ def _trial_lapse_rows(trials: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "commission_error": int(is_no_go and int(response.get("button_press_count", 0) or 0) > 0),
                 "omission_error": int(not is_no_go and int(response.get("button_press_count", 0) or 0) == 0),
                 "slow_trial": int(not is_no_go and correct and rt is not None and rt >= slow_threshold),
+                "slow_go_rt": int(not is_no_go and correct and rt is not None and rt >= slow_threshold),
             }
         )
     _add_lapse_scores(rows)
@@ -205,6 +225,37 @@ def _add_lapse_scores(rows: list[dict[str, Any]]) -> None:
             components.append(float(item["omission_error"]))
             components.append(float(item["commission_error"]))
         row["lapse_score"] = float(np.mean(components)) if components else 0.0
+        row["composite_lapse"] = int(
+            bool(row.get("slow_go_rt"))
+            or bool(row.get("omission_error"))
+            or bool(row.get("commission_error"))
+        )
+
+
+def _score_for_label_mode(row: dict[str, Any], label_mode: str) -> float:
+    mode = str(label_mode)
+    if mode in {"slow_go_rt", "slow_trial", "attention_lapse_slow_rt"}:
+        return float(row.get("slow_go_rt", row.get("slow_trial", 0.0)))
+    if mode in {"omission", "omission_error"}:
+        return float(row.get("omission_error", 0.0))
+    if mode in {"commission", "commission_error"}:
+        return float(row.get("commission_error", 0.0))
+    if mode in {"composite", "composite_lapse"}:
+        return float(row.get("composite_lapse", 0.0))
+    return float(row.get("lapse_score", 0.0))
+
+
+def _score_name_for_label_mode(label_mode: str) -> str:
+    mode = str(label_mode)
+    if mode in {"slow_go_rt", "slow_trial", "attention_lapse_slow_rt"}:
+        return "slow_go_rt"
+    if mode in {"omission", "omission_error"}:
+        return "omission_error"
+    if mode in {"commission", "commission_error"}:
+        return "commission_error"
+    if mode in {"composite", "composite_lapse"}:
+        return "composite_lapse"
+    return "lapse_score"
 
 
 def npz_value(data: Any, key: str, default: Any) -> Any:

@@ -14,7 +14,14 @@ from eegle.ml.contracts import normalize_input_contract, select_contract_channel
 from eegle.ml.registry import get_model_spec, list_model_kinds, resolve_model_kind
 from eegle.ml.targets import build_training_target
 from eegle.realtime.classification import model_prediction_row, prepare_classifier_epoch
-from eegle.realtime.models import ModelPrediction, load_epoch_dataset, make_model_adapter, train_epoch_model
+from eegle.realtime.models import (
+    ModelPrediction,
+    causal_bandpower_features,
+    load_epoch_dataset,
+    make_model_adapter,
+    temporal_support_query_split,
+    train_epoch_model,
+)
 from eegle.realtime.policy import make_decision_policy
 
 
@@ -30,6 +37,9 @@ class ModularMlInfrastructureTests(unittest.TestCase):
         self.assertEqual(labram.family, "eeg_foundation")
         self.assertFalse(labram.primary_realtime_allowed)
         self.assertTrue(labram.external_checkpoint)
+        self.assertTrue(get_model_spec("causal_bandpower_logreg").primary_realtime_allowed)
+        self.assertFalse(get_model_spec("foundation_head_logreg").primary_realtime_allowed)
+        self.assertTrue(get_model_spec("foundation_prototype").trainable)
 
     def test_channel_contract_selects_required_and_optional_channels(self) -> None:
         contract = normalize_input_contract(
@@ -82,6 +92,45 @@ class ModularMlInfrastructureTests(unittest.TestCase):
         self.assertEqual(target.metadata["source"], "session_behavior")
         self.assertTrue(target.eligible.all())
         self.assertIn(1, target.y.tolist())
+
+    def test_slow_go_rt_target_uses_session_quantile_without_secondary_leakage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            session = root / "session"
+            (session / "events").mkdir(parents=True)
+            manifest = {
+                "trials": [
+                    {"trial": 1, "stimulus": {"is_no_go": False}, "response": {"correct_press": True, "reaction_time_seconds": 0.20, "button_press_count": 1}},
+                    {"trial": 2, "stimulus": {"is_no_go": False}, "response": {"correct_press": True, "reaction_time_seconds": 0.40, "button_press_count": 1}},
+                    {"trial": 3, "stimulus": {"is_no_go": False}, "response": {"correct_press": True, "reaction_time_seconds": 0.80, "button_press_count": 1}},
+                    {"trial": 4, "stimulus": {"is_no_go": False}, "response": {"correct_press": True, "reaction_time_seconds": 0.90, "button_press_count": 1}},
+                    {"trial": 5, "stimulus": {"is_no_go": True}, "response": {"button_press_count": 1}},
+                    {"trial": 6, "stimulus": {"is_no_go": False}, "response": {"button_press_count": 0}},
+                ]
+            }
+            (session / "events" / "stimulus_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            data = _npz_like(
+                {
+                    "X": np.zeros((6, 2, 5)),
+                    "y": np.asarray([0, 0, 0, 0, 1, 0]),
+                    "trials": np.arange(1, 7),
+                }
+            )
+
+            target = build_training_target(
+                data,
+                {
+                    "target": "attention_lapse_binary",
+                    "attention_lapse_label": "slow_go_rt",
+                    "slow_rt_quantile": 0.8,
+                    "session_dirs": [str(session)],
+                    "attention_lapse_threshold": 0.5,
+                },
+            )
+
+        self.assertEqual(target.y.tolist(), [0, 0, 0, 1, 0, 0])
+        self.assertEqual(target.metadata["score_name"], "slow_go_rt")
+        self.assertEqual(target.metadata["primary_label_rule"], "slow_go_rt")
 
     def test_multi_session_attention_lapse_join_uses_source_session_index(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -198,6 +247,29 @@ class ModularMlInfrastructureTests(unittest.TestCase):
         self.assertEqual(calibration["status"], "ok")
         self.assertLess(float(calibration["selected_threshold"]), 0.5)
         self.assertGreaterEqual(float(calibration["selected_metrics"]["balanced_accuracy"]), 0.75)
+        self.assertIn("auprc", calibration["selected_metrics"])
+        self.assertIn("ece", calibration["selected_metrics"])
+
+    def test_temporal_support_query_split_uses_first_k_main_trials_only(self) -> None:
+        split = temporal_support_query_split(
+            np.asarray([1, 2, 3, 4, 5, 6]),
+            np.asarray([0, 1, 0, 1, 0, 1]),
+            {"support_trials": 4},
+        )
+
+        self.assertEqual(split["support_mask"].tolist(), [True, True, True, True, False, False])
+        self.assertEqual(split["query_mask"].tolist(), [False, False, False, False, True, True])
+        self.assertEqual(split["payload"]["support_positive_count"], 2)
+        self.assertEqual(split["payload"]["query_epoch_count"], 2)
+
+    @unittest.skipIf(importlib.util.find_spec("scipy") is None, "scipy not installed")
+    def test_causal_bandpower_features_are_named_and_finite(self) -> None:
+        epoch = np.random.default_rng(3).normal(size=(2, 200))
+        features = causal_bandpower_features(epoch, 100.0, ["Fz", "Pz"])
+
+        self.assertIn("global_alpha_power", features)
+        self.assertIn("global_theta_alpha_ratio", features)
+        self.assertTrue(all(np.isfinite(value) for value in features.values()))
 
     def test_prediction_row_uses_attention_lapse_fields_without_condition_truth(self) -> None:
         prediction = ModelPrediction(
@@ -220,6 +292,7 @@ class ModularMlInfrastructureTests(unittest.TestCase):
         self.assertEqual(row["probability_attention_lapse"], 0.8)
         self.assertIsNone(row["probability_no_go"])
         self.assertEqual(row["calibrated_threshold"], 0.7)
+        self.assertEqual(row["quality_status"], "ok")
 
     def test_foundation_adapter_requires_user_supplied_checkpoint(self) -> None:
         adapter = make_model_adapter("foundation_bendr", {})
@@ -328,6 +401,48 @@ class ModularMlInfrastructureTests(unittest.TestCase):
         self.assertFalse(result["metrics"]["target_spec"]["score_regression_supported"])
         self.assertTrue(manifest["training_source"]["path_values_redacted"])
         self.assertNotIn("epochs_npz", manifest["training_source"])
+
+    @unittest.skipIf(importlib.util.find_spec("joblib") is None, "joblib not installed")
+    def test_foundation_prototype_training_persists_calibration_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            times = np.linspace(-2.0, 0.0, 201)
+            rng = np.random.default_rng(12)
+            channels = np.asarray(["Fz", "Cz", "Pz"], dtype=object)
+            x = rng.normal(0.0, 1.0, size=(8, len(channels), times.size))
+            x[4:, :, -80:] += 1.5
+            np.savez(
+                root / "epochs.npz",
+                X=x,
+                y=np.asarray([0, 0, 0, 0, 1, 1, 1, 1]),
+                trials=np.arange(1, 9),
+                times=times,
+                channel_names=channels,
+                sample_rate_hz=np.asarray([100.0]),
+                slow_go_rt=np.asarray([0, 0, 0, 0, 1, 1, 1, 1]),
+            )
+
+            result = train_epoch_model(
+                "foundation_prototype",
+                root / "epochs.npz",
+                root / "prototype",
+                {
+                    "target": "attention_lapse_binary",
+                    "attention_lapse_label": "slow_go_rt",
+                    "epoch_data_source": "causal_preprocessed",
+                    "prediction_window_seconds": [-2.0, 0.0],
+                    "support_trials": 6,
+                    "permutations": 1,
+                },
+            )
+            manifest = json.loads((Path(result["bundle_path"]) / "manifest.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(manifest["support_query"]["support_epoch_count"], 6)
+        self.assertEqual(manifest["prototype_state"]["kind"], "prototype")
+        self.assertEqual(manifest["prototype_state"]["metadata"]["calibration_id"], result["calibration"]["calibration_id"])
+        self.assertTrue(manifest["prototype_state"]["calibration_state_hash"])
+        self.assertEqual(manifest["contract"]["prediction_window_seconds"], [-2.0, 0.0])
 
 
 class _npz_like:

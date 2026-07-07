@@ -10,7 +10,7 @@ from typing import Any
 from eegle.ml.registry import get_model_spec, resolve_model_kind
 from eegle.hardware.system import CheckResult
 
-CONSOLE_COMMANDS = ("eegle", "alpha8", "inhibition8", "classify8")
+CONSOLE_COMMANDS = ("eegle", "alpha8", "inhibition8", "classify8", "attention8")
 
 def check_command_entrypoints(commands: tuple[str, ...] = CONSOLE_COMMANDS) -> CheckResult:
     """Report whether installed console commands are visible on PATH."""

@@ -1,7 +1,23 @@
 """Stable model APIs for EEGle bundles, contracts, registries, and calibration."""
 
-from eegle.models.bundles import ModelBundle, file_sha256, load_model_bundle, load_model_bundle_object, snapshot_model_bundle, write_model_bundle
-from eegle.models.calibration import CalibrationAdapter, CalibrationState, read_calibration_state, write_calibration_state
+from eegle.models.bundles import (
+    ModelBundle,
+    file_sha256,
+    import_runtime_bundle,
+    load_model_bundle,
+    load_model_bundle_object,
+    snapshot_model_bundle,
+    write_model_bundle,
+)
+from eegle.models.calibration import (
+    CalibrationAdapter,
+    CalibrationState,
+    calibration_state_hash,
+    make_prototype_state,
+    make_threshold_state,
+    read_calibration_state,
+    write_calibration_state,
+)
 from eegle.models.contracts import ModelContract, PreprocessingContract, TargetContract
 from eegle.models.registry import (
     get_model_spec,
@@ -27,12 +43,16 @@ __all__ = [
     "PreprocessingContract",
     "TargetContract",
     "file_sha256",
+    "calibration_state_hash",
     "get_model_spec",
+    "import_runtime_bundle",
     "list_model_kinds",
     "list_model_specs",
     "load_entry_point_model_specs",
     "load_model_bundle",
     "load_model_bundle_object",
+    "make_prototype_state",
+    "make_threshold_state",
     "read_calibration_state",
     "register_model_spec",
     "resolve_model_kind",

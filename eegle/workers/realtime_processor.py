@@ -195,7 +195,9 @@ def main(argv: list[str] | None = None) -> int:
         list(realtime_config.get("shadow_models", [])),
         paths,
     )
-    _validate_model_entries(model_entries, channel_names, sample_rate, epoching_config)
+    processed_sample_rate = sample_rate if preprocessor is None else preprocessor.output_sample_rate_hz
+    epoch_sample_rate = processed_sample_rate if epoching_config.data_source in {"processed", "causal_preprocessed"} else sample_rate
+    _validate_model_entries(model_entries, channel_names, epoch_sample_rate, epoching_config)
     model = None if not model_entries else model_entries[0]["adapter"]
     policy_config = dict(realtime_config.get("decision_policy", {}))
     policy_config.setdefault("allow_task_adaptation", bool(feedback_config.get("allow_task_adaptation", True)))
@@ -205,14 +207,13 @@ def main(argv: list[str] | None = None) -> int:
     policy = None if event_features_enabled or not inference_enabled else make_policy(policy_kind, policy_config)
     feedback_backend = "disabled" if event_features_enabled else args.feedback_backend
     emitter = make_feedback_emitter(feedback_backend, feedback_config, paths.realtime_feedback_jsonl)
-    processed_sample_rate = sample_rate if preprocessor is None else preprocessor.output_sample_rate_hz
     alpha_estimator = AlphaPowerEstimator(processed_sample_rate, channel_names, alpha_config) if alpha_enabled else None
     alpha_step_seconds = float(alpha_config.get("step_seconds", realtime_config.get("step_seconds", 0.25)))
     window_samples = max(1, int(round(window_seconds * processed_sample_rate)))
     buffer_samples = max(window_samples * 5, int(round(processed_sample_rate * 30)))
     buffer = None if event_features_enabled else RingBuffer(buffer_samples, channel_count)
-    raw_epoch_samples = expected_sample_count(sample_rate, epoching_config)
-    raw_buffer_samples = max(raw_epoch_samples * 5, int(round(sample_rate * 30)))
+    raw_epoch_samples = expected_sample_count(epoch_sample_rate, epoching_config)
+    raw_buffer_samples = max(raw_epoch_samples * 5, int(round(epoch_sample_rate * 30)))
     raw_buffer = None if event_features_enabled else RingBuffer(raw_buffer_samples, channel_count)
     raw_timestamp_scratch = np.empty(raw_buffer_samples, dtype=float) if raw_buffer is not None else None
     raw_data_scratch = np.empty((raw_buffer_samples, channel_count), dtype=float) if raw_buffer is not None else None
@@ -300,6 +301,7 @@ def main(argv: list[str] | None = None) -> int:
                 event_features_config,
                 epoching_config,
                 quality_config,
+                preprocessing_config,
                 model_entries,
                 event_features_enabled,
             ),
@@ -354,7 +356,7 @@ def main(argv: list[str] | None = None) -> int:
                 ts = np.asarray(timestamps, dtype=float)
                 sample_count += raw.shape[0]
                 latest_raw_eeg_timestamp = float(ts[-1])
-                if raw_buffer is not None:
+                if raw_buffer is not None and epoching_config.data_source not in {"processed", "causal_preprocessed"}:
                     raw_buffer.append_chunk(ts, raw)
                 if capture_writer is not None:
                     capture_writer.write_eeg(ts, raw)
@@ -371,10 +373,14 @@ def main(argv: list[str] | None = None) -> int:
                     processed_ts, processed = preprocessor.process_chunk(ts, raw)
                     buffer.append_chunk(processed_ts, processed)
                     processed_count += processed.shape[0]
+                    if raw_buffer is not None and epoching_config.data_source in {"processed", "causal_preprocessed"}:
+                        raw_buffer.append_chunk(processed_ts, processed)
                     if alpha_estimator is not None and processed.shape[0] > 0:
                         alpha_estimator.process_chunk(processed_ts, processed, artifact_result=alpha_artifact)
                 else:
                     processed_count += raw.shape[0]
+                    if raw_buffer is not None and epoching_config.data_source in {"processed", "causal_preprocessed"}:
+                        raw_buffer.append_chunk(ts, raw)
                 performance_stats.preprocessing_time_ms = elapsed_ms(preprocessing_started)
 
             if marker_inlet is None and monotonic() >= next_marker_resolve_at:
@@ -460,15 +466,15 @@ def main(argv: list[str] | None = None) -> int:
                         required_seconds,
                         latest_timestamp - (oldest_marker + epoching_config.tmin_seconds) + epoching_config.sample_tolerance_seconds,
                     )
-                required_samples = max(raw_epoch_samples, int(np.ceil(required_seconds * sample_rate)) + 2)
+                required_samples = max(raw_epoch_samples, int(np.ceil(required_seconds * epoch_sample_rate)) + 2)
                 assert raw_timestamp_scratch is not None and raw_data_scratch is not None
                 raw_timestamps, raw_data = raw_buffer.window_into(required_samples, raw_timestamp_scratch, raw_data_scratch)
                 ready_epochs, rejected_epochs = epocher.extract_ready(
-                    raw_timestamps,
-                    raw_data,
-                    sample_rate,
-                    channel_names,
-                )
+                        raw_timestamps,
+                        raw_data,
+                        epoch_sample_rate,
+                        channel_names,
+                    )
                 performance_stats.epoch_extraction_time_ms = elapsed_ms(epoch_extraction_started)
                 for attempt in rejected_epochs:
                     rejected_epoch_count += 1
@@ -538,7 +544,7 @@ def main(argv: list[str] | None = None) -> int:
                     inference_queue.popleft(),
                     queue_depth=len(inference_queue),
                     model_entries=model_entries,
-                    sample_rate=sample_rate,
+                    sample_rate=epoch_sample_rate,
                     channel_names=channel_names,
                     classifier_mode=classifier_mode,
                     model_prediction_writer=model_prediction_writer,
@@ -865,6 +871,7 @@ def _process_inference_item(
                 role=role,
                 latency_ms=model_latency_ms,
                 quality=item.quality,
+                preprocessing_latency_ms=performance_stats.preprocessing_time_ms,
             )
             model_prediction_writer.write(row)
             result.prediction_count += 1
@@ -1056,6 +1063,7 @@ def _capture_header(
     event_features_config: dict[str, Any],
     epoching_config: EpochingConfig,
     quality_config: dict[str, Any],
+    preprocessing_config: dict[str, Any],
     model_entries: list[dict[str, Any]],
     event_features_enabled: bool,
 ) -> dict[str, Any]:
@@ -1073,6 +1081,7 @@ def _capture_header(
         "sample_rate_hz": sample_rate,
         "channel_names": channel_names,
         "epoching_config": asdict(epoching_config),
+        "preprocessing_config": preprocessing_config,
         "quality_gate": quality_config,
         "models": [
             {

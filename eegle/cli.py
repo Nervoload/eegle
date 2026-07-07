@@ -18,6 +18,7 @@ from eegle.experiment import ForwardExperimentRunner
 from eegle.factory import make_task_component
 from eegle.ml.registry import list_model_kinds, list_model_specs
 from eegle.ml.targets import SUPPORTED_TARGETS
+from eegle.models.bundles import import_runtime_bundle
 from eegle.preflight import run_preflight, write_preflight_report
 from eegle.realtime.controller import ClosedLoopController
 from eegle.realtime.epoching import extract_epochs_for_session
@@ -66,6 +67,16 @@ def build_parser() -> argparse.ArgumentParser:
     _add_telemetry_args(model_list)
     model_list.add_argument("--json", action="store_true", help="Emit JSON instead of a table")
     model_list.set_defaults(func=cmd_model_list)
+
+    model_import = subparsers.add_parser(
+        "model-import",
+        help="Import a hashed eegle-model runtime zip as an EEGle runtime bundle",
+    )
+    _add_config_arg(model_import)
+    _add_telemetry_args(model_import)
+    model_import.add_argument("--source", required=True, help="eegle-model runtime export zip")
+    model_import.add_argument("--output", required=True, help="Output EEGle model bundle directory")
+    model_import.set_defaults(func=cmd_model_import)
 
     init = subparsers.add_parser("init-session", help="Create a session directory without running a task")
     _add_config_arg(init)
@@ -261,6 +272,12 @@ def cmd_model_list(args: argparse.Namespace, config: dict[str, Any]) -> int:
             f"{str(bool(spec['primary_realtime_allowed'])):7} "
             f"{','.join(spec['dependencies']) or '-':24} {','.join(spec['supported_targets'])}"
         )
+    return 0
+
+
+def cmd_model_import(args: argparse.Namespace, config: dict[str, Any]) -> int:
+    manifest = import_runtime_bundle(args.source, args.output)
+    print(json.dumps(manifest, indent=2, sort_keys=True))
     return 0
 
 

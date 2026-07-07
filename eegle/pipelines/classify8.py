@@ -323,7 +323,11 @@ def _run_forward(config: dict[str, Any], args: argparse.Namespace) -> Any:
     effective = copy.deepcopy(config)
     if bool(args.skip_eeg):
         effective["processes"]["realtime_processor"]["enabled"] = False
+        effective["processes"]["realtime_processor"]["backend"] = "disabled"
         effective["processes"]["dashboard"]["enabled"] = False
+        effective.setdefault("experiment", {}).setdefault("components", {})["realtime_processor"] = "disabled"
+        effective.setdefault("realtime", {})["enabled"] = False
+        effective.setdefault("realtime", {}).setdefault("inference", {})["enabled"] = False
     return ForwardExperimentRunner(
         effective,
         task_name="go_nogo",

@@ -16,6 +16,7 @@ from eegle.ml.contracts import contract_hash, normalize_input_contract, validate
 from eegle.ml.registry import get_model_spec, resolve_model_kind
 from eegle.ml.targets import build_training_target
 from eegle.models.bundles import file_sha256, load_model_bundle, write_model_bundle
+from eegle.models.calibration import calibration_state_hash, make_prototype_state
 from eegle.realtime.classification import (
     DEFAULT_ROI_CONFIG,
     assess_epoch_quality,
@@ -369,6 +370,112 @@ class PyriemannErpCovAdapter(BaseModelAdapter):
         return self._artifact_cache
 
 
+class CausalBandpowerLogregAdapter(BaseModelAdapter):
+    """Causal bandpower feature logistic-regression adapter."""
+
+    kind = "causal_bandpower_logreg"
+
+    def predict_epoch(
+        self,
+        epoch: np.ndarray,
+        sample_rate_hz: float,
+        channel_names: list[str],
+        metadata: dict[str, Any],
+    ) -> ModelPrediction:
+        return self.predict_prepared_epoch(PreparedEpochCache(epoch, sample_rate_hz, channel_names, metadata))
+
+    def predict_prepared_epoch(self, prepared: PreparedEpochCache) -> ModelPrediction:
+        artifact = self._load_artifact()
+        contract = artifact.get("contract", {}) if isinstance(artifact, dict) else {}
+        channels_samples = prepared.artifact(contract, self.input_layout)
+        features = causal_bandpower_features(
+            channels_samples,
+            prepared.sample_rate_hz,
+            list(contract.get("channel_names", prepared.channel_names)),
+            artifact.get("feature_config") if isinstance(artifact, dict) else None,
+        )
+        vector, _ = feature_vector(features, artifact.get("feature_names") if isinstance(artifact, dict) else None)
+        estimator = artifact.get("pipeline") if isinstance(artifact, dict) else artifact
+        probability = estimator_probability(estimator, vector.reshape(1, -1))
+        return ModelPrediction(
+            label=classifier_label(probability, artifact if isinstance(artifact, dict) else self.config),
+            score=probability,
+            probability=probability,
+            features={**features, "probability_attention_lapse": probability},
+            model_kind=self.kind,
+            model_version=artifact.get("model_version") if isinstance(artifact, dict) else self.model_version,
+            metadata=artifact_prediction_metadata(artifact),
+        )
+
+    def _load_artifact(self) -> Any:
+        if self._artifact_cache is None:
+            self._artifact_cache = load_joblib_artifact(self.config, self.kind)
+        return self._artifact_cache
+
+
+class RiemannTangentLogregAdapter(PyriemannErpCovAdapter):
+    """Riemannian tangent-space logistic-regression adapter."""
+
+    kind = "riemann_tangent_logreg"
+
+
+class FoundationHeadLogregAdapter(CausalBandpowerLogregAdapter):
+    """Frozen embedding plus logistic-regression head adapter."""
+
+    kind = "foundation_head_logreg"
+
+    def predict_prepared_epoch(self, prepared: PreparedEpochCache) -> ModelPrediction:
+        artifact = self._load_artifact()
+        contract = artifact.get("contract", {}) if isinstance(artifact, dict) else {}
+        channels_samples = prepared.artifact(contract, self.input_layout)
+        features = frozen_embedding_features(
+            channels_samples,
+            prepared.sample_rate_hz,
+            list(contract.get("channel_names", prepared.channel_names)),
+            artifact.get("embedding_config") if isinstance(artifact, dict) else None,
+        )
+        vector, _ = feature_vector(features, artifact.get("feature_names") if isinstance(artifact, dict) else None)
+        estimator = artifact.get("pipeline") if isinstance(artifact, dict) else artifact
+        probability = estimator_probability(estimator, vector.reshape(1, -1))
+        return ModelPrediction(
+            label=classifier_label(probability, artifact if isinstance(artifact, dict) else self.config),
+            score=probability,
+            probability=probability,
+            features={"probability_attention_lapse": probability},
+            model_kind=self.kind,
+            model_version=artifact.get("model_version") if isinstance(artifact, dict) else self.model_version,
+            metadata=artifact_prediction_metadata(artifact),
+        )
+
+
+class FoundationPrototypeAdapter(FoundationHeadLogregAdapter):
+    """Frozen embedding prototype calibration adapter."""
+
+    kind = "foundation_prototype"
+
+    def predict_prepared_epoch(self, prepared: PreparedEpochCache) -> ModelPrediction:
+        artifact = self._load_artifact()
+        contract = artifact.get("contract", {}) if isinstance(artifact, dict) else {}
+        channels_samples = prepared.artifact(contract, self.input_layout)
+        features = frozen_embedding_features(
+            channels_samples,
+            prepared.sample_rate_hz,
+            list(contract.get("channel_names", prepared.channel_names)),
+            artifact.get("embedding_config") if isinstance(artifact, dict) else None,
+        )
+        vector, names = feature_vector(features, artifact.get("feature_names") if isinstance(artifact, dict) else None)
+        probability, margin = prototype_probability(vector, artifact)
+        return ModelPrediction(
+            label=classifier_label(probability, artifact if isinstance(artifact, dict) else self.config),
+            score=probability,
+            probability=probability,
+            features={"prototype_margin": margin, "embedding_feature_count": float(len(names)), "probability_attention_lapse": probability},
+            model_kind=self.kind,
+            model_version=artifact.get("model_version") if isinstance(artifact, dict) else self.model_version,
+            metadata=artifact_prediction_metadata(artifact),
+        )
+
+
 class TorchEpochAdapter(BaseModelAdapter):
     """TorchScript inference adapter for EEGNet/ShallowConvNet-style models."""
 
@@ -498,6 +605,14 @@ def make_model_adapter(kind: str, config: dict[str, Any] | None = None) -> BaseM
         return ErpRoiLogisticRegressionAdapter(config)
     if normalized == "pyriemann_erp_cov":
         return PyriemannErpCovAdapter(config)
+    if normalized == "causal_bandpower_logreg":
+        return CausalBandpowerLogregAdapter(config)
+    if normalized == "riemann_tangent_logreg":
+        return RiemannTangentLogregAdapter(config)
+    if normalized == "foundation_head_logreg":
+        return FoundationHeadLogregAdapter(config)
+    if normalized == "foundation_prototype":
+        return FoundationPrototypeAdapter(config)
     if normalized == "torch_eegnet":
         return TorchEEGNetAdapter(config)
     if normalized == "torch_shallowconvnet":
@@ -564,34 +679,60 @@ def train_epoch_model(
         ],
         axis=0,
     )
-    blocked = blocked_validation_metrics(normalized, corrected, y, trials, data, cfg, contract)
+    support_info = temporal_support_query_split(trials, y, cfg)
+    fit_mask = support_info["support_mask"]
+    query_mask = support_info["query_mask"]
+    x_fit = corrected[fit_mask]
+    y_fit = y[fit_mask]
+    if len(set(y_fit.tolist())) < 2:
+        raise ValueError(
+            f"training support set requires both classes for target {training_target.name}; "
+            f"support_trials={support_info['support_trials']}"
+        )
+    blocked = blocked_validation_metrics(normalized, x_fit, y_fit, trials[fit_mask], data, cfg, contract)
     final_config = dict(cfg)
     if normalized == "torch_eegnet" and blocked.get("best_epoch"):
         final_config["_fixed_epoch_count"] = int(blocked["best_epoch"])
     if normalized == "erp_roi_logreg":
-        artifact = train_erp_roi_logreg(corrected, y, data, final_config, contract)
+        artifact = train_erp_roi_logreg(x_fit, y_fit, data, final_config, contract)
         extension = ".joblib"
         artifact_format = "joblib"
     elif normalized == "sklearn_flatten_lda":
-        artifact = train_sklearn_flatten_lda(corrected, y, data, final_config, contract)
+        artifact = train_sklearn_flatten_lda(x_fit, y_fit, data, final_config, contract)
         extension = ".joblib"
         artifact_format = "joblib"
     elif normalized == "pyriemann_erp_cov":
-        artifact = train_pyriemann_erp_cov(corrected, y, data, final_config, contract)
+        artifact = train_pyriemann_erp_cov(x_fit, y_fit, data, final_config, contract)
+        extension = ".joblib"
+        artifact_format = "joblib"
+    elif normalized == "causal_bandpower_logreg":
+        artifact = train_causal_bandpower_logreg(x_fit, y_fit, data, final_config, contract)
+        extension = ".joblib"
+        artifact_format = "joblib"
+    elif normalized == "riemann_tangent_logreg":
+        artifact = train_riemann_tangent_logreg(x_fit, y_fit, data, final_config, contract)
+        extension = ".joblib"
+        artifact_format = "joblib"
+    elif normalized == "foundation_head_logreg":
+        artifact = train_foundation_head_logreg(x_fit, y_fit, data, final_config, contract)
+        extension = ".joblib"
+        artifact_format = "joblib"
+    elif normalized == "foundation_prototype":
+        artifact = train_foundation_prototype(x_fit, y_fit, data, final_config, contract)
         extension = ".joblib"
         artifact_format = "joblib"
     elif normalized == "torch_eegnet":
-        artifact = train_torch_eegnet(corrected, y, data, final_config, contract)
+        artifact = train_torch_eegnet(x_fit, y_fit, data, final_config, contract)
         extension = ".pt"
         artifact_format = "torchscript"
     else:
         raise NotImplementedError(f"training for model '{kind}' is not implemented")
 
-    probabilities = training_probabilities(normalized, artifact, corrected, data, cfg, contract)
+    probabilities = training_probabilities(normalized, artifact, x_fit, data, cfg, contract)
     calibration_cfg = dict(cfg.get("calibration", {}))
     positive_label = positive_label_for_target(training_target.name)
     threshold_calibration = _training_threshold_calibration(
-        y,
+        y_fit,
         probabilities,
         blocked,
         metric=str(calibration_cfg.get("threshold_metric", "balanced_accuracy")),
@@ -599,12 +740,30 @@ def train_epoch_model(
         positive_label=positive_label,
     )
     selected_threshold = float(threshold_calibration.get("selected_threshold", 0.5))
+    query_metrics = None
+    if query_mask.any() and len(set(y[query_mask].tolist())) >= 2:
+        query_probabilities = training_probabilities(normalized, artifact, corrected[query_mask], data, cfg, contract)
+        query_metrics = binary_classification_metrics(
+            y[query_mask],
+            query_probabilities,
+            threshold=selected_threshold,
+            positive_label=positive_label,
+        )
+        query_metrics["evaluation_level"] = "temporal_query"
+        query_metrics["query_epoch_count"] = int(np.sum(query_mask))
     if isinstance(artifact, dict):
         artifact["decision_probability"] = selected_threshold
         artifact["target"] = training_target.name
         artifact["target_spec"] = training_target.metadata
         artifact["calibration"] = threshold_calibration
         artifact["model_spec"] = spec.payload()
+        artifact["support_query"] = support_info["payload"]
+        if artifact.get("prototype_state"):
+            artifact["prototype_state"] = _with_prototype_threshold(
+                dict(artifact["prototype_state"]),
+                selected_threshold,
+                str(threshold_calibration.get("calibration_id", "")),
+            )
 
     output_target = Path(output_path).expanduser().resolve()
     bundle_output = output_target.suffix == ""
@@ -623,19 +782,19 @@ def train_epoch_model(
     else:
         artifact["scripted_model"].save(str(artifact_target))
     metrics = binary_classification_metrics(
-        y,
+        y_fit,
         probabilities,
         threshold=selected_threshold,
         positive_label=positive_label,
     )
     metrics["default_threshold_metrics"] = binary_classification_metrics(
-        y,
+        y_fit,
         probabilities,
         threshold=0.5,
         positive_label=positive_label,
     )
     metrics["permutation_p_value"] = prediction_permutation_p_value(
-        y,
+        y_fit,
         probabilities,
         threshold=selected_threshold,
         permutations=int(cfg.get("permutations", 100)),
@@ -647,6 +806,8 @@ def train_epoch_model(
         {
             "coverage": int(x.shape[0]) / max(1, eligible_training_epochs),
             "blocked_validation": blocked,
+            "support_query": support_info["payload"],
+            "query_metrics": query_metrics,
             "target": training_target.name,
             "target_spec": training_target.metadata,
             "evaluation_level": "training_fit",
@@ -670,9 +831,10 @@ def train_epoch_model(
             metrics=metrics,
             training_source={
                 **training_source_provenance(data, source_paths),
-                "training_epochs": int(x.shape[0]),
+                "training_epochs": int(x_fit.shape[0]),
                 "eligible_training_epochs": eligible_training_epochs,
                 "quality_rejected_epochs": eligible_training_epochs - int(x.shape[0]),
+                "query_epochs": int(np.sum(query_mask)),
             },
             extra={
                 "model_version": str(cfg.get("model_version", "trained")),
@@ -682,6 +844,8 @@ def train_epoch_model(
                 "target_spec": training_target.metadata,
                 "label_mapping": training_target.label_mapping,
                 "calibration": threshold_calibration,
+                "support_query": support_info["payload"],
+                "prototype_state": artifact.get("prototype_state") if isinstance(artifact, dict) else None,
             },
         )
     return {
@@ -692,8 +856,9 @@ def train_epoch_model(
         "artifact_path": str(artifact_target),
         "bundle_path": str(output_target) if bundle_output else None,
         "bundle_hash": None if bundle_manifest is None else bundle_manifest["bundle_hash"],
-        "training_epochs": int(x.shape[0]),
-        "classes": sorted(int(value) for value in set(y.tolist())),
+        "training_epochs": int(x_fit.shape[0]),
+        "query_epochs": int(np.sum(query_mask)),
+        "classes": sorted(int(value) for value in set(y_fit.tolist())),
         "channel_names": [str(value) for value in contract["channel_names"]],
         "sample_rate_hz": float(contract["sample_rate_hz"]),
         "epoch_window_seconds": contract["epoch_window_seconds"],
@@ -824,6 +989,191 @@ def train_pyriemann_erp_cov(
         "input_layout": "channels_x_samples",
         "channel_names": [str(value) for value in npz_value(data, "channel_names", [])],
         "contract": contract or training_contract(data, config),
+    }
+
+
+def train_riemann_tangent_logreg(
+    x: np.ndarray,
+    y: np.ndarray,
+    data: Any,
+    config: dict[str, Any],
+    contract: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    try:
+        from pyriemann.estimation import Covariances
+        from pyriemann.tangentspace import TangentSpace
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.pipeline import Pipeline
+    except Exception as exc:
+        raise RuntimeError("riemann_tangent_logreg training requires pyriemann and scikit-learn") from exc
+
+    pipeline = Pipeline(
+        [
+            ("cov", Covariances(estimator=str(config.get("covariance_estimator", "oas")))),
+            ("tangent", TangentSpace()),
+            (
+                "classifier",
+                LogisticRegression(
+                    max_iter=int(config.get("max_iter", 1000)),
+                    class_weight=config.get("class_weight", "balanced"),
+                    random_state=int(config.get("seed", 42)),
+                ),
+            ),
+        ]
+    )
+    pipeline.fit(x, y)
+    return {
+        "kind": "riemann_tangent_logreg",
+        "model_version": str(config.get("model_version", "trained")),
+        "pipeline": pipeline,
+        "input_layout": "channels_x_samples",
+        "channel_names": [str(value) for value in npz_value(data, "channel_names", [])],
+        "contract": contract or training_contract(data, config),
+    }
+
+
+def train_causal_bandpower_logreg(
+    x: np.ndarray,
+    y: np.ndarray,
+    data: Any,
+    config: dict[str, Any],
+    contract: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.pipeline import Pipeline
+        from sklearn.preprocessing import StandardScaler
+    except Exception as exc:
+        raise RuntimeError("causal_bandpower_logreg training requires scikit-learn") from exc
+    feature_config = dict(config.get("bandpower_features", {}))
+    rows = [
+        causal_bandpower_features(epoch, float(contract["sample_rate_hz"]), list(contract["channel_names"]), feature_config)
+        for epoch in x
+    ]
+    vectors = [feature_vector(row) for row in rows]
+    feature_names = vectors[0][1]
+    matrix = np.stack([vector for vector, _ in vectors], axis=0)
+    pipeline = Pipeline(
+        [
+            ("scale", StandardScaler()),
+            (
+                "classifier",
+                LogisticRegression(
+                    penalty="l2",
+                    class_weight="balanced",
+                    solver="liblinear",
+                    max_iter=int(config.get("max_iter", 1000)),
+                    random_state=int(config.get("seed", 42)),
+                ),
+            ),
+        ]
+    )
+    pipeline.fit(matrix, y)
+    return {
+        "kind": "causal_bandpower_logreg",
+        "model_version": str(config.get("model_version", "trained")),
+        "pipeline": pipeline,
+        "feature_names": feature_names,
+        "feature_config": feature_config,
+        "contract": contract,
+    }
+
+
+def train_foundation_head_logreg(
+    x: np.ndarray,
+    y: np.ndarray,
+    data: Any,
+    config: dict[str, Any],
+    contract: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.pipeline import Pipeline
+        from sklearn.preprocessing import StandardScaler
+    except Exception as exc:
+        raise RuntimeError("foundation_head_logreg training requires scikit-learn") from exc
+    embedding_config = dict(config.get("embedding", config.get("foundation_embedding", {})))
+    rows = [
+        frozen_embedding_features(epoch, float(contract["sample_rate_hz"]), list(contract["channel_names"]), embedding_config)
+        for epoch in x
+    ]
+    vectors = [feature_vector(row) for row in rows]
+    feature_names = vectors[0][1]
+    matrix = np.stack([vector for vector, _ in vectors], axis=0)
+    pipeline = Pipeline(
+        [
+            ("scale", StandardScaler()),
+            (
+                "classifier",
+                LogisticRegression(
+                    penalty="l2",
+                    class_weight="balanced",
+                    solver="liblinear",
+                    max_iter=int(config.get("max_iter", 1000)),
+                    random_state=int(config.get("seed", 42)),
+                ),
+            ),
+        ]
+    )
+    pipeline.fit(matrix, y)
+    return {
+        "kind": "foundation_head_logreg",
+        "model_version": str(config.get("model_version", "trained")),
+        "pipeline": pipeline,
+        "feature_names": feature_names,
+        "embedding_config": {**embedding_config, "encoder_update_policy": "frozen"},
+        "contract": contract,
+    }
+
+
+def train_foundation_prototype(
+    x: np.ndarray,
+    y: np.ndarray,
+    data: Any,
+    config: dict[str, Any],
+    contract: dict[str, Any],
+) -> dict[str, Any]:
+    embedding_config = dict(config.get("embedding", config.get("foundation_embedding", {})))
+    rows = [
+        frozen_embedding_features(epoch, float(contract["sample_rate_hz"]), list(contract["channel_names"]), embedding_config)
+        for epoch in x
+    ]
+    vectors = [feature_vector(row) for row in rows]
+    feature_names = vectors[0][1]
+    matrix = np.stack([vector for vector, _ in vectors], axis=0).astype(float)
+    mean = matrix.mean(axis=0)
+    std = np.maximum(matrix.std(axis=0), 1e-9)
+    normalized = (matrix - mean) / std
+    lapse = normalized[y == 1]
+    non_lapse = normalized[y == 0]
+    if lapse.size == 0 or non_lapse.size == 0:
+        raise ValueError("foundation_prototype requires both lapse and non-lapse support examples")
+    lapse_prototype = lapse.mean(axis=0)
+    non_lapse_prototype = non_lapse.mean(axis=0)
+    margins = np.asarray([
+        prototype_margin(row, non_lapse_prototype, lapse_prototype)
+        for row in normalized
+    ], dtype=float)
+    alpha, bias = fit_prototype_logistic(margins, y, config)
+    state = make_prototype_state(
+        lapse_prototype=lapse_prototype,
+        non_lapse_prototype=non_lapse_prototype,
+        support_counts={"attention_lapse": int(lapse.shape[0]), "attentive": int(non_lapse.shape[0])},
+        distance_metric=str(dict(config.get("calibration", {})).get("prototype_distance_metric", "cosine")),
+        alpha=float(alpha),
+        bias=float(bias),
+        selected_threshold=float(config.get("decision_probability", 0.5)),
+        normalizer={"mean": mean.tolist(), "std": std.tolist()},
+        source="temporal_support_set",
+        metadata={"encoder_update_policy": "frozen"},
+    )
+    return {
+        "kind": "foundation_prototype",
+        "model_version": str(config.get("model_version", "trained")),
+        "feature_names": feature_names,
+        "embedding_config": {**embedding_config, "encoder_update_policy": "frozen"},
+        "prototype_state": state.payload(),
+        "contract": contract,
     }
 
 
@@ -983,11 +1333,28 @@ def training_contract(data: Any, config: dict[str, Any]) -> dict[str, Any]:
     selected_channels = [name for name in input_contract["channel_order"] if name in source_channel_names]
     if not selected_channels:
         selected_channels = source_channel_names
-    preprocessing = {
-        "kind": "as_recorded_microvolts_then_baseline_correction",
-        "resampling": input_contract.get("resampling", "none"),
-        "resampling_supported": False,
-    }
+    epoch_data_source = str(config.get("epoch_data_source", config.get("data_source", "raw")))
+    preprocessing_config = dict(config.get("preprocessing", {}))
+    if epoch_data_source in {"processed", "causal_preprocessed"}:
+        preprocessing = {
+            "kind": "causal_bandpass_notch_reference",
+            "data_source": epoch_data_source,
+            "reference": preprocessing_config.get("reference", "average"),
+            "notch_hz": preprocessing_config.get("notch_hz"),
+            "bandpass_low_hz": preprocessing_config.get("bandpass_low_hz"),
+            "bandpass_high_hz": preprocessing_config.get("bandpass_high_hz"),
+            "downsample_factor": int(preprocessing_config.get("downsample_factor", 1)),
+            "baseline_seconds": [float(value) for value in config.get("baseline_seconds", [-0.2, 0.0])],
+            "resampling": input_contract.get("resampling", "none"),
+            "resampling_supported": False,
+        }
+    else:
+        preprocessing = {
+            "kind": "as_recorded_microvolts_then_baseline_correction",
+            "data_source": epoch_data_source,
+            "resampling": input_contract.get("resampling", "none"),
+            "resampling_supported": False,
+        }
     return {
         "input_layout": "channels_x_samples",
         "input_units": str(input_contract.get("input_units", "microvolts")),
@@ -1001,6 +1368,8 @@ def training_contract(data: Any, config: dict[str, Any]) -> dict[str, Any]:
         "sample_rate_hz": sample_rate,
         "sample_count": int(times.size),
         "epoch_window_seconds": [float(times[0]), float(times[-1])],
+        "prediction_window_seconds": [float(value) for value in config.get("prediction_window_seconds", [float(times[0]), float(times[-1])])],
+        "prediction_horizon": str(config.get("prediction_horizon", "same_trial_response")),
         "epoch_duration_seconds": float(times[-1] - times[0]) if times.size > 1 else 0.0,
         "baseline_seconds": [float(value) for value in config.get("baseline_seconds", [-0.2, 0.0])],
         "preprocessing": preprocessing,
@@ -1035,6 +1404,35 @@ def training_probabilities(
         return estimator_probabilities(artifact["pipeline"], x.reshape(x.shape[0], -1))
     if kind == "pyriemann_erp_cov":
         return estimator_probabilities(artifact["pipeline"], x)
+    if kind == "riemann_tangent_logreg":
+        return estimator_probabilities(artifact["pipeline"], x)
+    if kind == "causal_bandpower_logreg":
+        rows = [
+            feature_vector(
+                causal_bandpower_features(epoch, float(contract["sample_rate_hz"]), list(contract["channel_names"]), artifact["feature_config"]),
+                artifact["feature_names"],
+            )[0]
+            for epoch in x
+        ]
+        return estimator_probabilities(artifact["pipeline"], np.stack(rows, axis=0))
+    if kind == "foundation_head_logreg":
+        rows = [
+            feature_vector(
+                frozen_embedding_features(epoch, float(contract["sample_rate_hz"]), list(contract["channel_names"]), artifact["embedding_config"]),
+                artifact["feature_names"],
+            )[0]
+            for epoch in x
+        ]
+        return estimator_probabilities(artifact["pipeline"], np.stack(rows, axis=0))
+    if kind == "foundation_prototype":
+        rows = [
+            feature_vector(
+                frozen_embedding_features(epoch, float(contract["sample_rate_hz"]), list(contract["channel_names"]), artifact["embedding_config"]),
+                artifact["feature_names"],
+            )[0]
+            for epoch in x
+        ]
+        return np.asarray([prototype_probability(row, artifact)[0] for row in rows], dtype=float)
     if kind == "torch_eegnet":
         import torch
 
@@ -1072,6 +1470,14 @@ def blocked_validation_metrics(
             artifact = train_sklearn_flatten_lda(x[training], y[training], data, config, contract)
         elif kind == "pyriemann_erp_cov":
             artifact = train_pyriemann_erp_cov(x[training], y[training], data, config, contract)
+        elif kind == "riemann_tangent_logreg":
+            artifact = train_riemann_tangent_logreg(x[training], y[training], data, config, contract)
+        elif kind == "causal_bandpower_logreg":
+            artifact = train_causal_bandpower_logreg(x[training], y[training], data, config, contract)
+        elif kind == "foundation_head_logreg":
+            artifact = train_foundation_head_logreg(x[training], y[training], data, config, contract)
+        elif kind == "foundation_prototype":
+            artifact = train_foundation_prototype(x[training], y[training], data, config, contract)
         elif kind == "torch_eegnet":
             artifact = train_torch_eegnet(x[training], y[training], data, config, contract)
             best_epochs.append(int(artifact["best_epoch"]))
@@ -1152,6 +1558,39 @@ def _stratified_block_folds(
     return folds
 
 
+def temporal_support_query_split(
+    trials: np.ndarray,
+    labels: np.ndarray,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    calibration_cfg = dict(config.get("calibration", {}))
+    raw_support = config.get("support_trials", calibration_cfg.get("support_trials"))
+    trial_values = np.asarray(trials, dtype=int)
+    support_mask = np.ones(trial_values.shape, dtype=bool)
+    query_mask = np.zeros(trial_values.shape, dtype=bool)
+    support_trials = None
+    if raw_support is not None:
+        support_trials = max(0, int(raw_support))
+        if support_trials > 0:
+            order = np.argsort(np.arange(trial_values.size), kind="mergesort")
+            selected = order[: min(support_trials, order.size)]
+            support_mask = np.zeros(trial_values.shape, dtype=bool)
+            support_mask[selected] = True
+            query_mask = ~support_mask
+    payload = {
+        "strategy": "temporal_first_k" if support_trials is not None and support_trials > 0 else "all_eligible_training",
+        "support_trials": support_trials,
+        "support_epoch_count": int(np.sum(support_mask)),
+        "query_epoch_count": int(np.sum(query_mask)),
+        "support_positive_count": int(np.sum(np.asarray(labels, dtype=int)[support_mask] == 1)),
+        "support_negative_count": int(np.sum(np.asarray(labels, dtype=int)[support_mask] == 0)),
+        "query_positive_count": int(np.sum(np.asarray(labels, dtype=int)[query_mask] == 1)),
+        "query_negative_count": int(np.sum(np.asarray(labels, dtype=int)[query_mask] == 0)),
+        "practice_excluded": True,
+    }
+    return {"support_mask": support_mask, "query_mask": query_mask, "support_trials": support_trials, "payload": payload}
+
+
 def binary_classification_metrics(
     y_true: np.ndarray,
     probabilities: np.ndarray,
@@ -1192,7 +1631,7 @@ def _training_threshold_calibration(
 ) -> dict[str, Any]:
     blocked_calibration = dict(blocked.get("threshold_calibration") or {})
     if blocked.get("status") == "ok" and blocked_calibration.get("status") == "ok":
-        return {**blocked_calibration, "source": "blocked_validation"}
+        return _with_calibration_id({**blocked_calibration, "source": "blocked_validation"})
     calibration = select_binary_threshold(
         y_true,
         probabilities,
@@ -1200,11 +1639,40 @@ def _training_threshold_calibration(
         max_candidates=max_candidates,
         positive_label=positive_label,
     )
-    return {
+    return _with_calibration_id({
         **calibration,
         "source": "training_fit",
         "fallback_reason": blocked.get("reason", "blocked_validation_unavailable"),
-    }
+    })
+
+
+def _with_calibration_id(calibration: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(calibration)
+    if payload.get("calibration_id"):
+        return payload
+    encoded = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    payload["calibration_id"] = "cal-" + hashlib.sha256(encoded).hexdigest()[:12]
+    return payload
+
+
+def _with_prototype_threshold(
+    state: dict[str, Any],
+    selected_threshold: float,
+    calibration_id: str,
+) -> dict[str, Any]:
+    payload = dict(state)
+    if isinstance(payload.get("parameters"), dict):
+        payload["parameters"] = {**dict(payload["parameters"]), "selected_threshold": float(selected_threshold)}
+        metadata = dict(payload.get("metadata") or {})
+        if calibration_id:
+            metadata["calibration_id"] = calibration_id
+        payload["metadata"] = metadata
+    else:
+        payload["selected_threshold"] = float(selected_threshold)
+        if calibration_id:
+            payload["calibration_id"] = calibration_id
+    payload["calibration_state_hash"] = calibration_state_hash(payload)
+    return payload
 
 
 def prediction_permutation_p_value(
@@ -1273,6 +1741,125 @@ def band_power_features(data: np.ndarray, sample_rate_hz: float, bands: dict[str
         else:
             features[name] = float(np.trapezoid(band_psd, band_freqs))
     return features
+
+
+def causal_bandpower_features(
+    channels_samples: np.ndarray,
+    sample_rate_hz: float,
+    channel_names: list[str],
+    config: dict[str, Any] | None = None,
+) -> dict[str, float]:
+    cfg = dict(config or {})
+    bands = dict(
+        cfg.get(
+            "bands",
+            {
+                "theta": [4.0, 7.0],
+                "alpha": [8.0, 12.0],
+                "beta": [13.0, 30.0],
+            },
+        )
+    )
+    values = np.asarray(channels_samples, dtype=float)
+    if values.ndim != 2:
+        raise ValueError("causal bandpower features require channels x samples data")
+    samples_channels = values.T
+    global_features = band_power_features(samples_channels, sample_rate_hz, bands)
+    features = {f"global_{key}_power": value for key, value in global_features.items()}
+    theta = features.get("global_theta_power", 0.0)
+    alpha = features.get("global_alpha_power", 0.0)
+    beta = features.get("global_beta_power", 0.0)
+    features["global_theta_alpha_ratio"] = theta / max(alpha, 1e-12)
+    features["global_alpha_beta_ratio"] = alpha / max(beta, 1e-12)
+    features["epoch_mean_uv"] = float(np.nanmean(values)) if values.size else 0.0
+    features["epoch_std_uv"] = float(np.nanstd(values)) if values.size else 0.0
+    features["epoch_peak_to_peak_uv"] = float(np.nanmax(values) - np.nanmin(values)) if values.size else 0.0
+
+    groups = dict(cfg.get("channel_groups", {}))
+    if not groups:
+        groups = {
+            "frontal": ["Fz", "Fp1", "Fp2"],
+            "central": ["Cz", "C3", "C4"],
+            "posterior": ["Pz", "P3", "P4", "O1", "O2", "Oz"],
+        }
+    for group_name, requested in groups.items():
+        indices = [channel_names.index(name) for name in requested if name in channel_names]
+        if not indices:
+            continue
+        group = band_power_features(values[indices].T, sample_rate_hz, bands)
+        safe_group = _safe_feature_name(group_name)
+        for band_name, value in group.items():
+            features[f"{safe_group}_{band_name}_power"] = float(value)
+    return features
+
+
+def frozen_embedding_features(
+    channels_samples: np.ndarray,
+    sample_rate_hz: float,
+    channel_names: list[str],
+    config: dict[str, Any] | None = None,
+) -> dict[str, float]:
+    """Return deterministic frozen embeddings until an imported encoder is supplied."""
+    cfg = dict(config or {})
+    base = causal_bandpower_features(channels_samples, sample_rate_hz, channel_names, cfg.get("bandpower", cfg))
+    values = np.asarray(channels_samples, dtype=float)
+    embedding = {f"embedding_{key}": value for key, value in base.items()}
+    if values.size:
+        embedding["embedding_channel_mean_std"] = float(np.nanstd(np.nanmean(values, axis=1)))
+        embedding["embedding_channel_variance_mean"] = float(np.nanmean(np.nanvar(values, axis=1)))
+    embedding["embedding_source_is_frozen"] = 1.0
+    return embedding
+
+
+def prototype_probability(vector: np.ndarray, artifact: dict[str, Any]) -> tuple[float, float]:
+    state = dict(artifact.get("prototype_state") or {})
+    params = dict(state.get("parameters") or state)
+    normalizer = dict(params.get("normalizer") or {})
+    mean = np.asarray(normalizer.get("mean", np.zeros_like(vector)), dtype=float)
+    std = np.maximum(np.asarray(normalizer.get("std", np.ones_like(vector)), dtype=float), 1e-9)
+    normalized = (np.asarray(vector, dtype=float) - mean) / std
+    non_lapse = np.asarray(params.get("non_lapse_prototype"), dtype=float)
+    lapse = np.asarray(params.get("lapse_prototype"), dtype=float)
+    margin = prototype_margin(normalized, non_lapse, lapse)
+    alpha = float(params.get("alpha", 1.0))
+    bias = float(params.get("bias", 0.0))
+    probability = logistic_probability(alpha * margin + bias, 0.0, 1.0)
+    return probability, float(margin)
+
+
+def prototype_margin(vector: np.ndarray, non_lapse_prototype: np.ndarray, lapse_prototype: np.ndarray) -> float:
+    return float(_cosine_distance(vector, non_lapse_prototype) - _cosine_distance(vector, lapse_prototype))
+
+
+def fit_prototype_logistic(margins: np.ndarray, labels: np.ndarray, config: dict[str, Any]) -> tuple[float, float]:
+    try:
+        from sklearn.linear_model import LogisticRegression
+    except Exception:
+        positives = margins[labels == 1]
+        negatives = margins[labels == 0]
+        midpoint = float((np.mean(positives) + np.mean(negatives)) / 2.0)
+        scale = float(np.std(margins) or 1.0)
+        return 1.0 / max(scale, 1e-9), -midpoint / max(scale, 1e-9)
+    model = LogisticRegression(
+        solver="liblinear",
+        class_weight="balanced",
+        random_state=int(config.get("seed", 42)),
+    )
+    model.fit(np.asarray(margins, dtype=float).reshape(-1, 1), np.asarray(labels, dtype=int))
+    return float(model.coef_[0, 0]), float(model.intercept_[0])
+
+
+def _cosine_distance(left: np.ndarray, right: np.ndarray) -> float:
+    a = np.asarray(left, dtype=float)
+    b = np.asarray(right, dtype=float)
+    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+    if denom <= 1e-12:
+        return 1.0
+    return float(1.0 - np.dot(a, b) / denom)
+
+
+def _safe_feature_name(value: Any) -> str:
+    return "_".join(part for part in "".join(ch if ch.isalnum() else "_" for ch in str(value).lower()).split("_") if part)
 
 
 def epoch_to_channels_samples(epoch: np.ndarray, channel_names: list[str], input_layout: str = "auto") -> np.ndarray:
@@ -1350,6 +1937,8 @@ def load_joblib_artifact(config: dict[str, Any], kind: str) -> Any:
             "target_spec": bundle.get("target_spec") or artifact.get("target_spec"),
             "model_family": bundle.get("model_family") or artifact.get("model_family"),
             "model_spec": bundle.get("model_spec") or artifact.get("model_spec"),
+            "support_query": bundle.get("support_query") or artifact.get("support_query"),
+            "prototype_state": bundle.get("prototype_state") or artifact.get("prototype_state"),
         }
     return artifact
 
@@ -1399,6 +1988,9 @@ def bundle_prediction_metadata(bundle: dict[str, Any]) -> dict[str, Any]:
 def _model_artifact_metadata(value: dict[str, Any]) -> dict[str, Any]:
     calibration = dict(value.get("calibration") or {})
     model_spec = dict(value.get("model_spec") or {})
+    support_query = dict(value.get("support_query") or {})
+    prototype_state = dict(value.get("prototype_state") or {})
+    contract = dict(value.get("contract") or {})
     payload = {
         "target": value.get("target", dict(value.get("target_spec") or {}).get("target", "condition")),
         "target_spec": value.get("target_spec"),
@@ -1406,8 +1998,20 @@ def _model_artifact_metadata(value: dict[str, Any]) -> dict[str, Any]:
         "model_spec": model_spec or None,
         "calibrated_threshold": calibration.get("selected_threshold", value.get("decision_probability")),
         "calibration_id": calibration.get("calibration_id"),
+        "support_size": support_query.get("support_epoch_count"),
+        "query_size": support_query.get("query_epoch_count"),
+        "support_query": support_query or None,
+        "calibration_state_hash": prototype_state.get("calibration_state_hash") or _artifact_state_hash(prototype_state or calibration),
+        "prediction_window_seconds": contract.get("prediction_window_seconds", contract.get("epoch_window_seconds")),
+        "prediction_horizon": contract.get("prediction_horizon", contract.get("prediction_horizon_seconds")),
     }
     return {key: item for key, item in payload.items() if item is not None}
+
+
+def _artifact_state_hash(value: dict[str, Any]) -> str | None:
+    if not value:
+        return None
+    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
 
 def prepare_artifact_epoch(
@@ -1505,7 +2109,20 @@ def load_epoch_dataset(
             if key in reference and key in values and not np.array_equal(reference[key], values[key]):
                 raise ValueError(f"cannot combine epoch datasets with different {key}")
     combined: dict[str, Any] = {}
-    sample_keys = {"X", "y", "trials", "conditions", "epoch_timestamps", "marker_timestamps", "attention_lapse_binary", "attention_lapse_score", "lapse_score"}
+    sample_keys = {
+        "X",
+        "y",
+        "trials",
+        "conditions",
+        "epoch_timestamps",
+        "marker_timestamps",
+        "attention_lapse_binary",
+        "attention_lapse_score",
+        "lapse_score",
+        "slow_go_rt",
+        "slow_trial",
+        "attention_lapse_slow_rt",
+    }
     for key in sample_keys:
         present = [key in values for values in loaded]
         if any(present) and not all(present):

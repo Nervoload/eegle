@@ -647,6 +647,46 @@ classify8 demo --record-eeg
 Demo guesses and illustrative ERP windows are written separately to
 `realtime/demo_predictions.jsonl`.
 
+## Attention-Lapse System Test
+
+`attention8` is the observe-only, SART-style attention-lapse recipe layered on
+the existing Go/No-go/classify8 runtime. It uses the pre-stimulus EEG window
+`[-2.0, 0.0]` seconds relative to stimulus onset and predicts same-trial lapse
+risk before the response. No task adaptation, stimulation, or online encoder
+updates are enabled.
+
+```bash
+attention8 collect --participant sub-001 --trials 240
+attention8 train --session-dir <calibration-session> --check-ready
+attention8 train --session-dir <calibration-session> --support-trials 50
+attention8 online --participant sub-001 --model-dir <calibration-session>/models/attention8 \
+  --primary causal_bandpower_logreg --shadow foundation_head_logreg --shadow foundation_prototype
+attention8 evaluate --session-dir <online-session>
+attention8 protocol
+```
+
+The default training target is `attention_lapse_binary` with primary label
+`slow_go_rt`: correct GO reaction times at or above the session 80th percentile.
+Reports also carry secondary omission, commission, and composite-lapse labels.
+The support/query split excludes practice trials; support uses the first `K`
+eligible main trials and query metrics use later trials only. The default online
+support size is 50, and the report grid is declared as `0, 20, 50, 100`.
+
+The first bundled baselines are `causal_bandpower_logreg`,
+`riemann_tangent_logreg`, `torch_eegnet`, `foundation_head_logreg`, and
+`foundation_prototype`. Foundation models are shadow-first. EEGle does not clone
+research repos or load raw public-dataset checkpoints during live sessions.
+Use `eegle-model` or another workbench to produce a validated runtime zip, then
+import it into EEGle as a hashed model bundle:
+
+```bash
+eegle model-import --source <eegle-model-runtime.zip> --output <bundle-dir>
+```
+
+The imported zip must include runtime metadata, the exact input contract,
+license/provenance, and runtime assets. EEGle stores the zip as a
+content-addressed artifact and validates bundle hashes before live inference.
+
 ## Current Scope
 
 EEGle currently supports PVT and Go/No-go execution, Enobio/NIC2 and Neuracle

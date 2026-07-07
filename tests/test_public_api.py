@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 import eegle
@@ -10,6 +12,7 @@ from eegle.models import (
     ModelContract,
     ModelSpec,
     get_model_spec,
+    import_runtime_bundle,
     load_model_bundle_object,
     read_calibration_state,
     register_model_spec,
@@ -18,7 +21,7 @@ from eegle.models import (
     write_calibration_state,
     write_model_bundle,
 )
-from eegle.protocols import ProtocolTarget, ScientificProtocol, load_protocol, write_protocol
+from eegle.protocols import ProtocolTarget, ScientificProtocol, attention_lapse_protocol, load_protocol, write_protocol
 
 
 class PublicApiTests(unittest.TestCase):
@@ -114,6 +117,36 @@ class PublicApiTests(unittest.TestCase):
         self.assertEqual(bundle.contract["channel_names"], ["Cz"])
         self.assertTrue(bundle.bundle_hash)
 
+    def test_runtime_zip_import_validates_and_hashes_workbench_exports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "runtime.zip"
+            runtime = {
+                "kind": "foundation_head_logreg",
+                "model_version": "fixture",
+                "contract": {
+                    "channel_names": ["Fz", "Cz"],
+                    "sample_rate_hz": 100.0,
+                    "sample_count": 200,
+                    "epoch_window_seconds": [-2.0, 0.0],
+                },
+                "target": "attention_lapse_binary",
+                "metrics": {"auprc": 0.6},
+                "license": {"spdx": "MIT"},
+                "provenance": {"source": "fixture"},
+            }
+            with zipfile.ZipFile(source, "w") as archive:
+                archive.writestr("runtime.json", json.dumps(runtime))
+                archive.writestr("encoder.ts", b"fixture")
+
+            manifest = import_runtime_bundle(source, root / "bundle")
+            bundle = load_model_bundle_object(root / "bundle")
+
+        self.assertEqual(manifest["artifact_format"], "eegle_runtime_zip")
+        self.assertEqual(bundle.kind, "foundation_head_logreg")
+        self.assertEqual(bundle.contract["epoch_window_seconds"], [-2.0, 0.0])
+        self.assertEqual(bundle.manifest["runtime_export"]["license"]["spdx"], "MIT")
+
     def test_scientific_protocol_round_trips(self) -> None:
         protocol = ScientificProtocol(
             name="sart_attention_lapse_v1",
@@ -134,6 +167,15 @@ class PublicApiTests(unittest.TestCase):
         self.assertEqual(loaded.name, "sart_attention_lapse_v1")
         self.assertEqual(loaded.prediction_window_seconds, (-4.0, 0.0))
         self.assertEqual(loaded.targets[0].positive, ("commission_error", "omission_error"))
+
+    def test_attention_lapse_protocol_declares_go_nogo_pre_stimulus_endpoint(self) -> None:
+        protocol = attention_lapse_protocol()
+
+        self.assertEqual(protocol.task, "go_nogo")
+        self.assertEqual(protocol.primary_endpoint, "attention_lapse_risk")
+        self.assertEqual(protocol.prediction_window_seconds, (-2.0, 0.0))
+        self.assertIn("temporal_support_query", protocol.splits)
+        self.assertIn("auprc", protocol.metrics)
 
 
 if __name__ == "__main__":

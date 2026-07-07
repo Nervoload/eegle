@@ -30,17 +30,23 @@ def binary_metrics_at_threshold(
     auc = None
     if positives.size and negatives.size:
         auc = float(np.mean([(p > n) + 0.5 * (p == n) for p in positives for n in negatives]))
+    average_precision = average_precision_score(truth, probs)
+    calibration_error = expected_calibration_error(truth, probs)
     result = {
         "threshold": float(threshold),
         "operating_threshold": float(threshold),
         "accuracy": float(np.mean(predicted == truth)) if truth.size else 0.0,
         "balanced_accuracy": float((recall_negative + recall_positive) / 2.0),
         "roc_auc": auc,
+        "average_precision": average_precision,
+        "auprc": average_precision,
         "positive_precision": float(precision_positive),
         "positive_recall": float(recall_positive),
         "positive_f1": float(f1),
         "negative_recall": float(recall_negative),
         "brier_score": float(np.mean((probs - truth) ** 2)) if truth.size else 0.0,
+        "expected_calibration_error": calibration_error,
+        "ece": calibration_error,
         "confusion_matrix": [[tn, fp], [fn, tp]],
         "sample_count": int(truth.size),
     }
@@ -93,6 +99,57 @@ def threshold_candidates(probabilities: np.ndarray, *, max_candidates: int = 512
     quantiles = np.linspace(0.0, 1.0, candidate_limit)
     reduced = {0.5, *[float(value) for value in np.quantile(finite, quantiles).tolist()]}
     return sorted(reduced)
+
+
+def average_precision_score(y_true: np.ndarray, probabilities: np.ndarray) -> float | None:
+    """Return binary average precision without requiring scikit-learn."""
+    truth = np.asarray(y_true, dtype=int)
+    probs = np.asarray(probabilities, dtype=float)
+    mask = np.isfinite(probs)
+    truth = truth[mask]
+    probs = probs[mask]
+    positives = int(np.sum(truth == 1))
+    if truth.size == 0 or positives == 0:
+        return None
+    order = np.argsort(-probs, kind="mergesort")
+    sorted_truth = truth[order]
+    tp = np.cumsum(sorted_truth == 1)
+    fp = np.cumsum(sorted_truth == 0)
+    precision = tp / np.maximum(tp + fp, 1)
+    recall_step = (sorted_truth == 1).astype(float) / positives
+    return float(np.sum(precision * recall_step))
+
+
+def expected_calibration_error(
+    y_true: np.ndarray,
+    probabilities: np.ndarray,
+    *,
+    bins: int = 10,
+) -> float | None:
+    """Compute fixed-width binary expected calibration error."""
+    truth = np.asarray(y_true, dtype=int)
+    probs = np.clip(np.asarray(probabilities, dtype=float), 0.0, 1.0)
+    mask = np.isfinite(probs)
+    truth = truth[mask]
+    probs = probs[mask]
+    if truth.size == 0:
+        return None
+    bin_count = max(1, int(bins))
+    edges = np.linspace(0.0, 1.0, bin_count + 1)
+    total = float(truth.size)
+    error = 0.0
+    for index in range(bin_count):
+        low, high = edges[index], edges[index + 1]
+        if index == bin_count - 1:
+            selected = (probs >= low) & (probs <= high)
+        else:
+            selected = (probs >= low) & (probs < high)
+        if not selected.any():
+            continue
+        confidence = float(np.mean(probs[selected]))
+        accuracy = float(np.mean(truth[selected]))
+        error += float(np.sum(selected)) / total * abs(accuracy - confidence)
+    return float(error)
 
 
 def _metric_label(value: str) -> str:

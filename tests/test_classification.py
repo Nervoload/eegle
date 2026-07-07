@@ -14,6 +14,7 @@ import numpy as np
 from eegle.analysis.classification import evaluate_classifier_session, replay_classifier_session
 from eegle.config import load_config
 from eegle.hardware.system import CheckResult
+from eegle.pipelines import attention8 as attention8_pipeline
 from eegle.pipelines.classify8 import _validate_online_model_bundles, build_parser, train as classify8_train
 from eegle.realtime.classification import (
     assess_epoch_quality,
@@ -472,6 +473,16 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["training_ready"]["status"], "fail")
         train_model.assert_not_called()
+
+    def test_attention8_cli_defaults_to_attention_config_and_protocol(self) -> None:
+        parser = attention8_pipeline.build_parser()
+        args = parser.parse_args(["collect", "--task-mode", "dry-run"])
+        protocol = attention8_pipeline.protocol(parser.parse_args(["protocol"]))
+
+        self.assertEqual(args.config, "configs/forward_attention_lapse_go_nogo8.json")
+        self.assertEqual(args.trials, 240)
+        self.assertEqual(protocol["protocol"]["task"], "go_nogo")
+        self.assertEqual(protocol["protocol"]["prediction_window_seconds"], [-2.0, 0.0])
 
     def test_classify8_train_skips_model_with_structured_missing_dependency(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
