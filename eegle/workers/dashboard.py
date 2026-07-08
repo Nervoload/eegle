@@ -35,6 +35,16 @@ def dashboard_snapshot(session_dir: str | Path, demo_state: dict[str, Any] | Non
 
     predictions = _load_jsonl(root / "realtime" / "model_predictions.jsonl")
     manifest = _load_json(root / "events" / "stimulus_manifest.json") or {}
+    dashboard_target = _dashboard_target(predictions, config)
+    attention_lapse_mode = dashboard_target.startswith("attention_lapse")
+    probability_label = "P(LAPSE)" if attention_lapse_mode else "P(NO-GO)"
+    title = "Live Attention-Lapse Classifier" if attention_lapse_mode else "Realtime EEG Classifier"
+    disclosure = (
+        "Real task mode: this dashboard follows realtime/model_predictions.jsonl from the configured EEG "
+        "attention-lapse model pipeline. It is not the classroom demo, and it does not adapt or stimulate the task."
+        if attention_lapse_mode
+        else "Live classifier mode: predictions come from the configured EEG model pipeline."
+    )
     condition_truth = {
         int(row["trial"]): int(bool(dict(row.get("stimulus") or {}).get("is_no_go")))
         for row in manifest.get("trials", [])
@@ -83,8 +93,12 @@ def dashboard_snapshot(session_dir: str | Path, demo_state: dict[str, Any] | Non
     return {
         "schema_version": 1,
         "mode": "classifier",
-        "title": "Realtime EEG Classifier",
-        "disclosure": "Live classifier mode: predictions come from the configured EEG model pipeline.",
+        "title": title,
+        "disclosure": disclosure,
+        "target": dashboard_target,
+        "probability_label": probability_label,
+        "source_artifact": "realtime/model_predictions.jsonl",
+        "demo_enabled": False,
         "session_dir": str(root),
         "model_ids": model_ids,
         "latest": latest,
@@ -92,7 +106,7 @@ def dashboard_snapshot(session_dir: str | Path, demo_state: dict[str, Any] | Non
         "predictions": predicted[-500:],
         "prediction_count": len(predicted),
         "rejected_epoch_count": len(rejected),
-        "truth_count": len(condition_truth),
+        "truth_count": len(lapse_truth if attention_lapse_mode else condition_truth),
         "primary_shadow_agreement": agreement,
         "processes": statuses,
     }
@@ -171,6 +185,27 @@ def _primary_shadow_agreement(predictions: list[dict[str, Any]]) -> dict[str, An
         "rate": agreements / max(1, comparisons) if comparisons else None,
         "by_shadow": by_shadow,
     }
+
+
+def _dashboard_target(predictions: list[dict[str, Any]], config: dict[str, Any]) -> str:
+    primary_rows = [
+        row for row in predictions
+        if row.get("status") == "predicted" and row.get("model_role") == "primary" and row.get("target")
+    ]
+    other_rows = [
+        row for row in predictions
+        if row.get("status") == "predicted" and row.get("target")
+    ]
+    configured = dict(dict(config.get("realtime", {})).get("model", {})).get("target")
+    for value in [
+        primary_rows[-1].get("target") if primary_rows else None,
+        other_rows[-1].get("target") if other_rows else None,
+        configured,
+    ]:
+        target = str(value or "").strip()
+        if target:
+            return target
+    return "condition"
 
 
 def _manifest_lapse_truth(manifest: dict[str, Any]) -> dict[int, int]:
@@ -533,7 +568,7 @@ body:before{content:"";position:fixed;inset:0;pointer-events:none;background-ima
   <article class="card erp-wrap"><div class="card-title"><div><div class="eyebrow">Signal window</div><h2>Illustrative event-related potential</h2></div><span class="status-pill">-200 to 800 ms</span></div><svg class="erp-svg" id="erpChart" viewBox="0 0 720 245"></svg><div class="erp-caption">The highlighted region is a common P300 analysis window. This demo waveform is illustrative and is not measured from EEG.</div></article>
   <article class="card history"><div class="card-title"><div><div class="eyebrow">Guess history</div><h2>Recent trials</h2></div><span class="status-pill" id="accuracyPill">Waiting</span></div><div class="history-list" id="demoHistory"></div></article>
 </section>
-<section id="classifierView" class="hidden"><div class="card"><div class="card-title"><div><div class="eyebrow">Live models</div><h2>Classifier predictions</h2></div></div><div class="model-grid" id="models"></div></div><div class="card" style="margin-top:14px"><div class="card-title"><h2>Recent predictions</h2></div><table><thead><tr><th>Trial</th><th>Model</th><th>Role</th><th>Prediction</th><th>P(NO-GO)</th><th>Latency</th></tr></thead><tbody id="rows"></tbody></table></div></section>
+<section id="classifierView" class="hidden"><div class="card"><div class="card-title"><div><div class="eyebrow">Live models</div><h2>Classifier predictions</h2></div></div><div class="model-grid" id="models"></div></div><div class="card" style="margin-top:14px"><div class="card-title"><h2>Recent predictions</h2></div><table><thead><tr><th>Trial</th><th>Model</th><th>Role</th><th>Prediction</th><th id="probHeader">P</th><th>Latency</th></tr></thead><tbody id="rows"></tbody></table></div></section>
 </main><script>
 const esc=x=>String(x??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const pct=x=>x==null?'waiting':`${Math.round(Number(x)*100)}%`;
@@ -541,7 +576,7 @@ function shapeHtml(s,mini=false){if(!s)return '<div class="waiting-mark">?</div>
 function stat(label,value){return `<div class="stat"><div class="stat-label">${esc(label)}</div><div class="stat-value">${esc(value)}</div></div>`}
 function erpSvg(windowData){const svg=document.getElementById('erpChart'),times=windowData?.times_ms||[],amps=windowData?.amplitude_uv||[];if(!times.length){svg.innerHTML='<text x="360" y="125" text-anchor="middle" class="axis-label">Waiting for the first illustrative window</text>';return}const x=t=>55+(t+200)/1000*630,min=Math.min(...amps,-8),max=Math.max(...amps,8),y=a=>205-(a-min)/(max-min)*175,path=times.map((t,i)=>`${i?'L':'M'} ${x(t).toFixed(1)} ${y(amps[i]).toFixed(1)}`).join(' ');let grid='';[-200,0,200,400,600,800].forEach(t=>grid+=`<line class="erp-grid" x1="${x(t)}" y1="25" x2="${x(t)}" y2="205"/><text class="axis-label" x="${x(t)}" y="225" text-anchor="middle">${t}</text>`);[-5,0,5].forEach(a=>grid+=`<line class="${a===0?'erp-axis':'erp-grid'}" x1="55" y1="${y(a)}" x2="685" y2="${y(a)}"/><text class="axis-label" x="43" y="${y(a)+3}" text-anchor="end">${a}</text>`);svg.innerHTML=`<defs><linearGradient id="signalGradient"><stop stop-color="#d49a00"/><stop offset="1" stop-color="#e96b18"/></linearGradient></defs><rect class="p3-zone" x="${x(300)}" y="25" width="${x(600)-x(300)}" height="180" rx="7"/>${grid}<path class="erp-line" d="${path}"/><text class="axis-label" x="370" y="242" text-anchor="middle">time from stimulus (ms)</text><text class="axis-label" x="14" y="118" transform="rotate(-90 14 118)" text-anchor="middle">amplitude (uV)</text>`}
 function renderDemo(d){document.getElementById('demoView').classList.remove('hidden');document.getElementById('classifierView').classList.add('hidden');const p=d.latest;document.getElementById('stats').innerHTML=stat('LSL marker link',String(d.marker_status||'starting').replaceAll('_',' '))+stat('Guesses made',d.prediction_count)+stat('Demo accuracy',pct(d.accuracy))+stat('Prediction delay',`${Number(d.prediction_delay_seconds||0).toFixed(1)} s`);document.getElementById('markerPill').innerHTML=`<span class="dot"></span>${esc(String(d.marker_status||'starting').replaceAll('_',' '))}`;if(p){const g=p.guessed_stimulus||{};document.getElementById('guessStage').innerHTML=`<div class="state">Latest prediction, trial ${esc(p.trial)}</div>${shapeHtml(g)}<div class="guess-label">${esc(String(p.predicted_condition).replace('_','-').toUpperCase())}</div><div class="guess-meta">${esc(g.color)} ${esc(g.shape)} | ${pct(p.confidence)} confidence</div><div class="confidence"><span style="width:${Number(p.confidence||0)*100}%"></span></div><div class="guess-meta ${p.is_correct?'ok':'miss'}">${p.is_correct?'Matched the marker':'Intentional demo miss'}</div>`}else{document.getElementById('guessStage').innerHTML=`<div class="state">Waiting for the first delayed prediction</div>${shapeHtml(null)}<div class="guess-label" style="font-size:24px">Ready to guess</div><div class="guess-meta">Each guess will remain here until the next one arrives.</div>`}erpSvg(p?.erp_window);document.getElementById('accuracyPill').textContent=d.accuracy==null?'Waiting':`${d.correct_count} / ${d.prediction_count} correct`;document.getElementById('demoHistory').innerHTML=(d.predictions||[]).slice(-12).reverse().map(row=>{const g=row.guessed_stimulus||{},a=row.actual_stimulus||{};return `<div class="history-item">${shapeHtml(g,true)}<div><div class="history-name">${esc(String(row.predicted_condition).replace('_','-'))}</div><div class="history-sub">Trial ${esc(row.trial)} | saw ${esc(a.color)} ${esc(a.shape)}</div></div><div class="result ${row.is_correct?'ok':'miss'}">${row.is_correct?'match':'miss'}</div></div>`}).join('')||'<div class="empty">Guesses will appear here after the first stimulus.</div>'}
-function renderClassifier(d){document.getElementById('classifierView').classList.remove('hidden');document.getElementById('demoView').classList.add('hidden');const agreement=d.primary_shadow_agreement?.rate;document.getElementById('stats').innerHTML=stat('Predictions',d.prediction_count)+stat('Rejected epochs',d.rejected_epoch_count)+stat('Scored trials',d.truth_count)+stat('Model agreement',pct(agreement));document.getElementById('models').innerHTML=(d.model_ids||[]).map(id=>{const p=d.latest[id]||{},m=d.metrics[id]||{},target=String(m.target||p.target||'condition'),prob=target.startsWith('attention_lapse')?p.probability_attention_lapse:p.probability_no_go,v=Number(prob||0),probLabel=target.startsWith('attention_lapse')?'P(LAPSE)':'P(NO-GO)',label=p.predicted_condition||p.prediction_label||'waiting';return `<div class="model-card"><div class="eyebrow">${esc(id)}</div><div class="guess-label" style="font-size:27px;margin-top:8px">${esc(label)}</div><div class="meter"><span style="width:${v*100}%"></span></div><div class="history-sub">${probLabel} ${v.toFixed(3)} | threshold ${m.operating_threshold==null?'0.500':Number(m.operating_threshold).toFixed(3)} | balanced accuracy ${m.balanced_accuracy==null?'waiting':Number(m.balanced_accuracy).toFixed(3)} | mean latency ${m.mean_latency_ms==null?'waiting':Number(m.mean_latency_ms).toFixed(1)+' ms'}</div></div>`}).join('');document.getElementById('rows').innerHTML=(d.predictions||[]).slice(-30).reverse().map(p=>{const target=String(p.target||'condition'),prob=target.startsWith('attention_lapse')?p.probability_attention_lapse:p.probability_no_go,label=p.predicted_condition||p.prediction_label;return `<tr><td>${esc(p.trial)}</td><td>${esc(p.model_id)}</td><td>${esc(p.model_role)}</td><td>${esc(label)}</td><td>${Number(prob||0).toFixed(3)}</td><td>${Number(p.processing_latency_ms||0).toFixed(1)} ms</td></tr>`}).join('')}
+function renderClassifier(d){document.getElementById('classifierView').classList.remove('hidden');document.getElementById('demoView').classList.add('hidden');const agreement=d.primary_shadow_agreement?.rate,probabilityLabel=d.probability_label||'P(NO-GO)';document.getElementById('probHeader').textContent=probabilityLabel;document.getElementById('stats').innerHTML=stat('Predictions',d.prediction_count)+stat('Rejected epochs',d.rejected_epoch_count)+stat('Scored trials',d.truth_count)+stat('Model agreement',pct(agreement));document.getElementById('models').innerHTML=(d.model_ids||[]).map(id=>{const p=d.latest[id]||{},m=d.metrics[id]||{},target=String(m.target||p.target||d.target||'condition'),prob=target.startsWith('attention_lapse')?p.probability_attention_lapse:p.probability_no_go,v=Number(prob||0),probLabel=target.startsWith('attention_lapse')?'P(LAPSE)':'P(NO-GO)',label=p.predicted_condition||p.prediction_label||'waiting';return `<div class="model-card"><div class="eyebrow">${esc(id)}</div><div class="guess-label" style="font-size:27px;margin-top:8px">${esc(label)}</div><div class="meter"><span style="width:${v*100}%"></span></div><div class="history-sub">${probLabel} ${v.toFixed(3)} | threshold ${m.operating_threshold==null?'0.500':Number(m.operating_threshold).toFixed(3)} | balanced accuracy ${m.balanced_accuracy==null?'waiting':Number(m.balanced_accuracy).toFixed(3)} | mean latency ${m.mean_latency_ms==null?'waiting':Number(m.mean_latency_ms).toFixed(1)+' ms'}</div></div>`}).join('');document.getElementById('rows').innerHTML=(d.predictions||[]).slice(-30).reverse().map(p=>{const target=String(p.target||d.target||'condition'),prob=target.startsWith('attention_lapse')?p.probability_attention_lapse:p.probability_no_go,label=p.predicted_condition||p.prediction_label;return `<tr><td>${esc(p.trial)}</td><td>${esc(p.model_id)}</td><td>${esc(p.model_role)}</td><td>${esc(label)}</td><td>${Number(prob||0).toFixed(3)}</td><td>${Number(p.processing_latency_ms||0).toFixed(1)} ms</td></tr>`}).join('')}
 async function refresh(){try{const d=await fetch('/api/snapshot',{cache:'no-store'}).then(r=>r.json());document.getElementById('title').textContent=d.title||'EEGle Realtime Classifier';document.getElementById('modeText').textContent=d.mode==='demo'?'LSL marker demo':'Live EEG classifier';document.getElementById('disclosure').innerHTML=d.mode==='demo'?`<span>${esc(d.disclosure||'')}</span>`:`<strong>How this works</strong><span>${esc(d.disclosure||'')}</span>`;d.mode==='demo'?renderDemo(d):renderClassifier(d)}catch(e){document.getElementById('modeText').textContent='Reconnecting'}}refresh();setInterval(refresh,250);
 </script></body></html>"""
 

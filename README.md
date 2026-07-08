@@ -662,11 +662,15 @@ updates are enabled.
 attention8 collect --participant sub-001 --trials 240
 attention8 train --session-dir <calibration-session> --check-ready
 attention8 train --session-dir <calibration-session> --support-trials 50
+attention8 compare --session-dir <calibration-session>
+attention8 compare --session-dir <calibration-session> --online-session-dir <online-session> \
+  --method log-reg --method riemann --method lora --method film
 attention8 online --participant sub-001 --model-dir <calibration-session>/models/attention8 \
   --primary causal_bandpower_logreg --shadow foundation_head_logreg --shadow foundation_prototype
 attention8 online --participant sub-001 --model-dir <calibration-session>/models/attention8 \
   --primary causal_bandpower_logreg --shadow foundation_prototype --enable-adaptation --adapt-shadows
 attention8 evaluate --session-dir <online-session>
+attention8 readiness --participant sub-001 --participant sub-002
 attention8 protocol
 ```
 
@@ -691,6 +695,25 @@ eegle model-import --source <eegle-model-runtime.zip> --output <bundle-dir>
 The imported zip must include runtime metadata, the exact input contract,
 license/provenance, and runtime assets. EEGle stores the zip as a
 content-addressed artifact and validates bundle hashes before live inference.
+
+`attention8 compare` is the offline method-comparison step. It trains and
+scores comparison bundles from captured epochs, writes
+`reports/classification/attention8_offline_comparison/summary.json` and
+`summary.csv`, and optionally includes deltas against the model used in an
+online session. The shorthand methods map to concrete registry-backed models:
+`log-reg` -> `causal_bandpower_logreg`, `riemann` ->
+`riemann_tangent_logreg`, `lora` -> `foundation_head_logreg`, and `film` ->
+`foundation_prototype`. The LoRA and FiLM names are comparison profiles only in
+this repository today; they do not run parameter-efficient fine-tuning or FiLM
+conditioning layers unless a future external adapter supplies those contracts.
+
+For a two-subject real-EEG classification test, keep each subject isolated:
+collect one calibration session, train subject-specific bundles, run
+`attention8 compare`, then run one online session and `attention8 evaluate` per
+participant. Do not pool the two subjects' sessions unless that pooling is an
+explicit study-design choice. `attention8 readiness --participant sub-001
+--participant sub-002` prints the subject-by-subject command checklist and the
+current training dependency readiness.
 
 Online adaptation is explicit opt-in with `attention8 online
 --enable-adaptation`. The realtime worker still writes each prediction before

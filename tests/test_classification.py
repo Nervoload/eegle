@@ -324,6 +324,48 @@ class ClassificationTests(unittest.TestCase):
             self.assertAlmostEqual(evaluated["metrics"]["primary"]["coverage"], 2.0 / 3.0)
             self.assertTrue((root / "reports" / "classification" / "predictions.csv").exists())
 
+    def test_attention_lapse_dashboard_uses_live_model_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "realtime").mkdir()
+            (root / "events").mkdir()
+            (root / "logs" / "processes").mkdir(parents=True)
+            manifest = {
+                "trials": [
+                    {
+                        "trial": 1,
+                        "stimulus": {"is_no_go": False},
+                        "response": {"reaction_time_seconds": 0.2, "correct_press": True, "button_press_count": 1},
+                    },
+                    {
+                        "trial": 2,
+                        "stimulus": {"is_no_go": False},
+                        "response": {"reaction_time_seconds": 0.7, "correct_press": True, "button_press_count": 1},
+                    },
+                ]
+            }
+            (root / "events" / "stimulus_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            rows = [
+                _attention_prediction(1, "attentive", 0.2),
+                _attention_prediction(2, "attention_lapse", 0.9),
+            ]
+            (root / "realtime" / "model_predictions.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in rows),
+                encoding="utf-8",
+            )
+
+            live = dashboard_snapshot(root)
+
+        self.assertEqual(live["mode"], "classifier")
+        self.assertEqual(live["title"], "Live Attention-Lapse Classifier")
+        self.assertEqual(live["target"], "attention_lapse_binary")
+        self.assertEqual(live["probability_label"], "P(LAPSE)")
+        self.assertEqual(live["source_artifact"], "realtime/model_predictions.jsonl")
+        self.assertFalse(live["demo_enabled"])
+        self.assertEqual(live["metrics"]["primary"]["target"], "attention_lapse_binary")
+        self.assertIn("attention_lapse_recall", live["metrics"]["primary"])
+        self.assertIn('id="probHeader"', DASHBOARD_HTML)
+
     def test_evaluation_and_dashboard_use_calibrated_threshold(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -484,6 +526,86 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(protocol["protocol"]["task"], "go_nogo")
         self.assertEqual(protocol["protocol"]["prediction_window_seconds"], [-2.0, 0.0])
 
+    def test_attention8_compare_maps_profiles_and_writes_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            session = root / "calibration"
+            output = root / "comparison"
+            (session / "realtime" / "epochs").mkdir(parents=True)
+            args = attention8_pipeline.build_parser().parse_args(
+                [
+                    "compare",
+                    "--session-dir",
+                    str(session),
+                    "--method",
+                    "log-reg",
+                    "--method",
+                    "riemann",
+                    "--method",
+                    "lora",
+                    "--method",
+                    "film",
+                    "--output-dir",
+                    str(output),
+                ]
+            )
+            readiness = CheckResult("training_ready", "ok", "ready")
+
+            def fake_train(kind: str, epochs: object, bundle: Path, config: dict[str, object]) -> dict[str, object]:
+                return {
+                    "status": "ok",
+                    "model_kind": kind,
+                    "bundle_path": str(bundle),
+                    "bundle_hash": f"hash-{kind}",
+                    "training_epochs": 50,
+                    "query_epochs": 20,
+                    "calibration": {"selected_threshold": 0.55},
+                    "metrics": {
+                        "balanced_accuracy": 0.7,
+                        "auprc": 0.6,
+                        "brier_score": 0.2,
+                        "ece": 0.1,
+                        "coverage": 1.0,
+                        "operating_threshold": 0.55,
+                        "query_metrics": {
+                            "balanced_accuracy": 0.75,
+                            "auprc": 0.65,
+                            "brier_score": 0.18,
+                            "ece": 0.08,
+                            "coverage": 0.9,
+                            "operating_threshold": 0.55,
+                        },
+                    },
+                }
+
+            with patch("eegle.pipelines.attention8.check_training_ready", return_value=readiness), patch(
+                "eegle.pipelines.attention8.missing_training_packages",
+                return_value=[],
+            ), patch("eegle.pipelines.attention8.train_epoch_model", side_effect=fake_train) as train_model:
+                result = attention8_pipeline.compare(args)
+
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(
+                [call.args[0] for call in train_model.call_args_list],
+                ["causal_bandpower_logreg", "riemann_tangent_logreg", "foundation_head_logreg", "foundation_prototype"],
+            )
+            self.assertEqual(result["methods"]["lora"]["model_kind"], "foundation_head_logreg")
+            self.assertIn("Comparison proxy only", result["methods"]["lora"]["comparison_profile"]["implementation_note"])
+            self.assertEqual(result["methods"]["riemann"]["metrics"]["comparison_metric_source"], "temporal_query")
+            self.assertTrue((output / "summary.json").exists())
+            self.assertIn("foundation_prototype", (output / "summary.csv").read_text(encoding="utf-8"))
+
+    def test_attention8_readiness_defaults_to_two_subject_checklist(self) -> None:
+        readiness = CheckResult("training_ready", "ok", "ready")
+        args = attention8_pipeline.build_parser().parse_args(["readiness"])
+        with patch("eegle.pipelines.attention8.check_training_ready", return_value=readiness):
+            result = attention8_pipeline.readiness(args)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["expected_subjects"], 2)
+        self.assertEqual([row["participant"] for row in result["commands"]], ["sub-001", "sub-002"])
+        self.assertIn("attention8 compare", result["commands"][0]["compare"])
+
     def test_classify8_train_skips_model_with_structured_missing_dependency(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             args = build_parser().parse_args(["train", "--session-dir", tmp, "--kind", "torch_eegnet"])
@@ -528,6 +650,22 @@ def _prediction(trial: int, condition: str, probability: float) -> dict[str, obj
         "predicted_condition": condition,
         "probability_no_go": probability,
         "processing_latency_ms": 2.0,
+    }
+
+
+def _attention_prediction(trial: int, label: str, probability: float) -> dict[str, object]:
+    return {
+        "schema": "eegle.model_prediction.v1",
+        "status": "predicted",
+        "trial": trial,
+        "epoch_index": trial,
+        "model_id": "primary",
+        "model_role": "primary",
+        "model_kind": "causal_bandpower_logreg",
+        "target": "attention_lapse_binary",
+        "prediction_label": label,
+        "probability_attention_lapse": probability,
+        "processing_latency_ms": 3.0,
     }
 
 

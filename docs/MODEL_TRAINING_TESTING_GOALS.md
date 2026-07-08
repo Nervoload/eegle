@@ -40,11 +40,15 @@ question to causal same-trial lapse-risk prediction:
 attention8 collect --participant sub-001 --trials 240
 attention8 train --session-dir <calibration-session> --check-ready
 attention8 train --session-dir <calibration-session> --support-trials 50
+attention8 compare --session-dir <calibration-session>
+attention8 compare --session-dir <calibration-session> --online-session-dir <online-session> \
+  --method log-reg --method riemann --method lora --method film
 attention8 online --participant sub-001 --model-dir <calibration-session>/models/attention8 \
   --primary causal_bandpower_logreg --shadow foundation_head_logreg --shadow foundation_prototype
 attention8 online --participant sub-001 --model-dir <calibration-session>/models/attention8 \
   --primary causal_bandpower_logreg --shadow foundation_prototype --enable-adaptation --adapt-shadows
 attention8 evaluate --session-dir <online-session>
+attention8 readiness --participant sub-001 --participant sub-002
 attention8 protocol
 ```
 
@@ -90,6 +94,16 @@ Online testing snapshots the requested primary and shadow bundles into the
 online session, runs marker-locked epochs through the shared realtime model
 contracts, writes predictions to `realtime/model_predictions.jsonl`, and joins
 ground truth only later for dashboard summaries and scoring.
+
+`attention8 compare` trains offline comparison bundles against captured
+attention-lapse epochs and writes a method summary under
+`reports/classification/attention8_offline_comparison/`. Its default comparison
+profiles are `log-reg`, `riemann`, `lora`, and `film`. These resolve to
+registry-backed implementations `causal_bandpower_logreg`,
+`riemann_tangent_logreg`, `foundation_head_logreg`, and
+`foundation_prototype`, respectively. The LoRA and FiLM names are explicit
+profile labels for offline comparison only; v1 does not fine-tune foundation
+weights with LoRA or run FiLM conditioning layers inside EEGle.
 
 Training targets are:
 
@@ -220,6 +234,8 @@ The evaluation path should answer separate questions:
 - Does the calibrated operating threshold produce acceptable balanced accuracy
   and target recall?
 - Do primary and shadow models agree or fail in different ways?
+- Do offline comparison methods beat, match, or fail differently from the
+  primary model used in the online session?
 
 Scoring joins predictions to `events/stimulus_manifest.json`, which is the
 canonical truth source. Evaluation outputs include classification reports under
@@ -228,6 +244,11 @@ session evaluation report confusion matrices and threshold-sensitive metrics at
 the calibrated operating threshold when one is present. Default `0.5` threshold
 metrics are retained under `default_threshold_metrics` for reproducible
 comparison with older bundles and papers.
+
+For two-subject real-EEG tests, run the full collect -> train -> compare ->
+online -> evaluate sequence independently for each subject before considering
+pooled training. This keeps subject-specific calibration, thresholds, bundle
+hashes, dashboard snapshots, and online-session reports interpretable.
 
 When online adaptation is enabled, evaluation also summarizes accepted and
 skipped update counts, skipped reasons, final class counts, threshold trajectory,
