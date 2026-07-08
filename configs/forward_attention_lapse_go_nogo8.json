@@ -98,6 +98,14 @@
       "practice_message_min_seconds": 1.0,
       "countdown_seconds": 3,
       "countdown_step_seconds": 1.0,
+      "attention_challenge": {
+        "enabled": false,
+        "cue_trials": [20, 40, 60, 80],
+        "window_trials": 5,
+        "cue_duration_seconds": 2.0,
+        "expected_state_label": "deliberate_inattention",
+        "cue_text": "Attention challenge\n\nFor the next few trials, deliberately let your attention drift. Then return to the task."
+      },
       "response_keys": ["space"],
       "escape_keys": ["escape"],
       "completion_auto_close_seconds": 30.0,

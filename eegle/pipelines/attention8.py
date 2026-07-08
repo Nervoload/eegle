@@ -106,6 +106,8 @@ def main(argv: list[str] | None = None) -> int:
             result = evaluate(args)
         elif args.command == "readiness":
             result = readiness(args)
+        elif args.command == "pilot-suite":
+            result = pilot_suite(args)
         elif args.command == "protocol":
             result = protocol(args)
         else:
@@ -177,6 +179,21 @@ def build_parser() -> argparse.ArgumentParser:
     readiness_parser.add_argument("--expected-subjects", type=int, default=2)
     readiness_parser.add_argument("--calibration-trials", type=int, default=240)
     readiness_parser.add_argument("--online-trials", type=int, default=160)
+
+    suite_parser = subparsers.add_parser("pilot-suite", help="Plan the three-phase dry-electrode attention8 pilot suite")
+    suite_parser.add_argument("--config", default=str(DEFAULT_CONFIG))
+    suite_parser.add_argument("--participant", required=True)
+    suite_parser.add_argument("--model-dir", default=None, help="Existing attention8 model directory for smoke/challenge phases")
+    suite_parser.add_argument("--output-dir", default=None, help="Where --write-configs stores generated suite configs")
+    suite_parser.add_argument("--write-configs", action="store_true", help="Write phase-specific configs for Windows runs")
+    suite_parser.add_argument("--smoke-trials", type=int, default=24)
+    suite_parser.add_argument("--calibration-trials", type=int, default=240)
+    suite_parser.add_argument("--post-calibration-trials", type=int, default=160)
+    suite_parser.add_argument("--challenge-trials", type=int, default=100)
+    suite_parser.add_argument("--challenge-cue-trials", default="20,40,60,80")
+    suite_parser.add_argument("--challenge-window-trials", type=int, default=5)
+    suite_parser.add_argument("--challenge-cue-seconds", type=float, default=2.0)
+    suite_parser.add_argument("--command-prefix", default="attention8", help="Command prefix to print, e.g. attention8 or py -3.10 -m eegle.pipelines.attention8")
 
     protocol_parser = subparsers.add_parser("protocol", help="Print or write the attention-lapse protocol declaration")
     protocol_parser.add_argument("--config", default=str(DEFAULT_CONFIG))
@@ -419,6 +436,111 @@ def readiness(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def pilot_suite(args: argparse.Namespace) -> dict[str, Any]:
+    participant = str(args.participant).strip()
+    if not participant:
+        raise ValueError("--participant cannot be empty")
+    cue_trials = _parse_trial_list(args.challenge_cue_trials)
+    if not cue_trials:
+        raise ValueError("--challenge-cue-trials must include at least one trial")
+    base_config = load_config(args.config)
+    output_root = Path(args.output_dir).expanduser().resolve() if args.output_dir else Path("data") / "attention8_pilot_suite" / participant
+    config_dir = output_root / "configs"
+    config_paths = {
+        "smoke": config_dir / "attention8_smoke.json",
+        "calibration": config_dir / "attention8_calibration.json",
+        "post_calibration": config_dir / "attention8_post_calibration.json",
+        "challenge": config_dir / "attention8_challenge_100.json",
+    }
+    configs = _pilot_suite_configs(base_config, args, cue_trials)
+    if bool(args.write_configs):
+        for name, config in configs.items():
+            path = config_paths[name]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    command_prefix = str(args.command_prefix).strip() or "attention8"
+    model_dir = str(args.model_dir or "<existing-or-calibrated-attention8-model-dir>")
+    calibrated_model_dir = "<calibration-session>\\models\\attention8"
+    suite = {
+        "schema_version": 1,
+        "status": "ok",
+        "workflow": "attention8.pilot_suite",
+        "participant": participant,
+        "dry_electrode": True,
+        "no_resting_or_closed_eyes_baseline": True,
+        "online_adaptation": {
+            "enabled_in_online_phases": True,
+            "storage": [
+                "realtime/adaptation_updates.jsonl",
+                "realtime/adaptation_state/",
+                "models/attention8/ after attention8 train",
+            ],
+            "note": "Online adaptation stores session-specific update/state artifacts; it does not mutate the source model bundle in place.",
+        },
+        "config_paths": {name: _windows_path(path) for name, path in config_paths.items()},
+        "configs_written": bool(args.write_configs),
+        "operator_notes": [
+            "Run pilot-suite with --write-configs before copying the printed phase commands into PowerShell.",
+            "Use a subject-specific calibrated model directory after phase 2 unless deliberately testing an existing imported model.",
+            "Challenge cues are recorded for later analysis and are not included in prediction-time model metadata.",
+        ],
+        "phase_order": ["smoke", "calibrate", "post_calibration_online", "challenge_100"],
+        "phases": {
+            "smoke": {
+                "goal": "Light model-system smoke: no baseline metrics, verify the loaded model stack emits predictions.",
+                "trials": int(args.smoke_trials),
+                "novel_model_role": "shadow",
+                "commands": [
+                    f"eegle check-setup --config {_windows_path(config_paths['smoke'])} --require-eeg --lsl-wait 5",
+                    (
+                        f"{command_prefix} online --config {_windows_path(config_paths['smoke'])} --participant {participant}-smoke "
+                        f"--model-dir {model_dir} --primary causal_bandpower_logreg --shadow foundation_prototype "
+                        f"--trials {int(args.smoke_trials)} --enable-adaptation --adapt-shadows"
+                    ),
+                    f"{command_prefix} evaluate --session-dir <smoke-online-session>",
+                ],
+            },
+            "calibrate": {
+                "goal": "Collect enough subject-specific dry-electrode data and store calibrated attention8 bundles.",
+                "trials": int(args.calibration_trials),
+                "commands": [
+                    f"{command_prefix} collect --config {_windows_path(config_paths['calibration'])} --participant {participant} --trials {int(args.calibration_trials)}",
+                    f"{command_prefix} train --session-dir <calibration-session> --support-trials 50",
+                    f"{command_prefix} compare --session-dir <calibration-session> --method log-reg --method riemann --method lora --method film",
+                ],
+            },
+            "post_calibration_online": {
+                "goal": "Run a sufficient post-calibration task with adaptation enabled and score attention-lapse prediction.",
+                "trials": int(args.post_calibration_trials),
+                "commands": [
+                    (
+                        f"{command_prefix} online --config {_windows_path(config_paths['post_calibration'])} --participant {participant}-postcal "
+                        f"--model-dir {calibrated_model_dir} --primary causal_bandpower_logreg --shadow foundation_prototype "
+                        f"--trials {int(args.post_calibration_trials)} --enable-adaptation --adapt-shadows"
+                    ),
+                    f"{command_prefix} evaluate --session-dir <post-calibration-online-session>",
+                    f"{command_prefix} compare --session-dir <calibration-session> --online-session-dir <post-calibration-online-session>",
+                ],
+            },
+            "challenge_100": {
+                "goal": "Run 100 trials with deliberate inattention cues at set moments while loading the selected model.",
+                "trials": int(args.challenge_trials),
+                "cue_trials": cue_trials,
+                "window_trials": int(args.challenge_window_trials),
+                "commands": [
+                    (
+                        f"{command_prefix} online --config {_windows_path(config_paths['challenge'])} --participant {participant}-challenge "
+                        f"--model-dir {model_dir if args.model_dir else calibrated_model_dir} --primary causal_bandpower_logreg "
+                        f"--shadow foundation_prototype --trials {int(args.challenge_trials)} --enable-adaptation --adapt-shadows"
+                    ),
+                    f"{command_prefix} evaluate --session-dir <challenge-online-session>",
+                ],
+            },
+        },
+    }
+    return suite
+
+
 def protocol(args: argparse.Namespace) -> dict[str, Any]:
     declaration = attention_lapse_protocol()
     if args.output:
@@ -468,6 +590,88 @@ def _attention_model_config(
         }
     )
     return model
+
+
+def _pilot_suite_configs(base_config: dict[str, Any], args: argparse.Namespace, cue_trials: list[int]) -> dict[str, dict[str, Any]]:
+    return {
+        "smoke": _pilot_config(
+            base_config,
+            experiment_id="attention8_dry_electrode_smoke",
+            trials=max(1, int(args.smoke_trials)),
+            challenge=None,
+        ),
+        "calibration": _pilot_config(
+            base_config,
+            experiment_id="attention8_dry_electrode_calibration",
+            trials=max(1, int(args.calibration_trials)),
+            challenge=None,
+        ),
+        "post_calibration": _pilot_config(
+            base_config,
+            experiment_id="attention8_dry_electrode_post_calibration_online",
+            trials=max(1, int(args.post_calibration_trials)),
+            challenge=None,
+        ),
+        "challenge": _pilot_config(
+            base_config,
+            experiment_id="attention8_dry_electrode_deliberate_lapse_challenge",
+            trials=max(1, int(args.challenge_trials)),
+            challenge={
+                "enabled": True,
+                "cue_trials": cue_trials,
+                "window_trials": max(1, int(args.challenge_window_trials)),
+                "cue_duration_seconds": max(0.0, float(args.challenge_cue_seconds)),
+                "expected_state_label": "deliberate_inattention",
+                "cue_text": (
+                    "Attention challenge\n\n"
+                    "For the next few trials, deliberately let your attention drift. Then return to the task."
+                ),
+            },
+        ),
+    }
+
+
+def _pilot_config(
+    base_config: dict[str, Any],
+    *,
+    experiment_id: str,
+    trials: int,
+    challenge: dict[str, Any] | None,
+) -> dict[str, Any]:
+    config = copy.deepcopy(base_config)
+    config.setdefault("experiment", {})["experiment_id"] = experiment_id
+    task = config.setdefault("tasks", {}).setdefault("go_nogo", {})
+    task["trials"] = int(trials)
+    task["practice_enabled"] = True
+    task["countdown_seconds"] = min(3, int(task.get("countdown_seconds", 3) or 0))
+    task["attention_challenge"] = dict(challenge or {**dict(task.get("attention_challenge", {}) or {}), "enabled": False})
+    config.setdefault("realtime", {}).setdefault("alpha", {})["enabled"] = False
+    config.setdefault("analysis", {}).setdefault("alpha", {})["enabled"] = False
+    return config
+
+
+def _parse_trial_list(value: Any) -> list[int]:
+    if isinstance(value, str):
+        parts = [part.strip() for part in value.replace(";", ",").split(",")]
+    elif isinstance(value, (list, tuple, set)):
+        parts = list(value)
+    else:
+        parts = [value]
+    trials = []
+    for part in parts:
+        if part in {"", None}:
+            continue
+        try:
+            trial = int(part)
+        except (TypeError, ValueError):
+            continue
+        if trial >= 1:
+            trials.append(trial)
+    return sorted(dict.fromkeys(trials))
+
+
+def _windows_path(path: Path) -> str:
+    return str(path).replace("/", "\\")
 
 
 def _comparison_methods(values: list[str] | None) -> list[dict[str, str]]:

@@ -606,6 +606,41 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual([row["participant"] for row in result["commands"]], ["sub-001", "sub-002"])
         self.assertIn("attention8 compare", result["commands"][0]["compare"])
 
+    def test_attention8_pilot_suite_writes_phase_configs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            args = attention8_pipeline.build_parser().parse_args(
+                [
+                    "pilot-suite",
+                    "--participant",
+                    "sub-001",
+                    "--model-dir",
+                    "C:\\Models\\attention8",
+                    "--output-dir",
+                    str(root),
+                    "--write-configs",
+                    "--challenge-cue-trials",
+                    "10,20",
+                    "--challenge-window-trials",
+                    "3",
+                ]
+            )
+
+            result = attention8_pipeline.pilot_suite(args)
+
+            challenge_path = root / "configs" / "attention8_challenge_100.json"
+            challenge = json.loads(challenge_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["configs_written"])
+        self.assertTrue(result["no_resting_or_closed_eyes_baseline"])
+        self.assertIn("challenge_100", result["phases"])
+        self.assertIn("C:\\Models\\attention8", result["phases"]["smoke"]["commands"][1])
+        self.assertEqual(challenge["tasks"]["go_nogo"]["trials"], 100)
+        self.assertEqual(challenge["tasks"]["go_nogo"]["attention_challenge"]["cue_trials"], [10, 20])
+        self.assertEqual(challenge["tasks"]["go_nogo"]["attention_challenge"]["window_trials"], 3)
+        self.assertFalse(challenge["realtime"]["alpha"]["enabled"])
+
     def test_classify8_train_skips_model_with_structured_missing_dependency(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             args = build_parser().parse_args(["train", "--session-dir", tmp, "--kind", "torch_eegnet"])

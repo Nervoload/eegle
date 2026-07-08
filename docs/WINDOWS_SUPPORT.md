@@ -58,3 +58,36 @@ py -3.10 -m eegle.pipelines.attention8 --help
 
 Makefile targets and repository-root `./alpha8` wrappers are POSIX conveniences,
 not the Windows operator path.
+
+## Attention8 Dry-Electrode Pilot Suite
+
+Install the runtime plus model-training extras, then verify the dry-electrode
+LSL stream before collecting data:
+
+```powershell
+py -3.10 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[runtime,ml]"
+eegle check-setup --config configs\forward_attention_lapse_go_nogo8.json --require-eeg --lsl-wait 5
+```
+
+Generate the three-phase suite configs and PowerShell commands:
+
+```powershell
+attention8 pilot-suite --participant sub-001 --model-dir <existing-or-calibrated-attention8-model-dir> --write-configs
+```
+
+The emitted phases are:
+
+- `smoke`: 24 trials, no resting or closed-eyes baseline, loads the chosen model
+  directory, and checks that live predictions are written.
+- `calibrate` plus `post_calibration_online`: collects subject-specific data,
+  trains/stores `models\attention8`, then runs a longer online task with
+  adaptation state logging.
+- `challenge_100`: 100 trials with deliberate-inattention cue windows, default
+  cue trials `20,40,60,80`.
+
+Online adaptation writes session artifacts such as
+`realtime\adaptation_updates.jsonl` and `realtime\adaptation_state\`; it does
+not mutate the source model bundle in place during the task.

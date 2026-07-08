@@ -96,6 +96,37 @@ class Attention8OnlineAdaptationTests(unittest.TestCase):
         self.assertIn("omission_error", complete[0])
         self.assertIn("commission_error", complete[0])
 
+    def test_attention_challenge_cues_are_recorded_in_dry_run_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = load_config("configs/forward_attention_lapse_go_nogo8.json")
+            config["runtime"]["session_root"] = tmp
+            config["telemetry"]["console_level"] = "quiet"
+            config["tasks"]["go_nogo"]["attention_challenge"] = {
+                "enabled": True,
+                "cue_trials": [2],
+                "window_trials": 2,
+                "cue_duration_seconds": 0.0,
+                "expected_state_label": "deliberate_inattention",
+                "cue_text": "Let attention drift for this test window.",
+            }
+            paths = create_session(config, task="go_nogo", participant_id="unit", root=tmp)
+
+            GoNoGoTask(config, mode="dry-run", trials=3, participant_id="unit").run(paths)
+
+            manifest = json.loads((paths.events / "stimulus_manifest.json").read_text(encoding="utf-8"))
+            events = [json.loads(line) for line in paths.events_jsonl.read_text(encoding="utf-8").splitlines()]
+
+        trials = manifest["trials"]
+        self.assertEqual(trials[0]["attention_challenge"]["expected_state"], "normal")
+        self.assertTrue(trials[1]["attention_challenge"]["is_cue_trial"])
+        self.assertEqual(trials[1]["attention_challenge"]["expected_state"], "deliberate_inattention")
+        self.assertEqual(trials[2]["attention_challenge"]["cue_start_trial"], 2)
+        cues = [row for row in events if row["label"] == "attention_challenge_cue"]
+        self.assertEqual(len(cues), 1)
+        self.assertEqual(cues[0]["trial"], 2)
+        complete = [row for row in events if row["label"] == "go_nogo_trial_complete" and row["trial"] == 2]
+        self.assertEqual(complete[0]["metadata"]["attention_challenge"]["expected_state"], "deliberate_inattention")
+
     def test_trial_complete_does_not_update_until_prediction_exists(self) -> None:
         writer = _MemoryWriter()
         telemetry = _SilentTelemetry()

@@ -74,6 +74,7 @@ class GoNoGoTask:
         stimulus_seconds = float(self.task_config.get("stimulus_seconds", 0.8))
         state = _make_adaptive_state(self.config, self.task_config)
         feedback_client = _make_task_feedback_client(self.config, paths)
+        challenge_config = _attention_challenge_config(self.task_config)
         start = monotonic()
         virtual_time = start
         records: list[dict[str, Any]] = []
@@ -84,6 +85,9 @@ class GoNoGoTask:
                 applied_actions = []
                 applied_actions.extend(_poll_and_apply_feedback(feedback_client, logger, "between_trials", index, state))
                 applied_actions.extend(_poll_and_apply_feedback(feedback_client, logger, "before_trial_generation", index, state))
+                attention_challenge = _attention_challenge_for_trial(index, challenge_config)
+                if attention_challenge.get("is_cue_trial"):
+                    _mark_attention_challenge_cue(logger, None, index, attention_challenge)
                 stimulus = _next_adaptive_stimulus(self.task_config, no_go, state)
                 onset = virtual_time
                 logger.mark(_stim_label("go_nogo_stimulus_onset", index, stimulus), trial=index, **stimulus)
@@ -101,6 +105,7 @@ class GoNoGoTask:
                     presses,
                     applied_actions,
                     state.payload(),
+                    attention_challenge=attention_challenge,
                 )
                 records.append(record)
                 _mark_trial_complete(logger, record, paths)
@@ -132,6 +137,7 @@ class GoNoGoTask:
         practice_message_min_seconds = float(self.task_config.get("practice_message_min_seconds", 1.0))
         countdown_seconds = int(self.task_config.get("countdown_seconds", 3))
         countdown_step_seconds = float(self.task_config.get("countdown_step_seconds", 1.0))
+        challenge_config = _attention_challenge_config(self.task_config)
         window_size = display.get("size", [1000, 700])
 
         records: list[dict[str, Any]] = []
@@ -190,6 +196,18 @@ class GoNoGoTask:
                         if state.reward_pending:
                             _show_reward(win, visual, core)
                             state.reward_pending = False
+                        attention_challenge = _attention_challenge_for_trial(index, challenge_config)
+                        if attention_challenge.get("is_cue_trial"):
+                            _show_attention_challenge_cue(
+                                win,
+                                visual,
+                                core,
+                                logger,
+                                marker_outlet,
+                                index,
+                                attention_challenge,
+                                display_timing,
+                            )
                         stimulus = _next_adaptive_stimulus(self.task_config, no_go, state)
                         record, aborted = _present_stimulus(
                             win=win,
@@ -207,6 +225,7 @@ class GoNoGoTask:
                             escape_keys=escape_keys,
                             applied_actions=applied_actions,
                             adaptive_state=state.payload(),
+                            attention_challenge=attention_challenge,
                             display_timing=display_timing,
                         )
                         records.append(record)
@@ -250,6 +269,7 @@ def _present_stimulus(
     escape_keys: list[str],
     applied_actions: list[dict[str, Any]] | None = None,
     adaptive_state: dict[str, Any] | None = None,
+    attention_challenge: dict[str, Any] | None = None,
     display_timing: dict[str, float] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     _draw_stimulus(win, visual, stimulus, label="NO-GO" if stimulus["is_no_go"] else "GO", visual_alpha=visual_alpha)
@@ -314,6 +334,7 @@ def _present_stimulus(
             presses,
             applied_actions,
             adaptive_state,
+            attention_challenge=attention_challenge,
             onset_lsl_timestamp=onset_holder.get("lsl_timestamp"),
             offset_lsl_timestamp=onset_holder.get("offset_lsl_timestamp"),
         ),
@@ -532,6 +553,36 @@ def _show_reward(win: Any, visual: Any, core: Any) -> None:
     core.wait(0.25)
 
 
+def _show_attention_challenge_cue(
+    win: Any,
+    visual: Any,
+    core: Any,
+    logger: EventLogger,
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet,
+    trial: int,
+    challenge: dict[str, Any],
+    display_timing: dict[str, float],
+) -> None:
+    text = visual.TextStim(
+        win,
+        text=str(challenge.get("cue_text") or "Attention challenge\n\nLet your attention drift for the next few trials."),
+        height=0.042,
+        color="white",
+        wrapWidth=1.5,
+    )
+    text.draw()
+    win.callOnFlip(
+        _mark_attention_challenge_cue,
+        logger,
+        marker_outlet,
+        trial,
+        challenge,
+        display_timing,
+    )
+    win.flip()
+    _safe_wait(float(challenge.get("cue_duration_seconds", 2.0)))
+
+
 def _show_practice_message(
     win: Any,
     visual: Any,
@@ -599,6 +650,68 @@ def _make_task_feedback_client(config: dict[str, Any], paths: SessionPaths) -> T
     if "backend" not in client_config:
         client_config["backend"] = feedback_config.get("emitter", "disabled")
     return TaskFeedbackClient(client_config, default_jsonl_path=paths.realtime_feedback_jsonl)
+
+
+def _attention_challenge_config(task_config: dict[str, Any]) -> dict[str, Any]:
+    raw = dict(task_config.get("attention_challenge", {}) or {})
+    cue_trials = sorted({value for value in _int_values(raw.get("cue_trials", [])) if value >= 1})
+    return {
+        "enabled": bool(raw.get("enabled", False)) and bool(cue_trials),
+        "cue_trials": cue_trials,
+        "window_trials": max(1, int(raw.get("window_trials", raw.get("lapse_window_trials", 5)) or 5)),
+        "cue_duration_seconds": max(0.0, float(raw.get("cue_duration_seconds", 2.0) or 0.0)),
+        "cue_text": str(
+            raw.get(
+                "cue_text",
+                "Attention challenge\n\nFor the next few trials, deliberately let your attention drift. Then return to the task.",
+            )
+        ),
+        "expected_state_label": str(raw.get("expected_state_label", "deliberate_inattention")),
+    }
+
+
+def _attention_challenge_for_trial(trial: int, config: dict[str, Any]) -> dict[str, Any]:
+    if not bool(config.get("enabled", False)):
+        return {"enabled": False, "expected_state": "normal", "is_cue_trial": False}
+    cue_trials = [int(value) for value in config.get("cue_trials", [])]
+    window_trials = int(config.get("window_trials", 5))
+    active_start = None
+    for cue in cue_trials:
+        if cue <= trial < cue + window_trials:
+            active_start = cue
+    is_cue = trial in cue_trials
+    expected_state = str(config.get("expected_state_label", "deliberate_inattention")) if active_start is not None else "normal"
+    return {
+        "enabled": True,
+        "trial": int(trial),
+        "is_cue_trial": bool(is_cue),
+        "cue_start_trial": active_start,
+        "cue_trials": cue_trials,
+        "window_trials": window_trials,
+        "expected_state": expected_state,
+        "cue_duration_seconds": float(config.get("cue_duration_seconds", 2.0)),
+        "cue_text": str(config.get("cue_text", "")),
+    }
+
+
+def _int_values(value: Any) -> list[int]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parts = [part.strip() for part in value.replace(";", ",").split(",")]
+    elif isinstance(value, (list, tuple, set)):
+        parts = list(value)
+    else:
+        parts = [value]
+    result = []
+    for part in parts:
+        if part in {"", None}:
+            continue
+        try:
+            result.append(int(part))
+        except (TypeError, ValueError):
+            continue
+    return result
 
 
 def _poll_and_apply_feedback(
@@ -749,6 +862,7 @@ def _make_trial_record(
     presses: list[dict[str, Any]],
     applied_actions: list[dict[str, Any]] | None = None,
     adaptive_state: dict[str, Any] | None = None,
+    attention_challenge: dict[str, Any] | None = None,
     onset_lsl_timestamp: float | None = None,
     offset_lsl_timestamp: float | None = None,
 ) -> dict[str, Any]:
@@ -785,6 +899,7 @@ def _make_trial_record(
         "correct_press": int(correct),
         "applied_actions": list(applied_actions or []),
         "adaptive_state": dict(adaptive_state or {}),
+        "attention_challenge": dict(attention_challenge or {"enabled": False, "expected_state": "normal", "is_cue_trial": False}),
     }
 
 
@@ -812,6 +927,7 @@ def _mark_trial_complete(logger: EventLogger, record: dict[str, Any], paths: Ses
         stimulus_offset_monotonic=record.get("stimulus_offset_monotonic"),
         stimulus_onset_lsl_timestamp=record.get("stimulus_onset_lsl_timestamp"),
         stimulus_offset_lsl_timestamp=record.get("stimulus_offset_lsl_timestamp"),
+        attention_challenge=record.get("attention_challenge", {}),
         session_dir=str(paths.root),
         task="go_nogo",
         source="task.go_nogo",
@@ -851,6 +967,8 @@ def _write_go_nogo_outputs(
                 "rolling_average_accuracy",
                 "button_press_count",
                 "timestamp_since_start",
+                "attention_challenge_expected_state",
+                "attention_challenge_cue",
             ]
         )
         correct_so_far = 0
@@ -865,6 +983,8 @@ def _write_go_nogo_outputs(
                     f"{correct_so_far / row_idx:.6f}",
                     record["button_press_count"],
                     f"{record['timestamp_since_start']:.6f}",
+                    dict(record.get("attention_challenge") or {}).get("expected_state", "normal"),
+                    int(bool(dict(record.get("attention_challenge") or {}).get("is_cue_trial", False))),
                 ]
             )
 
@@ -884,6 +1004,7 @@ def _write_stimulus_manifest(
             "colors": list(_color_options(config)),
             "stimulus_seconds": config.get("stimulus_seconds"),
             "isi_seconds": config.get("isi_seconds"),
+            "attention_challenge": dict(config.get("attention_challenge", {}) or {}),
         },
         "no_go_stimulus": no_go,
         "trials": [
@@ -899,6 +1020,7 @@ def _write_stimulus_manifest(
                 "actual_duration_seconds": record["actual_duration_seconds"],
                 "applied_actions": record.get("applied_actions", []),
                 "adaptive_state": record.get("adaptive_state", {}),
+                "attention_challenge": record.get("attention_challenge", {}),
                 "response": {
                     "reaction_time_seconds": record["reaction_time_seconds"],
                     "button_press_count": record["button_press_count"],
@@ -1050,6 +1172,35 @@ def _make_marker_outlet(markers: dict[str, Any], paths: SessionPaths) -> LslMark
         if bool(markers.get("required_for_realtime", False)):
             raise RuntimeError(f"required LSL marker outlet could not be created: {type(exc).__name__}: {exc}") from exc
         return NullMarkerOutlet(f"{type(exc).__name__}: {exc}")
+
+
+def _mark_attention_challenge_cue(
+    logger: EventLogger,
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet | None,
+    trial: int,
+    challenge: dict[str, Any],
+    display_timing: dict[str, float] | None = None,
+) -> Any:
+    metadata = {
+        "task": "go_nogo",
+        "challenge_kind": "deliberate_attention_lapse",
+        "attention_challenge": challenge,
+        "expected_state": challenge.get("expected_state"),
+        "cue_start_trial": challenge.get("cue_start_trial"),
+        "window_trials": challenge.get("window_trials"),
+    }
+    if marker_outlet is None:
+        return logger.mark("attention_challenge_cue", event_type="SYSTEM", trial=trial, **metadata)
+    return _mark(
+        logger,
+        marker_outlet,
+        "attention_challenge_cue",
+        "SYSTEM",
+        trial,
+        **metadata,
+        _scheduled_on_flip=True,
+        _display_timing=display_timing or {},
+    )
 
 
 def _mark(

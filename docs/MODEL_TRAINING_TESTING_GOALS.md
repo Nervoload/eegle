@@ -49,6 +49,7 @@ attention8 online --participant sub-001 --model-dir <calibration-session>/models
   --primary causal_bandpower_logreg --shadow foundation_prototype --enable-adaptation --adapt-shadows
 attention8 evaluate --session-dir <online-session>
 attention8 readiness --participant sub-001 --participant sub-002
+attention8 pilot-suite --participant sub-001 --model-dir <existing-or-calibrated-attention8-model-dir> --write-configs
 attention8 protocol
 ```
 
@@ -249,6 +250,13 @@ For two-subject real-EEG tests, run the full collect -> train -> compare ->
 online -> evaluate sequence independently for each subject before considering
 pooled training. This keeps subject-specific calibration, thresholds, bundle
 hashes, dashboard snapshots, and online-session reports interpretable.
+
+The light dry-electrode pilot path is `attention8 pilot-suite`. It generates
+phase-specific configs for a no-baseline smoke run, subject calibration,
+post-calibration online prediction, and a 100-trial deliberate-inattention
+challenge. Challenge cues are task-side analysis annotations: they are written
+to events and `stimulus_manifest.json`, but prediction-time model metadata stays
+label-blind.
 
 When online adaptation is enabled, evaluation also summarizes accepted and
 skipped update counts, skipped reasons, final class counts, threshold trajectory,

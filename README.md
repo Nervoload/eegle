@@ -671,6 +671,7 @@ attention8 online --participant sub-001 --model-dir <calibration-session>/models
   --primary causal_bandpower_logreg --shadow foundation_prototype --enable-adaptation --adapt-shadows
 attention8 evaluate --session-dir <online-session>
 attention8 readiness --participant sub-001 --participant sub-002
+attention8 pilot-suite --participant sub-001 --model-dir <existing-or-calibrated-attention8-model-dir> --write-configs
 attention8 protocol
 ```
 
@@ -714,6 +715,16 @@ participant. Do not pool the two subjects' sessions unless that pooling is an
 explicit study-design choice. `attention8 readiness --participant sub-001
 --participant sub-002` prints the subject-by-subject command checklist and the
 current training dependency readiness.
+
+`attention8 pilot-suite` prints a Windows-friendly dry-electrode suite for
+three practical checks: a light online model-system smoke test, a calibration
+and post-calibration online task, and a 100-trial deliberate-inattention
+challenge. With `--write-configs`, it writes phase configs under
+`data/attention8_pilot_suite/<participant>/configs/`. These configs keep
+posterior-alpha/resting/closed-eyes baseline paths disabled. Challenge cue
+trials are shown in the task and recorded into task events and the stimulus
+manifest for later analysis, but they are not included in prediction-time model
+metadata.
 
 Online adaptation is explicit opt-in with `attention8 online
 --enable-adaptation`. The realtime worker still writes each prediction before
