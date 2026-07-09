@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import importlib.util
 import os
@@ -8,11 +10,13 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
 
 from eegle.analysis.classification import evaluate_classifier_session, replay_classifier_session
+from eegle import cli as eegle_cli
 from eegle.config import load_config
 from eegle.hardware.system import CheckResult
 from eegle.pipelines import attention8 as attention8_pipeline
@@ -503,6 +507,46 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(source, "stimulus_manifest")
         self.assertEqual(path.name, "stimulus_manifest.json")
         self.assertEqual(len(markers), 12)
+
+    def test_extract_epochs_cli_uses_session_parameters_when_default_config_would_be_wrong(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp)
+            parameters = {
+                "realtime": {
+                    "epoching": {
+                        "enabled": True,
+                        "marker_prefix": "go_nogo_stimulus_onset",
+                        "tmin_seconds": -2.0,
+                        "tmax_seconds": 0.0,
+                        "data_source": "causal_preprocessed",
+                    }
+                }
+            }
+            (session / "parameters.json").write_text(json.dumps(parameters), encoding="utf-8")
+            args = SimpleNamespace(
+                session_dir=str(session),
+                source="stimulus_manifest",
+                output_dir=None,
+                tmin=None,
+                tmax=None,
+                marker_prefix=None,
+                log_level=None,
+                quiet=False,
+                trace=False,
+                config=str(eegle_cli.DEFAULT_CONFIG),
+            )
+            default_config = load_config(eegle_cli.DEFAULT_CONFIG)
+
+            with patch("eegle.cli.extract_epochs_for_session") as extract, contextlib.redirect_stdout(io.StringIO()):
+                extract.return_value = {"status": "ok", "raw_file_unchanged": True}
+                status = eegle_cli.cmd_extract_epochs(args, default_config)
+
+            effective_config = extract.call_args.args[1]
+
+        self.assertEqual(status, 0)
+        self.assertEqual(effective_config["realtime"]["epoching"]["tmin_seconds"], -2.0)
+        self.assertEqual(effective_config["realtime"]["epoching"]["tmax_seconds"], 0.0)
+        self.assertEqual(effective_config["realtime"]["epoching"]["data_source"], "causal_preprocessed")
 
     def test_missing_optional_training_dependencies_fail_cleanly(self) -> None:
         missing = {

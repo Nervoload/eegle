@@ -178,7 +178,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--source",
         choices=["auto", "markers_jsonl", "events_jsonl", "stimulus_manifest"],
         default="auto",
-        help="Marker source to use. auto prefers realtime LSL markers, then stimulus manifest, then task events.",
+        help="Marker source to use. auto uses realtime LSL markers when sufficiently complete, otherwise the fuller task manifest/events.",
     )
     epochs.add_argument("--output-dir", default=None, help="Derived epoch output directory; defaults to <session>/realtime/epochs")
     epochs.add_argument("--tmin", type=float, default=None, help="Epoch start in seconds relative to marker")
@@ -442,6 +442,13 @@ def cmd_analyze_erp(args: argparse.Namespace, config: dict[str, Any]) -> int:
 
 
 def cmd_extract_epochs(args: argparse.Namespace, config: dict[str, Any]) -> int:
+    session_dir = Path(args.session_dir)
+    session_parameters = session_dir / "parameters.json"
+    config_path = str(config.get("_config_path") or "")
+    using_default_config = config_path == str(DEFAULT_CONFIG.resolve())
+    if session_parameters.exists() and (not hasattr(args, "config") or using_default_config):
+        config = load_config(session_parameters)
+        config = apply_cli_telemetry_overrides(config, args)
     realtime = dict(config.get("realtime", {}))
     epoching = dict(realtime.get("epoching", {}))
     if args.tmin is not None:
@@ -454,7 +461,7 @@ def cmd_extract_epochs(args: argparse.Namespace, config: dict[str, Any]) -> int:
     effective_config = dict(config)
     effective_config["realtime"] = realtime
     manifest = extract_epochs_for_session(
-        Path(args.session_dir),
+        session_dir,
         effective_config,
         source=args.source,
         output_dir=args.output_dir,

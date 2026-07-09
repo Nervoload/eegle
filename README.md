@@ -749,6 +749,13 @@ Train from the calibration session, not a post-calibration online session. If
 `attention8 train` attempts epoch export before fitting models. Sparse realtime
 marker logs no longer mask fuller task manifests during offline export, and
 epoch rejection reasons are summarized in `realtime/epochs/manifest.json`.
+For sessions collected before this fix, rerun epoch export with the session
+parameters explicitly:
+
+```powershell
+eegle extract-epochs --config "$Cal\parameters.json" --session-dir $Cal --source stimulus_manifest
+attention8 train --session-dir $Cal --support-trials 50
+```
 
 Online adaptation is explicit opt-in with `attention8 online
 --enable-adaptation`. The realtime worker still writes each prediction before

@@ -116,6 +116,14 @@ export epochs first. When a realtime marker log is sparse, offline export falls
 back to the fuller task stimulus manifest and records epoch rejection counts in
 `realtime\epochs\manifest.json`.
 
+When salvaging a session collected before this fix, explicitly use that
+session's parameters so the attention8 pre-stimulus epoch window is preserved:
+
+```powershell
+eegle extract-epochs --config "$Cal\parameters.json" --session-dir $Cal --source stimulus_manifest
+attention8 train --session-dir $Cal --support-trials 50
+```
+
 Online adaptation writes session artifacts such as
 `realtime\adaptation_updates.jsonl` and `realtime\adaptation_state\`; it does
 not mutate the source model bundle in place during the task.
