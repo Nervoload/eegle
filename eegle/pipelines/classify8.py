@@ -5,13 +5,14 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 from eegle.analysis.classification import evaluate_classifier_session, replay_classifier_session
 from eegle.analysis.html_summary import generate_experiment_html_report
 from eegle.analysis.reports import analyze_session
-from eegle.config import load_config
+from eegle.config import load_config, resolve_path
 from eegle.experiment import ForwardExperimentRunner
 from eegle.hardware.capabilities import check_training_ready, missing_training_packages
 from eegle.ml.registry import get_model_spec, list_model_kinds, resolve_model_kind
@@ -89,6 +90,14 @@ def _run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--task-mode", choices=["psychopy", "dry-run"], default="psychopy")
     parser.add_argument("--skip-eeg", action="store_true")
     parser.add_argument("--allow-missing-eeg", action="store_true")
+    parser.add_argument(
+        "--session-root",
+        default=None,
+        help=(
+            "Override runtime.session_root for generated session data. "
+            "Use a writable path on locked-down Windows machines, e.g. $env:LOCALAPPDATA\\EEGle\\data."
+        ),
+    )
 
 
 def collect(args: argparse.Namespace) -> dict[str, Any]:
@@ -351,6 +360,8 @@ def _classifier_config(config: dict[str, Any]) -> dict[str, Any]:
 
 def _run_forward(config: dict[str, Any], args: argparse.Namespace) -> Any:
     effective = copy.deepcopy(config)
+    _apply_session_root_override(effective, args)
+    _probe_session_root_writable(effective)
     if bool(args.skip_eeg):
         effective["processes"]["realtime_processor"]["enabled"] = False
         effective["processes"]["realtime_processor"]["backend"] = "disabled"
@@ -367,6 +378,40 @@ def _run_forward(config: dict[str, Any], args: argparse.Namespace) -> Any:
         record_eeg=not bool(args.skip_eeg),
         require_eeg=not bool(args.skip_eeg) and not bool(args.allow_missing_eeg),
     ).run()
+
+
+def _apply_session_root_override(config: dict[str, Any], args: argparse.Namespace) -> None:
+    session_root = getattr(args, "session_root", None)
+    if session_root is None or str(session_root).strip() == "":
+        return
+    config.setdefault("runtime", {})["session_root"] = str(Path(str(session_root)).expanduser())
+
+
+def _probe_session_root_writable(config: dict[str, Any]) -> None:
+    root = resolve_path(config.get("runtime", {}).get("session_root", "data"))
+    probe_dir = root / ".eegle_write_probe"
+    probe_file = probe_dir / f"{os.getpid()}.tmp"
+    try:
+        probe_dir.mkdir(parents=True, exist_ok=True)
+        probe_file.write_text("ok\n", encoding="utf-8")
+        probe_file.unlink(missing_ok=True)
+        try:
+            probe_dir.rmdir()
+        except OSError:
+            pass
+    except PermissionError as exc:
+        raise PermissionError(_session_root_error_message(root, exc)) from exc
+    except OSError as exc:
+        raise OSError(_session_root_error_message(root, exc)) from exc
+
+
+def _session_root_error_message(root: Path, exc: OSError) -> str:
+    return (
+        f"session root is not writable by the current Python process: {root} "
+        f"({type(exc).__name__}: {exc}). "
+        "Choose an approved data location with --session-root, for example "
+        "$env:LOCALAPPDATA\\EEGle\\data on Windows, then rerun the same attention8 command."
+    )
 
 
 if __name__ == "__main__":

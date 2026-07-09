@@ -15,6 +15,7 @@ from eegle.analysis.classification import evaluate_classifier_session, replay_cl
 from eegle.config import load_config
 from eegle.hardware.system import CheckResult
 from eegle.pipelines import attention8 as attention8_pipeline
+from eegle.pipelines import classify8 as classify8_pipeline
 from eegle.pipelines.classify8 import _validate_online_model_bundles, build_parser, train as classify8_train
 from eegle.realtime.classification import (
     assess_epoch_quality,
@@ -618,6 +619,8 @@ class ClassificationTests(unittest.TestCase):
                     "C:\\Models\\attention8",
                     "--output-dir",
                     str(root),
+                    "--session-root",
+                    "C:\\EEGleData",
                     "--write-configs",
                     "--challenge-cue-trials",
                     "10,20",
@@ -636,10 +639,43 @@ class ClassificationTests(unittest.TestCase):
         self.assertTrue(result["no_resting_or_closed_eyes_baseline"])
         self.assertIn("challenge_100", result["phases"])
         self.assertIn("C:\\Models\\attention8", result["phases"]["smoke"]["commands"][1])
+        self.assertEqual(result["session_root"], "C:\\EEGleData")
+        self.assertIn("--session-root C:\\EEGleData", result["phases"]["smoke"]["commands"][1])
+        self.assertEqual(challenge["runtime"]["session_root"], "C:\\EEGleData")
         self.assertEqual(challenge["tasks"]["go_nogo"]["trials"], 100)
         self.assertEqual(challenge["tasks"]["go_nogo"]["attention_challenge"]["cue_trials"], [10, 20])
         self.assertEqual(challenge["tasks"]["go_nogo"]["attention_challenge"]["window_trials"], 3)
         self.assertFalse(challenge["realtime"]["alpha"]["enabled"])
+
+    def test_classify8_run_forward_applies_session_root_before_startup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session_root = Path(tmp) / "approved-data"
+            args = classify8_pipeline.build_parser().parse_args(
+                [
+                    "collect",
+                    "--participant",
+                    "unit",
+                    "--session-root",
+                    str(session_root),
+                    "--skip-eeg",
+                ]
+            )
+            config = {
+                "runtime": {"session_root": "data"},
+                "experiment": {"components": {}},
+                "processes": {"realtime_processor": {}, "dashboard": {}},
+                "realtime": {"inference": {}},
+            }
+
+            with patch("eegle.pipelines.classify8.ForwardExperimentRunner") as runner:
+                runner.return_value.run.return_value = "ran"
+                result = classify8_pipeline._run_forward(config, args)
+
+            effective = runner.call_args.args[0]
+            self.assertEqual(result, "ran")
+            self.assertEqual(effective["runtime"]["session_root"], str(session_root))
+            self.assertTrue(session_root.exists())
+            self.assertFalse((session_root / ".eegle_write_probe").exists())
 
     def test_classify8_train_skips_model_with_structured_missing_dependency(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -185,6 +185,14 @@ def build_parser() -> argparse.ArgumentParser:
     suite_parser.add_argument("--participant", required=True)
     suite_parser.add_argument("--model-dir", default=None, help="Existing attention8 model directory for smoke/challenge phases")
     suite_parser.add_argument("--output-dir", default=None, help="Where --write-configs stores generated suite configs")
+    suite_parser.add_argument(
+        "--session-root",
+        default=None,
+        help=(
+            "Session data root to put into generated phase configs and commands. "
+            "Use a writable Windows location such as $env:LOCALAPPDATA\\EEGle\\data when Documents is restricted."
+        ),
+    )
     suite_parser.add_argument("--write-configs", action="store_true", help="Write phase-specific configs for Windows runs")
     suite_parser.add_argument("--smoke-trials", type=int, default=24)
     suite_parser.add_argument("--calibration-trials", type=int, default=240)
@@ -208,6 +216,14 @@ def _run_arguments(parser: argparse.ArgumentParser, *, trials: int) -> None:
     parser.add_argument("--task-mode", choices=["psychopy", "dry-run"], default="psychopy")
     parser.add_argument("--skip-eeg", action="store_true")
     parser.add_argument("--allow-missing-eeg", action="store_true")
+    parser.add_argument(
+        "--session-root",
+        default=None,
+        help=(
+            "Override runtime.session_root for generated session data. "
+            "Use a writable path on locked-down Windows machines, e.g. $env:LOCALAPPDATA\\EEGle\\data."
+        ),
+    )
 
 
 def collect(args: argparse.Namespace) -> dict[str, Any]:
@@ -444,7 +460,14 @@ def pilot_suite(args: argparse.Namespace) -> dict[str, Any]:
     if not cue_trials:
         raise ValueError("--challenge-cue-trials must include at least one trial")
     base_config = load_config(args.config)
-    output_root = Path(args.output_dir).expanduser().resolve() if args.output_dir else Path("data") / "attention8_pilot_suite" / participant
+    session_root = _session_root_override(args)
+    if session_root is not None:
+        base_config.setdefault("runtime", {})["session_root"] = session_root
+    output_root = (
+        Path(args.output_dir).expanduser().resolve()
+        if args.output_dir
+        else Path(session_root or "data") / "attention8_pilot_suite" / participant
+    )
     config_dir = output_root / "configs"
     config_paths = {
         "smoke": config_dir / "attention8_smoke.json",
@@ -461,6 +484,7 @@ def pilot_suite(args: argparse.Namespace) -> dict[str, Any]:
     command_prefix = str(args.command_prefix).strip() or "attention8"
     model_dir = str(args.model_dir or "<existing-or-calibrated-attention8-model-dir>")
     calibrated_model_dir = "<calibration-session>\\models\\attention8"
+    session_root_arg = "" if session_root is None else f" --session-root {_windows_path(Path(session_root))}"
     suite = {
         "schema_version": 1,
         "status": "ok",
@@ -478,6 +502,7 @@ def pilot_suite(args: argparse.Namespace) -> dict[str, Any]:
             "note": "Online adaptation stores session-specific update/state artifacts; it does not mutate the source model bundle in place.",
         },
         "config_paths": {name: _windows_path(path) for name, path in config_paths.items()},
+        "session_root": session_root,
         "configs_written": bool(args.write_configs),
         "operator_notes": [
             "Run pilot-suite with --write-configs before copying the printed phase commands into PowerShell.",
@@ -495,7 +520,7 @@ def pilot_suite(args: argparse.Namespace) -> dict[str, Any]:
                     (
                         f"{command_prefix} online --config {_windows_path(config_paths['smoke'])} --participant {participant}-smoke "
                         f"--model-dir {model_dir} --primary causal_bandpower_logreg --shadow foundation_prototype "
-                        f"--trials {int(args.smoke_trials)} --enable-adaptation --adapt-shadows"
+                        f"--trials {int(args.smoke_trials)} --enable-adaptation --adapt-shadows{session_root_arg}"
                     ),
                     f"{command_prefix} evaluate --session-dir <smoke-online-session>",
                 ],
@@ -504,7 +529,7 @@ def pilot_suite(args: argparse.Namespace) -> dict[str, Any]:
                 "goal": "Collect enough subject-specific dry-electrode data and store calibrated attention8 bundles.",
                 "trials": int(args.calibration_trials),
                 "commands": [
-                    f"{command_prefix} collect --config {_windows_path(config_paths['calibration'])} --participant {participant} --trials {int(args.calibration_trials)}",
+                    f"{command_prefix} collect --config {_windows_path(config_paths['calibration'])} --participant {participant} --trials {int(args.calibration_trials)}{session_root_arg}",
                     f"{command_prefix} train --session-dir <calibration-session> --support-trials 50",
                     f"{command_prefix} compare --session-dir <calibration-session> --method log-reg --method riemann --method lora --method film",
                 ],
@@ -516,7 +541,7 @@ def pilot_suite(args: argparse.Namespace) -> dict[str, Any]:
                     (
                         f"{command_prefix} online --config {_windows_path(config_paths['post_calibration'])} --participant {participant}-postcal "
                         f"--model-dir {calibrated_model_dir} --primary causal_bandpower_logreg --shadow foundation_prototype "
-                        f"--trials {int(args.post_calibration_trials)} --enable-adaptation --adapt-shadows"
+                        f"--trials {int(args.post_calibration_trials)} --enable-adaptation --adapt-shadows{session_root_arg}"
                     ),
                     f"{command_prefix} evaluate --session-dir <post-calibration-online-session>",
                     f"{command_prefix} compare --session-dir <calibration-session> --online-session-dir <post-calibration-online-session>",
@@ -531,7 +556,7 @@ def pilot_suite(args: argparse.Namespace) -> dict[str, Any]:
                     (
                         f"{command_prefix} online --config {_windows_path(config_paths['challenge'])} --participant {participant}-challenge "
                         f"--model-dir {model_dir if args.model_dir else calibrated_model_dir} --primary causal_bandpower_logreg "
-                        f"--shadow foundation_prototype --trials {int(args.challenge_trials)} --enable-adaptation --adapt-shadows"
+                        f"--shadow foundation_prototype --trials {int(args.challenge_trials)} --enable-adaptation --adapt-shadows{session_root_arg}"
                     ),
                     f"{command_prefix} evaluate --session-dir <challenge-online-session>",
                 ],
@@ -539,6 +564,13 @@ def pilot_suite(args: argparse.Namespace) -> dict[str, Any]:
         },
     }
     return suite
+
+
+def _session_root_override(args: argparse.Namespace) -> str | None:
+    value = getattr(args, "session_root", None)
+    if value is None or str(value).strip() == "":
+        return None
+    return str(Path(str(value)).expanduser())
 
 
 def protocol(args: argparse.Namespace) -> dict[str, Any]:

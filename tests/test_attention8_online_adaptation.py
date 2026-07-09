@@ -47,12 +47,15 @@ class Attention8OnlineAdaptationTests(unittest.TestCase):
                 "composite_lapse",
                 "--min-correct-go-rts-for-threshold",
                 "5",
+                "--session-root",
+                "C:\\EEGleData",
             ]
         )
 
         self.assertTrue(args.enable_adaptation)
         self.assertEqual(args.adaptation_label_mode, "composite_lapse")
         self.assertEqual(args.min_correct_go_rts_for_threshold, 5)
+        self.assertEqual(args.session_root, "C:\\EEGleData")
 
     def test_slow_go_rt_labeler_uses_only_past_correct_go_rts(self) -> None:
         labeler = OnlineAttentionLapseLabeler(

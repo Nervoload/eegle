@@ -726,6 +726,21 @@ trials are shown in the task and recorded into task events and the stimulus
 manifest for later analysis, but they are not included in prediction-time model
 metadata.
 
+On locked-down Windows desktops, do not try to bypass access control. Choose a
+data root that the current user is allowed to write and pass it through the
+suite:
+
+```powershell
+$EegleData = Join-Path $env:LOCALAPPDATA "EEGle\data"
+attention8 pilot-suite --participant sub-0001 --session-root $EegleData --write-configs
+attention8 online --config <phase-config> --participant sub-0001-postcal --model-dir <model-dir> --session-root $EegleData
+```
+
+`attention8 collect` and `attention8 online` probe the selected session root
+before launching worker subprocesses. If Windows blocks writes, the command
+fails before the realtime processor starts and prints the path to replace with
+`--session-root`.
+
 Online adaptation is explicit opt-in with `attention8 online
 --enable-adaptation`. The realtime worker still writes each prediction before
 behavior is available, then consumes the task's delayed

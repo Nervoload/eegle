@@ -78,6 +78,22 @@ Generate the three-phase suite configs and PowerShell commands:
 attention8 pilot-suite --participant sub-001 --model-dir <existing-or-calibrated-attention8-model-dir> --write-configs
 ```
 
+If Windows Controlled Folder Access, enterprise policy, OneDrive redirection,
+or antivirus rules block writes under `Documents\Codespaces\eegle\data`, choose
+an approved user-writable data root and pass it explicitly:
+
+```powershell
+$EegleData = Join-Path $env:LOCALAPPDATA "EEGle\data"
+attention8 pilot-suite --participant sub-001 --session-root $EegleData --model-dir <existing-or-calibrated-attention8-model-dir> --write-configs
+attention8 online --config <phase-config> --participant sub-001-postcal --model-dir <model-dir> --session-root $EegleData
+```
+
+This does not bypass Windows security policy. It keeps the same session layout
+and worker subprocesses, but points generated session data at a location the
+current user is allowed to write. `attention8 collect` and `attention8 online`
+probe the selected root before realtime startup so an access denial is reported
+before the task window begins.
+
 The emitted phases are:
 
 - `smoke`: 24 trials, no resting or closed-eyes baseline, loads the chosen model
