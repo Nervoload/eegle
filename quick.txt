@@ -1,168 +1,137 @@
-[feedback_manager] offline_analyzer exited
-[feedback_manager] Feedback manager summary: failed
-[feedback_manager] Offline analyzer complete
-[experiment] Experiment failed: C:\Users\Surettej\Documents\Codespace\eegle\data\participants\sub-001\sessions\2026-07-09\attention8_dry_electrode_calibration\go_nogo\run-20260709T114356
-{
-  "epochs": {
-    "channel_names": [
-      "Fz",
-      "Cz",
-      "Pz",
-      "C3",
-      "C4",
-      "P3",
-      "P4",
-      "Oz"
-    ],
-    "created_at": "2026-07-09T11:51:23",
-    "data_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356\\realtime\\epochs\\epochs.npz",
-    "data_key": "X",
-    "data_layout": "epochs_x_channels_x_samples",
-    "epoch_count": 1,
-    "epoch_shape": [
-      1,
-      8,
-      1001
-    ],
-    "epoch_timestamp_key": "epoch_timestamps",
-    "epoching_config": {
-      "data_source": "causal_preprocessed",
-      "drop_incomplete": true,
-      "enabled": true,
-      "include_practice_trials": false,
-      "marker_prefix": "go_nogo_stimulus_onset",
-      "sample_tolerance_seconds": 0.01,
-      "timebase": "lsl",
-      "tmax_seconds": 0.0,
-      "tmin_seconds": -2.0
-    },
-    "label_key": "y",
-    "marker_source_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356\\realtime\\markers.jsonl",
-    "marker_source_sha256": "5636718b2333fa216fd82be22f167b72237d3884d65ef0df872c8aa6e8bbb5b9",
-    "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356\\realtime\\epochs\\epochs.jsonl",
-    "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356\\raw\\eeg.csv",
-    "raw_file_unchanged": true,
-    "raw_sha256": "7cd867ac127d019af0d71dc72e6cd1e63e7a1ec78a4dc054275bbeaa599eb144",
-    "raw_sha256_after_epoch_export": "7cd867ac127d019af0d71dc72e6cd1e63e7a1ec78a4dc054275bbeaa599eb144",
-    "rejected_count": 17,
-    "relative_time_key": "times",
-    "sample_rate_hz": 500.0,
-    "schema_version": 1,
-    "source": "markers_jsonl",
-    "status": "ok",
-    "timestamp_column": "lsl_timestamp"
+PS C:\Users\Surettej\Documents\Codespace\eegle> eegle extract-epochs --session-dir $Cal --source stimulus_manifest                                              
+{                                                   
+  "channel_names": [
+    "Fz",
+    "Cz",
+    "Pz",
+    "C3",
+    "C4",
+    "P3",
+    "P4",
+    "Oz"
+  ],
+  "created_at": "2026-07-09T14:22:06",
+  "data_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356\\realtime\\epochs\\epochs.npz",
+  "data_key": "X",
+  "data_layout": "epochs_x_channels_x_samples",
+  "epoch_count": 1,
+  "epoch_shape": [
+    1,
+    8,
+    501
+  ],
+  "epoch_timestamp_key": "epoch_timestamps",
+  "epoching_config": {
+    "data_source": "raw",
+    "drop_incomplete": true,
+    "enabled": true,
+    "include_practice_trials": false,
+    "marker_prefix": "go_nogo_stimulus_onset",
+    "sample_tolerance_seconds": 0.01,
+    "timebase": "local_received",
+    "tmax_seconds": 0.8,
+    "tmin_seconds": -0.2
   },
-  "forward": {
-    "analysis": {
-      "alpha": {
-        "alpha_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356\\realtime\\alpha_power.jsonl",
-        "calibration": null,
-        "offline_alpha": {
-          "band": {
-            "high_hz": 12.0,
-            "low_hz": 8.0
-          },
-          "channel_count": 8,
-          "file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356\\reports\\alpha\\offline_alpha_timeseries.csv",
-          "posterior_channels": [
-            "Fz",
-            "Cz",
-            "Pz",
-            "C3",
-            "C4",
-            "P3",
-            "P4",
-            "Oz"
-          ],
-          "status": "ok",
-          "step_seconds": 0.1,
-          "window_count": 490,
-          "window_seconds": 1.0
-        },
-        "reason": "no realtime alpha estimates found",
-        "staged_alpha_quality": {
-          "alpha_erd_percent_max": null,
-          "alpha_erd_percent_min": null,
-          "alpha_erd_percent_std": null,
-          "erd_estimate_count": 0,
-          "estimate_count": 0,
-          "readiness_estimate_count": 0,
-          "readiness_power_max": null,
-          "readiness_power_min": null,
-          "readiness_power_std": null,
-          "reasons": [
-            "readiness_alpha_missing",
-            "alpha_erd_missing"
-          ],
-          "source": "inhibition8_staged_event_features",
-          "status": "missing",
-          "usable": false,
-          "valid_fraction": 0.0
-        },
-        "status": "missing",
-        "trial_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356\\events\\stimulus_manifest.json"
-      },
-      "analysis_status": {
-        "alpha": "missing",
-        "bids_export": "pending_raw_eeg",
-        "classification": "disabled",
-        "epochs": "missing",
-        "erp": "disabled",
-        "exploratory_feature_behavior": "disabled",
-        "html_report": "ok",
-        "power_bands": "pending_raw_eeg",
-        "realtime_feature_quality": null,
-        "realtime_feature_replay": "missing",
-        "scalp_maps": "pending_raw_eeg"
-      },
-      "behavior": {
-        "mean_rt_seconds": 0.3735452491711428,
-        "median_rt_seconds": 0.3586452999879839,
-        "misses": 0,
-        "premature_responses": 0,
-        "responses": 181,
-        "status": "ok",
-        "too_fast_responses": 0,
-        "trials": 240
-      },
-      "behavior_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356\\events\\behavior.csv",
-      "classification": {
-        "status": "disabled"
-      },
-      "epochs": {
-        "manifest_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356\\realtime\\epochs\\manifest.json",
-        "status": "missing"
-      },
-
-
-
-       PS C:\Users\Surettej\Documents\Codespace\eegle> attention8 train --session-dir "C:\Users\Surettej\Documents\Codespace\eegle\data\participants\sub-001-postcal\sessions\2026-07-09\attention8_dry_electrode_post_calibration_online\go_nogo\run-20260709T112623" --support-trials 50                                                                                                           
-{                                                                                                      
+  "label_key": "y",
+  "marker_source_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356\\events\\stimulus_manifest.json",
+  "marker_source_sha256": "dfb0f55c23a3822bd1671773aa30bfc94c5782fa077792106a99a00de82736bf",
+  "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356\\realtime\\epochs\\epochs.jsonl",
+  "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356\\raw\\eeg.csv",
+  "raw_file_unchanged": true,
+  "raw_sha256": "7cd867ac127d019af0d71dc72e6cd1e63e7a1ec78a4dc054275bbeaa599eb144",
+  "raw_sha256_after_epoch_export": "7cd867ac127d019af0d71dc72e6cd1e63e7a1ec78a4dc054275bbeaa599eb144",
+  "rejected_count": 239,
+  "rejection_reasons": {
+    "waiting for post-stimulus EEG samples": 239
+  },
+  "relative_time_key": "times",
+  "sample_rate_hz": 500.0,
+  "schema_version": 1,
+  "source": "stimulus_manifest",
+  "status": "ok",
+  "timestamp_column": "local_received_time"
+}
+(.venv) PS C:\Users\Surettej\Documents\Codespace\eegle> attention8 train --session-dir $Cal --support-trials 50 
+{
   "attention_lapse_label": "slow_go_rt",
-  "model_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-postcal\\sessions\\2026-07-09\\attention8_dry_electrode_post_calibration_online\\go_nogo\\run-20260709T112623\\models\\attention8",
-  "models": {
-    "causal_bandpower_logreg": {
-      "error": "ValueError: epochs.npz does not exist: C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-postcal\\sessions\\2026-07-09\\attention8_dry_electrode_post_calibration_online\\go_nogo\\run-20260709T112623\\realtime\\epochs\\epochs.npz",
-      "model_kind": "causal_bandpower_logreg",
-      "status": "failed"
+  "epoch_preparation": {
+    "epochs_npz": [],
+    "operator_notes": [
+      "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356 has only 1 usable epoch(s) after export; need at least 2 before training. Inspect realtime/epochs/manifest.json and realtime/epochs/epochs.jsonl for rejection reasons.",
+      "Run attention8 collect for calibration sessions; online/post-calibration sessions may not contain exported training epochs."
+    ],
+    "reason": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356 has only 1 usable epoch(s) after export; need at least 2 before training. Inspect realtime/epochs/manifest.json and realtime/epochs/epochs.jsonl for rejection reasons.",
+    "session_dirs": [
+      "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356"
+    ],
+    "sessions": [
+      {
+        "epochs_npz": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356\\realtime\\epochs\\epochs.npz",
+        "exported": false,
+        "rejected_epoch_count": 239,
+        "rejection_reasons": {
+          "waiting for post-stimulus EEG samples": 239
+        },
+        "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356",
+        "usable_epoch_count": 1
+      }
+    ],
+    "status": "failed"
+  },
+  "model_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356\\models\\attention8",
+  "models": {},
+  "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356",
+  "session_dirs": [
+    "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356"
+  ],
+  "slow_rt_quantile": 0.8,
+  "status": "failed",
+  "support_trials": 50,
+  "target": "attention_lapse_binary",
+  "training_ready": {
+    "data": {
+      "missing": [],
+      "missing_by_kind": {
+        "causal_bandpower_logreg": [],
+        "foundation_head_logreg": [],
+        "foundation_prototype": [],
+        "riemann_tangent_logreg": [],
+        "torch_eegnet": []
+      },
+      "model_kinds": [
+        "causal_bandpower_logreg",
+        "riemann_tangent_logreg",
+        "torch_eegnet",
+        "foundation_head_logreg",
+        "foundation_prototype"
+      ],
+      "requirements": {
+        "causal_bandpower_logreg": [
+          "sklearn",
+          "joblib",
+          "scipy"
+        ],
+        "foundation_head_logreg": [
+          "sklearn",
+          "joblib"
+        ],
+        "foundation_prototype": [
+          "sklearn",
+          "joblib"
+        ],
+        "riemann_tangent_logreg": [
+          "sklearn",
+          "joblib",
+          "pyriemann"
+        ],
+        "torch_eegnet": [
+          "torch"
+        ]
+      }
     },
-    "foundation_head_logreg": {
-      "error": "ValueError: epochs.npz does not exist: C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-postcal\\sessions\\2026-07-09\\attention8_dry_electrode_post_calibration_online\\go_nogo\\run-20260709T112623\\realtime\\epochs\\epochs.npz",
-      "model_kind": "foundation_head_logreg",
-      "status": "failed"
-    },
-    "foundation_prototype": {
-      "error": "ValueError: epochs.npz does not exist: C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-postcal\\sessions\\2026-07-09\\attention8_dry_electrode_post_calibration_online\\go_nogo\\run-20260709T112623\\realtime\\epochs\\epochs.npz",
-      "model_kind": "foundation_prototype",
-      "status": "failed"
-    },
-    "riemann_tangent_logreg": {
-      "error": "ValueError: epochs.npz does not exist: C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-postcal\\sessions\\2026-07-09\\attention8_dry_electrode_post_calibration_online\\go_nogo\\run-20260709T112623\\realtime\\epochs\\epochs.npz",
-      "model_kind": "riemann_tangent_logreg",
-      "status": "failed"
-    },
-    "torch_eegnet": {
-      "error": "ValueError: epochs.npz does not exist: C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-postcal\\sessions\\2026-07-09\\attention8_dry_electrode_post_calibration_online\\go_nogo\\run-20260709T112623\\realtime\\epochs\\epochs.npz",
-      "model_kind": "torch_eegnet",
-      "status": "failed"
-    }
+    "detail": "training dependencies available",
+    "name": "training_ready",
+    "status": "ok"
+  },
+  "workflow": "attention8.train"
+}
