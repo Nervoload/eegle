@@ -133,3 +133,36 @@
         "manifest_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356\\realtime\\epochs\\manifest.json",
         "status": "missing"
       },
+
+
+
+       PS C:\Users\Surettej\Documents\Codespace\eegle> attention8 train --session-dir "C:\Users\Surettej\Documents\Codespace\eegle\data\participants\sub-001-postcal\sessions\2026-07-09\attention8_dry_electrode_post_calibration_online\go_nogo\run-20260709T112623" --support-trials 50                                                                                                           
+{                                                                                                      
+  "attention_lapse_label": "slow_go_rt",
+  "model_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-postcal\\sessions\\2026-07-09\\attention8_dry_electrode_post_calibration_online\\go_nogo\\run-20260709T112623\\models\\attention8",
+  "models": {
+    "causal_bandpower_logreg": {
+      "error": "ValueError: epochs.npz does not exist: C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-postcal\\sessions\\2026-07-09\\attention8_dry_electrode_post_calibration_online\\go_nogo\\run-20260709T112623\\realtime\\epochs\\epochs.npz",
+      "model_kind": "causal_bandpower_logreg",
+      "status": "failed"
+    },
+    "foundation_head_logreg": {
+      "error": "ValueError: epochs.npz does not exist: C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-postcal\\sessions\\2026-07-09\\attention8_dry_electrode_post_calibration_online\\go_nogo\\run-20260709T112623\\realtime\\epochs\\epochs.npz",
+      "model_kind": "foundation_head_logreg",
+      "status": "failed"
+    },
+    "foundation_prototype": {
+      "error": "ValueError: epochs.npz does not exist: C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-postcal\\sessions\\2026-07-09\\attention8_dry_electrode_post_calibration_online\\go_nogo\\run-20260709T112623\\realtime\\epochs\\epochs.npz",
+      "model_kind": "foundation_prototype",
+      "status": "failed"
+    },
+    "riemann_tangent_logreg": {
+      "error": "ValueError: epochs.npz does not exist: C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-postcal\\sessions\\2026-07-09\\attention8_dry_electrode_post_calibration_online\\go_nogo\\run-20260709T112623\\realtime\\epochs\\epochs.npz",
+      "model_kind": "riemann_tangent_logreg",
+      "status": "failed"
+    },
+    "torch_eegnet": {
+      "error": "ValueError: epochs.npz does not exist: C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-postcal\\sessions\\2026-07-09\\attention8_dry_electrode_post_calibration_online\\go_nogo\\run-20260709T112623\\realtime\\epochs\\epochs.npz",
+      "model_kind": "torch_eegnet",
+      "status": "failed"
+    }
