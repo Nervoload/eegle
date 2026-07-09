@@ -516,6 +516,27 @@ class RealtimeSynchronyTests(unittest.TestCase):
 
         self.assertIn("realtime_processor", failures)
 
+    def test_epoch_capture_without_inference_is_not_a_pipeline_failure(self) -> None:
+        failures = _pipeline_validity_failures(
+            {
+                "recorder": {"status": "stopped", "sample_count": 100},
+                "realtime_processor": {"status": "stopped", "sample_count": 100, "marker_count": 0, "epoch_count": 0},
+            },
+            {
+                "recorder": {"enabled": True},
+                "realtime_processor": {"enabled": True},
+            },
+            {
+                "realtime": {
+                    "inference": {"enabled": False},
+                    "epoching": {"enabled": True},
+                    "classifier": {"enabled": True},
+                }
+            },
+        )
+
+        self.assertNotIn("realtime_processor", failures)
+
     def test_recorder_validity_reads_nested_worker_summary(self) -> None:
         failures = _pipeline_validity_failures(
             {

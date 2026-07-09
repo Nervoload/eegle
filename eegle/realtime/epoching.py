@@ -554,6 +554,9 @@ def write_epoch_dataset(
 
     raw_hash_after = file_sha256(raw)
     marker_hash = file_sha256(marker_source_path) if marker_source_path and Path(marker_source_path).exists() else None
+    rejection_reasons: dict[str, int] = {}
+    for attempt in rejected:
+        rejection_reasons[attempt.reason] = rejection_reasons.get(attempt.reason, 0) + 1
     manifest = {
         "schema_version": 1,
         "status": "ok",
@@ -578,6 +581,7 @@ def write_epoch_dataset(
         "relative_time_key": "times",
         "epoch_timestamp_key": "epoch_timestamps",
         "epoch_shape": list(epoch_array.shape),
+        "rejection_reasons": rejection_reasons,
         "epoching_config": asdict(config),
     }
     manifest_path = target / "manifest.json"
@@ -612,16 +616,21 @@ def _load_session_markers(root: Path, source: str, config: EpochingConfig) -> tu
     if source != "auto":
         raise ValueError(f"unknown marker source '{source}'")
 
-    options = [
-        ("markers_jsonl", marker_jsonl, load_markers_jsonl(marker_jsonl, config)),
-        ("stimulus_manifest", stimulus_manifest, load_stimulus_manifest_markers(stimulus_manifest, config)),
-        ("events_jsonl", events_jsonl, load_events_jsonl(events_jsonl, config)),
+    loaded_options = [
+        ("markers_jsonl", marker_jsonl, list(load_markers_jsonl(marker_jsonl, config))),
+        ("stimulus_manifest", stimulus_manifest, list(load_stimulus_manifest_markers(stimulus_manifest, config))),
+        ("events_jsonl", events_jsonl, list(load_events_jsonl(events_jsonl, config))),
     ]
-    for name, path, markers in options:
-        markers_list = list(markers)
-        if markers_list:
-            return name, path, markers_list
-    return "auto", None, []
+    non_empty = [(name, path, markers) for name, path, markers in loaded_options if markers]
+    if not non_empty:
+        return "auto", None, []
+    markers_option = next((value for value in non_empty if value[0] == "markers_jsonl"), None)
+    if markers_option is not None:
+        strongest = max(non_empty, key=lambda value: len(value[2]))
+        if len(markers_option[2]) >= max(1, int(0.5 * len(strongest[2]))):
+            return markers_option
+        return strongest
+    return non_empty[0]
 
 
 def _unique_time_to_sample_index(times: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from eegle.config import merged_config, resolve_path, write_config
+from eegle.config import merged_config, resolve_path, resolve_session_root, write_config
 from eegle.hardware.system import system_snapshot
 from eegle.lsl import session_marker_source_id
 
@@ -68,7 +68,7 @@ def create_session(
     task_name = task or experiment.get("task", "pvt")
     participant = participant_id or experiment.get("participant_id", "example-participant")
     experiment_id = experiment.get("experiment_id", "experiment")
-    session_root = resolve_path(root or runtime.get("session_root", "data"))
+    session_root = resolve_session_root(config, root)
     now = datetime.now()
     run_stamp = now.strftime("run-%Y%m%dT%H%M%S")
     session_dir = (
@@ -146,6 +146,7 @@ def create_session(
         config,
         {
             "experiment": {"task": task_name, "participant_id": participant},
+            "runtime": {"session_root": str(session_root)},
             "hardware": {
                 "markers": {
                     "source_id": marker_source_id,

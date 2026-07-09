@@ -606,21 +606,30 @@ def _pipeline_validity_failures(
         failures["realtime_processor"] = "realtime alpha was enabled but produced no estimates"
     if bool(realtime_config.get("event_features", {}).get("enabled", False)) and _status_metric(realtime, "event_feature_packet_count") <= 0:
         failures["realtime_processor"] = "realtime staged event features were enabled but produced no packets"
-    if bool(realtime_config.get("epoching", {}).get("enabled", False)) and _status_metric(realtime, "marker_count") <= 0:
+    inference_enabled = bool(realtime_config.get("inference", {}).get("enabled", True))
+    if (
+        inference_enabled
+        and bool(realtime_config.get("epoching", {}).get("enabled", False))
+        and _status_metric(realtime, "marker_count") <= 0
+    ):
         failures["realtime_processor"] = "realtime epoching was enabled but received no task markers"
-    elif bool(realtime_config.get("epoching", {}).get("enabled", False)) and _status_metric(realtime, "epoch_count") <= 0:
+    elif (
+        inference_enabled
+        and bool(realtime_config.get("epoching", {}).get("enabled", False))
+        and _status_metric(realtime, "epoch_count") <= 0
+    ):
         failures["realtime_processor"] = "realtime epoching received markers but produced no usable epochs"
     elif (
         bool(realtime_config.get("epoching", {}).get("enabled", False))
         and bool(realtime_config.get("classifier", {}).get("enabled", False))
-        and bool(realtime_config.get("inference", {}).get("enabled", True))
+        and inference_enabled
         and _status_metric(realtime, "classifier_prediction_count") <= 0
         and _status_metric(realtime, "classifier_rejected_epoch_count") <= 0
     ):
         failures["realtime_processor"] = "classifier inference produced neither predictions nor explicit rejections"
     elif (
         bool(realtime_config.get("classifier", {}).get("enabled", False))
-        and bool(realtime_config.get("inference", {}).get("enabled", True))
+        and inference_enabled
         and (
             _status_metric(realtime, "classifier_predicted_epoch_count")
             + _status_metric(realtime, "classifier_rejected_epoch_count")

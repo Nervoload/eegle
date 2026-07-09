@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from eegle.cli import build_parser, cmd_check_setup
-from eegle.config import DEFAULT_CONFIG, load_config
+from eegle.config import DEFAULT_CONFIG, load_config, resolve_session_root
 from eegle.hardware.capabilities import (
     check_command_entrypoints,
     check_realtime_ready,
@@ -96,6 +96,22 @@ class PortabilityTests(unittest.TestCase):
                 self.assertEqual(os.environ["LOCALAPPDATA"], str(root / "local_appdata"))
                 self.assertEqual(os.environ["CLOSEDLOOP_ORIGINAL_USERPROFILE"], "C:\\Users\\RealUser")
                 self.assertTrue((root / "lsl_api.cfg").exists())
+
+    def test_eegle_session_root_env_overrides_default_session_data_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session_root = Path(tmp) / "approved-data"
+            config = {
+                "runtime": {"session_root": "data"},
+                "experiment": {"experiment_id": "test", "participant_id": "unit", "task": "go_nogo"},
+            }
+            with patch.dict(os.environ, {"EEGLE_SESSION_ROOT": str(session_root)}, clear=False):
+                self.assertEqual(os.path.realpath(resolve_session_root(config)), os.path.realpath(session_root))
+                paths = create_session(config, task="go_nogo", participant_id="unit")
+
+                written = load_config(paths.parameters)
+
+        self.assertTrue(os.path.realpath(paths.root).startswith(os.path.realpath(session_root)))
+        self.assertEqual(os.path.realpath(written["runtime"]["session_root"]), os.path.realpath(session_root))
 
     def test_console_command_visibility_is_reported_without_failing_preflight(self) -> None:
         with patch("eegle.hardware.capabilities.shutil.which", return_value=None):

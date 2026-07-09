@@ -12,7 +12,7 @@ from typing import Any
 from eegle.analysis.classification import evaluate_classifier_session, replay_classifier_session
 from eegle.analysis.html_summary import generate_experiment_html_report
 from eegle.analysis.reports import analyze_session
-from eegle.config import load_config, resolve_path
+from eegle.config import load_config, resolve_session_root
 from eegle.experiment import ForwardExperimentRunner
 from eegle.hardware.capabilities import check_training_ready, missing_training_packages
 from eegle.ml.registry import get_model_spec, list_model_kinds, resolve_model_kind
@@ -388,7 +388,7 @@ def _apply_session_root_override(config: dict[str, Any], args: argparse.Namespac
 
 
 def _probe_session_root_writable(config: dict[str, Any]) -> None:
-    root = resolve_path(config.get("runtime", {}).get("session_root", "data"))
+    root = resolve_session_root(config)
     probe_dir = root / ".eegle_write_probe"
     probe_file = probe_dir / f"{os.getpid()}.tmp"
     try:

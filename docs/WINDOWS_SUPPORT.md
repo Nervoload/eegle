@@ -84,15 +84,20 @@ an approved user-writable data root and pass it explicitly:
 
 ```powershell
 $EegleData = Join-Path $env:LOCALAPPDATA "EEGle\data"
+$env:EEGLE_SESSION_ROOT = $EegleData
 attention8 pilot-suite --participant sub-001 --session-root $EegleData --model-dir <existing-or-calibrated-attention8-model-dir> --write-configs
 attention8 online --config <phase-config> --participant sub-001-postcal --model-dir <model-dir> --session-root $EegleData
 ```
 
 This does not bypass Windows security policy. It keeps the same session layout
 and worker subprocesses, but points generated session data at a location the
-current user is allowed to write. `attention8 collect` and `attention8 online`
-probe the selected root before realtime startup so an access denial is reported
-before the task window begins.
+current user is allowed to write. `EEGLE_SESSION_ROOT` is honored by all new
+session creation, so setting it once keeps generated phase configs, calibration
+runs, online runs, and child worker paths on the approved data root. Regenerate
+pilot-suite configs after setting the variable if an older config still points
+at `Documents\Codespaces\eegle\data`. `attention8 collect` and
+`attention8 online` also probe the selected root before realtime startup so an
+access denial is reported before the task window begins.
 
 The emitted phases are:
 
@@ -103,6 +108,13 @@ The emitted phases are:
   adaptation state logging.
 - `challenge_100`: 100 trials with deliberate-inattention cue windows, default
   cue trials `20,40,60,80`.
+
+For training, point `attention8 train --session-dir` at the calibration session,
+not the post-calibration online session. If `epochs.npz` is missing but raw EEG,
+task events, and parameters are present, `attention8 train` will now try to
+export epochs first. When a realtime marker log is sparse, offline export falls
+back to the fuller task stimulus manifest and records epoch rejection counts in
+`realtime\epochs\manifest.json`.
 
 Online adaptation writes session artifacts such as
 `realtime\adaptation_updates.jsonl` and `realtime\adaptation_state\`; it does

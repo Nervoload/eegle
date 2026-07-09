@@ -9,15 +9,18 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from eegle.analysis.classification import evaluate_classifier_session, replay_classifier_session
 from eegle.analysis.html_summary import generate_experiment_html_report
 from eegle.analysis.reports import analyze_session
-from eegle.config import load_config
+from eegle.config import load_config, session_root_env_override
 from eegle.hardware.capabilities import check_training_ready, missing_training_packages
 from eegle.ml.registry import list_model_kinds, resolve_model_kind
 from eegle.ml.targets import SUPPORTED_TARGETS
 from eegle.pipelines import classify8
 from eegle.protocols import attention_lapse_protocol, write_protocol
+from eegle.realtime.epoching import extract_epochs_for_session
 from eegle.realtime.models import train_epoch_model
 
 
@@ -229,13 +232,19 @@ def _run_arguments(parser: argparse.ArgumentParser, *, trials: int) -> None:
 def collect(args: argparse.Namespace) -> dict[str, Any]:
     result = classify8.collect(args)
     root = _write_session_protocol(result)
-    return {**result, "workflow": "attention8.collect", "protocol_file": None if root is None else str(root / "protocol.json")}
+    calibration = _calibration_readiness(result.get("epochs"))
+    return {
+        **result,
+        "workflow": "attention8.collect",
+        "protocol_file": None if root is None else str(root / "protocol.json"),
+        "calibration_readiness": calibration,
+        "operator_notes": [*list(result.get("operator_notes", [])), *calibration.get("operator_notes", [])],
+    }
 
 
 def train(args: argparse.Namespace) -> dict[str, Any]:
     sessions = [Path(value).expanduser().resolve() for value in args.session_dir]
     session = sessions[0]
-    epochs = [value / "realtime" / "epochs" / "epochs.npz" for value in sessions]
     config = load_config(session / "parameters.json") if (session / "parameters.json").exists() else load_config(args.config)
     output_root = Path(args.output_dir).expanduser().resolve() if args.output_dir else session / "models" / "attention8"
     kinds = [resolve_model_kind(kind) for kind in (args.kind or list(DEFAULT_MODEL_KINDS))]
@@ -248,6 +257,23 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             "training_ready": readiness.__dict__,
         }
 
+    epoch_preparation = _prepare_training_epochs(sessions)
+    if epoch_preparation["status"] == "failed":
+        return {
+            "status": "failed",
+            "workflow": "attention8.train",
+            "session_dir": str(session),
+            "session_dirs": [str(value) for value in sessions],
+            "target": args.target,
+            "attention_lapse_label": args.attention_lapse_label,
+            "slow_rt_quantile": float(args.slow_rt_quantile),
+            "support_trials": int(args.support_trials),
+            "model_dir": str(output_root),
+            "training_ready": readiness.__dict__,
+            "epoch_preparation": epoch_preparation,
+            "models": {},
+        }
+    epochs = [Path(value) for value in epoch_preparation["epochs_npz"]]
     protocol_payload = attention_lapse_protocol().payload()
     results = {}
     for kind in kinds:
@@ -290,6 +316,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         "model_dir": str(output_root),
         "protocol": protocol_payload,
         "training_ready": readiness.__dict__,
+        "epoch_preparation": epoch_preparation,
         "models": results,
     }
 
@@ -303,7 +330,6 @@ def online(args: argparse.Namespace) -> dict[str, Any]:
 def compare(args: argparse.Namespace) -> dict[str, Any]:
     sessions = [Path(value).expanduser().resolve() for value in args.session_dir]
     session = sessions[0]
-    epochs = [value / "realtime" / "epochs" / "epochs.npz" for value in sessions]
     config = load_config(session / "parameters.json") if (session / "parameters.json").exists() else load_config(args.config)
     methods = _comparison_methods(args.method)
     kinds = [str(profile["model_kind"]) for profile in methods]
@@ -320,6 +346,26 @@ def compare(args: argparse.Namespace) -> dict[str, Any]:
             "online_reference": online_reference,
         }
 
+    epoch_preparation = _prepare_training_epochs(sessions)
+    if epoch_preparation["status"] == "failed":
+        summary = {
+            "schema_version": 1,
+            "status": "failed",
+            "workflow": "attention8.compare",
+            "session_dir": str(session),
+            "session_dirs": [str(value) for value in sessions],
+            "target": args.target,
+            "attention_lapse_label": args.attention_lapse_label,
+            "slow_rt_quantile": float(args.slow_rt_quantile),
+            "support_trials": int(args.support_trials),
+            "online_reference": online_reference,
+            "training_ready": readiness.__dict__,
+            "epoch_preparation": epoch_preparation,
+            "methods": {},
+        }
+        files = _write_comparison_outputs(output_root, summary)
+        return {**summary, "files": files}
+    epochs = [Path(value) for value in epoch_preparation["epochs_npz"]]
     results: dict[str, dict[str, Any]] = {}
     for profile in methods:
         method = str(profile["method"])
@@ -386,6 +432,7 @@ def compare(args: argparse.Namespace) -> dict[str, Any]:
         "support_trials": int(args.support_trials),
         "online_reference": online_reference,
         "training_ready": readiness.__dict__,
+        "epoch_preparation": epoch_preparation,
         "methods": results,
     }
     files = _write_comparison_outputs(output_root, summary)
@@ -569,8 +616,161 @@ def pilot_suite(args: argparse.Namespace) -> dict[str, Any]:
 def _session_root_override(args: argparse.Namespace) -> str | None:
     value = getattr(args, "session_root", None)
     if value is None or str(value).strip() == "":
+        value = session_root_env_override()
+    if value is None or str(value).strip() == "":
         return None
     return str(Path(str(value)).expanduser())
+
+
+def _calibration_readiness(epochs: Any, *, minimum_usable_epochs: int = 50) -> dict[str, Any]:
+    if not isinstance(epochs, dict):
+        return {
+            "status": "missing",
+            "usable_epoch_count": 0,
+            "minimum_usable_epochs": int(minimum_usable_epochs),
+            "operator_notes": ["No epoch export was produced; check raw EEG, realtime markers, and worker status files."],
+        }
+    usable = int(epochs.get("epoch_count") or 0)
+    rejected = int(epochs.get("rejected_count") or 0)
+    rejection_reasons = dict(epochs.get("rejection_reasons") or {})
+    total = usable + rejected
+    notes = []
+    if usable < int(minimum_usable_epochs):
+        notes.append(
+            f"Only {usable} usable attention8 epochs were exported from {total} marker attempts; "
+            f"collect more usable EEG/marker data before training."
+        )
+    if rejected > usable:
+        notes.append(
+            "Rejected epochs outnumber usable epochs; inspect realtime/epochs/epochs.jsonl for rejection reasons "
+            "and verify the dry electrode signal plus marker stream stayed connected."
+        )
+    if rejection_reasons:
+        notes.append(f"Epoch rejection reasons: {rejection_reasons}")
+    status = "ok" if usable >= int(minimum_usable_epochs) else ("degraded" if usable > 0 else "failed")
+    return {
+        "status": status,
+        "usable_epoch_count": usable,
+        "rejected_epoch_count": rejected,
+        "marker_attempt_count": total,
+        "rejection_reasons": rejection_reasons,
+        "minimum_usable_epochs": int(minimum_usable_epochs),
+        "operator_notes": notes,
+    }
+
+
+def _prepare_training_epochs(
+    sessions: list[Path],
+    *,
+    minimum_trainable_epochs: int = 2,
+) -> dict[str, Any]:
+    prepared = []
+    notes = []
+    for session in sessions:
+        epochs_npz = session / "realtime" / "epochs" / "epochs.npz"
+        manifest_path = session / "realtime" / "epochs" / "manifest.json"
+        exported = False
+        manifest: dict[str, Any] | None = None
+        if not epochs_npz.exists():
+            if not (session / "raw" / "eeg.csv").exists():
+                return _epoch_preparation_failure(
+                    sessions,
+                    f"epochs.npz is missing and raw/eeg.csv is not available for export: {session}",
+                )
+            if not (session / "parameters.json").exists():
+                return _epoch_preparation_failure(
+                    sessions,
+                    f"epochs.npz is missing and parameters.json is not available for export: {session}",
+                )
+            try:
+                manifest = extract_epochs_for_session(session, load_config(session / "parameters.json"), source="auto")
+                exported = True
+            except Exception as exc:
+                return _epoch_preparation_failure(
+                    sessions,
+                    f"could not export epochs for {session}: {type(exc).__name__}: {exc}",
+                )
+        if manifest is None and manifest_path.exists():
+            try:
+                with manifest_path.open("r", encoding="utf-8") as handle:
+                    manifest = json.load(handle)
+            except Exception:
+                manifest = None
+        if manifest is None and epochs_npz.exists():
+            try:
+                with np.load(epochs_npz, allow_pickle=True) as data:
+                    usable = int(np.asarray(data["X"]).shape[0])
+                manifest = {"epoch_count": usable, "rejected_count": 0, "rejection_reasons": {}}
+            except Exception:
+                manifest = None
+        usable = int((manifest or {}).get("epoch_count") or 0)
+        rejected = int((manifest or {}).get("rejected_count") or 0)
+        rejection_reasons = dict((manifest or {}).get("rejection_reasons") or {})
+        if exported:
+            notes.append(f"Exported epochs.npz from raw EEG and markers for {session}.")
+        if usable < minimum_trainable_epochs:
+            reason = (
+                f"{session} has only {usable} usable epoch(s) after export; "
+                f"need at least {minimum_trainable_epochs} before training. "
+                "Inspect realtime/epochs/manifest.json and realtime/epochs/epochs.jsonl for rejection reasons."
+            )
+            return _epoch_preparation_failure(
+                sessions,
+                reason,
+                prepared=[
+                    *prepared,
+                    {
+                        "session_dir": str(session),
+                        "epochs_npz": str(epochs_npz),
+                        "exported": exported,
+                        "usable_epoch_count": usable,
+                        "rejected_epoch_count": rejected,
+                        "rejection_reasons": rejection_reasons,
+                    },
+                ],
+            )
+        if usable < 50:
+            notes.append(
+                f"{session} has {usable} usable epoch(s); this is trainable for smoke tests but likely thin for calibration."
+            )
+        if rejection_reasons:
+            notes.append(f"{session} epoch rejection reasons: {rejection_reasons}")
+        prepared.append(
+            {
+                "session_dir": str(session),
+                "epochs_npz": str(epochs_npz),
+                "exported": exported,
+                "usable_epoch_count": usable,
+                "rejected_epoch_count": rejected,
+                "rejection_reasons": rejection_reasons,
+            }
+        )
+    return {
+        "status": "ok" if not notes else "degraded",
+        "session_dirs": [str(value) for value in sessions],
+        "epochs_npz": [item["epochs_npz"] for item in prepared],
+        "sessions": prepared,
+        "operator_notes": notes,
+    }
+
+
+def _epoch_preparation_failure(
+    sessions: list[Path],
+    reason: str,
+    *,
+    prepared: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    return {
+        "status": "failed",
+        "session_dirs": [str(value) for value in sessions],
+        "epochs_npz": [],
+        "sessions": list(prepared or []),
+        "reason": reason,
+        "operator_notes": [
+            reason,
+            "Run attention8 collect for calibration sessions; online/post-calibration sessions may not contain exported training epochs.",
+        ],
+    }
 
 
 def protocol(args: argparse.Namespace) -> dict[str, Any]:

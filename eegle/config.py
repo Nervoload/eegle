@@ -4,19 +4,38 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 from eegle.runtime import PROJECT_ROOT
 
 DEFAULT_CONFIG = PROJECT_ROOT / "configs" / "default_experiment.json"
+SESSION_ROOT_ENV_VARS = ("EEGLE_SESSION_ROOT", "CLOSEDLOOP_SESSION_ROOT")
 
 
 def resolve_path(path: str | Path) -> Path:
-    candidate = Path(path).expanduser()
+    candidate = Path(os.path.expandvars(str(path))).expanduser()
     if candidate.is_absolute():
         return candidate
     return (PROJECT_ROOT / candidate).resolve()
+
+
+def session_root_env_override() -> str | None:
+    for name in SESSION_ROOT_ENV_VARS:
+        value = os.environ.get(name)
+        if value is not None and value.strip():
+            return value
+    return None
+
+
+def resolve_session_root(config: dict[str, Any], root: str | Path | None = None) -> Path:
+    value = root
+    if value is None:
+        value = session_root_env_override()
+    if value is None:
+        value = config.get("runtime", {}).get("session_root", "data")
+    return resolve_path(value)
 
 
 def load_config(path: str | Path | None = None) -> dict[str, Any]:

@@ -732,14 +732,23 @@ suite:
 
 ```powershell
 $EegleData = Join-Path $env:LOCALAPPDATA "EEGle\data"
+$env:EEGLE_SESSION_ROOT = $EegleData
 attention8 pilot-suite --participant sub-0001 --session-root $EegleData --write-configs
 attention8 online --config <phase-config> --participant sub-0001-postcal --model-dir <model-dir> --session-root $EegleData
 ```
 
-`attention8 collect` and `attention8 online` probe the selected session root
-before launching worker subprocesses. If Windows blocks writes, the command
-fails before the realtime processor starts and prints the path to replace with
-`--session-root`.
+`EEGLE_SESSION_ROOT` is honored by all new session creation, so setting it once
+keeps generated phase configs, calibration runs, online runs, and child worker
+paths on the approved data root. `attention8 collect` and `attention8 online`
+also accept `--session-root` and probe the selected root before launching worker
+subprocesses. If Windows blocks writes, the command fails before the realtime
+processor starts and prints the path to replace.
+
+Train from the calibration session, not a post-calibration online session. If
+`realtime/epochs/epochs.npz` is missing but raw EEG and task events are present,
+`attention8 train` attempts epoch export before fitting models. Sparse realtime
+marker logs no longer mask fuller task manifests during offline export, and
+epoch rejection reasons are summarized in `realtime/epochs/manifest.json`.
 
 Online adaptation is explicit opt-in with `attention8 online
 --enable-adaptation`. The realtime worker still writes each prediction before

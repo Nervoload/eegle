@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import os
 import random
 import tempfile
 import threading
@@ -27,7 +28,7 @@ from eegle.realtime.classification import (
     write_model_bundle,
 )
 from eegle.realtime.demo_classifier import DEMO_DISCLOSURE, demo_config_from, demo_prediction_from_marker
-from eegle.realtime.epoching import EpochingConfig, MarkerEvent, RealtimeEpocher
+from eegle.realtime.epoching import EpochingConfig, MarkerEvent, RealtimeEpocher, _load_session_markers
 from eegle.realtime.event_features import EngineInputCaptureWriter
 from eegle.realtime.models import PreparedEpochCache, prepare_artifact_epoch, train_epoch_model
 from eegle.session import create_session
@@ -467,6 +468,42 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(rejected[0].reason, "worker_stopped_before_epoch_completed")
         self.assertEqual(epocher.pending_count, 0)
 
+    def test_auto_epoch_marker_source_uses_manifest_when_realtime_markers_are_sparse(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "realtime").mkdir()
+            (root / "events").mkdir()
+            realtime_rows = [
+                {"label": f"go_nogo_stimulus_onset_{trial}_go_square_blue", "lsl_timestamp": float(trial)}
+                for trial in range(1, 5)
+            ]
+            (root / "realtime" / "markers.jsonl").write_text(
+                "\n".join(json.dumps(row) for row in realtime_rows) + "\n",
+                encoding="utf-8",
+            )
+            manifest = {
+                "trials": [
+                    {
+                        "trial": trial,
+                        "onset_monotonic": float(trial),
+                        "stimulus_id": f"stim-{trial}",
+                        "stimulus": {"shape": "square", "color": "blue", "is_no_go": False},
+                    }
+                    for trial in range(1, 13)
+                ]
+            }
+            (root / "events" / "stimulus_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+            source, path, markers = _load_session_markers(
+                root,
+                "auto",
+                EpochingConfig(marker_prefix="go_nogo_stimulus_onset"),
+            )
+
+        self.assertEqual(source, "stimulus_manifest")
+        self.assertEqual(path.name, "stimulus_manifest.json")
+        self.assertEqual(len(markers), 12)
+
     def test_missing_optional_training_dependencies_fail_cleanly(self) -> None:
         missing = {
             "erp_roi_logreg": "sklearn",
@@ -533,6 +570,7 @@ class ClassificationTests(unittest.TestCase):
             session = root / "calibration"
             output = root / "comparison"
             (session / "realtime" / "epochs").mkdir(parents=True)
+            np.savez(session / "realtime" / "epochs" / "epochs.npz", X=np.zeros((4, 2, 3)))
             args = attention8_pipeline.build_parser().parse_args(
                 [
                     "compare",
@@ -607,6 +645,37 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual([row["participant"] for row in result["commands"]], ["sub-001", "sub-002"])
         self.assertIn("attention8 compare", result["commands"][0]["compare"])
 
+    def test_attention8_calibration_readiness_flags_too_few_usable_epochs(self) -> None:
+        result = attention8_pipeline._calibration_readiness(
+            {"epoch_count": 1, "rejected_count": 17, "rejection_reasons": {"epoch starts before EEG sample zero": 17}}
+        )
+
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["usable_epoch_count"], 1)
+        self.assertEqual(result["marker_attempt_count"], 18)
+        self.assertEqual(result["rejection_reasons"], {"epoch starts before EEG sample zero": 17})
+        self.assertIn("Only 1 usable attention8 epochs", result["operator_notes"][0])
+        self.assertIn("Rejected epochs outnumber", result["operator_notes"][1])
+        self.assertIn("epoch starts before EEG sample zero", result["operator_notes"][2])
+
+    def test_attention8_train_reports_missing_epoch_export_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp)
+            (session / "parameters.json").write_text(json.dumps({"realtime": {}}), encoding="utf-8")
+            args = attention8_pipeline.build_parser().parse_args(["train", "--session-dir", str(session)])
+            readiness = CheckResult("training_ready", "ok", "ready")
+
+            with patch("eegle.pipelines.attention8.check_training_ready", return_value=readiness), patch(
+                "eegle.pipelines.attention8.train_epoch_model"
+            ) as train_model:
+                result = attention8_pipeline.train(args)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["models"], {})
+        self.assertEqual(result["epoch_preparation"]["status"], "failed")
+        self.assertIn("raw/eeg.csv is not available", result["epoch_preparation"]["reason"])
+        train_model.assert_not_called()
+
     def test_attention8_pilot_suite_writes_phase_configs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -646,6 +715,30 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(challenge["tasks"]["go_nogo"]["attention_challenge"]["cue_trials"], [10, 20])
         self.assertEqual(challenge["tasks"]["go_nogo"]["attention_challenge"]["window_trials"], 3)
         self.assertFalse(challenge["realtime"]["alpha"]["enabled"])
+
+    def test_attention8_pilot_suite_uses_env_session_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session_root = Path(tmp) / "suite-data"
+            args = attention8_pipeline.build_parser().parse_args(
+                [
+                    "pilot-suite",
+                    "--participant",
+                    "sub-001",
+                    "--write-configs",
+                ]
+            )
+
+            with patch.dict(os.environ, {"EEGLE_SESSION_ROOT": str(session_root)}, clear=False):
+                result = attention8_pipeline.pilot_suite(args)
+
+            smoke_path = Path(str(result["config_paths"]["smoke"]).replace("\\", "/"))
+            smoke = json.loads(smoke_path.read_text(encoding="utf-8"))
+
+        expected_session_root_arg = "--session-root " + str(session_root).replace("/", "\\")
+        self.assertEqual(os.path.realpath(result["session_root"]), os.path.realpath(session_root))
+        self.assertTrue(os.path.realpath(smoke_path).startswith(os.path.realpath(session_root)))
+        self.assertEqual(os.path.realpath(smoke["runtime"]["session_root"]), os.path.realpath(session_root))
+        self.assertIn(expected_session_root_arg, result["phases"]["smoke"]["commands"][1])
 
     def test_classify8_run_forward_applies_session_root_before_startup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
