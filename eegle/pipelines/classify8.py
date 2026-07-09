@@ -53,21 +53,30 @@ def main(argv: list[str] | None = None) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="classify8", description="GO/NO-GO EEG condition-classification workflow")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
     collect_parser = subparsers.add_parser("collect", help="Collect participant calibration EEG and export epochs")
     _run_arguments(collect_parser)
+
     train_parser = subparsers.add_parser("train", help="Train frozen participant model bundles")
     train_parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     train_parser.add_argument("--session-dir", action="append", required=True)
-    train_parser.add_argument("--kind", action="append", choices=TRAINABLE_MODEL_KINDS, help="Train one or more kinds; defaults to the classifier trio")
+    train_parser.add_argument(
+        "--kind",
+        action="append",
+        choices=TRAINABLE_MODEL_KINDS,
+        help="Train one or more kinds; defaults to the classifier trio",
+    )
     train_parser.add_argument("--target", choices=SUPPORTED_TARGETS, default="condition")
     train_parser.add_argument("--output-dir", default=None)
     train_parser.add_argument("--check-ready", action="store_true", help="Only report training dependency readiness")
+
     online_parser = subparsers.add_parser("online", help="Run observe-only primary plus shadow models")
     _run_arguments(online_parser)
     online_parser.add_argument("--model-dir", required=True, help="Directory containing model-kind bundle directories")
     online_parser.add_argument("--primary", choices=MODEL_KINDS, default="erp_roi_logreg")
     online_parser.add_argument("--shadow", action="append", choices=MODEL_KINDS, default=[])
     online_parser.add_argument("--no-dashboard", action="store_true")
+
     demo_parser = subparsers.add_parser("demo", help="Run a transparent marker-driven classroom dashboard demo")
     demo_parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     demo_parser.add_argument("--participant", default="classroom-demo")
@@ -77,6 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
     demo_parser.add_argument("--error-rate", type=float, default=0.1)
     demo_parser.add_argument("--seed", type=int, default=42)
     demo_parser.add_argument("--port", type=int, default=8765)
+
     evaluate_parser = subparsers.add_parser("evaluate", help="Replay, score, and report an online classifier session")
     evaluate_parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     evaluate_parser.add_argument("--session-dir", required=True)
@@ -102,14 +112,16 @@ def _run_arguments(parser: argparse.ArgumentParser) -> None:
 
 def collect(args: argparse.Namespace) -> dict[str, Any]:
     config = _classifier_config(load_config(args.config))
-    config["realtime"]["inference"]["enabled"] = False
-    config["realtime"]["dashboard"]["enabled"] = False
-    config["processes"]["dashboard"]["enabled"] = False
+    _configure_collect_mode(config)
     result = _run_forward(config, args)
     session = Path(result.session_dir)
     epochs = None
     if (session / "raw" / "eeg.csv").exists():
-        epochs = extract_epochs_for_session(session, load_config(session / "parameters.json"), source="auto")
+        epochs = extract_epochs_for_session(
+            session,
+            load_config(session / "parameters.json"),
+            source="stimulus_manifest",
+        )
     return {
         "status": result.as_dict()["status"],
         "workflow": "classify8.collect",
@@ -134,6 +146,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             "session_dirs": [str(value) for value in sessions],
             "training_ready": readiness.__dict__,
         }
+
     results = {}
     for kind in kinds:
         missing = missing_training_packages(kind)
@@ -154,6 +167,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             results[kind] = train_epoch_model(kind, epochs, output_root / kind, kind_config)
         except Exception as exc:
             results[kind] = {"status": "failed", "model_kind": kind, "error": f"{type(exc).__name__}: {exc}"}
+
     complete = [value for value in results.values() if value.get("status") == "ok"]
     return {
         "status": "ok" if len(complete) == len(results) else ("degraded" if complete else "failed"),
@@ -191,7 +205,7 @@ def online(args: argparse.Namespace) -> dict[str, Any]:
     _apply_optional_adaptation_args(config, args)
     config["processes"]["realtime_processor"]["model"] = primary
     config["realtime"]["dashboard"]["enabled"] = not bool(args.no_dashboard)
-    config["processes"]["dashboard"]["enabled"] = not bool(args.no_dashboard)
+    config["processes"].setdefault("dashboard", {})["enabled"] = not bool(args.no_dashboard)
     result = _run_forward(config, args)
     return {
         "status": result.as_dict()["status"],
@@ -354,8 +368,22 @@ def _classifier_config(config: dict[str, Any]) -> dict[str, Any]:
     )
     result.setdefault("processes", {}).setdefault("feedback", {}).update({"enabled": False, "backend": "disabled"})
     result["processes"].setdefault("realtime_processor", {}).update({"enabled": True, "backend": "lsl"})
-    result["experiment"].setdefault("components", {})["realtime_processor"] = "lsl"
+    result.setdefault("experiment", {}).setdefault("components", {})["realtime_processor"] = "lsl"
     return result
+
+
+def _configure_collect_mode(config: dict[str, Any]) -> None:
+    """Collect raw EEG only; export calibration epochs from the task manifest after the run."""
+
+    config.setdefault("realtime", {})["enabled"] = False
+    config["realtime"].setdefault("inference", {})["enabled"] = False
+    config["realtime"].setdefault("dashboard", {})["enabled"] = False
+    config.setdefault("hardware", {}).setdefault("markers", {})["required_for_realtime"] = False
+    config.setdefault("processes", {}).setdefault("realtime_processor", {}).update(
+        {"enabled": False, "backend": "disabled"}
+    )
+    config["processes"].setdefault("dashboard", {})["enabled"] = False
+    config.setdefault("experiment", {}).setdefault("components", {})["realtime_processor"] = "disabled"
 
 
 def _run_forward(config: dict[str, Any], args: argparse.Namespace) -> Any:
@@ -365,7 +393,7 @@ def _run_forward(config: dict[str, Any], args: argparse.Namespace) -> Any:
     if bool(args.skip_eeg):
         effective["processes"]["realtime_processor"]["enabled"] = False
         effective["processes"]["realtime_processor"]["backend"] = "disabled"
-        effective["processes"]["dashboard"]["enabled"] = False
+        effective["processes"].setdefault("dashboard", {})["enabled"] = False
         effective.setdefault("experiment", {}).setdefault("components", {})["realtime_processor"] = "disabled"
         effective.setdefault("realtime", {})["enabled"] = False
         effective.setdefault("realtime", {}).setdefault("inference", {})["enabled"] = False
