@@ -148,8 +148,9 @@ class LslEegRecorder:
                     if not samples:
                         continue
                     received_at = monotonic()
-                    for sample, timestamp in zip(samples, timestamps):
-                        writer.writerow([f"{timestamp:.9f}", f"{received_at:.9f}", *sample])
+                    received_times = _local_received_times_for_chunk(timestamps, received_at)
+                    for sample, timestamp, received_time in zip(samples, timestamps, received_times):
+                        writer.writerow([f"{timestamp:.9f}", f"{received_time:.9f}", *sample])
                         self._summary.sample_count += 1
                         if self._summary.first_lsl_timestamp is None:
                             self._summary.first_lsl_timestamp = float(timestamp)
@@ -173,6 +174,27 @@ class LslEegRecorder:
         with self.metadata_file.open("w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
             handle.write("\n")
+
+
+def _local_received_times_for_chunk(timestamps: list[float], received_at: float) -> list[float]:
+    if not timestamps:
+        return []
+    try:
+        last_timestamp = float(timestamps[-1])
+    except Exception:
+        return [float(received_at)] * len(timestamps)
+    received = []
+    previous = float("-inf")
+    for timestamp in timestamps:
+        try:
+            estimate = float(received_at) - max(0.0, last_timestamp - float(timestamp))
+        except Exception:
+            estimate = float(received_at)
+        if estimate <= previous:
+            estimate = previous
+        received.append(estimate)
+        previous = estimate
+    return received
 
 
 def probe_eeg_stream(eeg_config: dict[str, Any], seconds: float = 2.0, timeout: float = 5.0) -> dict[str, Any]:

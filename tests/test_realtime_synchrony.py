@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-from eegle.devices.lsl_eeg import _select_lsl_info
+from eegle.devices.lsl_eeg import _local_received_times_for_chunk, _select_lsl_info
 from eegle.feedback_manager import FeedbackManager, WorkerHandle, _pipeline_validity_failures
 from eegle.hardware.enobio import mapped_channel_names
 from eegle.realtime.alpha import AlphaPowerEstimator
@@ -147,6 +147,14 @@ class _FakeAdapter:
 
 
 class RealtimeSynchronyTests(unittest.TestCase):
+    def test_recorder_estimates_per_sample_local_received_times_within_chunk(self) -> None:
+        received = _local_received_times_for_chunk([10.00, 10.01, 10.02], 100.0)
+
+        self.assertAlmostEqual(received[0], 99.98)
+        self.assertAlmostEqual(received[1], 99.99)
+        self.assertAlmostEqual(received[2], 100.0)
+        self.assertEqual(received, sorted(received))
+
     def test_worker_stop_handlers_include_windows_sigbreak_when_available(self) -> None:
         calls: list[int] = []
 

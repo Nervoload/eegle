@@ -768,7 +768,10 @@ def _epoch_preparation_failure(
         "reason": reason,
         "operator_notes": [
             reason,
-            "Run attention8 collect for calibration sessions; online/post-calibration sessions may not contain exported training epochs.",
+            (
+                "Use a session with raw/eeg.csv, events/stimulus_manifest.json or realtime markers, "
+                "and parameters.json; attention8 train can export calibration epochs from those raw files."
+            ),
         ],
     }
 

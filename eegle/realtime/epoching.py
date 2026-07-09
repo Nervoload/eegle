@@ -294,7 +294,12 @@ def extract_epoch_from_arrays(
     if epoch_start_time < index_times[0] - config.sample_tolerance_seconds:
         return EpochAttempt("rejected", "pre-stimulus samples are no longer in the EEG buffer", marker)
     if epoch_end_time > index_times[-1] + config.sample_tolerance_seconds:
-        return EpochAttempt("pending", "waiting for post-stimulus EEG samples", marker)
+        reason = (
+            "EEG samples do not extend to epoch end timestamp"
+            if config.tmax_seconds <= 0.0
+            else "waiting for post-stimulus EEG samples"
+        )
+        return EpochAttempt("pending", reason, marker)
 
     start_sample = int(round(float(np.interp(epoch_start_time, index_times, index_values))))
     stop_sample = start_sample + sample_count
@@ -397,7 +402,12 @@ def load_events_jsonl(path: str | Path, config: EpochingConfig) -> list[MarkerEv
     return markers
 
 
-def load_stimulus_manifest_markers(path: str | Path, config: EpochingConfig) -> list[MarkerEvent]:
+def load_stimulus_manifest_markers(
+    path: str | Path,
+    config: EpochingConfig,
+    *,
+    timebase: str = "local_received",
+) -> list[MarkerEvent]:
     target = Path(path)
     manifest = _load_json(target)
     if not manifest:
@@ -410,10 +420,14 @@ def load_stimulus_manifest_markers(path: str | Path, config: EpochingConfig) -> 
         color = stimulus.get("color", "unknown")
         trial_number = int(trial["trial"])
         label = f"{config.marker_prefix}_{trial_number}_{condition}_{shape}_{color}"
+        timestamp_key = "onset_lsl_timestamp" if timebase == "lsl" else "onset_monotonic"
+        timestamp_value = trial.get(timestamp_key)
+        if timestamp_value is None:
+            continue
         marker = MarkerEvent(
             label=label,
-            timestamp=float(trial["onset_monotonic"]),
-            timebase="local_received",
+            timestamp=float(timestamp_value),
+            timebase="lsl" if timebase == "lsl" else "local_received",
             source=str(target),
             metadata={
                 "trial": trial_number,
@@ -441,7 +455,67 @@ def extract_epochs_for_session(
         timebase = "lsl"
     else:
         timebase = "local_received"
-    epoch_cfg = replace(epoch_cfg, timebase=timebase)
+    candidates = [(timebase, markers)]
+    if selected_source == "stimulus_manifest" and marker_path is not None:
+        lsl_markers = load_stimulus_manifest_markers(marker_path, epoch_cfg, timebase="lsl")
+        if lsl_markers:
+            candidates.append(("lsl", lsl_markers))
+    attempts: list[EpochAttempt] = []
+    selected_eeg: EegCsvBundle | None = None
+    sample_rate_hz = 0.0
+    selected_epoch_cfg = epoch_cfg
+    best_ready_count = -1
+    best_rejected_count = 0
+    for candidate_timebase, candidate_markers in candidates:
+        candidate_cfg, candidate_eeg, candidate_sample_rate_hz, candidate_attempts = _attempt_epochs_for_timebase(
+            root,
+            config,
+            epoch_cfg,
+            candidate_markers,
+            candidate_timebase,
+        )
+        ready_count = sum(1 for attempt in candidate_attempts if attempt.status == "ready")
+        rejected_count = len(candidate_attempts) - ready_count
+        if ready_count > best_ready_count or (ready_count == best_ready_count and rejected_count < best_rejected_count):
+            selected_epoch_cfg = candidate_cfg
+            selected_eeg = candidate_eeg
+            sample_rate_hz = candidate_sample_rate_hz
+            attempts = candidate_attempts
+            best_ready_count = ready_count
+            best_rejected_count = rejected_count
+    if selected_eeg is None:
+        selected_epoch_cfg, selected_eeg, sample_rate_hz, attempts = _attempt_epochs_for_timebase(
+            root,
+            config,
+            epoch_cfg,
+            markers,
+            timebase,
+        )
+    epochs = [attempt.epoch for attempt in attempts if attempt.status == "ready" and attempt.epoch is not None]
+    rejected = [attempt for attempt in attempts if attempt.status != "ready"]
+    target_dir = Path(output_dir).expanduser().resolve() if output_dir else root / "realtime" / "epochs"
+    return write_epoch_dataset(
+        epochs=epochs,
+        rejected=rejected,
+        output_dir=target_dir,
+        raw_path=root / "raw" / "eeg.csv",
+        marker_source_path=marker_path,
+        source=selected_source,
+        timestamp_column=selected_eeg.timestamp_column,
+        config=selected_epoch_cfg,
+        channel_names=selected_eeg.channel_names,
+        sample_rate_hz=sample_rate_hz,
+    )
+
+
+def _attempt_epochs_for_timebase(
+    root: Path,
+    config: dict[str, Any],
+    epoch_cfg: EpochingConfig,
+    markers: list[MarkerEvent],
+    timebase: str,
+) -> tuple[EpochingConfig, EegCsvBundle, float, list[EpochAttempt]]:
+    candidate_cfg = replace(epoch_cfg, timebase=timebase)
     eeg = load_eeg_csv_for_epoching(
         root / "raw" / "eeg.csv",
         metadata_path=root / "raw" / "eeg_metadata.json",
@@ -452,7 +526,7 @@ def extract_epochs_for_session(
     eeg_data = eeg.data
     sample_rate_hz = eeg.sample_rate_hz
     preprocessing_config = dict(config.get("realtime", {}).get("preprocessing", {}))
-    if epoch_cfg.data_source in {"processed", "causal_preprocessed"}:
+    if candidate_cfg.data_source in {"processed", "causal_preprocessed"}:
         from eegle.realtime.preprocessing import CausalBandpassNotchPreprocessor
 
         preprocessor = CausalBandpassNotchPreprocessor(
@@ -469,26 +543,12 @@ def extract_epochs_for_session(
             marker=marker,
             sample_rate_hz=sample_rate_hz,
             channel_names=eeg.channel_names,
-            config=epoch_cfg,
+            config=candidate_cfg,
             epoch_index=index,
         )
         for index, marker in enumerate(markers, start=1)
     ]
-    epochs = [attempt.epoch for attempt in attempts if attempt.status == "ready" and attempt.epoch is not None]
-    rejected = [attempt for attempt in attempts if attempt.status != "ready"]
-    target_dir = Path(output_dir).expanduser().resolve() if output_dir else root / "realtime" / "epochs"
-    return write_epoch_dataset(
-        epochs=epochs,
-        rejected=rejected,
-        output_dir=target_dir,
-        raw_path=root / "raw" / "eeg.csv",
-        marker_source_path=marker_path,
-        source=selected_source,
-        timestamp_column=eeg.timestamp_column,
-        config=epoch_cfg,
-        channel_names=eeg.channel_names,
-        sample_rate_hz=sample_rate_hz,
-    )
+    return candidate_cfg, eeg, sample_rate_hz, attempts
 
 
 def write_epoch_dataset(

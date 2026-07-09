@@ -32,7 +32,14 @@ from eegle.realtime.classification import (
     write_model_bundle,
 )
 from eegle.realtime.demo_classifier import DEMO_DISCLOSURE, demo_config_from, demo_prediction_from_marker
-from eegle.realtime.epoching import EpochingConfig, MarkerEvent, RealtimeEpocher, _load_session_markers
+from eegle.realtime.epoching import (
+    EegCsvBundle,
+    EpochingConfig,
+    MarkerEvent,
+    RealtimeEpocher,
+    _load_session_markers,
+    extract_epochs_for_session,
+)
 from eegle.realtime.event_features import EngineInputCaptureWriter
 from eegle.realtime.models import PreparedEpochCache, prepare_artifact_epoch, train_epoch_model
 from eegle.session import create_session
@@ -507,6 +514,61 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(source, "stimulus_manifest")
         self.assertEqual(path.name, "stimulus_manifest.json")
         self.assertEqual(len(markers), 12)
+
+    def test_stimulus_manifest_epoch_export_falls_back_to_lsl_timebase(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "raw").mkdir()
+            (root / "events").mkdir()
+            (root / "raw" / "eeg.csv").write_text("lsl_timestamp,local_received_time,Fz,Cz\n", encoding="utf-8")
+            config = {
+                "realtime": {
+                    "epoching": {
+                        "enabled": True,
+                        "marker_prefix": "go_nogo_stimulus_onset",
+                        "tmin_seconds": -1.0,
+                        "tmax_seconds": 0.0,
+                        "timebase": "local_received",
+                        "data_source": "raw",
+                    }
+                }
+            }
+            (root / "parameters.json").write_text(json.dumps(config), encoding="utf-8")
+            manifest = {
+                "trials": [
+                    {
+                        "trial": trial,
+                        "onset_monotonic": 2000.0 + trial,
+                        "onset_lsl_timestamp": 11.5 + trial,
+                        "stimulus_id": f"stim-{trial}",
+                        "stimulus": {"shape": "square", "color": "blue", "is_no_go": False},
+                    }
+                    for trial in range(1, 4)
+                ]
+            }
+            (root / "events" / "stimulus_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+            timestamps = np.arange(601, dtype=float) / 100.0
+            data = np.column_stack([timestamps, timestamps * 0.5])
+
+            def load_bundle(*args: Any, **kwargs: Any) -> EegCsvBundle:
+                timebase = str(kwargs["timebase"])
+                offset = 10.0 if timebase == "lsl" else 1000.0
+                return EegCsvBundle(
+                    timestamps=offset + timestamps,
+                    data=data,
+                    channel_names=["Fz", "Cz"],
+                    sample_rate_hz=100.0,
+                    timestamp_column="lsl_timestamp" if timebase == "lsl" else "local_received_time",
+                )
+
+            with patch("eegle.realtime.epoching.load_eeg_csv_for_epoching", side_effect=load_bundle):
+                exported = extract_epochs_for_session(root, config, source="stimulus_manifest")
+
+        self.assertEqual(exported["timestamp_column"], "lsl_timestamp")
+        self.assertEqual(exported["epoching_config"]["timebase"], "lsl")
+        self.assertEqual(exported["epoch_count"], 3)
+        self.assertEqual(exported["rejected_count"], 0)
 
     def test_extract_epochs_cli_uses_session_parameters_when_default_config_would_be_wrong(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
