@@ -1,0 +1,239 @@
+{
+  "artifact": "model.joblib",
+  "artifact_format": "joblib",
+  "artifact_sha256": "9aaea7f4789f0b35085b520eb445419b8a22f8b70a27d2347104b223c8806614",
+  "bundle_hash": "be84f8c2b64007f03ff957d96915ed37e2e15a8f946402880d029082bd67abee",
+  "calibration": {
+    "calibration_id": "cal-f19091bb3f19",
+    "candidate_count": 51,
+    "max_candidates": 512,
+    "metric": "balanced_accuracy",
+    "selected_metrics": {
+      "accuracy": 0.44,
+      "attention_lapse_f1": 0.39130434782608686,
+      "attention_lapse_precision": 0.2571428571428571,
+      "attention_lapse_recall": 0.8181818181818182,
+      "auprc": 0.2093200658409531,
+      "average_precision": 0.2093200658409531,
+      "balanced_accuracy": 0.5757575757575758,
+      "brier_score": 0.2845723830221686,
+      "confusion_matrix": [
+        [
+          13,
+          26
+        ],
+        [
+          2,
+          9
+        ]
+      ],
+      "ece": 0.28461739066842245,
+      "expected_calibration_error": 0.28461739066842245,
+      "negative_recall": 0.3333333333333333,
+      "operating_threshold": 0.06716274111412633,
+      "positive_f1": 0.39130434782608686,
+      "positive_precision": 0.2571428571428571,
+      "positive_recall": 0.8181818181818182,
+      "roc_auc": 0.44988344988344986,
+      "sample_count": 50,
+      "threshold": 0.06716274111412633
+    },
+    "selected_threshold": 0.06716274111412633,
+    "source": "blocked_validation",
+    "status": "ok"
+  },
+  "contract": {
+    "baseline_seconds": [
+      -2.0,
+      0.0
+    ],
+    "channel_groups": {
+      "central": [
+        "Cz",
+        "C3",
+        "C4"
+      ],
+      "frontal": [
+        "Fz"
+      ],
+      "posterior": [
+        "Pz",
+        "P3",
+        "P4",
+        "Oz"
+      ]
+    },
+    "channel_names": [
+      "Fz",
+      "Cz",
+      "Pz",
+      "C3",
+      "C4",
+      "P3",
+      "P4",
+      "Oz"
+    ],
+    "channel_order": [
+      "Fz",
+      "Cz",
+      "Pz",
+      "C3",
+      "C4",
+      "P3",
+      "P4",
+      "Oz"
+    ],
+    "epoch_duration_seconds": 2.0,
+    "epoch_window_seconds": [
+      -2.0,
+      0.0
+    ],
+    "input_contract_version": 1,
+    "input_layout": "channels_x_samples",
+    "input_units": "microvolts",
+    "missing_channel_policy": "error",
+    "model_family": "eeg_foundation",
+    "optional_channels": [],
+    "prediction_horizon": "same_trial_response",
+    "prediction_window_seconds": [
+      -2.0,
+      0.0
+    ],
+    "preprocessing": {
+      "bandpass_high_hz": 45.0,
+      "bandpass_low_hz": 1.0,
+      "baseline_seconds": [
+        -2.0,
+        0.0
+      ],
+      "data_source": "causal_preprocessed",
+      "downsample_factor": 1,
+      "kind": "causal_bandpass_notch_reference",
+      "notch_hz": 60.0,
+      "reference": "average",
+      "resampling": "none",
+      "resampling_supported": false
+    },
+    "preprocessing_hash": "c75ae570f68f125a49a8ce89d59b8c2d5fc1fc390001cb99a629e3cfceb18358",
+    "required_channels": [
+      "Fz",
+      "Cz",
+      "Pz",
+      "C3",
+      "C4",
+      "P3",
+      "P4",
+      "Oz"
+    ],
+    "sample_count": 1001,
+    "sample_rate_hz": 500.0,
+    "source_channel_names": [
+      "Fz",
+      "Cz",
+      "Pz",
+      "C3",
+      "C4",
+      "P3",
+      "P4",
+      "Oz"
+    ],
+    "target": "attention_lapse_binary",
+    "tensor_layout": "batch_1_channels_samples"
+  },
+  "kind": "foundation_head_logreg",
+  "label_mapping": {
+    "attention_lapse": 1,
+    "attentive": 0
+  },
+  "metrics_file": "metrics.json",
+  "model_family": "eeg_foundation",
+  "model_spec": {
+    "adapter_kind": "foundation_head_logreg",
+    "aliases": [],
+    "artifact_format": "joblib",
+    "checkpoint_format": "eegle_runtime_bundle_or_joblib",
+    "dependencies": [
+      "sklearn",
+      "joblib"
+    ],
+    "description": "Frozen EEG embedding encoder plus logistic-regression calibration head.",
+    "external_checkpoint": true,
+    "family": "eeg_foundation",
+    "kind": "foundation_head_logreg",
+    "latency_budget_ms": 100.0,
+    "primary_realtime_allowed": false,
+    "realtime_supported": true,
+    "supported_targets": [
+      "attention_lapse_binary",
+      "attention_lapse_score"
+    ],
+    "train_kind": "foundation_head_logreg",
+    "trainable": true
+  },
+  "model_version": "trained",
+  "prototype_state": null,
+  "schema": "eegle.model_bundle.v1",
+  "software": {
+    "joblib": "1.5.3",
+    "numpy": "2.2.6",
+    "platform": "Windows-10-10.0.22631-SP0",
+    "pyriemann": "0.12",
+    "python": "3.10.11",
+    "scikit-learn": "1.7.2",
+    "scipy": "1.14.1",
+    "torch": "2.13.0+cu126"
+  },
+  "support_query": {
+    "practice_excluded": true,
+    "query_epoch_count": 190,
+    "query_negative_count": 169,
+    "query_positive_count": 21,
+    "strategy": "temporal_first_k",
+    "support_epoch_count": 50,
+    "support_negative_count": 39,
+    "support_positive_count": 11,
+    "support_trials": 50
+  },
+  "target": "attention_lapse_binary",
+  "target_spec": {
+    "attention_lapse_label": "slow_go_rt",
+    "attention_lapse_threshold": 0.5,
+    "eligible_score_count": 240,
+    "label_rule": "slow_go_rt >= 0.5",
+    "learning_problem": "binary_classification",
+    "negative_label_count": 208,
+    "positive_label_count": 32,
+    "primary_label_rule": "slow_go_rt",
+    "score_count": 240,
+    "score_join": "session_index_and_trial",
+    "score_name": "slow_go_rt",
+    "score_regression_supported": false,
+    "score_target_mode": "thresholded_behavior_score",
+    "session_count": 1,
+    "session_trial_counts": {
+      "0": 240
+    },
+    "slow_rt_quantile": 0.8,
+    "source": "session_behavior",
+    "source_session_index_present": false,
+    "target": "attention_lapse_binary"
+  },
+  "training_source": {
+    "eligible_training_epochs": 240,
+    "epochs_npz_count": 1,
+    "epochs_npz_path_sha256": [
+      "b6695520091a43cbf01fa0a8ca1b4b0d859015d0c6c8e5a12ebaf5973be93e9b"
+    ],
+    "epochs_npz_sha256": [
+      "1a427f1e19a14061826f93d9b46aa34807ca40b72043e3a58346ed1d9c62c87d"
+    ],
+    "path_values_redacted": true,
+    "quality_rejected_epochs": 0,
+    "query_epochs": 190,
+    "source_epoch_counts": [
+      240
+    ],
+    "source_index_contract": "per-epoch source_session_index maps to session_dirs order during target generation",
+    "training_epochs": 50
+  }
+}

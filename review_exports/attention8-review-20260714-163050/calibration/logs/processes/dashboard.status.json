@@ -1,0 +1,8 @@
+{
+  "backend": "http",
+  "elapsed_seconds": 0.015000000013969839,
+  "name": "dashboard",
+  "reason": "dashboard disabled by experiment settings",
+  "status": "disabled",
+  "updated_at": "2026-07-14T12:53:24"
+}

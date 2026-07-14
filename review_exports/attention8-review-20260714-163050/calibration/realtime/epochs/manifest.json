@@ -1,0 +1,50 @@
+{
+  "channel_names": [
+    "Fz",
+    "Cz",
+    "Pz",
+    "C3",
+    "C4",
+    "P3",
+    "P4",
+    "Oz"
+  ],
+  "created_at": "2026-07-14T13:10:10",
+  "data_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\realtime\\epochs\\epochs.npz",
+  "data_key": "X",
+  "data_layout": "epochs_x_channels_x_samples",
+  "epoch_count": 240,
+  "epoch_shape": [
+    240,
+    8,
+    1001
+  ],
+  "epoch_timestamp_key": "epoch_timestamps",
+  "epoching_config": {
+    "data_source": "causal_preprocessed",
+    "drop_incomplete": true,
+    "enabled": true,
+    "include_practice_trials": false,
+    "marker_prefix": "go_nogo_stimulus_onset",
+    "sample_tolerance_seconds": 0.01,
+    "timebase": "local_received",
+    "tmax_seconds": 0.0,
+    "tmin_seconds": -2.0
+  },
+  "label_key": "y",
+  "marker_source_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\events\\stimulus_manifest.json",
+  "marker_source_sha256": "a4d091f688f8b151dd42b5263b65078ef10d923340431a89bef6d515b764b914",
+  "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\realtime\\epochs\\epochs.jsonl",
+  "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\raw\\eeg.csv",
+  "raw_file_unchanged": true,
+  "raw_sha256": "a08bcc68044615dbd4079d0bca6edd5f4da75cd1454519b1be913c91d832e80f",
+  "raw_sha256_after_epoch_export": "a08bcc68044615dbd4079d0bca6edd5f4da75cd1454519b1be913c91d832e80f",
+  "rejected_count": 0,
+  "rejection_reasons": {},
+  "relative_time_key": "times",
+  "sample_rate_hz": 500.0,
+  "schema_version": 1,
+  "source": "stimulus_manifest",
+  "status": "ok",
+  "timestamp_column": "local_received_time"
+}

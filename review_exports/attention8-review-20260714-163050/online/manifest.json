@@ -1,0 +1,108 @@
+{
+  "components": {
+    "analysis": "minimal",
+    "eeg_recorder": "lsl_csv",
+    "feedback": "disabled",
+    "preflight": "default",
+    "realtime_processor": "lsl",
+    "task": "go_nogo"
+  },
+  "created_at": "2026-07-14T13:14:07",
+  "display_timing": {
+    "expected_refresh_rate_hz": 60.0,
+    "fixed_display_latency_ms": 0.0,
+    "photodiode_verification_enabled": false,
+    "timing_model": "psychopy_callOnFlip_plus_fixed_display_latency"
+  },
+  "experiment_id": "attention_lapse_go_nogo8_observe_only",
+  "feedback_manager_summary": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\logs\\feedback_manager.json",
+  "layout": "bcipy_style",
+  "marker_stream": {
+    "name": "EEGleMarkers",
+    "source_id": "eegle-markers-go_nogo-run-20260714T131407-49217a8040d8",
+    "type": "Markers"
+  },
+  "normalized_processes": {
+    "dashboard": {
+      "backend": "http",
+      "enabled": true,
+      "host": "127.0.0.1",
+      "mode": "classifier",
+      "port": 8765,
+      "startup_timeout_seconds": 4.0
+    },
+    "feedback": {
+      "backend": "disabled",
+      "enabled": false
+    },
+    "offline_analyzer": {
+      "backend": "minimal",
+      "enabled": true,
+      "timeout_seconds": 120.0
+    },
+    "realtime_processor": {
+      "backend": "lsl",
+      "enabled": true,
+      "model": "causal_bandpower_logreg",
+      "preprocessor": "causal_bandpass_notch",
+      "startup_timeout_seconds": 8.0
+    },
+    "recorder": {
+      "backend": "lsl_csv",
+      "csv_mirror": true,
+      "enabled": true,
+      "startup_timeout_seconds": 8.0
+    }
+  },
+  "participant_id": "sub-001-online",
+  "processes": {
+    "dashboard": {
+      "backend": "http",
+      "enabled": true,
+      "host": "127.0.0.1",
+      "port": 8765,
+      "startup_timeout_seconds": 4.0
+    },
+    "feedback": {
+      "backend": "disabled",
+      "enabled": false
+    },
+    "offline_analyzer": {
+      "backend": "minimal",
+      "enabled": true,
+      "timeout_seconds": 120.0
+    },
+    "realtime_processor": {
+      "backend": "lsl",
+      "enabled": true,
+      "model": "causal_bandpower_logreg",
+      "preprocessor": "causal_bandpass_notch",
+      "startup_timeout_seconds": 8.0
+    },
+    "recorder": {
+      "backend": "lsl_csv",
+      "csv_mirror": true,
+      "enabled": true,
+      "startup_timeout_seconds": 8.0
+    }
+  },
+  "system": {
+    "machine": "AMD64",
+    "platform": "Windows-10-10.0.22631-SP0",
+    "processor": "Intel64 Family 6 Model 151 Stepping 2, GenuineIntel",
+    "python": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\python.exe",
+    "python_version": "3.10.11",
+    "system": "Windows"
+  },
+  "task": "go_nogo",
+  "telemetry": {
+    "config": {
+      "console_level": "default",
+      "file_level": "realtime",
+      "heartbeat_seconds": 5.0,
+      "trace_enabled": false
+    },
+    "debug_jsonl": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\logs\\debug.jsonl",
+    "telemetry_jsonl": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\logs\\telemetry.jsonl"
+  }
+}

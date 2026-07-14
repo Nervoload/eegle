@@ -1,0 +1,8 @@
+{
+  "backend": "http",
+  "elapsed_seconds": 325.10999999998603,
+  "name": "dashboard",
+  "status": "stopped",
+  "updated_at": "2026-07-14T13:19:59",
+  "url": "http://127.0.0.1:8765"
+}

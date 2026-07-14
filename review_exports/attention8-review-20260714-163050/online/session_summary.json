@@ -1,0 +1,2515 @@
+{
+  "analysis": {
+    "alpha": {
+      "alpha_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\realtime\\alpha_power.jsonl",
+      "calibration": null,
+      "offline_alpha": {
+        "band": {
+          "high_hz": 12.0,
+          "low_hz": 8.0
+        },
+        "channel_count": 8,
+        "file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\reports\\alpha\\offline_alpha_timeseries.csv",
+        "posterior_channels": [
+          "Fz",
+          "Cz",
+          "Pz",
+          "C3",
+          "C4",
+          "P3",
+          "P4",
+          "Oz"
+        ],
+        "status": "ok",
+        "step_seconds": 0.1,
+        "window_count": 3345,
+        "window_seconds": 1.0
+      },
+      "reason": "no realtime alpha estimates found",
+      "staged_alpha_quality": {
+        "alpha_erd_percent_max": null,
+        "alpha_erd_percent_min": null,
+        "alpha_erd_percent_std": null,
+        "erd_estimate_count": 0,
+        "estimate_count": 0,
+        "readiness_estimate_count": 0,
+        "readiness_power_max": null,
+        "readiness_power_min": null,
+        "readiness_power_std": null,
+        "reasons": [
+          "readiness_alpha_missing",
+          "alpha_erd_missing"
+        ],
+        "source": "inhibition8_staged_event_features",
+        "status": "missing",
+        "usable": false,
+        "valid_fraction": 0.0
+      },
+      "status": "missing",
+      "trial_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\events\\stimulus_manifest.json"
+    },
+    "analysis_status": {
+      "alpha": "missing",
+      "bids_export": "pending_raw_eeg",
+      "classification": "ok",
+      "epochs": "missing",
+      "erp": "disabled",
+      "exploratory_feature_behavior": "disabled",
+      "html_report": "ok",
+      "power_bands": "pending_raw_eeg",
+      "realtime_feature_quality": null,
+      "realtime_feature_replay": "missing",
+      "scalp_maps": "pending_raw_eeg"
+    },
+    "behavior": {
+      "mean_rt_seconds": 0.3753119360633599,
+      "median_rt_seconds": 0.36438299997826107,
+      "misses": 0,
+      "premature_responses": 0,
+      "responses": 122,
+      "status": "ok",
+      "too_fast_responses": 0,
+      "trials": 160
+    },
+    "behavior_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\events\\behavior.csv",
+    "classification": {
+      "adaptation": {
+        "status": "disabled"
+      },
+      "canonical_trial_count": 160,
+      "files": {
+        "adaptation_updates_jsonl": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\realtime\\adaptation_updates.jsonl",
+        "metrics_json": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\reports\\classification\\metrics.json",
+        "predictions_csv": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\reports\\classification\\predictions.csv",
+        "probability_by_trial_csv": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\reports\\classification\\probability_by_trial.csv"
+      },
+      "metrics": {
+        "primary": {
+          "accuracy": 0.575,
+          "attention_lapse_f1": 0.26086956521739124,
+          "attention_lapse_precision": 0.17142857142857143,
+          "attention_lapse_recall": 0.5454545454545454,
+          "auprc": 0.16287176848803825,
+          "average_precision": 0.16287176848803825,
+          "balanced_accuracy": 0.5625823451910408,
+          "brier_score": 0.4249849732408452,
+          "calibration_id": "cal-03cd4e015b80",
+          "confusion_matrix": [
+            [
+              80,
+              58
+            ],
+            [
+              10,
+              12
+            ]
+          ],
+          "coverage": 1.0,
+          "default_threshold_metrics": {
+            "accuracy": 0.575,
+            "attention_lapse_f1": 0.26086956521739124,
+            "attention_lapse_precision": 0.17142857142857143,
+            "attention_lapse_recall": 0.5454545454545454,
+            "auprc": 0.16287176848803825,
+            "average_precision": 0.16287176848803825,
+            "balanced_accuracy": 0.5625823451910408,
+            "brier_score": 0.4249849732408452,
+            "confusion_matrix": [
+              [
+                80,
+                58
+              ],
+              [
+                10,
+                12
+              ]
+            ],
+            "ece": 0.42499248153727937,
+            "expected_calibration_error": 0.42499248153727937,
+            "negative_recall": 0.5797101449275363,
+            "operating_threshold": 0.5,
+            "positive_f1": 0.26086956521739124,
+            "positive_precision": 0.17142857142857143,
+            "positive_recall": 0.5454545454545454,
+            "roc_auc": 0.5655467720685112,
+            "sample_count": 160,
+            "threshold": 0.5
+          },
+          "ece": 0.42499248153727937,
+          "evaluation_level": "full_inference",
+          "expected_calibration_error": 0.42499248153727937,
+          "false_alarms_per_minute": 14.11317143149974,
+          "negative_recall": 0.5797101449275363,
+          "operating_threshold": 0.006524144594439291,
+          "permutation_p_value": 0.21782178217821782,
+          "positive_f1": 0.26086956521739124,
+          "positive_precision": 0.17142857142857143,
+          "positive_recall": 0.5454545454545454,
+          "roc_auc": 0.5655467720685112,
+          "sample_count": 160,
+          "status": "ok",
+          "target": "attention_lapse_binary",
+          "threshold": 0.006524144594439291,
+          "threshold_source": "prediction_row_calibrated_threshold",
+          "threshold_values_seen": [
+            0.006524144594
+          ],
+          "warnings": [
+            "balanced_accuracy_below_0.60",
+            "permutation_p_not_below_0.05"
+          ]
+        },
+        "shadow-foundation_head_logreg": {
+          "accuracy": 0.8616352201257862,
+          "attention_lapse_f1": 0.0,
+          "attention_lapse_precision": 0.0,
+          "attention_lapse_recall": 0.0,
+          "auprc": 0.170867603965317,
+          "average_precision": 0.170867603965317,
+          "balanced_accuracy": 0.5,
+          "brier_score": 0.13836477987421383,
+          "calibration_id": "cal-f19091bb3f19",
+          "confusion_matrix": [
+            [
+              137,
+              0
+            ],
+            [
+              22,
+              0
+            ]
+          ],
+          "coverage": 0.99375,
+          "default_threshold_metrics": {
+            "accuracy": 0.8616352201257862,
+            "attention_lapse_f1": 0.0,
+            "attention_lapse_precision": 0.0,
+            "attention_lapse_recall": 0.0,
+            "auprc": 0.170867603965317,
+            "average_precision": 0.170867603965317,
+            "balanced_accuracy": 0.5,
+            "brier_score": 0.13836477987421383,
+            "confusion_matrix": [
+              [
+                137,
+                0
+              ],
+              [
+                22,
+                0
+              ]
+            ],
+            "ece": 0.13836477987421383,
+            "expected_calibration_error": 0.13836477987421383,
+            "negative_recall": 1.0,
+            "operating_threshold": 0.5,
+            "positive_f1": 0.0,
+            "positive_precision": 0.0,
+            "positive_recall": 0.0,
+            "roc_auc": 0.5,
+            "sample_count": 159,
+            "threshold": 0.5
+          },
+          "ece": 0.13836477987421383,
+          "evaluation_level": "full_inference",
+          "expected_calibration_error": 0.13836477987421383,
+          "false_alarms_per_minute": 0.0,
+          "negative_recall": 1.0,
+          "operating_threshold": 0.06716274111412633,
+          "permutation_p_value": 1.0,
+          "positive_f1": 0.0,
+          "positive_precision": 0.0,
+          "positive_recall": 0.0,
+          "roc_auc": 0.5,
+          "sample_count": 159,
+          "status": "ok",
+          "target": "attention_lapse_binary",
+          "threshold": 0.06716274111412633,
+          "threshold_source": "prediction_row_calibrated_threshold",
+          "threshold_values_seen": [
+            0.067162741114
+          ],
+          "warnings": [
+            "balanced_accuracy_below_0.60",
+            "permutation_p_not_below_0.05"
+          ]
+        },
+        "shadow-foundation_prototype": {
+          "accuracy": 0.13836477987421383,
+          "attention_lapse_f1": 0.2430939226519337,
+          "attention_lapse_precision": 0.13836477987421383,
+          "attention_lapse_recall": 1.0,
+          "auprc": 0.1622455710721195,
+          "average_precision": 0.1622455710721195,
+          "balanced_accuracy": 0.5,
+          "brier_score": 0.22273512362751377,
+          "calibration_id": "cal-a53c0d100f57",
+          "confusion_matrix": [
+            [
+              0,
+              137
+            ],
+            [
+              0,
+              22
+            ]
+          ],
+          "coverage": 0.99375,
+          "default_threshold_metrics": {
+            "accuracy": 0.8616352201257862,
+            "attention_lapse_f1": 0.0,
+            "attention_lapse_precision": 0.0,
+            "attention_lapse_recall": 0.0,
+            "auprc": 0.1622455710721195,
+            "average_precision": 0.1622455710721195,
+            "balanced_accuracy": 0.5,
+            "brier_score": 0.22273512362751377,
+            "confusion_matrix": [
+              [
+                137,
+                0
+              ],
+              [
+                22,
+                0
+              ]
+            ],
+            "ece": 0.3217377384169138,
+            "expected_calibration_error": 0.3217377384169138,
+            "negative_recall": 1.0,
+            "operating_threshold": 0.5,
+            "positive_f1": 0.0,
+            "positive_precision": 0.0,
+            "positive_recall": 0.0,
+            "roc_auc": 0.5583941605839416,
+            "sample_count": 159,
+            "threshold": 0.5
+          },
+          "ece": 0.3217377384169138,
+          "evaluation_level": "full_inference",
+          "expected_calibration_error": 0.3217377384169138,
+          "false_alarms_per_minute": 33.54577640916432,
+          "negative_recall": 0.0,
+          "operating_threshold": 0.17737384449991817,
+          "permutation_p_value": 1.0,
+          "positive_f1": 0.2430939226519337,
+          "positive_precision": 0.13836477987421383,
+          "positive_recall": 1.0,
+          "roc_auc": 0.5583941605839416,
+          "sample_count": 159,
+          "status": "ok",
+          "target": "attention_lapse_binary",
+          "threshold": 0.17737384449991817,
+          "threshold_source": "prediction_row_calibrated_threshold",
+          "threshold_values_seen": [
+            0.1773738445
+          ],
+          "warnings": [
+            "balanced_accuracy_below_0.60",
+            "permutation_p_not_below_0.05"
+          ]
+        },
+        "shadow-riemann_tangent_logreg": {
+          "accuracy": 0.6415094339622641,
+          "attention_lapse_f1": 0.24,
+          "attention_lapse_precision": 0.16981132075471697,
+          "attention_lapse_recall": 0.4090909090909091,
+          "auprc": 0.15853473319800154,
+          "average_precision": 0.15853473319800154,
+          "balanced_accuracy": 0.5439615129396151,
+          "brier_score": 0.16905091827962732,
+          "calibration_id": "cal-ab226835add8",
+          "confusion_matrix": [
+            [
+              93,
+              44
+            ],
+            [
+              13,
+              9
+            ]
+          ],
+          "coverage": 0.99375,
+          "default_threshold_metrics": {
+            "accuracy": 0.7610062893081762,
+            "attention_lapse_f1": 0.0,
+            "attention_lapse_precision": 0.0,
+            "attention_lapse_recall": 0.0,
+            "auprc": 0.15853473319800154,
+            "average_precision": 0.15853473319800154,
+            "balanced_accuracy": 0.4416058394160584,
+            "brier_score": 0.16905091827962732,
+            "confusion_matrix": [
+              [
+                121,
+                16
+              ],
+              [
+                22,
+                0
+              ]
+            ],
+            "ece": 0.1139726740231666,
+            "expected_calibration_error": 0.1139726740231666,
+            "negative_recall": 0.8832116788321168,
+            "operating_threshold": 0.5,
+            "positive_f1": 0.0,
+            "positive_precision": 0.0,
+            "positive_recall": 0.0,
+            "roc_auc": 0.5680159256801592,
+            "sample_count": 159,
+            "threshold": 0.5
+          },
+          "ece": 0.1139726740231666,
+          "evaluation_level": "full_inference",
+          "expected_calibration_error": 0.1139726740231666,
+          "false_alarms_per_minute": 10.773826000023577,
+          "negative_recall": 0.6788321167883211,
+          "operating_threshold": 0.23934214771102058,
+          "permutation_p_value": 0.24752475247524752,
+          "positive_f1": 0.24,
+          "positive_precision": 0.16981132075471697,
+          "positive_recall": 0.4090909090909091,
+          "roc_auc": 0.5680159256801592,
+          "sample_count": 159,
+          "status": "ok",
+          "target": "attention_lapse_binary",
+          "threshold": 0.23934214771102058,
+          "threshold_source": "prediction_row_calibrated_threshold",
+          "threshold_values_seen": [
+            0.239342147711
+          ],
+          "warnings": [
+            "balanced_accuracy_below_0.60",
+            "permutation_p_not_below_0.05"
+          ]
+        },
+        "shadow-torch_eegnet": {
+          "accuracy": 0.13836477987421383,
+          "attention_lapse_f1": 0.2430939226519337,
+          "attention_lapse_precision": 0.13836477987421383,
+          "attention_lapse_recall": 1.0,
+          "auprc": 0.15185857545198694,
+          "average_precision": 0.15185857545198694,
+          "balanced_accuracy": 0.5,
+          "brier_score": 0.2623443723495151,
+          "calibration_id": "cal-2c573594caef",
+          "confusion_matrix": [
+            [
+              0,
+              137
+            ],
+            [
+              0,
+              22
+            ]
+          ],
+          "coverage": 0.99375,
+          "default_threshold_metrics": {
+            "accuracy": 0.3584905660377358,
+            "attention_lapse_f1": 0.22727272727272724,
+            "attention_lapse_precision": 0.13636363636363635,
+            "attention_lapse_recall": 0.6818181818181818,
+            "auprc": 0.15185857545198694,
+            "average_precision": 0.15185857545198694,
+            "balanced_accuracy": 0.4941937624419376,
+            "brier_score": 0.2623443723495151,
+            "confusion_matrix": [
+              [
+                42,
+                95
+              ],
+              [
+                7,
+                15
+              ]
+            ],
+            "ece": 0.3767893312781588,
+            "expected_calibration_error": 0.3767893312781588,
+            "negative_recall": 0.30656934306569344,
+            "operating_threshold": 0.5,
+            "positive_f1": 0.22727272727272724,
+            "positive_precision": 0.13636363636363635,
+            "positive_recall": 0.6818181818181818,
+            "roc_auc": 0.5079628400796284,
+            "sample_count": 159,
+            "threshold": 0.5
+          },
+          "ece": 0.3767893312781588,
+          "evaluation_level": "full_inference",
+          "expected_calibration_error": 0.3767893312781588,
+          "false_alarms_per_minute": 33.54577640916432,
+          "negative_recall": 0.0,
+          "operating_threshold": 0.10486464947462082,
+          "permutation_p_value": 1.0,
+          "positive_f1": 0.2430939226519337,
+          "positive_precision": 0.13836477987421383,
+          "positive_recall": 1.0,
+          "roc_auc": 0.5079628400796284,
+          "sample_count": 159,
+          "status": "ok",
+          "target": "attention_lapse_binary",
+          "threshold": 0.10486464947462082,
+          "threshold_source": "prediction_row_calibrated_threshold",
+          "threshold_values_seen": [
+            0.104864649475
+          ],
+          "warnings": [
+            "balanced_accuracy_below_0.60",
+            "permutation_p_not_below_0.05"
+          ]
+        }
+      },
+      "prediction_count": 800,
+      "replay": {
+        "adaptation_replay": {
+          "status": "disabled"
+        },
+        "capture_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\realtime\\engine_input.bin",
+        "difference_count": 4,
+        "differences": [
+          {
+            "key": [
+              "predicted",
+              1,
+              "shadow-foundation_head_logreg",
+              1
+            ],
+            "reason": "missing_row"
+          },
+          {
+            "key": [
+              "predicted",
+              1,
+              "shadow-foundation_prototype",
+              1
+            ],
+            "reason": "missing_row"
+          },
+          {
+            "key": [
+              "predicted",
+              1,
+              "shadow-riemann_tangent_logreg",
+              1
+            ],
+            "reason": "missing_row"
+          },
+          {
+            "key": [
+              "predicted",
+              1,
+              "shadow-torch_eegnet",
+              1
+            ],
+            "reason": "missing_row"
+          }
+        ],
+        "online_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\realtime\\model_predictions.jsonl",
+        "online_prediction_count": 796,
+        "online_skipped_count": 4,
+        "replay_adaptation_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\reports\\classification\\replay_adaptation_updates.jsonl",
+        "replay_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\reports\\classification\\replay_predictions.jsonl",
+        "replay_prediction_count": 800,
+        "schema_version": 1,
+        "status": "analytically_invalid"
+      },
+      "schema_version": 1,
+      "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407",
+      "status": "ok"
+    },
+    "epochs": {
+      "manifest_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\realtime\\epochs\\manifest.json",
+      "status": "missing"
+    },
+    "erp": {
+      "reason": "ERP analysis disabled",
+      "status": "disabled"
+    },
+    "exploratory_feature_behavior": {
+      "status": "disabled"
+    },
+    "html_report": {
+      "display_timebase": "monotonic",
+      "html_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\reports\\experiment_summary.html",
+      "legacy_continuous_alpha_count": 0,
+      "live_alpha_count": 0,
+      "live_alpha_source": "legacy_continuous_alpha",
+      "marker_count": 1064,
+      "offline_alpha_status": "ok",
+      "raw_sample_count": 167744,
+      "raw_status": "ok",
+      "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407",
+      "staged_alpha_packet_count": 0,
+      "status": "ok",
+      "timebase_diagnostics": {
+        "lsl_overlap_markers": 772,
+        "monotonic_overlap_markers": 932,
+        "raw_lsl_duration_seconds": 335.485998,
+        "raw_lsl_start": 504767.69544145,
+        "raw_monotonic_duration_seconds": 334.986,
+        "raw_monotonic_start": 504768.264000103
+      }
+    },
+    "processes": {
+      "failed_processes": [],
+      "processes": {
+        "dashboard": {
+          "backend": "http",
+          "elapsed_seconds": 325.10999999998603,
+          "name": "dashboard",
+          "status": "stopped",
+          "updated_at": "2026-07-14T13:19:59",
+          "url": "http://127.0.0.1:8765"
+        },
+        "offline_analyzer": {
+          "backend": "minimal",
+          "elapsed_seconds": 14.40600000001723,
+          "name": "offline_analyzer",
+          "status": "complete",
+          "updated_at": "2026-07-14T13:20:17"
+        },
+        "realtime_processor": {
+          "alpha_enabled": false,
+          "alpha_estimate_count": 0,
+          "backend": "lsl",
+          "classifier_predicted_epoch_count": 160,
+          "classifier_prediction_count": 796,
+          "classifier_rejected_epoch_count": 0,
+          "eeg_stream": {
+            "channel_count": 8,
+            "channel_mapping_source": "profile:enobio8_inhibition",
+            "channel_names": [
+              "Fz",
+              "Cz",
+              "Pz",
+              "C3",
+              "C4",
+              "P3",
+              "P4",
+              "Oz"
+            ],
+            "initial_time_correction_seconds": -4.499743226915598e-07,
+            "large_cap_detected": false,
+            "lsl_processing": [
+              "clocksync",
+              "dejitter",
+              "monotonize"
+            ],
+            "name": "LSLOutletStreamName-EEG",
+            "nominal_srate": 500.0,
+            "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+            "type": "EEG"
+          },
+          "elapsed_seconds": 332.81300000002375,
+          "eligible_marker_count": 160,
+          "epoch_count": 160,
+          "event_feature_packet_count": 0,
+          "event_features_enabled": false,
+          "marker_count": 452,
+          "marker_status": "connected",
+          "marker_stream": {
+            "initial_time_correction_seconds": null,
+            "lsl_processing": [
+              "clocksync",
+              "monotonize"
+            ],
+            "name": "EEGleMarkers",
+            "source_id": "eegle-markers-go_nogo-run-20260714T131407-49217a8040d8",
+            "type": "Markers"
+          },
+          "name": "realtime_processor",
+          "pending_epoch_count": 0,
+          "performance": {
+            "buffer_utilization": 1.0,
+            "eeg_pull_time_ms": 0.0,
+            "epoch_extraction_time_ms": 0.0,
+            "inference_queue_depth": 0,
+            "preprocessing_time_ms": 0.0,
+            "primary_latency_ms": 0.0,
+            "raw_buffer_utilization": 1.0,
+            "shadow_latency_ms": 0.0,
+            "skipped_shadow_count": 4,
+            "worst_loop_time_ms": 2531.0000000172295,
+            "writer_backlog": 0
+          },
+          "performance_config": {
+            "inference_queue_max_epochs": 4,
+            "large_cap_channel_threshold": 32,
+            "large_cap_detected": false,
+            "primary_latency_budget_ms": 50.0,
+            "skip_shadows_when_queue_depth_gte": 2,
+            "writer_flush_every": 50,
+            "writer_flush_interval_ms": 100.0
+          },
+          "processed_sample_count": 163786,
+          "rejected_epoch_count": 0,
+          "sample_count": 163786,
+          "status": "stopped",
+          "updated_at": "2026-07-14T13:20:00",
+          "window_count": 0
+        },
+        "recorder": {
+          "backend": "lsl_csv",
+          "elapsed_seconds": 341.23399999999674,
+          "error": null,
+          "name": "recorder",
+          "status": "stopped",
+          "updated_at": "2026-07-14T13:20:02"
+        }
+      },
+      "status": "ok"
+    },
+    "raw_eeg": {
+      "channel_count": 8,
+      "duration_seconds": 335.4859982730122,
+      "first_lsl_timestamp": 504767.69544145,
+      "last_lsl_timestamp": 505103.181439723,
+      "metadata": {
+        "duration_seconds": 335.485998272954,
+        "eeg_config": {
+          "allow_type_only_fallback": false,
+          "expected_channel_counts": [
+            8
+          ],
+          "expected_sample_rate_hz": 500,
+          "family": "Enobio",
+          "lsl_name_patterns": [
+            "enobio",
+            "nic",
+            "neuroelectrics",
+            "LSLOutletStreamName-EEG"
+          ],
+          "lsl_stream_type": "EEG",
+          "profile": "enobio8_inhibition",
+          "required_for_run": true,
+          "sample_probe_seconds": 2.0,
+          "stream_timeout_seconds": 5.0
+        },
+        "error": null,
+        "finished_at_monotonic": 505103.75,
+        "first_lsl_timestamp": 504767.69544145046,
+        "last_lsl_timestamp": 505103.1814397234,
+        "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\raw\\eeg_metadata.json",
+        "notes": [],
+        "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\raw\\eeg.csv",
+        "sample_count": 167744,
+        "started_at_monotonic": 504768.39,
+        "status": "stopped",
+        "stream": {
+          "channel_count": 8,
+          "channel_mapping_source": "profile:enobio8_inhibition",
+          "channel_names": [
+            "Fz",
+            "Cz",
+            "Pz",
+            "C3",
+            "C4",
+            "P3",
+            "P4",
+            "Oz"
+          ],
+          "initial_time_correction_seconds": 2.0500156097114086e-06,
+          "lsl_processing": [
+            "clocksync",
+            "dejitter",
+            "monotonize"
+          ],
+          "name": "LSLOutletStreamName-EEG",
+          "nominal_srate": 500.0,
+          "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+          "type": "EEG"
+        }
+      },
+      "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\raw\\eeg_metadata.json",
+      "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\raw\\eeg.csv",
+      "sample_count": 167744,
+      "status": "ok"
+    },
+    "realtime": {
+      "decision_count": 160,
+      "decisions_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\realtime\\decisions.jsonl",
+      "latest_decision": {
+        "actions": [
+          {
+            "action": "observe_only",
+            "action_id": "observe_only:causal_bandpower_logreg:160:observe_only:160",
+            "block_index": null,
+            "boundary": "between_trials",
+            "created_at_monotonic": 505069.89,
+            "metadata": {
+              "policy": "observe_only"
+            },
+            "parameters": {},
+            "reason": "task adaptation disabled",
+            "schema_version": 1,
+            "source_epoch_index": 160,
+            "source_label": "attention_lapse",
+            "source_model": "causal_bandpower_logreg",
+            "source_probability": 1.0,
+            "source_score": 1.0,
+            "source_trial": 160,
+            "target_trial_index": 161,
+            "value": null
+          }
+        ],
+        "created_at_monotonic": 505069.89,
+        "decision_source": "event_epoch",
+        "epoch": {
+          "channel_names": [
+            "Fz",
+            "Cz",
+            "Pz",
+            "C3",
+            "C4",
+            "P3",
+            "P4",
+            "Oz"
+          ],
+          "condition": "go",
+          "data_layout": "channels_x_samples",
+          "data_shape": [
+            8,
+            1001
+          ],
+          "end_timestamp": 505069.8474392676,
+          "epoch_index": 160,
+          "epoch_window_seconds": [
+            -2.0,
+            0.0
+          ],
+          "marker": {
+            "label": "go_nogo_stimulus_onset_160_go_circle_blue",
+            "metadata": {
+              "color": "blue",
+              "condition": "go",
+              "label": "go_nogo_stimulus_onset_160_go_circle_blue",
+              "shape": "circle",
+              "trial": 160
+            },
+            "source": "lsl",
+            "timebase": "lsl",
+            "timestamp": 505069.84805515
+          },
+          "relative_end_seconds": -0.0006158823962323368,
+          "relative_start_seconds": -2.000615966215264,
+          "sample_count": 1001,
+          "sample_rate_hz": 500.0,
+          "sample_start": 6,
+          "sample_stop": 1007,
+          "schema_version": 1,
+          "start_timestamp": 505067.8474391838,
+          "status": "ready",
+          "training_label": 0,
+          "trial": 160
+        },
+        "epoch_count": 160,
+        "epoch_index": 160,
+        "features": {
+          "central_alpha_power": 0.16988429775632272,
+          "central_beta_power": 0.21912827524362183,
+          "central_theta_power": 0.8879720839139942,
+          "epoch_mean_uv": -1.2225452085910295e-13,
+          "epoch_peak_to_peak_uv": 25.685958714895662,
+          "epoch_std_uv": 2.2940831339724665,
+          "frontal_alpha_power": 0.189443286479108,
+          "frontal_beta_power": 0.1737996908569311,
+          "frontal_theta_power": 0.36583298950355586,
+          "global_alpha_beta_ratio": 0.6967827087160773,
+          "global_alpha_power": 0.18667682110883796,
+          "global_beta_power": 0.26791253395598313,
+          "global_theta_alpha_ratio": 5.0841324277045805,
+          "global_theta_power": 0.94908967970025,
+          "posterior_alpha_power": 0.19857959728065688,
+          "posterior_beta_power": 0.3280289387650171,
+          "posterior_theta_power": 1.1407420490891156,
+          "probability_attention_lapse": 1.0
+        },
+        "feedback": {
+          "action": "observe_only",
+          "action_id": "observe_only:causal_bandpower_logreg:160:observe_only:160",
+          "block_index": null,
+          "boundary": "between_trials",
+          "created_at_monotonic": 505069.89,
+          "metadata": {
+            "policy": "observe_only"
+          },
+          "parameters": {},
+          "reason": "task adaptation disabled",
+          "schema_version": 1,
+          "source_epoch_index": 160,
+          "source_label": "attention_lapse",
+          "source_model": "causal_bandpower_logreg",
+          "source_probability": 1.0,
+          "source_score": 1.0,
+          "source_trial": 160,
+          "target_trial_index": 161,
+          "value": null
+        },
+        "inference_queue_depth": 0,
+        "marker_count": 449,
+        "prediction": {
+          "features": {
+            "central_alpha_power": 0.16988429775632272,
+            "central_beta_power": 0.21912827524362183,
+            "central_theta_power": 0.8879720839139942,
+            "epoch_mean_uv": -1.2225452085910295e-13,
+            "epoch_peak_to_peak_uv": 25.685958714895662,
+            "epoch_std_uv": 2.2940831339724665,
+            "frontal_alpha_power": 0.189443286479108,
+            "frontal_beta_power": 0.1737996908569311,
+            "frontal_theta_power": 0.36583298950355586,
+            "global_alpha_beta_ratio": 0.6967827087160773,
+            "global_alpha_power": 0.18667682110883796,
+            "global_beta_power": 0.26791253395598313,
+            "global_theta_alpha_ratio": 5.0841324277045805,
+            "global_theta_power": 0.94908967970025,
+            "posterior_alpha_power": 0.19857959728065688,
+            "posterior_beta_power": 0.3280289387650171,
+            "posterior_theta_power": 1.1407420490891156,
+            "probability_attention_lapse": 1.0
+          },
+          "label": "attention_lapse",
+          "latency_ms": 0.0,
+          "metadata": {
+            "bundle_hash": "4876c69e544736c629662f6cdbc967a4cd09ccdf5f4770044862062e890545c3",
+            "bundle_path": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\realtime\\models\\primary-causal_bandpower_logreg-4876c69e5447",
+            "calibrated_threshold": 0.006524144594439291,
+            "calibration_id": "cal-03cd4e015b80",
+            "calibration_state_hash": "ba15986d099667f85a39b2b462f5dbbaa316fba1f69b1e75b0f430ddc8f0c81e",
+            "model_family": "classical",
+            "model_spec": {
+              "adapter_kind": "causal_bandpower_logreg",
+              "aliases": [],
+              "artifact_format": "joblib",
+              "checkpoint_format": "joblib",
+              "dependencies": [
+                "sklearn",
+                "joblib",
+                "scipy"
+              ],
+              "description": "Causal pre-event bandpower features with logistic regression.",
+              "external_checkpoint": false,
+              "family": "classical",
+              "kind": "causal_bandpower_logreg",
+              "latency_budget_ms": 50.0,
+              "primary_realtime_allowed": true,
+              "realtime_supported": true,
+              "supported_targets": [
+                "attention_lapse_binary",
+                "attention_lapse_score"
+              ],
+              "train_kind": "causal_bandpower_logreg",
+              "trainable": true
+            },
+            "prediction_horizon": "same_trial_response",
+            "prediction_window_seconds": [
+              -2.0,
+              0.0
+            ],
+            "query_size": 190,
+            "support_query": {
+              "practice_excluded": true,
+              "query_epoch_count": 190,
+              "query_negative_count": 169,
+              "query_positive_count": 21,
+              "strategy": "temporal_first_k",
+              "support_epoch_count": 50,
+              "support_negative_count": 39,
+              "support_positive_count": 11,
+              "support_trials": 50
+            },
+            "support_size": 50,
+            "target": "attention_lapse_binary",
+            "target_spec": {
+              "attention_lapse_label": "slow_go_rt",
+              "attention_lapse_threshold": 0.5,
+              "eligible_score_count": 240,
+              "label_rule": "slow_go_rt >= 0.5",
+              "learning_problem": "binary_classification",
+              "negative_label_count": 208,
+              "positive_label_count": 32,
+              "primary_label_rule": "slow_go_rt",
+              "score_count": 240,
+              "score_join": "session_index_and_trial",
+              "score_name": "slow_go_rt",
+              "score_regression_supported": false,
+              "score_target_mode": "thresholded_behavior_score",
+              "session_count": 1,
+              "session_trial_counts": {
+                "0": 240
+              },
+              "slow_rt_quantile": 0.8,
+              "source": "session_behavior",
+              "source_session_index_present": false,
+              "target": "attention_lapse_binary"
+            }
+          },
+          "model_kind": "causal_bandpower_logreg",
+          "model_version": "trained",
+          "probability": 1.0,
+          "schema_version": 1,
+          "score": 1.0
+        },
+        "prediction_label": "attention_lapse",
+        "prediction_probability": 1.0,
+        "prediction_score": 1.0,
+        "primary_latency_ms": 0.0,
+        "processed_sample_count": 147874,
+        "processing_latency_ms": 0.0,
+        "sample_count": 147874,
+        "schema_version": 1,
+        "window_index": null
+      },
+      "marker_count": 452,
+      "markers_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\realtime\\markers.jsonl",
+      "status": "ok"
+    },
+    "realtime_feature_replay": {
+      "status": "missing"
+    },
+    "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407"
+  },
+  "calibration": null,
+  "eeg": {
+    "duration_seconds": 335.485998272954,
+    "error": null,
+    "first_lsl_timestamp": 504767.69544145046,
+    "last_lsl_timestamp": 505103.1814397234,
+    "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\raw\\eeg_metadata.json",
+    "notes": [],
+    "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\raw\\eeg.csv",
+    "sample_count": 167744,
+    "status": "stopped",
+    "stream": {
+      "channel_count": 8,
+      "channel_mapping_source": "profile:enobio8_inhibition",
+      "channel_names": [
+        "Fz",
+        "Cz",
+        "Pz",
+        "C3",
+        "C4",
+        "P3",
+        "P4",
+        "Oz"
+      ],
+      "initial_time_correction_seconds": 2.0500156097114086e-06,
+      "lsl_processing": [
+        "clocksync",
+        "dejitter",
+        "monotonize"
+      ],
+      "name": "LSLOutletStreamName-EEG",
+      "nominal_srate": 500.0,
+      "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+      "type": "EEG"
+    }
+  },
+  "preflight": [
+    {
+      "data": {
+        "command_shells": [
+          "PowerShell",
+          "cmd"
+        ],
+        "display_name": "Windows",
+        "os_specific_notes": [
+          "Use installed console scripts from PowerShell or cmd.",
+          "Repository-root sh wrappers and Makefile targets are POSIX conveniences.",
+          "PsychoPy display validation, NIC2, and Windows firewall settings remain operator checks."
+        ],
+        "path_style": "windows",
+        "requires_separate_codebase": false,
+        "runtime_cache_env_vars": [
+          "USERPROFILE",
+          "APPDATA",
+          "LOCALAPPDATA",
+          "MPLCONFIGDIR",
+          "PSYCHOPY_USERAPPDATA",
+          "LSLAPICFG"
+        ],
+        "supported_systems": [
+          "Darwin",
+          "Linux",
+          "Windows"
+        ],
+        "system": "Windows"
+      },
+      "detail": "Windows is supported by the shared Python codebase",
+      "name": "os_support",
+      "status": "ok"
+    },
+    {
+      "data": {
+        "machine": "AMD64",
+        "platform": "Windows-10-10.0.22631-SP0",
+        "processor": "Intel64 Family 6 Model 151 Stepping 2, GenuineIntel",
+        "python": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\python.exe",
+        "python_version": "3.10.11",
+        "system": "Windows"
+      },
+      "detail": "Windows on AMD64",
+      "name": "platform",
+      "status": "ok"
+    },
+    {
+      "data": {
+        "actual": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\python.exe"
+      },
+      "detail": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\python.exe",
+      "name": "python",
+      "status": "ok"
+    },
+    {
+      "data": {
+        "commands": {
+          "alpha8": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\alpha8.EXE",
+          "attention8": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\attention8.EXE",
+          "classify8": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\classify8.EXE",
+          "eegle": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\eegle.EXE",
+          "inhibition8": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\inhibition8.EXE"
+        },
+        "missing": [],
+        "module_fallback": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\python.exe -m eegle.cli"
+      },
+      "detail": "all EEGle console commands found",
+      "name": "commands",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (2.2.6)",
+      "name": "package:numpy",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (1.14.1)",
+      "name": "package:scipy",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (2.3.3)",
+      "name": "package:pandas",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (3.10.9)",
+      "name": "package:matplotlib",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (1.12.1)",
+      "name": "package:mne",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (1.18.2)",
+      "name": "package:pylsl",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (2026.1.3)",
+      "name": "package:psychopy",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (2.0.0rc7)",
+      "name": "package:specparam",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (unknown)",
+      "name": "package:sklearn",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (1.5.3)",
+      "name": "package:joblib",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (0.12)",
+      "name": "package:pyriemann",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (2.13.0+cu126)",
+      "name": "package:torch",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "not importable",
+      "name": "package:onnxruntime",
+      "status": "warn"
+    },
+    {
+      "data": {
+        "opens_window": false,
+        "win_type": "pyglet"
+      },
+      "detail": "PsychoPy is importable; display should be validated with a dry task run",
+      "name": "display_ready",
+      "status": "ok"
+    },
+    {
+      "data": {
+        "streams": [
+          {
+            "channel_count": 3,
+            "name": "LSLOutletStreamName-Accelerometer",
+            "nominal_srate": 100.0,
+            "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E) Acc",
+            "type": "Accelerometer"
+          },
+          {
+            "channel_count": 8,
+            "name": "LSLOutletStreamName-EEG",
+            "nominal_srate": 500.0,
+            "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+            "type": "EEG"
+          },
+          {
+            "channel_count": 8,
+            "name": "LSLOutletStreamName-Quality",
+            "nominal_srate": 1.0,
+            "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E) Quality",
+            "type": "Quality"
+          },
+          {
+            "channel_count": 1,
+            "name": "LSLOutletStreamName-Markers",
+            "nominal_srate": 0.0,
+            "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)Marker",
+            "type": "Markers"
+          }
+        ]
+      },
+      "detail": "found 4 streams",
+      "name": "lsl",
+      "status": "ok"
+    },
+    {
+      "data": {
+        "candidate_eeg_streams": [
+          {
+            "channel_count": 8,
+            "name": "LSLOutletStreamName-EEG",
+            "nominal_srate": 500.0,
+            "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+            "type": "EEG"
+          }
+        ],
+        "detector": "enobio_lsl",
+        "expected_channel_counts": [
+          8
+        ],
+        "expected_sample_rate_hz": 500,
+        "family": "Enobio",
+        "interface": "lsl",
+        "lsl_name_patterns": [
+          "enobio",
+          "nic",
+          "neuroelectrics",
+          "LSLOutletStreamName-EEG"
+        ],
+        "lsl_stream_type": "EEG",
+        "matches": [
+          {
+            "channel_count": 8,
+            "name": "LSLOutletStreamName-EEG",
+            "nominal_srate": 500.0,
+            "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+            "type": "EEG"
+          }
+        ],
+        "profile": "enobio8_inhibition"
+      },
+      "detail": "Enobio/NIC2 profile enobio8_inhibition; detected LSLOutletStreamName-EEG (8 ch, 500.0 Hz)",
+      "name": "eeg_device",
+      "status": "ok"
+    },
+    {
+      "data": {
+        "candidate_eeg_stream_count": 1,
+        "failures": [],
+        "matching_eeg_stream_count": 1,
+        "realtime_requested": true,
+        "require_eeg": true,
+        "warnings": [],
+        "worker_launch": {
+          "module_launch": true,
+          "python": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\python.exe",
+          "shell": false
+        }
+      },
+      "detail": "realtime worker launch path is portable",
+      "name": "realtime_ready",
+      "status": "ok"
+    },
+    {
+      "data": {
+        "missing": [],
+        "missing_by_kind": {
+          "causal_bandpower_logreg": [],
+          "foundation_head_logreg": [],
+          "foundation_prototype": [],
+          "riemann_tangent_logreg": [],
+          "torch_eegnet": []
+        },
+        "model_kinds": [
+          "causal_bandpower_logreg",
+          "riemann_tangent_logreg",
+          "foundation_head_logreg",
+          "foundation_prototype",
+          "torch_eegnet"
+        ],
+        "requirements": {
+          "causal_bandpower_logreg": [
+            "sklearn",
+            "joblib",
+            "scipy"
+          ],
+          "foundation_head_logreg": [
+            "sklearn",
+            "joblib"
+          ],
+          "foundation_prototype": [
+            "sklearn",
+            "joblib"
+          ],
+          "riemann_tangent_logreg": [
+            "sklearn",
+            "joblib",
+            "pyriemann"
+          ],
+          "torch_eegnet": [
+            "torch"
+          ]
+        }
+      },
+      "detail": "training dependencies available",
+      "name": "training_ready",
+      "status": "ok"
+    },
+    {
+      "data": {
+        "matches": [
+          {
+            "channel_count": 8,
+            "name": "LSLOutletStreamName-EEG",
+            "nominal_srate": 500.0,
+            "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+            "type": "EEG"
+          }
+        ]
+      },
+      "detail": "LSLOutletStreamName-EEG (8 ch)",
+      "name": "enobio_lsl",
+      "status": "ok"
+    },
+    {
+      "data": {
+        "first_lsl_timestamp": 504759.4334412126,
+        "last_lsl_timestamp": 504761.47944114986,
+        "probe_seconds": 2.0,
+        "sample_count": 1024,
+        "status": "ok",
+        "stream": {
+          "channel_count": 8,
+          "name": "LSLOutletStreamName-EEG",
+          "nominal_srate": 500.0,
+          "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+          "type": "EEG"
+        }
+      },
+      "detail": "read 1024 samples",
+      "name": "eeg_sample_probe",
+      "status": "ok"
+    }
+  ],
+  "processes": {
+    "manager_summary_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\logs\\feedback_manager.json",
+    "normalized_processes": {
+      "dashboard": {
+        "backend": "http",
+        "enabled": true,
+        "host": "127.0.0.1",
+        "mode": "classifier",
+        "port": 8765,
+        "startup_timeout_seconds": 4.0
+      },
+      "feedback": {
+        "backend": "disabled",
+        "enabled": false
+      },
+      "offline_analyzer": {
+        "backend": "minimal",
+        "enabled": true,
+        "timeout_seconds": 120.0
+      },
+      "realtime_processor": {
+        "backend": "lsl",
+        "enabled": true,
+        "model": "causal_bandpower_logreg",
+        "preprocessor": "causal_bandpass_notch",
+        "startup_timeout_seconds": 8.0
+      },
+      "recorder": {
+        "backend": "lsl_csv",
+        "csv_mirror": true,
+        "enabled": true,
+        "startup_timeout_seconds": 8.0
+      }
+    },
+    "notes": [],
+    "processes": {
+      "dashboard": {
+        "backend": "http",
+        "elapsed_seconds": 325.10999999998603,
+        "name": "dashboard",
+        "status": "stopped",
+        "updated_at": "2026-07-14T13:19:59",
+        "url": "http://127.0.0.1:8765"
+      },
+      "offline_analyzer": {
+        "backend": "minimal",
+        "elapsed_seconds": 14.40600000001723,
+        "name": "offline_analyzer",
+        "status": "complete",
+        "summary": {
+          "alpha": {
+            "alpha_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\realtime\\alpha_power.jsonl",
+            "calibration": null,
+            "offline_alpha": {
+              "band": {
+                "high_hz": 12.0,
+                "low_hz": 8.0
+              },
+              "channel_count": 8,
+              "file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\reports\\alpha\\offline_alpha_timeseries.csv",
+              "posterior_channels": [
+                "Fz",
+                "Cz",
+                "Pz",
+                "C3",
+                "C4",
+                "P3",
+                "P4",
+                "Oz"
+              ],
+              "status": "ok",
+              "step_seconds": 0.1,
+              "window_count": 3345,
+              "window_seconds": 1.0
+            },
+            "reason": "no realtime alpha estimates found",
+            "staged_alpha_quality": {
+              "alpha_erd_percent_max": null,
+              "alpha_erd_percent_min": null,
+              "alpha_erd_percent_std": null,
+              "erd_estimate_count": 0,
+              "estimate_count": 0,
+              "readiness_estimate_count": 0,
+              "readiness_power_max": null,
+              "readiness_power_min": null,
+              "readiness_power_std": null,
+              "reasons": [
+                "readiness_alpha_missing",
+                "alpha_erd_missing"
+              ],
+              "source": "inhibition8_staged_event_features",
+              "status": "missing",
+              "usable": false,
+              "valid_fraction": 0.0
+            },
+            "status": "missing",
+            "trial_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\events\\stimulus_manifest.json"
+          },
+          "analysis_status": {
+            "alpha": "missing",
+            "bids_export": "pending_raw_eeg",
+            "classification": "ok",
+            "epochs": "missing",
+            "erp": "disabled",
+            "exploratory_feature_behavior": "disabled",
+            "html_report": "ok",
+            "power_bands": "pending_raw_eeg",
+            "realtime_feature_quality": null,
+            "realtime_feature_replay": "missing",
+            "scalp_maps": "pending_raw_eeg"
+          },
+          "behavior": {
+            "mean_rt_seconds": 0.3753119360633599,
+            "median_rt_seconds": 0.36438299997826107,
+            "misses": 0,
+            "premature_responses": 0,
+            "responses": 122,
+            "status": "ok",
+            "too_fast_responses": 0,
+            "trials": 160
+          },
+          "behavior_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\events\\behavior.csv",
+          "classification": {
+            "adaptation": {
+              "status": "disabled"
+            },
+            "canonical_trial_count": 160,
+            "files": {
+              "adaptation_updates_jsonl": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\realtime\\adaptation_updates.jsonl",
+              "metrics_json": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\reports\\classification\\metrics.json",
+              "predictions_csv": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\reports\\classification\\predictions.csv",
+              "probability_by_trial_csv": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\reports\\classification\\probability_by_trial.csv"
+            },
+            "metrics": {
+              "primary": {
+                "accuracy": 0.575,
+                "attention_lapse_f1": 0.26086956521739124,
+                "attention_lapse_precision": 0.17142857142857143,
+                "attention_lapse_recall": 0.5454545454545454,
+                "auprc": 0.16287176848803825,
+                "average_precision": 0.16287176848803825,
+                "balanced_accuracy": 0.5625823451910408,
+                "brier_score": 0.4249849732408452,
+                "calibration_id": "cal-03cd4e015b80",
+                "confusion_matrix": [
+                  [
+                    80,
+                    58
+                  ],
+                  [
+                    10,
+                    12
+                  ]
+                ],
+                "coverage": 1.0,
+                "default_threshold_metrics": {
+                  "accuracy": 0.575,
+                  "attention_lapse_f1": 0.26086956521739124,
+                  "attention_lapse_precision": 0.17142857142857143,
+                  "attention_lapse_recall": 0.5454545454545454,
+                  "auprc": 0.16287176848803825,
+                  "average_precision": 0.16287176848803825,
+                  "balanced_accuracy": 0.5625823451910408,
+                  "brier_score": 0.4249849732408452,
+                  "confusion_matrix": [
+                    [
+                      80,
+                      58
+                    ],
+                    [
+                      10,
+                      12
+                    ]
+                  ],
+                  "ece": 0.42499248153727937,
+                  "expected_calibration_error": 0.42499248153727937,
+                  "negative_recall": 0.5797101449275363,
+                  "operating_threshold": 0.5,
+                  "positive_f1": 0.26086956521739124,
+                  "positive_precision": 0.17142857142857143,
+                  "positive_recall": 0.5454545454545454,
+                  "roc_auc": 0.5655467720685112,
+                  "sample_count": 160,
+                  "threshold": 0.5
+                },
+                "ece": 0.42499248153727937,
+                "evaluation_level": "full_inference",
+                "expected_calibration_error": 0.42499248153727937,
+                "false_alarms_per_minute": 14.11317143149974,
+                "negative_recall": 0.5797101449275363,
+                "operating_threshold": 0.006524144594439291,
+                "permutation_p_value": 0.21782178217821782,
+                "positive_f1": 0.26086956521739124,
+                "positive_precision": 0.17142857142857143,
+                "positive_recall": 0.5454545454545454,
+                "roc_auc": 0.5655467720685112,
+                "sample_count": 160,
+                "status": "ok",
+                "target": "attention_lapse_binary",
+                "threshold": 0.006524144594439291,
+                "threshold_source": "prediction_row_calibrated_threshold",
+                "threshold_values_seen": [
+                  0.006524144594
+                ],
+                "warnings": [
+                  "balanced_accuracy_below_0.60",
+                  "permutation_p_not_below_0.05"
+                ]
+              },
+              "shadow-foundation_head_logreg": {
+                "accuracy": 0.8616352201257862,
+                "attention_lapse_f1": 0.0,
+                "attention_lapse_precision": 0.0,
+                "attention_lapse_recall": 0.0,
+                "auprc": 0.170867603965317,
+                "average_precision": 0.170867603965317,
+                "balanced_accuracy": 0.5,
+                "brier_score": 0.13836477987421383,
+                "calibration_id": "cal-f19091bb3f19",
+                "confusion_matrix": [
+                  [
+                    137,
+                    0
+                  ],
+                  [
+                    22,
+                    0
+                  ]
+                ],
+                "coverage": 0.99375,
+                "default_threshold_metrics": {
+                  "accuracy": 0.8616352201257862,
+                  "attention_lapse_f1": 0.0,
+                  "attention_lapse_precision": 0.0,
+                  "attention_lapse_recall": 0.0,
+                  "auprc": 0.170867603965317,
+                  "average_precision": 0.170867603965317,
+                  "balanced_accuracy": 0.5,
+                  "brier_score": 0.13836477987421383,
+                  "confusion_matrix": [
+                    [
+                      137,
+                      0
+                    ],
+                    [
+                      22,
+                      0
+                    ]
+                  ],
+                  "ece": 0.13836477987421383,
+                  "expected_calibration_error": 0.13836477987421383,
+                  "negative_recall": 1.0,
+                  "operating_threshold": 0.5,
+                  "positive_f1": 0.0,
+                  "positive_precision": 0.0,
+                  "positive_recall": 0.0,
+                  "roc_auc": 0.5,
+                  "sample_count": 159,
+                  "threshold": 0.5
+                },
+                "ece": 0.13836477987421383,
+                "evaluation_level": "full_inference",
+                "expected_calibration_error": 0.13836477987421383,
+                "false_alarms_per_minute": 0.0,
+                "negative_recall": 1.0,
+                "operating_threshold": 0.06716274111412633,
+                "permutation_p_value": 1.0,
+                "positive_f1": 0.0,
+                "positive_precision": 0.0,
+                "positive_recall": 0.0,
+                "roc_auc": 0.5,
+                "sample_count": 159,
+                "status": "ok",
+                "target": "attention_lapse_binary",
+                "threshold": 0.06716274111412633,
+                "threshold_source": "prediction_row_calibrated_threshold",
+                "threshold_values_seen": [
+                  0.067162741114
+                ],
+                "warnings": [
+                  "balanced_accuracy_below_0.60",
+                  "permutation_p_not_below_0.05"
+                ]
+              },
+              "shadow-foundation_prototype": {
+                "accuracy": 0.13836477987421383,
+                "attention_lapse_f1": 0.2430939226519337,
+                "attention_lapse_precision": 0.13836477987421383,
+                "attention_lapse_recall": 1.0,
+                "auprc": 0.1622455710721195,
+                "average_precision": 0.1622455710721195,
+                "balanced_accuracy": 0.5,
+                "brier_score": 0.22273512362751377,
+                "calibration_id": "cal-a53c0d100f57",
+                "confusion_matrix": [
+                  [
+                    0,
+                    137
+                  ],
+                  [
+                    0,
+                    22
+                  ]
+                ],
+                "coverage": 0.99375,
+                "default_threshold_metrics": {
+                  "accuracy": 0.8616352201257862,
+                  "attention_lapse_f1": 0.0,
+                  "attention_lapse_precision": 0.0,
+                  "attention_lapse_recall": 0.0,
+                  "auprc": 0.1622455710721195,
+                  "average_precision": 0.1622455710721195,
+                  "balanced_accuracy": 0.5,
+                  "brier_score": 0.22273512362751377,
+                  "confusion_matrix": [
+                    [
+                      137,
+                      0
+                    ],
+                    [
+                      22,
+                      0
+                    ]
+                  ],
+                  "ece": 0.3217377384169138,
+                  "expected_calibration_error": 0.3217377384169138,
+                  "negative_recall": 1.0,
+                  "operating_threshold": 0.5,
+                  "positive_f1": 0.0,
+                  "positive_precision": 0.0,
+                  "positive_recall": 0.0,
+                  "roc_auc": 0.5583941605839416,
+                  "sample_count": 159,
+                  "threshold": 0.5
+                },
+                "ece": 0.3217377384169138,
+                "evaluation_level": "full_inference",
+                "expected_calibration_error": 0.3217377384169138,
+                "false_alarms_per_minute": 33.54577640916432,
+                "negative_recall": 0.0,
+                "operating_threshold": 0.17737384449991817,
+                "permutation_p_value": 1.0,
+                "positive_f1": 0.2430939226519337,
+                "positive_precision": 0.13836477987421383,
+                "positive_recall": 1.0,
+                "roc_auc": 0.5583941605839416,
+                "sample_count": 159,
+                "status": "ok",
+                "target": "attention_lapse_binary",
+                "threshold": 0.17737384449991817,
+                "threshold_source": "prediction_row_calibrated_threshold",
+                "threshold_values_seen": [
+                  0.1773738445
+                ],
+                "warnings": [
+                  "balanced_accuracy_below_0.60",
+                  "permutation_p_not_below_0.05"
+                ]
+              },
+              "shadow-riemann_tangent_logreg": {
+                "accuracy": 0.6415094339622641,
+                "attention_lapse_f1": 0.24,
+                "attention_lapse_precision": 0.16981132075471697,
+                "attention_lapse_recall": 0.4090909090909091,
+                "auprc": 0.15853473319800154,
+                "average_precision": 0.15853473319800154,
+                "balanced_accuracy": 0.5439615129396151,
+                "brier_score": 0.16905091827962732,
+                "calibration_id": "cal-ab226835add8",
+                "confusion_matrix": [
+                  [
+                    93,
+                    44
+                  ],
+                  [
+                    13,
+                    9
+                  ]
+                ],
+                "coverage": 0.99375,
+                "default_threshold_metrics": {
+                  "accuracy": 0.7610062893081762,
+                  "attention_lapse_f1": 0.0,
+                  "attention_lapse_precision": 0.0,
+                  "attention_lapse_recall": 0.0,
+                  "auprc": 0.15853473319800154,
+                  "average_precision": 0.15853473319800154,
+                  "balanced_accuracy": 0.4416058394160584,
+                  "brier_score": 0.16905091827962732,
+                  "confusion_matrix": [
+                    [
+                      121,
+                      16
+                    ],
+                    [
+                      22,
+                      0
+                    ]
+                  ],
+                  "ece": 0.1139726740231666,
+                  "expected_calibration_error": 0.1139726740231666,
+                  "negative_recall": 0.8832116788321168,
+                  "operating_threshold": 0.5,
+                  "positive_f1": 0.0,
+                  "positive_precision": 0.0,
+                  "positive_recall": 0.0,
+                  "roc_auc": 0.5680159256801592,
+                  "sample_count": 159,
+                  "threshold": 0.5
+                },
+                "ece": 0.1139726740231666,
+                "evaluation_level": "full_inference",
+                "expected_calibration_error": 0.1139726740231666,
+                "false_alarms_per_minute": 10.773826000023577,
+                "negative_recall": 0.6788321167883211,
+                "operating_threshold": 0.23934214771102058,
+                "permutation_p_value": 0.24752475247524752,
+                "positive_f1": 0.24,
+                "positive_precision": 0.16981132075471697,
+                "positive_recall": 0.4090909090909091,
+                "roc_auc": 0.5680159256801592,
+                "sample_count": 159,
+                "status": "ok",
+                "target": "attention_lapse_binary",
+                "threshold": 0.23934214771102058,
+                "threshold_source": "prediction_row_calibrated_threshold",
+                "threshold_values_seen": [
+                  0.239342147711
+                ],
+                "warnings": [
+                  "balanced_accuracy_below_0.60",
+                  "permutation_p_not_below_0.05"
+                ]
+              },
+              "shadow-torch_eegnet": {
+                "accuracy": 0.13836477987421383,
+                "attention_lapse_f1": 0.2430939226519337,
+                "attention_lapse_precision": 0.13836477987421383,
+                "attention_lapse_recall": 1.0,
+                "auprc": 0.15185857545198694,
+                "average_precision": 0.15185857545198694,
+                "balanced_accuracy": 0.5,
+                "brier_score": 0.2623443723495151,
+                "calibration_id": "cal-2c573594caef",
+                "confusion_matrix": [
+                  [
+                    0,
+                    137
+                  ],
+                  [
+                    0,
+                    22
+                  ]
+                ],
+                "coverage": 0.99375,
+                "default_threshold_metrics": {
+                  "accuracy": 0.3584905660377358,
+                  "attention_lapse_f1": 0.22727272727272724,
+                  "attention_lapse_precision": 0.13636363636363635,
+                  "attention_lapse_recall": 0.6818181818181818,
+                  "auprc": 0.15185857545198694,
+                  "average_precision": 0.15185857545198694,
+                  "balanced_accuracy": 0.4941937624419376,
+                  "brier_score": 0.2623443723495151,
+                  "confusion_matrix": [
+                    [
+                      42,
+                      95
+                    ],
+                    [
+                      7,
+                      15
+                    ]
+                  ],
+                  "ece": 0.3767893312781588,
+                  "expected_calibration_error": 0.3767893312781588,
+                  "negative_recall": 0.30656934306569344,
+                  "operating_threshold": 0.5,
+                  "positive_f1": 0.22727272727272724,
+                  "positive_precision": 0.13636363636363635,
+                  "positive_recall": 0.6818181818181818,
+                  "roc_auc": 0.5079628400796284,
+                  "sample_count": 159,
+                  "threshold": 0.5
+                },
+                "ece": 0.3767893312781588,
+                "evaluation_level": "full_inference",
+                "expected_calibration_error": 0.3767893312781588,
+                "false_alarms_per_minute": 33.54577640916432,
+                "negative_recall": 0.0,
+                "operating_threshold": 0.10486464947462082,
+                "permutation_p_value": 1.0,
+                "positive_f1": 0.2430939226519337,
+                "positive_precision": 0.13836477987421383,
+                "positive_recall": 1.0,
+                "roc_auc": 0.5079628400796284,
+                "sample_count": 159,
+                "status": "ok",
+                "target": "attention_lapse_binary",
+                "threshold": 0.10486464947462082,
+                "threshold_source": "prediction_row_calibrated_threshold",
+                "threshold_values_seen": [
+                  0.104864649475
+                ],
+                "warnings": [
+                  "balanced_accuracy_below_0.60",
+                  "permutation_p_not_below_0.05"
+                ]
+              }
+            },
+            "prediction_count": 800,
+            "replay": {
+              "adaptation_replay": {
+                "status": "disabled"
+              },
+              "capture_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\realtime\\engine_input.bin",
+              "difference_count": 4,
+              "differences": [
+                {
+                  "key": [
+                    "predicted",
+                    1,
+                    "shadow-foundation_head_logreg",
+                    1
+                  ],
+                  "reason": "missing_row"
+                },
+                {
+                  "key": [
+                    "predicted",
+                    1,
+                    "shadow-foundation_prototype",
+                    1
+                  ],
+                  "reason": "missing_row"
+                },
+                {
+                  "key": [
+                    "predicted",
+                    1,
+                    "shadow-riemann_tangent_logreg",
+                    1
+                  ],
+                  "reason": "missing_row"
+                },
+                {
+                  "key": [
+                    "predicted",
+                    1,
+                    "shadow-torch_eegnet",
+                    1
+                  ],
+                  "reason": "missing_row"
+                }
+              ],
+              "online_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\realtime\\model_predictions.jsonl",
+              "online_prediction_count": 796,
+              "online_skipped_count": 4,
+              "replay_adaptation_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\reports\\classification\\replay_adaptation_updates.jsonl",
+              "replay_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\reports\\classification\\replay_predictions.jsonl",
+              "replay_prediction_count": 800,
+              "schema_version": 1,
+              "status": "analytically_invalid"
+            },
+            "schema_version": 1,
+            "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407",
+            "status": "ok"
+          },
+          "epochs": {
+            "manifest_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\realtime\\epochs\\manifest.json",
+            "status": "missing"
+          },
+          "erp": {
+            "reason": "ERP analysis disabled",
+            "status": "disabled"
+          },
+          "exploratory_feature_behavior": {
+            "status": "disabled"
+          },
+          "html_report": {
+            "display_timebase": "monotonic",
+            "html_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\reports\\experiment_summary.html",
+            "legacy_continuous_alpha_count": 0,
+            "live_alpha_count": 0,
+            "live_alpha_source": "legacy_continuous_alpha",
+            "marker_count": 1064,
+            "offline_alpha_status": "ok",
+            "raw_sample_count": 167744,
+            "raw_status": "ok",
+            "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407",
+            "staged_alpha_packet_count": 0,
+            "status": "ok",
+            "timebase_diagnostics": {
+              "lsl_overlap_markers": 772,
+              "monotonic_overlap_markers": 932,
+              "raw_lsl_duration_seconds": 335.485998,
+              "raw_lsl_start": 504767.69544145,
+              "raw_monotonic_duration_seconds": 334.986,
+              "raw_monotonic_start": 504768.264000103
+            }
+          },
+          "processes": {
+            "failed_processes": [],
+            "processes": {
+              "dashboard": {
+                "backend": "http",
+                "elapsed_seconds": 325.10999999998603,
+                "name": "dashboard",
+                "status": "stopped",
+                "updated_at": "2026-07-14T13:19:59",
+                "url": "http://127.0.0.1:8765"
+              },
+              "offline_analyzer": {
+                "backend": "minimal",
+                "elapsed_seconds": 0.015000000013969839,
+                "name": "offline_analyzer",
+                "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407",
+                "status": "running",
+                "updated_at": "2026-07-14T13:20:02"
+              },
+              "realtime_processor": {
+                "alpha_enabled": false,
+                "alpha_estimate_count": 0,
+                "backend": "lsl",
+                "classifier_predicted_epoch_count": 160,
+                "classifier_prediction_count": 796,
+                "classifier_rejected_epoch_count": 0,
+                "eeg_stream": {
+                  "channel_count": 8,
+                  "channel_mapping_source": "profile:enobio8_inhibition",
+                  "channel_names": [
+                    "Fz",
+                    "Cz",
+                    "Pz",
+                    "C3",
+                    "C4",
+                    "P3",
+                    "P4",
+                    "Oz"
+                  ],
+                  "initial_time_correction_seconds": -4.499743226915598e-07,
+                  "large_cap_detected": false,
+                  "lsl_processing": [
+                    "clocksync",
+                    "dejitter",
+                    "monotonize"
+                  ],
+                  "name": "LSLOutletStreamName-EEG",
+                  "nominal_srate": 500.0,
+                  "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+                  "type": "EEG"
+                },
+                "elapsed_seconds": 332.81300000002375,
+                "eligible_marker_count": 160,
+                "epoch_count": 160,
+                "event_feature_packet_count": 0,
+                "event_features_enabled": false,
+                "marker_count": 452,
+                "marker_status": "connected",
+                "marker_stream": {
+                  "initial_time_correction_seconds": null,
+                  "lsl_processing": [
+                    "clocksync",
+                    "monotonize"
+                  ],
+                  "name": "EEGleMarkers",
+                  "source_id": "eegle-markers-go_nogo-run-20260714T131407-49217a8040d8",
+                  "type": "Markers"
+                },
+                "name": "realtime_processor",
+                "pending_epoch_count": 0,
+                "performance": {
+                  "buffer_utilization": 1.0,
+                  "eeg_pull_time_ms": 0.0,
+                  "epoch_extraction_time_ms": 0.0,
+                  "inference_queue_depth": 0,
+                  "preprocessing_time_ms": 0.0,
+                  "primary_latency_ms": 0.0,
+                  "raw_buffer_utilization": 1.0,
+                  "shadow_latency_ms": 0.0,
+                  "skipped_shadow_count": 4,
+                  "worst_loop_time_ms": 2531.0000000172295,
+                  "writer_backlog": 0
+                },
+                "performance_config": {
+                  "inference_queue_max_epochs": 4,
+                  "large_cap_channel_threshold": 32,
+                  "large_cap_detected": false,
+                  "primary_latency_budget_ms": 50.0,
+                  "skip_shadows_when_queue_depth_gte": 2,
+                  "writer_flush_every": 50,
+                  "writer_flush_interval_ms": 100.0
+                },
+                "processed_sample_count": 163786,
+                "rejected_epoch_count": 0,
+                "sample_count": 163786,
+                "status": "stopped",
+                "updated_at": "2026-07-14T13:20:00",
+                "window_count": 0
+              },
+              "recorder": {
+                "backend": "lsl_csv",
+                "elapsed_seconds": 341.23399999999674,
+                "error": null,
+                "name": "recorder",
+                "status": "stopped",
+                "updated_at": "2026-07-14T13:20:02"
+              }
+            },
+            "status": "ok"
+          },
+          "raw_eeg": {
+            "channel_count": 8,
+            "duration_seconds": 335.4859982730122,
+            "first_lsl_timestamp": 504767.69544145,
+            "last_lsl_timestamp": 505103.181439723,
+            "metadata": {
+              "duration_seconds": 335.485998272954,
+              "eeg_config": {
+                "allow_type_only_fallback": false,
+                "expected_channel_counts": [
+                  8
+                ],
+                "expected_sample_rate_hz": 500,
+                "family": "Enobio",
+                "lsl_name_patterns": [
+                  "enobio",
+                  "nic",
+                  "neuroelectrics",
+                  "LSLOutletStreamName-EEG"
+                ],
+                "lsl_stream_type": "EEG",
+                "profile": "enobio8_inhibition",
+                "required_for_run": true,
+                "sample_probe_seconds": 2.0,
+                "stream_timeout_seconds": 5.0
+              },
+              "error": null,
+              "finished_at_monotonic": 505103.75,
+              "first_lsl_timestamp": 504767.69544145046,
+              "last_lsl_timestamp": 505103.1814397234,
+              "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\raw\\eeg_metadata.json",
+              "notes": [],
+              "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\raw\\eeg.csv",
+              "sample_count": 167744,
+              "started_at_monotonic": 504768.39,
+              "status": "stopped",
+              "stream": {
+                "channel_count": 8,
+                "channel_mapping_source": "profile:enobio8_inhibition",
+                "channel_names": [
+                  "Fz",
+                  "Cz",
+                  "Pz",
+                  "C3",
+                  "C4",
+                  "P3",
+                  "P4",
+                  "Oz"
+                ],
+                "initial_time_correction_seconds": 2.0500156097114086e-06,
+                "lsl_processing": [
+                  "clocksync",
+                  "dejitter",
+                  "monotonize"
+                ],
+                "name": "LSLOutletStreamName-EEG",
+                "nominal_srate": 500.0,
+                "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+                "type": "EEG"
+              }
+            },
+            "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\raw\\eeg_metadata.json",
+            "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\raw\\eeg.csv",
+            "sample_count": 167744,
+            "status": "ok"
+          },
+          "realtime": {
+            "decision_count": 160,
+            "decisions_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\realtime\\decisions.jsonl",
+            "latest_decision": {
+              "actions": [
+                {
+                  "action": "observe_only",
+                  "action_id": "observe_only:causal_bandpower_logreg:160:observe_only:160",
+                  "block_index": null,
+                  "boundary": "between_trials",
+                  "created_at_monotonic": 505069.89,
+                  "metadata": {
+                    "policy": "observe_only"
+                  },
+                  "parameters": {},
+                  "reason": "task adaptation disabled",
+                  "schema_version": 1,
+                  "source_epoch_index": 160,
+                  "source_label": "attention_lapse",
+                  "source_model": "causal_bandpower_logreg",
+                  "source_probability": 1.0,
+                  "source_score": 1.0,
+                  "source_trial": 160,
+                  "target_trial_index": 161,
+                  "value": null
+                }
+              ],
+              "created_at_monotonic": 505069.89,
+              "decision_source": "event_epoch",
+              "epoch": {
+                "channel_names": [
+                  "Fz",
+                  "Cz",
+                  "Pz",
+                  "C3",
+                  "C4",
+                  "P3",
+                  "P4",
+                  "Oz"
+                ],
+                "condition": "go",
+                "data_layout": "channels_x_samples",
+                "data_shape": [
+                  8,
+                  1001
+                ],
+                "end_timestamp": 505069.8474392676,
+                "epoch_index": 160,
+                "epoch_window_seconds": [
+                  -2.0,
+                  0.0
+                ],
+                "marker": {
+                  "label": "go_nogo_stimulus_onset_160_go_circle_blue",
+                  "metadata": {
+                    "color": "blue",
+                    "condition": "go",
+                    "label": "go_nogo_stimulus_onset_160_go_circle_blue",
+                    "shape": "circle",
+                    "trial": 160
+                  },
+                  "source": "lsl",
+                  "timebase": "lsl",
+                  "timestamp": 505069.84805515
+                },
+                "relative_end_seconds": -0.0006158823962323368,
+                "relative_start_seconds": -2.000615966215264,
+                "sample_count": 1001,
+                "sample_rate_hz": 500.0,
+                "sample_start": 6,
+                "sample_stop": 1007,
+                "schema_version": 1,
+                "start_timestamp": 505067.8474391838,
+                "status": "ready",
+                "training_label": 0,
+                "trial": 160
+              },
+              "epoch_count": 160,
+              "epoch_index": 160,
+              "features": {
+                "central_alpha_power": 0.16988429775632272,
+                "central_beta_power": 0.21912827524362183,
+                "central_theta_power": 0.8879720839139942,
+                "epoch_mean_uv": -1.2225452085910295e-13,
+                "epoch_peak_to_peak_uv": 25.685958714895662,
+                "epoch_std_uv": 2.2940831339724665,
+                "frontal_alpha_power": 0.189443286479108,
+                "frontal_beta_power": 0.1737996908569311,
+                "frontal_theta_power": 0.36583298950355586,
+                "global_alpha_beta_ratio": 0.6967827087160773,
+                "global_alpha_power": 0.18667682110883796,
+                "global_beta_power": 0.26791253395598313,
+                "global_theta_alpha_ratio": 5.0841324277045805,
+                "global_theta_power": 0.94908967970025,
+                "posterior_alpha_power": 0.19857959728065688,
+                "posterior_beta_power": 0.3280289387650171,
+                "posterior_theta_power": 1.1407420490891156,
+                "probability_attention_lapse": 1.0
+              },
+              "feedback": {
+                "action": "observe_only",
+                "action_id": "observe_only:causal_bandpower_logreg:160:observe_only:160",
+                "block_index": null,
+                "boundary": "between_trials",
+                "created_at_monotonic": 505069.89,
+                "metadata": {
+                  "policy": "observe_only"
+                },
+                "parameters": {},
+                "reason": "task adaptation disabled",
+                "schema_version": 1,
+                "source_epoch_index": 160,
+                "source_label": "attention_lapse",
+                "source_model": "causal_bandpower_logreg",
+                "source_probability": 1.0,
+                "source_score": 1.0,
+                "source_trial": 160,
+                "target_trial_index": 161,
+                "value": null
+              },
+              "inference_queue_depth": 0,
+              "marker_count": 449,
+              "prediction": {
+                "features": {
+                  "central_alpha_power": 0.16988429775632272,
+                  "central_beta_power": 0.21912827524362183,
+                  "central_theta_power": 0.8879720839139942,
+                  "epoch_mean_uv": -1.2225452085910295e-13,
+                  "epoch_peak_to_peak_uv": 25.685958714895662,
+                  "epoch_std_uv": 2.2940831339724665,
+                  "frontal_alpha_power": 0.189443286479108,
+                  "frontal_beta_power": 0.1737996908569311,
+                  "frontal_theta_power": 0.36583298950355586,
+                  "global_alpha_beta_ratio": 0.6967827087160773,
+                  "global_alpha_power": 0.18667682110883796,
+                  "global_beta_power": 0.26791253395598313,
+                  "global_theta_alpha_ratio": 5.0841324277045805,
+                  "global_theta_power": 0.94908967970025,
+                  "posterior_alpha_power": 0.19857959728065688,
+                  "posterior_beta_power": 0.3280289387650171,
+                  "posterior_theta_power": 1.1407420490891156,
+                  "probability_attention_lapse": 1.0
+                },
+                "label": "attention_lapse",
+                "latency_ms": 0.0,
+                "metadata": {
+                  "bundle_hash": "4876c69e544736c629662f6cdbc967a4cd09ccdf5f4770044862062e890545c3",
+                  "bundle_path": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\realtime\\models\\primary-causal_bandpower_logreg-4876c69e5447",
+                  "calibrated_threshold": 0.006524144594439291,
+                  "calibration_id": "cal-03cd4e015b80",
+                  "calibration_state_hash": "ba15986d099667f85a39b2b462f5dbbaa316fba1f69b1e75b0f430ddc8f0c81e",
+                  "model_family": "classical",
+                  "model_spec": {
+                    "adapter_kind": "causal_bandpower_logreg",
+                    "aliases": [],
+                    "artifact_format": "joblib",
+                    "checkpoint_format": "joblib",
+                    "dependencies": [
+                      "sklearn",
+                      "joblib",
+                      "scipy"
+                    ],
+                    "description": "Causal pre-event bandpower features with logistic regression.",
+                    "external_checkpoint": false,
+                    "family": "classical",
+                    "kind": "causal_bandpower_logreg",
+                    "latency_budget_ms": 50.0,
+                    "primary_realtime_allowed": true,
+                    "realtime_supported": true,
+                    "supported_targets": [
+                      "attention_lapse_binary",
+                      "attention_lapse_score"
+                    ],
+                    "train_kind": "causal_bandpower_logreg",
+                    "trainable": true
+                  },
+                  "prediction_horizon": "same_trial_response",
+                  "prediction_window_seconds": [
+                    -2.0,
+                    0.0
+                  ],
+                  "query_size": 190,
+                  "support_query": {
+                    "practice_excluded": true,
+                    "query_epoch_count": 190,
+                    "query_negative_count": 169,
+                    "query_positive_count": 21,
+                    "strategy": "temporal_first_k",
+                    "support_epoch_count": 50,
+                    "support_negative_count": 39,
+                    "support_positive_count": 11,
+                    "support_trials": 50
+                  },
+                  "support_size": 50,
+                  "target": "attention_lapse_binary",
+                  "target_spec": {
+                    "attention_lapse_label": "slow_go_rt",
+                    "attention_lapse_threshold": 0.5,
+                    "eligible_score_count": 240,
+                    "label_rule": "slow_go_rt >= 0.5",
+                    "learning_problem": "binary_classification",
+                    "negative_label_count": 208,
+                    "positive_label_count": 32,
+                    "primary_label_rule": "slow_go_rt",
+                    "score_count": 240,
+                    "score_join": "session_index_and_trial",
+                    "score_name": "slow_go_rt",
+                    "score_regression_supported": false,
+                    "score_target_mode": "thresholded_behavior_score",
+                    "session_count": 1,
+                    "session_trial_counts": {
+                      "0": 240
+                    },
+                    "slow_rt_quantile": 0.8,
+                    "source": "session_behavior",
+                    "source_session_index_present": false,
+                    "target": "attention_lapse_binary"
+                  }
+                },
+                "model_kind": "causal_bandpower_logreg",
+                "model_version": "trained",
+                "probability": 1.0,
+                "schema_version": 1,
+                "score": 1.0
+              },
+              "prediction_label": "attention_lapse",
+              "prediction_probability": 1.0,
+              "prediction_score": 1.0,
+              "primary_latency_ms": 0.0,
+              "processed_sample_count": 147874,
+              "processing_latency_ms": 0.0,
+              "sample_count": 147874,
+              "schema_version": 1,
+              "window_index": null
+            },
+            "marker_count": 452,
+            "markers_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\realtime\\markers.jsonl",
+            "status": "ok"
+          },
+          "realtime_feature_replay": {
+            "status": "missing"
+          },
+          "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407"
+        },
+        "updated_at": "2026-07-14T13:20:17"
+      },
+      "realtime_processor": {
+        "alpha_enabled": false,
+        "alpha_estimate_count": 0,
+        "backend": "lsl",
+        "classifier_predicted_epoch_count": 160,
+        "classifier_prediction_count": 796,
+        "classifier_rejected_epoch_count": 0,
+        "eeg_stream": {
+          "channel_count": 8,
+          "channel_mapping_source": "profile:enobio8_inhibition",
+          "channel_names": [
+            "Fz",
+            "Cz",
+            "Pz",
+            "C3",
+            "C4",
+            "P3",
+            "P4",
+            "Oz"
+          ],
+          "initial_time_correction_seconds": -4.499743226915598e-07,
+          "large_cap_detected": false,
+          "lsl_processing": [
+            "clocksync",
+            "dejitter",
+            "monotonize"
+          ],
+          "name": "LSLOutletStreamName-EEG",
+          "nominal_srate": 500.0,
+          "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+          "type": "EEG"
+        },
+        "elapsed_seconds": 332.81300000002375,
+        "eligible_marker_count": 160,
+        "epoch_count": 160,
+        "event_feature_packet_count": 0,
+        "event_features_enabled": false,
+        "marker_count": 452,
+        "marker_status": "connected",
+        "marker_stream": {
+          "initial_time_correction_seconds": null,
+          "lsl_processing": [
+            "clocksync",
+            "monotonize"
+          ],
+          "name": "EEGleMarkers",
+          "source_id": "eegle-markers-go_nogo-run-20260714T131407-49217a8040d8",
+          "type": "Markers"
+        },
+        "name": "realtime_processor",
+        "pending_epoch_count": 0,
+        "performance": {
+          "buffer_utilization": 1.0,
+          "eeg_pull_time_ms": 0.0,
+          "epoch_extraction_time_ms": 0.0,
+          "inference_queue_depth": 0,
+          "preprocessing_time_ms": 0.0,
+          "primary_latency_ms": 0.0,
+          "raw_buffer_utilization": 1.0,
+          "shadow_latency_ms": 0.0,
+          "skipped_shadow_count": 4,
+          "worst_loop_time_ms": 2531.0000000172295,
+          "writer_backlog": 0
+        },
+        "performance_config": {
+          "inference_queue_max_epochs": 4,
+          "large_cap_channel_threshold": 32,
+          "large_cap_detected": false,
+          "primary_latency_budget_ms": 50.0,
+          "skip_shadows_when_queue_depth_gte": 2,
+          "writer_flush_every": 50,
+          "writer_flush_interval_ms": 100.0
+        },
+        "processed_sample_count": 163786,
+        "rejected_epoch_count": 0,
+        "sample_count": 163786,
+        "status": "stopped",
+        "updated_at": "2026-07-14T13:20:00",
+        "window_count": 0
+      },
+      "recorder": {
+        "backend": "lsl_csv",
+        "elapsed_seconds": 341.23399999999674,
+        "error": null,
+        "name": "recorder",
+        "status": "stopped",
+        "summary": {
+          "duration_seconds": 335.485998272954,
+          "error": null,
+          "first_lsl_timestamp": 504767.69544145046,
+          "last_lsl_timestamp": 505103.1814397234,
+          "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\raw\\eeg_metadata.json",
+          "notes": [],
+          "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\raw\\eeg.csv",
+          "sample_count": 167744,
+          "status": "stopped",
+          "stream": {
+            "channel_count": 8,
+            "channel_mapping_source": "profile:enobio8_inhibition",
+            "channel_names": [
+              "Fz",
+              "Cz",
+              "Pz",
+              "C3",
+              "C4",
+              "P3",
+              "P4",
+              "Oz"
+            ],
+            "initial_time_correction_seconds": 2.0500156097114086e-06,
+            "lsl_processing": [
+              "clocksync",
+              "dejitter",
+              "monotonize"
+            ],
+            "name": "LSLOutletStreamName-EEG",
+            "nominal_srate": 500.0,
+            "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+            "type": "EEG"
+          }
+        },
+        "updated_at": "2026-07-14T13:20:02"
+      }
+    },
+    "status": "complete"
+  },
+  "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407",
+  "status": "complete",
+  "summary_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\session_summary.json",
+  "task": {
+    "mode": "psychopy",
+    "summary": {
+      "aborted": false,
+      "accuracy": 0.89375,
+      "button_presses": 122,
+      "commission_errors": 13,
+      "duration_seconds": 247.39100000000326,
+      "finish_monotonic": 505070.625,
+      "mean_go_rt_seconds": 0.3791263467875745,
+      "omission_errors": 4,
+      "start_monotonic": 504823.234,
+      "trials": 160
+    },
+    "task": "go_nogo"
+  },
+  "telemetry": {
+    "debug_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\logs\\debug.jsonl",
+    "telemetry_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\logs\\telemetry.jsonl"
+  }
+}

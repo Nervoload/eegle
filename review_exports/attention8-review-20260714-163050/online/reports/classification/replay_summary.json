@@ -1,0 +1,53 @@
+{
+  "adaptation_replay": {
+    "status": "disabled"
+  },
+  "capture_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\realtime\\engine_input.bin",
+  "difference_count": 4,
+  "differences": [
+    {
+      "key": [
+        "predicted",
+        1,
+        "shadow-foundation_head_logreg",
+        1
+      ],
+      "reason": "missing_row"
+    },
+    {
+      "key": [
+        "predicted",
+        1,
+        "shadow-foundation_prototype",
+        1
+      ],
+      "reason": "missing_row"
+    },
+    {
+      "key": [
+        "predicted",
+        1,
+        "shadow-riemann_tangent_logreg",
+        1
+      ],
+      "reason": "missing_row"
+    },
+    {
+      "key": [
+        "predicted",
+        1,
+        "shadow-torch_eegnet",
+        1
+      ],
+      "reason": "missing_row"
+    }
+  ],
+  "online_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\realtime\\model_predictions.jsonl",
+  "online_prediction_count": 796,
+  "online_skipped_count": 4,
+  "replay_adaptation_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\reports\\classification\\replay_adaptation_updates.jsonl",
+  "replay_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-online\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T131407\\reports\\classification\\replay_predictions.jsonl",
+  "replay_prediction_count": 800,
+  "schema_version": 1,
+  "status": "analytically_invalid"
+}

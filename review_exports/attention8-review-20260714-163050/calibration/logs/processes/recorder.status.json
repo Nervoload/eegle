@@ -1,0 +1,43 @@
+{
+  "backend": "lsl_csv",
+  "elapsed_seconds": 882.5620000000345,
+  "error": null,
+  "name": "recorder",
+  "status": "stopped",
+  "summary": {
+    "duration_seconds": 876.8139990513446,
+    "error": null,
+    "first_lsl_timestamp": 503505.15144162194,
+    "last_lsl_timestamp": 504381.9654406733,
+    "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\raw\\eeg_metadata.json",
+    "notes": [],
+    "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\raw\\eeg.csv",
+    "sample_count": 438408,
+    "status": "stopped",
+    "stream": {
+      "channel_count": 8,
+      "channel_mapping_source": "profile:enobio8_inhibition",
+      "channel_names": [
+        "Fz",
+        "Cz",
+        "Pz",
+        "C3",
+        "C4",
+        "P3",
+        "P4",
+        "Oz"
+      ],
+      "initial_time_correction_seconds": 2.2999884095042944e-06,
+      "lsl_processing": [
+        "clocksync",
+        "dejitter",
+        "monotonize"
+      ],
+      "name": "LSLOutletStreamName-EEG",
+      "nominal_srate": 500.0,
+      "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+      "type": "EEG"
+    }
+  },
+  "updated_at": "2026-07-14T13:08:00"
+}

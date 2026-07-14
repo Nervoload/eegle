@@ -1,0 +1,916 @@
+{
+  "analysis": {
+    "alpha": {
+      "alpha_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\realtime\\alpha_power.jsonl",
+      "calibration": null,
+      "offline_alpha": {
+        "band": {
+          "high_hz": 12.0,
+          "low_hz": 8.0
+        },
+        "channel_count": 8,
+        "file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\reports\\alpha\\offline_alpha_timeseries.csv",
+        "posterior_channels": [
+          "Fz",
+          "Cz",
+          "Pz",
+          "C3",
+          "C4",
+          "P3",
+          "P4",
+          "Oz"
+        ],
+        "status": "ok",
+        "step_seconds": 0.1,
+        "window_count": 8759,
+        "window_seconds": 1.0
+      },
+      "reason": "no realtime alpha estimates found",
+      "staged_alpha_quality": {
+        "alpha_erd_percent_max": null,
+        "alpha_erd_percent_min": null,
+        "alpha_erd_percent_std": null,
+        "erd_estimate_count": 0,
+        "estimate_count": 0,
+        "readiness_estimate_count": 0,
+        "readiness_power_max": null,
+        "readiness_power_min": null,
+        "readiness_power_std": null,
+        "reasons": [
+          "readiness_alpha_missing",
+          "alpha_erd_missing"
+        ],
+        "source": "inhibition8_staged_event_features",
+        "status": "missing",
+        "usable": false,
+        "valid_fraction": 0.0
+      },
+      "status": "missing",
+      "trial_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\events\\stimulus_manifest.json"
+    },
+    "analysis_status": {
+      "alpha": "missing",
+      "bids_export": "pending_raw_eeg",
+      "classification": "disabled",
+      "epochs": "missing",
+      "erp": "disabled",
+      "exploratory_feature_behavior": "disabled",
+      "html_report": "ok",
+      "power_bands": "pending_raw_eeg",
+      "realtime_feature_quality": null,
+      "realtime_feature_replay": "missing",
+      "scalp_maps": "pending_raw_eeg"
+    },
+    "behavior": {
+      "mean_rt_seconds": 0.436591145980584,
+      "median_rt_seconds": 0.40339689995744266,
+      "misses": 0,
+      "premature_responses": 0,
+      "responses": 174,
+      "status": "ok",
+      "too_fast_responses": 0,
+      "trials": 240
+    },
+    "behavior_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\events\\behavior.csv",
+    "classification": {
+      "status": "disabled"
+    },
+    "epochs": {
+      "manifest_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\realtime\\epochs\\manifest.json",
+      "status": "missing"
+    },
+    "erp": {
+      "reason": "ERP analysis disabled",
+      "status": "disabled"
+    },
+    "exploratory_feature_behavior": {
+      "status": "disabled"
+    },
+    "html_report": {
+      "display_timebase": "monotonic",
+      "html_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\reports\\experiment_summary.html",
+      "legacy_continuous_alpha_count": 0,
+      "live_alpha_count": 0,
+      "live_alpha_source": "legacy_continuous_alpha",
+      "marker_count": 905,
+      "offline_alpha_status": "ok",
+      "raw_sample_count": 438408,
+      "raw_status": "ok",
+      "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304",
+      "staged_alpha_packet_count": 0,
+      "status": "ok",
+      "timebase_diagnostics": {
+        "lsl_overlap_markers": 1145,
+        "monotonic_overlap_markers": 1385,
+        "raw_lsl_duration_seconds": 876.813999,
+        "raw_lsl_start": 503505.151441622,
+        "raw_monotonic_duration_seconds": 876.314,
+        "raw_monotonic_start": 503505.686000023
+      }
+    },
+    "processes": {
+      "failed_processes": [],
+      "processes": {
+        "dashboard": {
+          "backend": "http",
+          "elapsed_seconds": 0.015000000013969839,
+          "name": "dashboard",
+          "reason": "dashboard disabled by experiment settings",
+          "status": "disabled",
+          "updated_at": "2026-07-14T12:53:24"
+        },
+        "offline_analyzer": {
+          "backend": "minimal",
+          "elapsed_seconds": 0.0,
+          "name": "offline_analyzer",
+          "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304",
+          "status": "running",
+          "updated_at": "2026-07-14T13:08:01"
+        },
+        "realtime_processor": {
+          "backend": "disabled",
+          "elapsed_seconds": 0.0,
+          "name": "realtime_processor",
+          "reason": "realtime processor disabled by experiment settings",
+          "status": "disabled",
+          "updated_at": "2026-07-14T12:53:24"
+        },
+        "recorder": {
+          "backend": "lsl_csv",
+          "elapsed_seconds": 882.5620000000345,
+          "error": null,
+          "name": "recorder",
+          "status": "stopped",
+          "updated_at": "2026-07-14T13:08:00"
+        }
+      },
+      "status": "ok"
+    },
+    "raw_eeg": {
+      "channel_count": 8,
+      "duration_seconds": 876.8139990509953,
+      "first_lsl_timestamp": 503505.151441622,
+      "last_lsl_timestamp": 504381.965440673,
+      "metadata": {
+        "duration_seconds": 876.8139990513446,
+        "eeg_config": {
+          "allow_type_only_fallback": false,
+          "expected_channel_counts": [
+            8
+          ],
+          "expected_sample_rate_hz": 500,
+          "family": "Enobio",
+          "lsl_name_patterns": [
+            "enobio",
+            "nic",
+            "neuroelectrics",
+            "LSLOutletStreamName-EEG"
+          ],
+          "lsl_stream_type": "EEG",
+          "profile": "enobio8_inhibition",
+          "required_for_run": true,
+          "sample_probe_seconds": 2.0,
+          "stream_timeout_seconds": 5.0
+        },
+        "error": null,
+        "finished_at_monotonic": 504382.5,
+        "first_lsl_timestamp": 503505.15144162194,
+        "last_lsl_timestamp": 504381.9654406733,
+        "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\raw\\eeg_metadata.json",
+        "notes": [],
+        "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\raw\\eeg.csv",
+        "sample_count": 438408,
+        "started_at_monotonic": 503505.796,
+        "status": "stopped",
+        "stream": {
+          "channel_count": 8,
+          "channel_mapping_source": "profile:enobio8_inhibition",
+          "channel_names": [
+            "Fz",
+            "Cz",
+            "Pz",
+            "C3",
+            "C4",
+            "P3",
+            "P4",
+            "Oz"
+          ],
+          "initial_time_correction_seconds": 2.2999884095042944e-06,
+          "lsl_processing": [
+            "clocksync",
+            "dejitter",
+            "monotonize"
+          ],
+          "name": "LSLOutletStreamName-EEG",
+          "nominal_srate": 500.0,
+          "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+          "type": "EEG"
+        }
+      },
+      "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\raw\\eeg_metadata.json",
+      "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\raw\\eeg.csv",
+      "sample_count": 438408,
+      "status": "ok"
+    },
+    "realtime": {
+      "decision_count": 0,
+      "decisions_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\realtime\\decisions.jsonl",
+      "latest_decision": null,
+      "marker_count": 0,
+      "markers_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\realtime\\markers.jsonl",
+      "status": "missing"
+    },
+    "realtime_feature_replay": {
+      "status": "missing"
+    },
+    "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304"
+  },
+  "calibration": null,
+  "eeg": {
+    "duration_seconds": 876.8139990513446,
+    "error": null,
+    "first_lsl_timestamp": 503505.15144162194,
+    "last_lsl_timestamp": 504381.9654406733,
+    "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\raw\\eeg_metadata.json",
+    "notes": [],
+    "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\raw\\eeg.csv",
+    "sample_count": 438408,
+    "status": "stopped",
+    "stream": {
+      "channel_count": 8,
+      "channel_mapping_source": "profile:enobio8_inhibition",
+      "channel_names": [
+        "Fz",
+        "Cz",
+        "Pz",
+        "C3",
+        "C4",
+        "P3",
+        "P4",
+        "Oz"
+      ],
+      "initial_time_correction_seconds": 2.2999884095042944e-06,
+      "lsl_processing": [
+        "clocksync",
+        "dejitter",
+        "monotonize"
+      ],
+      "name": "LSLOutletStreamName-EEG",
+      "nominal_srate": 500.0,
+      "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+      "type": "EEG"
+    }
+  },
+  "preflight": [
+    {
+      "data": {
+        "command_shells": [
+          "PowerShell",
+          "cmd"
+        ],
+        "display_name": "Windows",
+        "os_specific_notes": [
+          "Use installed console scripts from PowerShell or cmd.",
+          "Repository-root sh wrappers and Makefile targets are POSIX conveniences.",
+          "PsychoPy display validation, NIC2, and Windows firewall settings remain operator checks."
+        ],
+        "path_style": "windows",
+        "requires_separate_codebase": false,
+        "runtime_cache_env_vars": [
+          "USERPROFILE",
+          "APPDATA",
+          "LOCALAPPDATA",
+          "MPLCONFIGDIR",
+          "PSYCHOPY_USERAPPDATA",
+          "LSLAPICFG"
+        ],
+        "supported_systems": [
+          "Darwin",
+          "Linux",
+          "Windows"
+        ],
+        "system": "Windows"
+      },
+      "detail": "Windows is supported by the shared Python codebase",
+      "name": "os_support",
+      "status": "ok"
+    },
+    {
+      "data": {
+        "machine": "AMD64",
+        "platform": "Windows-10-10.0.22631-SP0",
+        "processor": "Intel64 Family 6 Model 151 Stepping 2, GenuineIntel",
+        "python": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\python.exe",
+        "python_version": "3.10.11",
+        "system": "Windows"
+      },
+      "detail": "Windows on AMD64",
+      "name": "platform",
+      "status": "ok"
+    },
+    {
+      "data": {
+        "actual": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\python.exe"
+      },
+      "detail": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\python.exe",
+      "name": "python",
+      "status": "ok"
+    },
+    {
+      "data": {
+        "commands": {
+          "alpha8": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\alpha8.EXE",
+          "attention8": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\attention8.EXE",
+          "classify8": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\classify8.EXE",
+          "eegle": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\eegle.EXE",
+          "inhibition8": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\inhibition8.EXE"
+        },
+        "missing": [],
+        "module_fallback": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\python.exe -m eegle.cli"
+      },
+      "detail": "all EEGle console commands found",
+      "name": "commands",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (2.2.6)",
+      "name": "package:numpy",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (1.14.1)",
+      "name": "package:scipy",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (2.3.3)",
+      "name": "package:pandas",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (3.10.9)",
+      "name": "package:matplotlib",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (1.12.1)",
+      "name": "package:mne",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (1.18.2)",
+      "name": "package:pylsl",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (2026.1.3)",
+      "name": "package:psychopy",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (2.0.0rc7)",
+      "name": "package:specparam",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (unknown)",
+      "name": "package:sklearn",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (1.5.3)",
+      "name": "package:joblib",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (0.12)",
+      "name": "package:pyriemann",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "available (2.13.0+cu126)",
+      "name": "package:torch",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "not importable",
+      "name": "package:onnxruntime",
+      "status": "warn"
+    },
+    {
+      "data": {
+        "opens_window": false,
+        "win_type": "pyglet"
+      },
+      "detail": "PsychoPy is importable; display should be validated with a dry task run",
+      "name": "display_ready",
+      "status": "ok"
+    },
+    {
+      "data": {
+        "streams": [
+          {
+            "channel_count": 3,
+            "name": "LSLOutletStreamName-Accelerometer",
+            "nominal_srate": 100.0,
+            "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E) Acc",
+            "type": "Accelerometer"
+          },
+          {
+            "channel_count": 8,
+            "name": "LSLOutletStreamName-EEG",
+            "nominal_srate": 500.0,
+            "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+            "type": "EEG"
+          },
+          {
+            "channel_count": 8,
+            "name": "LSLOutletStreamName-Quality",
+            "nominal_srate": 1.0,
+            "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E) Quality",
+            "type": "Quality"
+          },
+          {
+            "channel_count": 1,
+            "name": "LSLOutletStreamName-Markers",
+            "nominal_srate": 0.0,
+            "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)Marker",
+            "type": "Markers"
+          }
+        ]
+      },
+      "detail": "found 4 streams",
+      "name": "lsl",
+      "status": "ok"
+    },
+    {
+      "data": {
+        "candidate_eeg_streams": [
+          {
+            "channel_count": 8,
+            "name": "LSLOutletStreamName-EEG",
+            "nominal_srate": 500.0,
+            "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+            "type": "EEG"
+          }
+        ],
+        "detector": "enobio_lsl",
+        "expected_channel_counts": [
+          8
+        ],
+        "expected_sample_rate_hz": 500,
+        "family": "Enobio",
+        "interface": "lsl",
+        "lsl_name_patterns": [
+          "enobio",
+          "nic",
+          "neuroelectrics",
+          "LSLOutletStreamName-EEG"
+        ],
+        "lsl_stream_type": "EEG",
+        "matches": [
+          {
+            "channel_count": 8,
+            "name": "LSLOutletStreamName-EEG",
+            "nominal_srate": 500.0,
+            "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+            "type": "EEG"
+          }
+        ],
+        "profile": "enobio8_inhibition"
+      },
+      "detail": "Enobio/NIC2 profile enobio8_inhibition; detected LSLOutletStreamName-EEG (8 ch, 500.0 Hz)",
+      "name": "eeg_device",
+      "status": "ok"
+    },
+    {
+      "data": {},
+      "detail": "realtime processor disabled",
+      "name": "realtime_ready",
+      "status": "skip"
+    },
+    {
+      "data": {
+        "missing": [],
+        "missing_by_kind": {
+          "causal_bandpower_logreg": []
+        },
+        "model_kinds": [
+          "causal_bandpower_logreg"
+        ],
+        "requirements": {
+          "causal_bandpower_logreg": [
+            "sklearn",
+            "joblib",
+            "scipy"
+          ]
+        }
+      },
+      "detail": "training dependencies available",
+      "name": "training_ready",
+      "status": "ok"
+    },
+    {
+      "data": {
+        "matches": [
+          {
+            "channel_count": 8,
+            "name": "LSLOutletStreamName-EEG",
+            "nominal_srate": 500.0,
+            "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+            "type": "EEG"
+          }
+        ]
+      },
+      "detail": "LSLOutletStreamName-EEG (8 ch)",
+      "name": "enobio_lsl",
+      "status": "ok"
+    },
+    {
+      "data": {
+        "first_lsl_timestamp": 503496.8894383284,
+        "last_lsl_timestamp": 503498.9354381998,
+        "probe_seconds": 2.0,
+        "sample_count": 1024,
+        "status": "ok",
+        "stream": {
+          "channel_count": 8,
+          "name": "LSLOutletStreamName-EEG",
+          "nominal_srate": 500.0,
+          "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+          "type": "EEG"
+        }
+      },
+      "detail": "read 1024 samples",
+      "name": "eeg_sample_probe",
+      "status": "ok"
+    }
+  ],
+  "processes": {
+    "manager_summary_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\logs\\feedback_manager.json",
+    "normalized_processes": {
+      "dashboard": {
+        "backend": "http",
+        "enabled": false,
+        "host": "127.0.0.1",
+        "mode": "classifier",
+        "port": 8765,
+        "startup_timeout_seconds": 4.0
+      },
+      "feedback": {
+        "backend": "disabled",
+        "enabled": false
+      },
+      "offline_analyzer": {
+        "backend": "minimal",
+        "enabled": true,
+        "timeout_seconds": 120.0
+      },
+      "realtime_processor": {
+        "backend": "disabled",
+        "enabled": false,
+        "model": "causal_bandpower_logreg",
+        "preprocessor": "causal_bandpass_notch",
+        "startup_timeout_seconds": 8.0
+      },
+      "recorder": {
+        "backend": "lsl_csv",
+        "csv_mirror": true,
+        "enabled": true,
+        "startup_timeout_seconds": 8.0
+      }
+    },
+    "notes": [],
+    "processes": {
+      "dashboard": {
+        "backend": "http",
+        "elapsed_seconds": 0.015000000013969839,
+        "name": "dashboard",
+        "reason": "dashboard disabled by experiment settings",
+        "status": "disabled",
+        "updated_at": "2026-07-14T12:53:24"
+      },
+      "offline_analyzer": {
+        "backend": "minimal",
+        "elapsed_seconds": 9.327999999979511,
+        "name": "offline_analyzer",
+        "status": "complete",
+        "summary": {
+          "alpha": {
+            "alpha_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\realtime\\alpha_power.jsonl",
+            "calibration": null,
+            "offline_alpha": {
+              "band": {
+                "high_hz": 12.0,
+                "low_hz": 8.0
+              },
+              "channel_count": 8,
+              "file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\reports\\alpha\\offline_alpha_timeseries.csv",
+              "posterior_channels": [
+                "Fz",
+                "Cz",
+                "Pz",
+                "C3",
+                "C4",
+                "P3",
+                "P4",
+                "Oz"
+              ],
+              "status": "ok",
+              "step_seconds": 0.1,
+              "window_count": 8759,
+              "window_seconds": 1.0
+            },
+            "reason": "no realtime alpha estimates found",
+            "staged_alpha_quality": {
+              "alpha_erd_percent_max": null,
+              "alpha_erd_percent_min": null,
+              "alpha_erd_percent_std": null,
+              "erd_estimate_count": 0,
+              "estimate_count": 0,
+              "readiness_estimate_count": 0,
+              "readiness_power_max": null,
+              "readiness_power_min": null,
+              "readiness_power_std": null,
+              "reasons": [
+                "readiness_alpha_missing",
+                "alpha_erd_missing"
+              ],
+              "source": "inhibition8_staged_event_features",
+              "status": "missing",
+              "usable": false,
+              "valid_fraction": 0.0
+            },
+            "status": "missing",
+            "trial_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\events\\stimulus_manifest.json"
+          },
+          "analysis_status": {
+            "alpha": "missing",
+            "bids_export": "pending_raw_eeg",
+            "classification": "disabled",
+            "epochs": "missing",
+            "erp": "disabled",
+            "exploratory_feature_behavior": "disabled",
+            "html_report": "ok",
+            "power_bands": "pending_raw_eeg",
+            "realtime_feature_quality": null,
+            "realtime_feature_replay": "missing",
+            "scalp_maps": "pending_raw_eeg"
+          },
+          "behavior": {
+            "mean_rt_seconds": 0.436591145980584,
+            "median_rt_seconds": 0.40339689995744266,
+            "misses": 0,
+            "premature_responses": 0,
+            "responses": 174,
+            "status": "ok",
+            "too_fast_responses": 0,
+            "trials": 240
+          },
+          "behavior_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\events\\behavior.csv",
+          "classification": {
+            "status": "disabled"
+          },
+          "epochs": {
+            "manifest_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\realtime\\epochs\\manifest.json",
+            "status": "missing"
+          },
+          "erp": {
+            "reason": "ERP analysis disabled",
+            "status": "disabled"
+          },
+          "exploratory_feature_behavior": {
+            "status": "disabled"
+          },
+          "html_report": {
+            "display_timebase": "monotonic",
+            "html_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\reports\\experiment_summary.html",
+            "legacy_continuous_alpha_count": 0,
+            "live_alpha_count": 0,
+            "live_alpha_source": "legacy_continuous_alpha",
+            "marker_count": 905,
+            "offline_alpha_status": "ok",
+            "raw_sample_count": 438408,
+            "raw_status": "ok",
+            "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304",
+            "staged_alpha_packet_count": 0,
+            "status": "ok",
+            "timebase_diagnostics": {
+              "lsl_overlap_markers": 1145,
+              "monotonic_overlap_markers": 1385,
+              "raw_lsl_duration_seconds": 876.813999,
+              "raw_lsl_start": 503505.151441622,
+              "raw_monotonic_duration_seconds": 876.314,
+              "raw_monotonic_start": 503505.686000023
+            }
+          },
+          "processes": {
+            "failed_processes": [],
+            "processes": {
+              "dashboard": {
+                "backend": "http",
+                "elapsed_seconds": 0.015000000013969839,
+                "name": "dashboard",
+                "reason": "dashboard disabled by experiment settings",
+                "status": "disabled",
+                "updated_at": "2026-07-14T12:53:24"
+              },
+              "offline_analyzer": {
+                "backend": "minimal",
+                "elapsed_seconds": 0.0,
+                "name": "offline_analyzer",
+                "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304",
+                "status": "running",
+                "updated_at": "2026-07-14T13:08:01"
+              },
+              "realtime_processor": {
+                "backend": "disabled",
+                "elapsed_seconds": 0.0,
+                "name": "realtime_processor",
+                "reason": "realtime processor disabled by experiment settings",
+                "status": "disabled",
+                "updated_at": "2026-07-14T12:53:24"
+              },
+              "recorder": {
+                "backend": "lsl_csv",
+                "elapsed_seconds": 882.5620000000345,
+                "error": null,
+                "name": "recorder",
+                "status": "stopped",
+                "updated_at": "2026-07-14T13:08:00"
+              }
+            },
+            "status": "ok"
+          },
+          "raw_eeg": {
+            "channel_count": 8,
+            "duration_seconds": 876.8139990509953,
+            "first_lsl_timestamp": 503505.151441622,
+            "last_lsl_timestamp": 504381.965440673,
+            "metadata": {
+              "duration_seconds": 876.8139990513446,
+              "eeg_config": {
+                "allow_type_only_fallback": false,
+                "expected_channel_counts": [
+                  8
+                ],
+                "expected_sample_rate_hz": 500,
+                "family": "Enobio",
+                "lsl_name_patterns": [
+                  "enobio",
+                  "nic",
+                  "neuroelectrics",
+                  "LSLOutletStreamName-EEG"
+                ],
+                "lsl_stream_type": "EEG",
+                "profile": "enobio8_inhibition",
+                "required_for_run": true,
+                "sample_probe_seconds": 2.0,
+                "stream_timeout_seconds": 5.0
+              },
+              "error": null,
+              "finished_at_monotonic": 504382.5,
+              "first_lsl_timestamp": 503505.15144162194,
+              "last_lsl_timestamp": 504381.9654406733,
+              "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\raw\\eeg_metadata.json",
+              "notes": [],
+              "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\raw\\eeg.csv",
+              "sample_count": 438408,
+              "started_at_monotonic": 503505.796,
+              "status": "stopped",
+              "stream": {
+                "channel_count": 8,
+                "channel_mapping_source": "profile:enobio8_inhibition",
+                "channel_names": [
+                  "Fz",
+                  "Cz",
+                  "Pz",
+                  "C3",
+                  "C4",
+                  "P3",
+                  "P4",
+                  "Oz"
+                ],
+                "initial_time_correction_seconds": 2.2999884095042944e-06,
+                "lsl_processing": [
+                  "clocksync",
+                  "dejitter",
+                  "monotonize"
+                ],
+                "name": "LSLOutletStreamName-EEG",
+                "nominal_srate": 500.0,
+                "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+                "type": "EEG"
+              }
+            },
+            "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\raw\\eeg_metadata.json",
+            "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\raw\\eeg.csv",
+            "sample_count": 438408,
+            "status": "ok"
+          },
+          "realtime": {
+            "decision_count": 0,
+            "decisions_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\realtime\\decisions.jsonl",
+            "latest_decision": null,
+            "marker_count": 0,
+            "markers_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\realtime\\markers.jsonl",
+            "status": "missing"
+          },
+          "realtime_feature_replay": {
+            "status": "missing"
+          },
+          "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304"
+        },
+        "updated_at": "2026-07-14T13:08:10"
+      },
+      "realtime_processor": {
+        "backend": "disabled",
+        "elapsed_seconds": 0.0,
+        "name": "realtime_processor",
+        "reason": "realtime processor disabled by experiment settings",
+        "status": "disabled",
+        "updated_at": "2026-07-14T12:53:24"
+      },
+      "recorder": {
+        "backend": "lsl_csv",
+        "elapsed_seconds": 882.5620000000345,
+        "error": null,
+        "name": "recorder",
+        "status": "stopped",
+        "summary": {
+          "duration_seconds": 876.8139990513446,
+          "error": null,
+          "first_lsl_timestamp": 503505.15144162194,
+          "last_lsl_timestamp": 504381.9654406733,
+          "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\raw\\eeg_metadata.json",
+          "notes": [],
+          "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\raw\\eeg.csv",
+          "sample_count": 438408,
+          "status": "stopped",
+          "stream": {
+            "channel_count": 8,
+            "channel_mapping_source": "profile:enobio8_inhibition",
+            "channel_names": [
+              "Fz",
+              "Cz",
+              "Pz",
+              "C3",
+              "C4",
+              "P3",
+              "P4",
+              "Oz"
+            ],
+            "initial_time_correction_seconds": 2.2999884095042944e-06,
+            "lsl_processing": [
+              "clocksync",
+              "dejitter",
+              "monotonize"
+            ],
+            "name": "LSLOutletStreamName-EEG",
+            "nominal_srate": 500.0,
+            "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+            "type": "EEG"
+          }
+        },
+        "updated_at": "2026-07-14T13:08:00"
+      }
+    },
+    "status": "complete"
+  },
+  "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304",
+  "status": "complete",
+  "summary_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\session_summary.json",
+  "task": {
+    "mode": "psychopy",
+    "summary": {
+      "aborted": false,
+      "accuracy": 0.8541666666666666,
+      "button_presses": 174,
+      "commission_errors": 16,
+      "duration_seconds": 372.2820000000065,
+      "finish_monotonic": 504379.203,
+      "mean_go_rt_seconds": 0.43192848397787503,
+      "omission_errors": 19,
+      "start_monotonic": 504006.921,
+      "trials": 240
+    },
+    "task": "go_nogo"
+  },
+  "telemetry": {
+    "debug_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\logs\\debug.jsonl",
+    "telemetry_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001-calibration\\sessions\\2026-07-14\\attention_lapse_go_nogo8_observe_only\\go_nogo\\run-20260714T125304\\logs\\telemetry.jsonl"
+  }
+}

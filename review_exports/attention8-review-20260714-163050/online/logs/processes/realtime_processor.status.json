@@ -1,0 +1,80 @@
+{
+  "alpha_enabled": false,
+  "alpha_estimate_count": 0,
+  "backend": "lsl",
+  "classifier_predicted_epoch_count": 160,
+  "classifier_prediction_count": 796,
+  "classifier_rejected_epoch_count": 0,
+  "eeg_stream": {
+    "channel_count": 8,
+    "channel_mapping_source": "profile:enobio8_inhibition",
+    "channel_names": [
+      "Fz",
+      "Cz",
+      "Pz",
+      "C3",
+      "C4",
+      "P3",
+      "P4",
+      "Oz"
+    ],
+    "initial_time_correction_seconds": -4.499743226915598e-07,
+    "large_cap_detected": false,
+    "lsl_processing": [
+      "clocksync",
+      "dejitter",
+      "monotonize"
+    ],
+    "name": "LSLOutletStreamName-EEG",
+    "nominal_srate": 500.0,
+    "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+    "type": "EEG"
+  },
+  "elapsed_seconds": 332.81300000002375,
+  "eligible_marker_count": 160,
+  "epoch_count": 160,
+  "event_feature_packet_count": 0,
+  "event_features_enabled": false,
+  "marker_count": 452,
+  "marker_status": "connected",
+  "marker_stream": {
+    "initial_time_correction_seconds": null,
+    "lsl_processing": [
+      "clocksync",
+      "monotonize"
+    ],
+    "name": "EEGleMarkers",
+    "source_id": "eegle-markers-go_nogo-run-20260714T131407-49217a8040d8",
+    "type": "Markers"
+  },
+  "name": "realtime_processor",
+  "pending_epoch_count": 0,
+  "performance": {
+    "buffer_utilization": 1.0,
+    "eeg_pull_time_ms": 0.0,
+    "epoch_extraction_time_ms": 0.0,
+    "inference_queue_depth": 0,
+    "preprocessing_time_ms": 0.0,
+    "primary_latency_ms": 0.0,
+    "raw_buffer_utilization": 1.0,
+    "shadow_latency_ms": 0.0,
+    "skipped_shadow_count": 4,
+    "worst_loop_time_ms": 2531.0000000172295,
+    "writer_backlog": 0
+  },
+  "performance_config": {
+    "inference_queue_max_epochs": 4,
+    "large_cap_channel_threshold": 32,
+    "large_cap_detected": false,
+    "primary_latency_budget_ms": 50.0,
+    "skip_shadows_when_queue_depth_gte": 2,
+    "writer_flush_every": 50,
+    "writer_flush_interval_ms": 100.0
+  },
+  "processed_sample_count": 163786,
+  "rejected_epoch_count": 0,
+  "sample_count": 163786,
+  "status": "stopped",
+  "updated_at": "2026-07-14T13:20:00",
+  "window_count": 0
+}

@@ -1,0 +1,310 @@
+{
+  "accuracy": 0.22,
+  "attention_lapse_f1": 0.36065573770491804,
+  "attention_lapse_precision": 0.22,
+  "attention_lapse_recall": 1.0,
+  "auprc": 0.5614311127469023,
+  "average_precision": 0.5614311127469023,
+  "balanced_accuracy": 0.5,
+  "blocked_validation": {
+    "fold_count": 3,
+    "metrics": {
+      "accuracy": 0.26,
+      "attention_lapse_f1": 0.37288135593220334,
+      "attention_lapse_precision": 0.22916666666666666,
+      "attention_lapse_recall": 1.0,
+      "auprc": 0.1862892354297278,
+      "average_precision": 0.1862892354297278,
+      "balanced_accuracy": 0.5256410256410257,
+      "brier_score": 0.29181090878658267,
+      "confusion_matrix": [
+        [
+          2,
+          37
+        ],
+        [
+          0,
+          11
+        ]
+      ],
+      "coverage": 1.0,
+      "default_threshold_metrics": {
+        "accuracy": 0.64,
+        "attention_lapse_f1": 0.18181818181818182,
+        "attention_lapse_precision": 0.18181818181818182,
+        "attention_lapse_recall": 0.18181818181818182,
+        "auprc": 0.1862892354297278,
+        "average_precision": 0.1862892354297278,
+        "balanced_accuracy": 0.4755244755244755,
+        "brier_score": 0.29181090878658267,
+        "confusion_matrix": [
+          [
+            30,
+            9
+          ],
+          [
+            9,
+            2
+          ]
+        ],
+        "ece": 0.3313250977941845,
+        "expected_calibration_error": 0.3313250977941845,
+        "negative_recall": 0.7692307692307693,
+        "operating_threshold": 0.5,
+        "positive_f1": 0.18181818181818182,
+        "positive_precision": 0.18181818181818182,
+        "positive_recall": 0.18181818181818182,
+        "roc_auc": 0.36363636363636365,
+        "sample_count": 50,
+        "threshold": 0.5
+      },
+      "ece": 0.3313250977941845,
+      "evaluation_level": "calibration_blocked_validation",
+      "expected_calibration_error": 0.3313250977941845,
+      "negative_recall": 0.05128205128205128,
+      "operating_threshold": 0.006524144594439291,
+      "permutation_p_value": 0.6336633663366337,
+      "positive_f1": 0.37288135593220334,
+      "positive_precision": 0.22916666666666666,
+      "positive_recall": 1.0,
+      "roc_auc": 0.36363636363636365,
+      "sample_count": 50,
+      "threshold": 0.006524144594439291,
+      "threshold_source": "blocked_validation"
+    },
+    "status": "ok",
+    "threshold_calibration": {
+      "candidate_count": 51,
+      "max_candidates": 512,
+      "metric": "balanced_accuracy",
+      "selected_metrics": {
+        "accuracy": 0.26,
+        "attention_lapse_f1": 0.37288135593220334,
+        "attention_lapse_precision": 0.22916666666666666,
+        "attention_lapse_recall": 1.0,
+        "auprc": 0.1862892354297278,
+        "average_precision": 0.1862892354297278,
+        "balanced_accuracy": 0.5256410256410257,
+        "brier_score": 0.29181090878658267,
+        "confusion_matrix": [
+          [
+            2,
+            37
+          ],
+          [
+            0,
+            11
+          ]
+        ],
+        "ece": 0.3313250977941845,
+        "expected_calibration_error": 0.3313250977941845,
+        "negative_recall": 0.05128205128205128,
+        "operating_threshold": 0.006524144594439291,
+        "positive_f1": 0.37288135593220334,
+        "positive_precision": 0.22916666666666666,
+        "positive_recall": 1.0,
+        "roc_auc": 0.36363636363636365,
+        "sample_count": 50,
+        "threshold": 0.006524144594439291
+      },
+      "selected_threshold": 0.006524144594439291,
+      "source": "blocked_validation",
+      "status": "ok"
+    }
+  },
+  "brier_score": 0.14969219234932485,
+  "confusion_matrix": [
+    [
+      0,
+      39
+    ],
+    [
+      0,
+      11
+    ]
+  ],
+  "coverage": 1.0,
+  "default_threshold_metrics": {
+    "accuracy": 0.82,
+    "attention_lapse_f1": 0.6896551724137931,
+    "attention_lapse_precision": 0.5555555555555556,
+    "attention_lapse_recall": 0.9090909090909091,
+    "auprc": 0.5614311127469023,
+    "average_precision": 0.5614311127469023,
+    "balanced_accuracy": 0.8519813519813519,
+    "brier_score": 0.14969219234932485,
+    "confusion_matrix": [
+      [
+        31,
+        8
+      ],
+      [
+        1,
+        10
+      ]
+    ],
+    "ece": 0.23237657233629513,
+    "expected_calibration_error": 0.23237657233629513,
+    "negative_recall": 0.7948717948717948,
+    "operating_threshold": 0.5,
+    "positive_f1": 0.6896551724137931,
+    "positive_precision": 0.5555555555555556,
+    "positive_recall": 0.9090909090909091,
+    "roc_auc": 0.8717948717948718,
+    "sample_count": 50,
+    "threshold": 0.5
+  },
+  "ece": 0.23237657233629513,
+  "evaluation_level": "training_fit",
+  "expected_calibration_error": 0.23237657233629513,
+  "negative_recall": 0.0,
+  "operating_threshold": 0.006524144594439291,
+  "permutation_p_value": 1.0,
+  "positive_f1": 0.36065573770491804,
+  "positive_precision": 0.22,
+  "positive_recall": 1.0,
+  "query_metrics": {
+    "accuracy": 0.12105263157894737,
+    "attention_lapse_f1": 0.20095693779904306,
+    "attention_lapse_precision": 0.11170212765957446,
+    "attention_lapse_recall": 1.0,
+    "auprc": 0.11459032869938454,
+    "average_precision": 0.11459032869938454,
+    "balanced_accuracy": 0.5059171597633136,
+    "brier_score": 0.22781723506835455,
+    "confusion_matrix": [
+      [
+        2,
+        167
+      ],
+      [
+        0,
+        21
+      ]
+    ],
+    "ece": 0.25862136141233416,
+    "evaluation_level": "temporal_query",
+    "expected_calibration_error": 0.25862136141233416,
+    "negative_recall": 0.011834319526627219,
+    "operating_threshold": 0.006524144594439291,
+    "positive_f1": 0.20095693779904306,
+    "positive_precision": 0.11170212765957446,
+    "positive_recall": 1.0,
+    "query_epoch_count": 190,
+    "roc_auc": 0.47731755424063116,
+    "sample_count": 190,
+    "threshold": 0.006524144594439291
+  },
+  "roc_auc": 0.8717948717948718,
+  "sample_count": 50,
+  "selected_threshold_metrics": {
+    "accuracy": 0.26,
+    "attention_lapse_f1": 0.37288135593220334,
+    "attention_lapse_precision": 0.22916666666666666,
+    "attention_lapse_recall": 1.0,
+    "auprc": 0.1862892354297278,
+    "average_precision": 0.1862892354297278,
+    "balanced_accuracy": 0.5256410256410257,
+    "brier_score": 0.29181090878658267,
+    "confusion_matrix": [
+      [
+        2,
+        37
+      ],
+      [
+        0,
+        11
+      ]
+    ],
+    "ece": 0.3313250977941845,
+    "expected_calibration_error": 0.3313250977941845,
+    "negative_recall": 0.05128205128205128,
+    "operating_threshold": 0.006524144594439291,
+    "positive_f1": 0.37288135593220334,
+    "positive_precision": 0.22916666666666666,
+    "positive_recall": 1.0,
+    "roc_auc": 0.36363636363636365,
+    "sample_count": 50,
+    "threshold": 0.006524144594439291
+  },
+  "support_query": {
+    "practice_excluded": true,
+    "query_epoch_count": 190,
+    "query_negative_count": 169,
+    "query_positive_count": 21,
+    "strategy": "temporal_first_k",
+    "support_epoch_count": 50,
+    "support_negative_count": 39,
+    "support_positive_count": 11,
+    "support_trials": 50
+  },
+  "target": "attention_lapse_binary",
+  "target_spec": {
+    "attention_lapse_label": "slow_go_rt",
+    "attention_lapse_threshold": 0.5,
+    "eligible_score_count": 240,
+    "label_rule": "slow_go_rt >= 0.5",
+    "learning_problem": "binary_classification",
+    "negative_label_count": 208,
+    "positive_label_count": 32,
+    "primary_label_rule": "slow_go_rt",
+    "score_count": 240,
+    "score_join": "session_index_and_trial",
+    "score_name": "slow_go_rt",
+    "score_regression_supported": false,
+    "score_target_mode": "thresholded_behavior_score",
+    "session_count": 1,
+    "session_trial_counts": {
+      "0": 240
+    },
+    "slow_rt_quantile": 0.8,
+    "source": "session_behavior",
+    "source_session_index_present": false,
+    "target": "attention_lapse_binary"
+  },
+  "threshold": 0.006524144594439291,
+  "threshold_calibration": {
+    "calibration_id": "cal-03cd4e015b80",
+    "candidate_count": 51,
+    "max_candidates": 512,
+    "metric": "balanced_accuracy",
+    "selected_metrics": {
+      "accuracy": 0.26,
+      "attention_lapse_f1": 0.37288135593220334,
+      "attention_lapse_precision": 0.22916666666666666,
+      "attention_lapse_recall": 1.0,
+      "auprc": 0.1862892354297278,
+      "average_precision": 0.1862892354297278,
+      "balanced_accuracy": 0.5256410256410257,
+      "brier_score": 0.29181090878658267,
+      "confusion_matrix": [
+        [
+          2,
+          37
+        ],
+        [
+          0,
+          11
+        ]
+      ],
+      "ece": 0.3313250977941845,
+      "expected_calibration_error": 0.3313250977941845,
+      "negative_recall": 0.05128205128205128,
+      "operating_threshold": 0.006524144594439291,
+      "positive_f1": 0.37288135593220334,
+      "positive_precision": 0.22916666666666666,
+      "positive_recall": 1.0,
+      "roc_auc": 0.36363636363636365,
+      "sample_count": 50,
+      "threshold": 0.006524144594439291
+    },
+    "selected_threshold": 0.006524144594439291,
+    "source": "blocked_validation",
+    "status": "ok"
+  },
+  "threshold_source": "blocked_validation",
+  "warnings": [
+    "balanced_accuracy_below_0.60",
+    "permutation_p_not_below_0.05"
+  ]
+}
