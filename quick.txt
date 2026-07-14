@@ -1,3 +1,508 @@
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+For the first real experiment, use 240 calibration trials and 160 online trials—the current recipe’s intended split. Set `$OnlineTrials = 240` if you want both phases to contain 240 trials.
+
+Keep online adaptation disabled for this first baseline so performance remains interpretable.
+
+## 1. Prepare PowerShell
+
+Run from the EEGle repository:
+
+```powershell
+Set-Location "C:\Users\Surettej\Documents\Codespace\eegle"
+.\.venv\Scripts\Activate.ps1
+
+python -m pip install -e ".[runtime,ml]"
+
+$Repo = (Get-Location).Path
+$Config = (Resolve-Path ".\configs\forward_attention_lapse_go_nogo8.json").Path
+$DataRoot = Join-Path $Repo "data"
+
+$env:EEGLE_SESSION_ROOT = $DataRoot
+
+$Subject = "sub-001"
+$CalParticipant = "${Subject}-calibration"
+$OnlineParticipant = "${Subject}-online"
+
+$CalibrationTrials = 240
+$OnlineTrials = 160
+# Use this instead if you want 240 online trials:
+# $OnlineTrials = 240
+
+New-Item -ItemType Directory -Force -Path $DataRoot | Out-Null
+New-Item -ItemType Directory -Force -Path ".runtime" | Out-Null
+```
+
+## 2. Full preflight
+
+Start NIC2/Enobio LSL output first, then run:
+
+```powershell
+eegle check-setup `
+  --config $Config `
+  --require-eeg `
+  --lsl-wait 5 `
+  --save ".runtime\attention8_full_preflight.json"
+
+if ($LASTEXITCODE -ne 0) {
+  throw "Attention8 hardware preflight failed."
+}
+
+attention8 train `
+  --session-dir $DataRoot `
+  --check-ready
+```
+
+The second command may complain that `$DataRoot` is not a session; the useful part is the dependency report. Alternatively, run this after calibration using `$Cal`.
+
+## 3. Record the 240-trial calibration
+
+```powershell
+attention8 collect `
+  --config $Config `
+  --participant $CalParticipant `
+  --trials $CalibrationTrials `
+  --session-root $DataRoot
+
+if ($LASTEXITCODE -ne 0) {
+  throw "Attention8 calibration collection failed."
+}
+```
+
+Find the new session:
+
+```powershell
+$CalRoot = Join-Path $DataRoot "participants\$CalParticipant\sessions"
+
+$Cal = (
+  Get-ChildItem $CalRoot -Directory -Recurse -Filter "run-*" |
+  Sort-Object LastWriteTime -Descending |
+  Select-Object -First 1
+).FullName
+
+if (-not $Cal) {
+  throw "Calibration session was not found."
+}
+
+Write-Host "Calibration session: $Cal"
+```
+
+## 4. Validate the calibration data
+
+```powershell
+$RequiredCalibrationFiles = @(
+  "$Cal\parameters.json",
+  "$Cal\raw\eeg.csv",
+  "$Cal\raw\eeg_metadata.json",
+  "$Cal\events\stimulus_manifest.json",
+  "$Cal\events\behavior.csv",
+  "$Cal\realtime\epochs\epochs.npz",
+  "$Cal\realtime\epochs\manifest.json",
+  "$Cal\logs\processes\recorder.status.json"
+)
+
+$RequiredCalibrationFiles | ForEach-Object {
+  [PSCustomObject]@{
+    Exists = Test-Path $_
+    File = $_
+  }
+} | Format-Table -AutoSize
+```
+
+Inspect the recorder:
+
+```powershell
+Get-Content "$Cal\logs\processes\recorder.status.json" -Raw |
+  ConvertFrom-Json |
+  Format-List
+```
+
+Inspect the exported epochs:
+
+```powershell
+$EpochManifest = Get-Content "$Cal\realtime\epochs\manifest.json" -Raw |
+  ConvertFrom-Json
+
+$EpochManifest |
+  Select-Object status, epoch_count, rejected_count, timestamp_column, rejection_reasons |
+  Format-List
+
+if ($EpochManifest.epoch_count -lt 50) {
+  throw "Only $($EpochManifest.epoch_count) usable epochs were exported. Do not train yet."
+}
+```
+
+With a healthy run, you should have close to 240 usable epochs. A few early or incomplete rejections can be acceptable, but inspect any repeated rejection reason.
+
+## 5. Re-run epoch extraction explicitly
+
+This confirms that the recorded raw data is independently reproducible:
+
+```powershell
+eegle extract-epochs `
+  --config "$Cal\parameters.json" `
+  --session-dir $Cal `
+  --source stimulus_manifest `
+  --tmin -2.0 `
+  --tmax 0.0
+
+if ($LASTEXITCODE -ne 0) {
+  throw "Offline epoch extraction failed."
+}
+```
+
+Recheck:
+
+```powershell
+$EpochManifest = Get-Content "$Cal\realtime\epochs\manifest.json" -Raw |
+  ConvertFrom-Json
+
+$EpochManifest |
+  Select-Object status, epoch_count, rejected_count, timestamp_column, epoching_config |
+  Format-List
+```
+
+## 6. Check model-training readiness
+
+```powershell
+attention8 train `
+  --session-dir $Cal `
+  --check-ready
+
+attention8 compare `
+  --session-dir $Cal `
+  --method log-reg `
+  --method riemann `
+  --method lora `
+  --method film `
+  --check-ready
+```
+
+Fix any missing dependency before continuing.
+
+## 7. Train the complete Attention8 model set
+
+This trains the default five models using the first 50 eligible epochs as support and later epochs as the temporal query set:
+
+```powershell
+attention8 train `
+  --session-dir $Cal `
+  --support-trials 50
+
+if ($LASTEXITCODE -ne 0) {
+  throw "Attention8 model training failed."
+}
+```
+
+The expected models are:
+
+- `causal_bandpower_logreg`
+- `riemann_tangent_logreg`
+- `torch_eegnet`
+- `foundation_head_logreg`
+- `foundation_prototype`
+
+Inspect the bundles:
+
+```powershell
+$ModelDir = Join-Path $Cal "models\attention8"
+
+Get-ChildItem $ModelDir -Directory | ForEach-Object {
+  $ManifestPath = Join-Path $_.FullName "manifest.json"
+
+  [PSCustomObject]@{
+    Model = $_.Name
+    ManifestExists = Test-Path $ManifestPath
+    Manifest = $ManifestPath
+  }
+} | Format-Table -AutoSize
+```
+
+The primary model must exist:
+
+```powershell
+if (-not (Test-Path "$ModelDir\causal_bandpower_logreg\manifest.json")) {
+  throw "The primary causal_bandpower_logreg bundle was not created."
+}
+```
+
+## 8. Review training and query performance
+
+```powershell
+Get-ChildItem $ModelDir -Directory | ForEach-Object {
+  $ManifestPath = Join-Path $_.FullName "manifest.json"
+
+  if (Test-Path $ManifestPath) {
+    $Manifest = Get-Content $ManifestPath -Raw | ConvertFrom-Json
+    $Metrics = $Manifest.metrics
+    $Query = $Metrics.query_metrics
+
+    [PSCustomObject]@{
+      Model = $_.Name
+      TrainingBalancedAccuracy = $Metrics.balanced_accuracy
+      QueryBalancedAccuracy = $Query.balanced_accuracy
+      QueryROC_AUC = $Query.roc_auc
+      QueryAUPRC = $Query.auprc
+      QueryEpochs = $Query.query_epoch_count
+      Coverage = $Metrics.coverage
+      Threshold = $Metrics.operating_threshold
+      Warnings = ($Metrics.warnings -join ", ")
+    }
+  }
+} | Format-Table -AutoSize
+```
+
+The query metrics are more important than training-fit metrics.
+
+## 9. Run the offline model comparison
+
+```powershell
+attention8 compare `
+  --session-dir $Cal `
+  --support-trials 50 `
+  --method log-reg `
+  --method riemann `
+  --method lora `
+  --method film
+
+if ($LASTEXITCODE -ne 0) {
+  throw "Attention8 offline comparison failed."
+}
+```
+
+Inspect its output:
+
+```powershell
+$Comparison = Join-Path $Cal "reports\classification\attention8_offline_comparison\summary.json"
+
+Get-Content $Comparison -Raw |
+  ConvertFrom-Json |
+  ConvertTo-Json -Depth 12
+```
+
+## 10. Start the online run with dashboard
+
+The command below dynamically adds every successfully trained shadow model. The causal bandpower model remains the latency-prioritized primary.
+
+```powershell
+$OnlineArgs = @(
+  "online",
+  "--config", $Config,
+  "--participant", $OnlineParticipant,
+  "--model-dir", $ModelDir,
+  "--primary", "causal_bandpower_logreg",
+  "--trials", "$OnlineTrials",
+  "--session-root", $DataRoot
+)
+
+$ShadowKinds = @(
+  "riemann_tangent_logreg",
+  "foundation_head_logreg",
+  "foundation_prototype",
+  "torch_eegnet"
+)
+
+foreach ($Kind in $ShadowKinds) {
+  if (Test-Path "$ModelDir\$Kind\manifest.json") {
+    $OnlineArgs += @("--shadow", $Kind)
+  }
+}
+
+Write-Host "Dashboard will be available at http://127.0.0.1:8765"
+& attention8 @OnlineArgs
+
+if ($LASTEXITCODE -ne 0) {
+  throw "Attention8 online run failed."
+}
+```
+
+Do not add `--no-dashboard`. The dashboard is enabled by default.
+
+### Open the dashboard from a second PowerShell window
+
+Run this shortly after starting the online command:
+
+```powershell
+Start-Sleep -Seconds 8
+Start-Process "http://127.0.0.1:8765"
+```
+
+If the browser opens too early, refresh once the task countdown begins.
+
+## 11. Find and validate the online session
+
+```powershell
+$OnlineRoot = Join-Path $DataRoot "participants\$OnlineParticipant\sessions"
+
+$Online = (
+  Get-ChildItem $OnlineRoot -Directory -Recurse -Filter "run-*" |
+  Sort-Object LastWriteTime -Descending |
+  Select-Object -First 1
+).FullName
+
+if (-not $Online) {
+  throw "Online session was not found."
+}
+
+Write-Host "Online session: $Online"
+```
+
+Check the worker state:
+
+```powershell
+$RealtimeStatus = Get-Content "$Online\logs\processes\realtime_processor.status.json" -Raw |
+  ConvertFrom-Json
+
+$RealtimeStatus |
+  Select-Object status, sample_count, marker_count, eligible_marker_count,
+    epoch_count, rejected_epoch_count, classifier_prediction_count,
+    classifier_rejected_epoch_count |
+  Format-List
+
+$RealtimeStatus.performance | Format-List
+$RealtimeStatus.performance_config | Format-List
+```
+
+Important performance indicators:
+
+- `primary_latency_ms` should normally stay below the configured 50 ms budget.
+- `inference_queue_depth` should return to zero.
+- `writer_backlog` should return to zero.
+- `skipped_shadow_count` should be low.
+- Primary predictions should not be lost merely because a shadow is slow.
+
+## 12. Evaluate and replay the online session
+
+```powershell
+attention8 evaluate `
+  --config $Config `
+  --session-dir $Online
+
+if ($LASTEXITCODE -ne 0) {
+  throw "Attention8 online evaluation failed."
+}
+```
+
+Validate replay:
+
+```powershell
+Get-Content "$Online\reports\classification\replay_summary.json" -Raw |
+  ConvertFrom-Json |
+  Format-List
+```
+
+The replay status should be `pass`.
+
+## 13. Display online model performance
+
+```powershell
+$Evaluation = Get-Content "$Online\reports\classification\metrics.json" -Raw |
+  ConvertFrom-Json
+
+$Evaluation.metrics.PSObject.Properties | ForEach-Object {
+  $Model = $_.Value
+
+  [PSCustomObject]@{
+    Model = $_.Name
+    BalancedAccuracy = $Model.balanced_accuracy
+    ROC_AUC = $Model.roc_auc
+    AUPRC = $Model.auprc
+    BrierScore = $Model.brier_score
+    Coverage = $Model.coverage
+    FalseAlarmsPerMinute = $Model.false_alarms_per_minute
+    OperatingThreshold = $Model.operating_threshold
+    ThresholdSource = $Model.threshold_source
+    Warnings = ($Model.warnings -join ", ")
+  }
+} | Format-Table -AutoSize
+```
+
+Calculate latency per model directly from prediction rows:
+
+```powershell
+$PredictionRows = Get-Content "$Online\realtime\model_predictions.jsonl" |
+  ForEach-Object { $_ | ConvertFrom-Json }
+
+$PredictionRows |
+  Where-Object { $_.status -eq "predicted" } |
+  Group-Object model_id |
+  ForEach-Object {
+    $Latency = $_.Group.processing_latency_ms |
+      Where-Object { $_ -ne $null } |
+      Measure-Object -Average -Maximum -Minimum
+
+    [PSCustomObject]@{
+      Model = $_.Name
+      Predictions = $_.Count
+      MeanLatencyMs = [Math]::Round($Latency.Average, 3)
+      MaximumLatencyMs = [Math]::Round($Latency.Maximum, 3)
+      MinimumLatencyMs = [Math]::Round($Latency.Minimum, 3)
+    }
+  } | Format-Table -AutoSize
+```
+
+Inspect skipped/rejected predictions:
+
+```powershell
+$PredictionRows |
+  Where-Object { $_.status -ne "predicted" } |
+  Group-Object reason |
+  Select-Object Name, Count |
+  Format-Table -AutoSize
+```
+
+## 14. Compare offline models against the online session
+
+```powershell
+attention8 compare `
+  --session-dir $Cal `
+  --online-session-dir $Online `
+  --support-trials 50 `
+  --method log-reg `
+  --method riemann `
+  --method lora `
+  --method film
+```
+
+The comparison will include metric deltas against the online primary.
+
+## 15. Open the final report
+
+```powershell
+Start-Process "$Online\reports\experiment_summary.html"
+```
+
+For a successful first experiment, look for:
+
+- Close to 240 usable calibration epochs.
+- Both lapse and non-lapse examples in the 50-trial support set.
+- Non-null temporal query metrics.
+- Replay status `pass`.
+- High online coverage.
+- Primary latency generally below 50 ms.
+- Low queue depth and few shadow skips.
+- No recorder or realtime worker failure.
+- Dashboard predictions updating during the task.
+
+Treat this as the first within-subject performance estimate—not final validation. Keep adaptation disabled until this frozen baseline has been reviewed.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 Below is a Windows PowerShell smoke suite. It stores data in the repository’s `data` directory and uses 10 trials only to validate plumbing—not model quality.
 
 Run from the EEGle repository with the Enobio/NIC2 LSL stream active.
@@ -364,3 +869,4 @@ realtime\adaptation_state\
 ```
 
 Ten trials validate execution only. For real calibration and meaningful evaluation, return to approximately 240 calibration trials with `--support-trials 50`.
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
