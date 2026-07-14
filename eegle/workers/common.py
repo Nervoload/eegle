@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import signal
 import threading
 from collections import deque
@@ -10,6 +11,9 @@ from datetime import datetime
 from pathlib import Path
 from time import monotonic, sleep
 from typing import Any
+
+
+_STATUS_REPLACE_RETRY_DELAYS_SECONDS = (0.0, 0.01, 0.025, 0.05, 0.1, 0.2, 0.4, 0.8)
 
 
 class StatusWriter:
@@ -32,11 +36,16 @@ class StatusWriter:
             "elapsed_seconds": monotonic() - self.started_at_monotonic,
             **fields,
         }
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        with tmp.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-        tmp.replace(self.path)
+        tmp = self.path.with_name(
+            f".{self.path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+        )
+        try:
+            with tmp.open("w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+            _replace_status_file(tmp, self.path)
+        finally:
+            tmp.unlink(missing_ok=True)
         self._emit_telemetry(payload)
         self._last_status = status
         return payload
@@ -168,10 +177,33 @@ def _start_stop_file_watcher(stop_event: threading.Event, stop_file: Path) -> No
 
 def load_status(path: str | Path) -> dict[str, Any] | None:
     target = Path(path)
-    if not target.exists():
+    try:
+        content = target.read_text(encoding="utf-8")
+    except FileNotFoundError:
         return None
-    with target.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+    return json.loads(content)
+
+
+def _replace_status_file(source: Path, target: Path) -> None:
+    """Atomically publish a status file despite short-lived Windows file locks."""
+
+    last_error: OSError | None = None
+    for delay in _STATUS_REPLACE_RETRY_DELAYS_SECONDS:
+        if delay:
+            sleep(delay)
+        try:
+            source.replace(target)
+            return
+        except OSError as exc:
+            if not _is_transient_replace_error(exc):
+                raise
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+
+
+def _is_transient_replace_error(exc: OSError) -> bool:
+    return isinstance(exc, PermissionError) or getattr(exc, "winerror", None) in {5, 32, 33}
 
 
 def _status_event(name: str, status: str, last_status: str | None, ready_emitted: bool) -> tuple[str, str, str]:

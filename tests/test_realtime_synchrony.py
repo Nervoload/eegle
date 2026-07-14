@@ -21,7 +21,7 @@ from eegle.realtime.models import ModelPrediction
 from eegle.realtime.performance import RealtimePerformanceConfig, RealtimePerformanceStats, performance_config_from
 from eegle.session import create_session
 from eegle.tasks.go_nogo import _mark
-from eegle.workers.common import QueuedJsonlWriter, install_stop_signal_handlers
+from eegle.workers.common import QueuedJsonlWriter, StatusWriter, install_stop_signal_handlers
 from eegle.workers.realtime_processor import (
     InferenceWorkItem,
     _advance_deadline,
@@ -486,6 +486,32 @@ class RealtimeSynchronyTests(unittest.TestCase):
 
             self.assertEqual(status["status"], "failed")
             self.assertEqual(status["error"], "FileNotFoundError: missing model bundle")
+
+    def test_status_writer_retries_transient_windows_replace_denial(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            status_path = Path(tmp) / "recorder.status.json"
+            status_path.write_text('{"status": "starting"}\n', encoding="utf-8")
+            writer = StatusWriter(status_path, "recorder", "lsl_csv")
+            real_replace = Path.replace
+            attempts = 0
+
+            def replace_after_transient_denial(source: Path, target: Path) -> Path:
+                nonlocal attempts
+                attempts += 1
+                if attempts == 1:
+                    raise PermissionError(13, "simulated Windows/EDR file lock", str(target))
+                return real_replace(source, target)
+
+            with patch.object(Path, "replace", autospec=True, side_effect=replace_after_transient_denial), patch(
+                "eegle.workers.common.sleep"
+            ):
+                writer.update("recording", sample_count=128)
+
+            payload = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(attempts, 2)
+            self.assertEqual(payload["status"], "recording")
+            self.assertEqual(payload["sample_count"], 128)
+            self.assertEqual(list(status_path.parent.glob("*.tmp")), [])
 
     def test_worker_command_uses_current_python_module_launch_without_shell(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,53 +1,366 @@
-.venv) PS C:\Users\Surettej\Documents\Codespace\eegle> eegle extract-epochs --config "$Cal\parameters.json" --session-dir $Cal --source stimulus_manifest --tmin -2.0 --tmax 0.0
-{
-  "channel_names": [
-    "Fz",
-    "Cz",
-    "Pz",
-    "C3",
-    "C4",
-    "P3",
-    "P4",
-    "Oz"
-  ],
-  "created_at": "2026-07-09T14:45:47",
-  "data_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356\\realtime\\epochs\\epochs.npz",
-  "data_key": "X",
-  "data_layout": "epochs_x_channels_x_samples",
-  "epoch_count": 1,
-  "epoch_shape": [
-    1,
-    8,
-    1001
-  ],
-  "epoch_timestamp_key": "epoch_timestamps",
-  "epoching_config": {
-    "data_source": "causal_preprocessed",
-    "drop_incomplete": true,
-    "enabled": true,
-    "include_practice_trials": false,
-    "marker_prefix": "go_nogo_stimulus_onset",
-    "sample_tolerance_seconds": 0.01,
-    "timebase": "local_received",
-    "tmax_seconds": 0.0,
-    "tmin_seconds": -2.0
-  },
-  "label_key": "y",
-  "marker_source_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356\\events\\stimulus_manifest.json",
-  "marker_source_sha256": "dfb0f55c23a3822bd1671773aa30bfc94c5782fa077792106a99a00de82736bf",
-  "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356\\realtime\\epochs\\epochs.jsonl",
-  "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T114356\\raw\\eeg.csv",
-  "raw_file_unchanged": true,
-  "raw_sha256": "7cd867ac127d019af0d71dc72e6cd1e63e7a1ec78a4dc054275bbeaa599eb144",
-  "raw_sha256_after_epoch_export": "7cd867ac127d019af0d71dc72e6cd1e63e7a1ec78a4dc054275bbeaa599eb144",
-  "rejected_count": 239,
-  "rejection_reasons": {
-    "waiting for post-stimulus EEG samples": 239
-  },
-  "relative_time_key": "times",
-  "sample_rate_hz": 500.0,
-  "schema_version": 1,
-  "source": "stimulus_manifest",
-  "status": "ok",
-  "timestamp_column": "local_received_time"
+Below is a Windows PowerShell smoke suite. It stores data in the repository’s `data` directory and uses 10 trials only to validate plumbing—not model quality.
+
+Run from the EEGle repository with the Enobio/NIC2 LSL stream active.
+
+## 1. Environment and paths
+
+```powershell
+Set-Location "C:\Users\Surettej\Documents\Codespace\eegle"
+
+.\.venv\Scripts\Activate.ps1
+
+python --version
+python -m pip install -e ".[runtime,ml]"
+
+$Repo = (Get-Location).Path
+$Config = (Resolve-Path ".\configs\forward_attention_lapse_go_nogo8.json").Path
+$DataRoot = Join-Path $Repo "data"
+
+$env:EEGLE_SESSION_ROOT = $DataRoot
+
+$Participant = "attention8-script-test"
+$CalParticipant = "${Participant}-cal"
+$OnlineParticipant = "${Participant}-online"
+
+New-Item -ItemType Directory -Force -Path $DataRoot | Out-Null
+New-Item -ItemType Directory -Force -Path ".runtime" | Out-Null
+
+Write-Host "Config:    $Config"
+Write-Host "Data root: $DataRoot"
+```
+
+Confirm the commands are installed:
+
+```powershell
+Get-Command eegle
+Get-Command attention8
+
+attention8 --help
+attention8 protocol
+eegle model-list
+```
+
+## 2. Software and hardware setup checks
+
+First, check software without requiring EEG:
+
+```powershell
+eegle check-setup `
+  --config $Config `
+  --allow-missing-eeg `
+  --save ".runtime\attention8_setup_software.json"
+```
+
+Then verify the actual Enobio EEG stream:
+
+```powershell
+eegle check-setup `
+  --config $Config `
+  --require-eeg `
+  --lsl-wait 5 `
+  --save ".runtime\attention8_setup_hardware.json"
+```
+
+The second command should report:
+
+- The expected 8-channel EEG stream.
+- A 500 Hz sample rate.
+- Successful EEG sample probing.
+- No blocking setup failures.
+
+## 3. Software-only orchestration smoke
+
+This creates a session and exercises Attention8 orchestration without opening PsychoPy or requiring EEG:
+
+```powershell
+attention8 collect `
+  --config $Config `
+  --participant "${Participant}-dry" `
+  --task-mode dry-run `
+  --trials 2 `
+  --skip-eeg `
+  --allow-missing-eeg `
+  --session-root $DataRoot
+```
+
+A missing epoch export is expected because EEG recording was intentionally disabled.
+
+## 4. Collect 10 real EEG trials
+
+This opens PsychoPy and records real EEG:
+
+```powershell
+attention8 collect `
+  --config $Config `
+  --participant $CalParticipant `
+  --trials 10 `
+  --session-root $DataRoot
+```
+
+Find the newly created calibration session:
+
+```powershell
+$CalParticipantRoot = Join-Path $DataRoot "participants\$CalParticipant\sessions"
+
+$Cal = (
+  Get-ChildItem $CalParticipantRoot -Directory -Recurse -Filter "run-*" |
+  Sort-Object LastWriteTime -Descending |
+  Select-Object -First 1
+).FullName
+
+if (-not $Cal) {
+  throw "Could not find the calibration session."
 }
+
+Write-Host "Calibration session: $Cal"
+```
+
+Validate the critical artifacts:
+
+```powershell
+Test-Path "$Cal\parameters.json"
+Test-Path "$Cal\raw\eeg.csv"
+Test-Path "$Cal\raw\eeg_metadata.json"
+Test-Path "$Cal\events\stimulus_manifest.json"
+Test-Path "$Cal\events\behavior.csv"
+Test-Path "$Cal\realtime\epochs\epochs.npz"
+Test-Path "$Cal\realtime\epochs\manifest.json"
+Test-Path "$Cal\logs\processes\recorder.status.json"
+```
+
+All should print `True`.
+
+Inspect recorder and epoch status:
+
+```powershell
+Get-Content "$Cal\logs\processes\recorder.status.json" -Raw |
+  ConvertFrom-Json |
+  Format-List
+
+Get-Content "$Cal\realtime\epochs\manifest.json" -Raw |
+  ConvertFrom-Json |
+  Select-Object status, epoch_count, rejected_count, timestamp_column, epoching_config |
+  Format-List
+```
+
+For this smoke test, ideally `epoch_count` is close to 10 and `rejected_count` is zero or small.
+
+## 5. Explicitly test epoch extraction
+
+Although `attention8 collect` automatically exports epochs, run it explicitly to validate the standalone script:
+
+```powershell
+eegle extract-epochs `
+  --config "$Cal\parameters.json" `
+  --session-dir $Cal `
+  --source stimulus_manifest `
+  --tmin -2.0 `
+  --tmax 0.0
+```
+
+Reinspect the manifest:
+
+```powershell
+Get-Content "$Cal\realtime\epochs\manifest.json" -Raw |
+  ConvertFrom-Json |
+  Format-List
+```
+
+## 6. Check training dependencies
+
+Check the complete default Attention8 model set:
+
+```powershell
+attention8 train `
+  --session-dir $Cal `
+  --check-ready
+```
+
+Check offline comparison dependencies:
+
+```powershell
+attention8 compare `
+  --session-dir $Cal `
+  --check-ready `
+  --method log-reg `
+  --method riemann `
+  --method lora `
+  --method film
+```
+
+A missing optional package should be reported by name.
+
+## 7. Smoke-train primary and shadow models
+
+For only 10 trials, use `--support-trials 0`. That fits using all eligible epochs and avoids requiring a 50-trial support partition.
+
+```powershell
+attention8 train `
+  --session-dir $Cal `
+  --support-trials 0 `
+  --kind causal_bandpower_logreg `
+  --kind foundation_prototype
+```
+
+Set and inspect the model directory:
+
+```powershell
+$ModelDir = Join-Path $Cal "models\attention8"
+
+Test-Path "$ModelDir\causal_bandpower_logreg\manifest.json"
+Test-Path "$ModelDir\foundation_prototype\manifest.json"
+
+Get-ChildItem $ModelDir -Recurse -Filter "manifest.json" |
+  Select-Object FullName
+```
+
+Both `Test-Path` commands should return `True`.
+
+### Test the remaining bundled models
+
+```powershell
+attention8 train `
+  --session-dir $Cal `
+  --support-trials 0 `
+  --kind riemann_tangent_logreg `
+  --kind foundation_head_logreg `
+  --kind torch_eegnet
+```
+
+This exercises:
+
+- Causal bandpower logistic regression.
+- Riemannian tangent-space logistic regression.
+- Foundation-feature logistic head.
+- Foundation prototype.
+- Torch EEGNet.
+
+If one optional model is unavailable, the result may be `degraded` while the other bundles still succeed.
+
+## 8. Run 10 trials of live online inference
+
+Start with adaptation disabled and the dashboard disabled, which isolates EEG inference from localhost/browser restrictions:
+
+```powershell
+attention8 online `
+  --config $Config `
+  --participant $OnlineParticipant `
+  --model-dir $ModelDir `
+  --primary causal_bandpower_logreg `
+  --shadow foundation_prototype `
+  --trials 10 `
+  --session-root $DataRoot `
+  --no-dashboard
+```
+
+Locate the online session:
+
+```powershell
+$OnlineParticipantRoot = Join-Path $DataRoot "participants\$OnlineParticipant\sessions"
+
+$Online = (
+  Get-ChildItem $OnlineParticipantRoot -Directory -Recurse -Filter "run-*" |
+  Sort-Object LastWriteTime -Descending |
+  Select-Object -First 1
+).FullName
+
+if (-not $Online) {
+  throw "Could not find the online session."
+}
+
+Write-Host "Online session: $Online"
+```
+
+Validate online artifacts:
+
+```powershell
+Test-Path "$Online\raw\eeg.csv"
+Test-Path "$Online\realtime\model_predictions.jsonl"
+Test-Path "$Online\logs\processes\recorder.status.json"
+Test-Path "$Online\logs\processes\realtime_processor.status.json"
+
+Get-Content "$Online\logs\processes\recorder.status.json" -Raw |
+  ConvertFrom-Json |
+  Format-List
+
+Get-Content "$Online\logs\processes\realtime_processor.status.json" -Raw |
+  ConvertFrom-Json |
+  Format-List
+
+(Get-Content "$Online\realtime\model_predictions.jsonl").Count
+```
+
+The prediction count may be slightly below 10 because the first pre-stimulus window can occur before two seconds of EEG have accumulated.
+
+## 9. Replay and evaluate the online session
+
+```powershell
+attention8 evaluate `
+  --config $Config `
+  --session-dir $Online
+```
+
+Check the output:
+
+```powershell
+Test-Path "$Online\reports\classification\metrics.json"
+Test-Path "$Online\reports\classification\replay_summary.json"
+Test-Path "$Online\reports\experiment_summary.html"
+
+Get-Content "$Online\reports\classification\metrics.json" -Raw |
+  ConvertFrom-Json |
+  Format-List
+```
+
+## 10. Run the offline model comparison
+
+With only 10 trials, continue using `--support-trials 0`:
+
+```powershell
+attention8 compare `
+  --session-dir $Cal `
+  --online-session-dir $Online `
+  --support-trials 0 `
+  --method log-reg `
+  --method riemann `
+  --method lora `
+  --method film
+```
+
+Find the summary:
+
+```powershell
+Get-ChildItem "$Online\reports\classification" -Recurse |
+  Select-Object FullName
+```
+
+## Optional: test delayed-label adaptation
+
+Use a separate participant/session:
+
+```powershell
+$AdaptParticipant = "${Participant}-adapt"
+
+attention8 online `
+  --config $Config `
+  --participant $AdaptParticipant `
+  --model-dir $ModelDir `
+  --primary causal_bandpower_logreg `
+  --shadow foundation_prototype `
+  --trials 10 `
+  --session-root $DataRoot `
+  --no-dashboard `
+  --enable-adaptation `
+  --adapt-shadows `
+  --adaptation-warmup-trials 2 `
+  --min-correct-go-rts-for-threshold 2
+```
+
+Then locate that session and check for:
+
+```text
+realtime\adaptation_updates.jsonl
+realtime\adaptation_state\
+```
+
+Ten trials validate execution only. For real calibration and meaningful evaluation, return to approximately 240 calibration trials with `--support-trials 50`.

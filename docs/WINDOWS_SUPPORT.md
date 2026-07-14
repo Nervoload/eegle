@@ -99,6 +99,14 @@ at `Documents\Codespaces\eegle\data`. `attention8 collect` and
 `attention8 online` also probe the selected root before realtime startup so an
 access denial is reported before the task window begins.
 
+An error that specifically shows `*.status.json.tmp -> *.status.json` after raw
+EEG or report files were already written is different: the session root is
+writable, but Windows or endpoint-protection software briefly locked a worker
+status file during its atomic replacement. Current status writers use unique
+temporary files and retry transient Windows sharing/access denials. The absolute
+path in that exception is diagnostic output; changing the same file reference
+to a relative path would not change which Windows file is opened.
+
 The emitted phases are:
 
 - `smoke`: 24 trials, no resting or closed-eyes baseline, loads the chosen model
