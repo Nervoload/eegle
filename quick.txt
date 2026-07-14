@@ -1,23 +1,94 @@
-260709T152822\\realtime\\epochs\\epochs.jsonl",
-    "raw_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\raw\\eeg.csv",
-    "raw_file_unchanged": true,
-    "raw_sha256": "5bfe162b09416a501bce1f20aafa63bca3d0442ae1f4f4c849431a8148487b43",
-    "raw_sha256_after_epoch_export": "5bfe162b09416a501bce1f20aafa63bca3d0442ae1f4f4c849431a8148487b43",
-    "rejected_count": 50,
-    "rejection_reasons": {
-      "EEG samples do not extend to epoch end timestamp": 50
+2026-07-14 09:27:41.407 (  12.089s) [R_LSLOutletStr  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
+[experiment] Preflight checks complete
+[feedback_manager] Feedback manager starting enabled processes
+[feedback_manager] Starting recorder
+[feedback_manager] recorder status: recording
+[realtime_processor] realtime_processor disabled
+[dashboard] dashboard disabled
+[experiment] Starting task go_nogo
+[task.go_nogo] Task started
+[task.go_nogo] countdown_3
+[task.go_nogo] countdown_2
+[task.go_nogo] countdown_1
+[task.go_nogo] countdown_go
+[task.go_nogo] Task ended
+4.7824  WARNING         Monitor specification not found. Creating a temporary one...
+[experiment] Task go_nogo ended
+[feedback_manager] Feedback manager stopping processes
+[recorder] recorder failed
+[feedback_manager] recorder stopped
+[feedback_manager] Offline analyzer worker starting
+[feedback_manager] Starting offline_analyzer
+[feedback_manager] offline_analyzer exited
+[feedback_manager] Feedback manager summary: failed
+[feedback_manager] Offline analyzer complete
+[experiment] Experiment failed: C:\Users\Surettej\Documents\Codespace\eegle\data\participants\sub-001\sessions\2026-07-14\attention8_dry_electrode_calibration\go_nogo\run-20260714T092728
+{
+  "calibration_readiness": {
+    "marker_attempt_count": 10,
+    "minimum_usable_epochs": 50,
+    "operator_notes": [
+      "Only 10 usable attention8 epochs were exported from 10 marker attempts; collect more usable EEG/marker data before training."
+    ],
+    "rejected_epoch_count": 0,
+    "rejection_reasons": {},
+    "status": "degraded",
+    "usable_epoch_count": 10
+  },
+  "epochs": {
+    "channel_names": [
+      "Fz",
+      "Cz",
+      "Pz",
+      "C3",
+      "C4",
+      "P3",
+      "P4",
+      "Oz"
+    ],
+    "created_at": "2026-07-14T09:28:26",
+    "data_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\realtime\\epochs\\epochs.npz",
+    "data_key": "X",
+    "data_layout": "epochs_x_channels_x_samples",
+    "epoch_count": 10,
+    "epoch_shape": [
+      10,
+      8,
+      1001
+    ],
+    "epoch_timestamp_key": "epoch_timestamps",
+    "epoching_config": {
+      "data_source": "causal_preprocessed",
+      "drop_incomplete": true,
+      "enabled": true,
+      "include_practice_trials": false,
+      "marker_prefix": "go_nogo_stimulus_onset",
+      "sample_tolerance_seconds": 0.01,
+      "timebase": "local_received",
+      "tmax_seconds": 0.0,
+      "tmin_seconds": -2.0
     },
+    "label_key": "y",
+    "marker_source_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\events\\stimulus_manifest.json",
+    "marker_source_sha256": "add0dfd0fb6f78ad3dc7391e8752967e07259933b13b74fe529337773f0541b6",
+    "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\realtime\\epochs\\epochs.jsonl",
+    "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\raw\\eeg.csv",
+    "raw_file_unchanged": true,
+    "raw_sha256": "fd78aa6111d01e7b4081cea886fab773c570771ac1ab43d4871a539c04139504",
+    "raw_sha256_after_epoch_export": "fd78aa6111d01e7b4081cea886fab773c570771ac1ab43d4871a539c04139504",
+    "rejected_count": 0,
+    "rejection_reasons": {},
     "relative_time_key": "times",
     "sample_rate_hz": 500.0,
     "schema_version": 1,
-    "source": "markers_jsonl",
+    "source": "stimulus_manifest",
     "status": "ok",
-    "timestamp_column": "lsl_timestamp"
+    "timestamp_column": "local_received_time"
   },
   "forward": {
     "analysis": {
       "alpha": {
-        "alpha_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\realtime\\alpha_power.jsonl",
+        "alpha_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\realtime\\alpha_power.jsonl",
         "calibration": null,
         "offline_alpha": {
           "band": {
@@ -25,7 +96,7 @@
             "low_hz": 8.0
           },
           "channel_count": 8,
-          "file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\reports\\alpha\\offline_alpha_timeseries.csv",
+          "file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\reports\\alpha\\offline_alpha_timeseries.csv",
           "posterior_channels": [
             "Fz",
             "Cz",
@@ -38,7 +109,7 @@
           ],
           "status": "ok",
           "step_seconds": 0.1,
-          "window_count": 203,
+          "window_count": 345,
           "window_seconds": 1.0
         },
         "reason": "no realtime alpha estimates found",
@@ -62,7 +133,7 @@
           "valid_fraction": 0.0
         },
         "status": "missing",
-        "trial_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\events\\stimulus_manifest.json"
+        "trial_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\events\\stimulus_manifest.json"
       },
       "analysis_status": {
         "alpha": "missing",
@@ -78,21 +149,21 @@
         "scalp_maps": "pending_raw_eeg"
       },
       "behavior": {
-        "mean_rt_seconds": 0.3861475055552243,
-        "median_rt_seconds": 0.3815761500009103,
+        "mean_rt_seconds": 0.3185401624941733,
+        "median_rt_seconds": 0.3178842499910388,
         "misses": 0,
         "premature_responses": 0,
-        "responses": 36,
+        "responses": 8,
         "status": "ok",
         "too_fast_responses": 0,
-        "trials": 50
+        "trials": 10
       },
-      "behavior_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\events\\behavior.csv",
+      "behavior_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\events\\behavior.csv",
       "classification": {
         "status": "disabled"
       },
       "epochs": {
-        "manifest_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\realtime\\epochs\\manifest.json",
+        "manifest_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\realtime\\epochs\\manifest.json",
         "status": "missing"
       },
       "erp": {
@@ -103,30 +174,29 @@
         "status": "disabled"
       },
       "html_report": {
-        "display_timebase": "lsl",
-        "html_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\reports\\experiment_summary.html",
+        "display_timebase": "monotonic",
+        "html_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\reports\\experiment_summary.html",
         "legacy_continuous_alpha_count": 0,
         "live_alpha_count": 0,
         "live_alpha_source": "legacy_continuous_alpha",
-        "marker_count": 342,
+        "marker_count": 50,
         "offline_alpha_status": "ok",
-        "raw_sample_count": 10624,
+        "raw_sample_count": 17728,
         "raw_status": "ok",
-        "session_dir": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822",
+        "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728",
         "staged_alpha_packet_count": 0,
         "status": "ok",
         "timebase_diagnostics": {
-          "lsl_overlap_markers": 1,
-          "monotonic_overlap_markers": 1,
-          "raw_lsl_duration_seconds": 21.245997,
-          "raw_lsl_start": 80822.446484064,
-          "raw_monotonic_duration_seconds": 20.72,
-          "raw_monotonic_start": 80823.014000066
+          "lsl_overlap_markers": 60,
+          "monotonic_overlap_markers": 70,
+          "raw_lsl_duration_seconds": 35.454003,
+          "raw_lsl_start": 491169.3474379,
+          "raw_monotonic_duration_seconds": 34.923,
+          "raw_monotonic_start": 491169.842000052
         }
       },
       "processes": {
         "failed_processes": [
-          "realtime_processor",
           "recorder"
         ],
         "processes": {
@@ -136,46 +206,44 @@
             "name": "dashboard",
             "reason": "dashboard disabled by experiment settings",
             "status": "disabled",
-            "updated_at": "2026-07-09T15:28:48"
+            "updated_at": "2026-07-14T09:27:48"
           },
           "offline_analyzer": {
             "backend": "minimal",
-            "elapsed_seconds": 0.014999999999417923,
+            "elapsed_seconds": 0.0,
             "name": "offline_analyzer",
-            "session_dir": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822",
+            "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728",
             "status": "running",
-            "updated_at": "2026-07-09T15:30:34"
+            "updated_at": "2026-07-14T09:28:24"
           },
           "realtime_processor": {
-            "backend": "lsl",
-            "elapsed_seconds": 0.01600000000325963,
-            "error": "PermissionError: [WinError 5] Access is denied: 'C:\\\\Users\\\\Surettej\\\\AppData\\\\Local\\\\eegle\\\\data\\\\participants\\\\sub-1\\\\sessions\\\\2026-07-09\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260709T152822\\\\logs\\\\processes\\\\realtime_processor.status.json.tmp' -> 'C:\\\\Users\\\\Surettej\\\\AppData\\\\Local\\\\eegle\\\\data\\\\participants\\\\sub-1\\\\sessions\\\\2026-07-09\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260709T152822\\\\logs\\\\processes\\\\realtime_processor.status.json'",
+            "backend": "disabled",
+            "elapsed_seconds": 0.0,
             "name": "realtime_processor",
-            "reason": "worker exited with return code 1",
-            "returncode": 1,
-            "status": "failed",
-            "updated_at": "2026-07-09T15:30:33"
+            "reason": "realtime processor disabled by experiment settings",
+            "status": "disabled",
+            "updated_at": "2026-07-14T09:27:48"
           },
           "recorder": {
             "backend": "lsl_csv",
             "elapsed_seconds": 0.0,
-            "error": "PermissionError: [WinError 5] Access is denied: 'C:\\\\Users\\\\Surettej\\\\AppData\\\\Local\\\\eegle\\\\data\\\\participants\\\\sub-1\\\\sessions\\\\2026-07-09\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260709T152822\\\\logs\\\\processes\\\\recorder.status.json.tmp' -> 'C:\\\\Users\\\\Surettej\\\\AppData\\\\Local\\\\eegle\\\\data\\\\participants\\\\sub-1\\\\sessions\\\\2026-07-09\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260709T152822\\\\logs\\\\processes\\\\recorder.status.json'",
+            "error": "PermissionError: [WinError 5] Access is denied: 'C:\\\\Users\\\\Surettej\\\\Documents\\\\Codespace\\\\eegle\\\\data\\\\participants\\\\sub-001\\\\sessions\\\\2026-07-14\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260714T092728\\\\logs\\\\processes\\\\recorder.status.json.tmp' -> 'C:\\\\Users\\\\Surettej\\\\Documents\\\\Codespace\\\\eegle\\\\data\\\\participants\\\\sub-001\\\\sessions\\\\2026-07-14\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260714T092728\\\\logs\\\\processes\\\\recorder.status.json'",
             "name": "recorder",
             "reason": "worker exited with return code 1",
             "returncode": 1,
             "status": "failed",
-            "updated_at": "2026-07-09T15:30:33"
+            "updated_at": "2026-07-14T09:28:24"
           }
         },
         "status": "failed"
       },
       "raw_eeg": {
         "channel_count": 8,
-        "duration_seconds": 21.24599732599745,
-        "first_lsl_timestamp": 80822.446484064,
-        "last_lsl_timestamp": 80843.69248139,
+        "duration_seconds": 35.45400264998898,
+        "first_lsl_timestamp": 491169.3474379,
+        "last_lsl_timestamp": 491204.80144055,
         "metadata": {
-          "duration_seconds": 21.24599732529896,
+          "duration_seconds": 35.45400264993077,
           "eeg_config": {
             "allow_type_only_fallback": false,
             "expected_channel_counts": [
@@ -196,14 +264,14 @@
             "stream_timeout_seconds": 5.0
           },
           "error": null,
-          "finished_at_monotonic": 80844.25,
-          "first_lsl_timestamp": 80822.44648406447,
-          "last_lsl_timestamp": 80843.69248138976,
-          "metadata_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\raw\\eeg_metadata.json",
+          "finished_at_monotonic": 491205.265,
+          "first_lsl_timestamp": 491169.3474379002,
+          "last_lsl_timestamp": 491204.80144055013,
+          "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\raw\\eeg_metadata.json",
           "notes": [],
-          "raw_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\raw\\eeg.csv",
-          "sample_count": 10624,
-          "started_at_monotonic": 80823.125,
+          "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\raw\\eeg.csv",
+          "sample_count": 17728,
+          "started_at_monotonic": 491169.953,
           "status": "stopped",
           "stream": {
             "channel_count": 8,
@@ -218,7 +286,7 @@
               "P4",
               "Oz"
             ],
-            "initial_time_correction_seconds": 1.1000010999850929e-06,
+            "initial_time_correction_seconds": -1.4500110410153866e-06,
             "lsl_processing": [
               "clocksync",
               "dejitter",
@@ -230,34 +298,34 @@
             "type": "EEG"
           }
         },
-        "metadata_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\raw\\eeg_metadata.json",
-        "raw_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\raw\\eeg.csv",
-        "sample_count": 10624,
+        "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\raw\\eeg_metadata.json",
+        "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\raw\\eeg.csv",
+        "sample_count": 17728,
         "status": "ok"
       },
       "realtime": {
         "decision_count": 0,
-        "decisions_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\realtime\\decisions.jsonl",
+        "decisions_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\realtime\\decisions.jsonl",
         "latest_decision": null,
-        "marker_count": 146,
-        "markers_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\realtime\\markers.jsonl",
+        "marker_count": 0,
+        "markers_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\realtime\\markers.jsonl",
         "status": "missing"
       },
       "realtime_feature_replay": {
         "status": "missing"
       },
-      "session_dir": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822"
+      "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728"
     },
     "calibration": null,
     "eeg": {
       "backend": "lsl_csv",
       "elapsed_seconds": 0.0,
-      "error": "PermissionError: [WinError 5] Access is denied: 'C:\\\\Users\\\\Surettej\\\\AppData\\\\Local\\\\eegle\\\\data\\\\participants\\\\sub-1\\\\sessions\\\\2026-07-09\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260709T152822\\\\logs\\\\processes\\\\recorder.status.json.tmp' -> 'C:\\\\Users\\\\Surettej\\\\AppData\\\\Local\\\\eegle\\\\data\\\\participants\\\\sub-1\\\\sessions\\\\2026-07-09\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260709T152822\\\\logs\\\\processes\\\\recorder.status.json'",
+      "error": "PermissionError: [WinError 5] Access is denied: 'C:\\\\Users\\\\Surettej\\\\Documents\\\\Codespace\\\\eegle\\\\data\\\\participants\\\\sub-001\\\\sessions\\\\2026-07-14\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260714T092728\\\\logs\\\\processes\\\\recorder.status.json.tmp' -> 'C:\\\\Users\\\\Surettej\\\\Documents\\\\Codespace\\\\eegle\\\\data\\\\participants\\\\sub-001\\\\sessions\\\\2026-07-14\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260714T092728\\\\logs\\\\processes\\\\recorder.status.json'",
       "name": "recorder",
       "reason": "worker exited with return code 1",
       "returncode": 1,
       "status": "failed",
-      "updated_at": "2026-07-09T15:30:33"
+      "updated_at": "2026-07-14T09:28:24"
     },
     "preflight": [
       {
@@ -421,27 +489,6 @@
         "data": {
           "streams": [
             {
-              "channel_count": 1,
-              "name": "Markers",
-              "nominal_srate": 0.0,
-              "source_id": "html_markers",
-              "type": "Markers"
-            },
-            {
-              "channel_count": 1,
-              "name": "Markers",
-              "nominal_srate": 0.0,
-              "source_id": "html_markers",
-              "type": "Markers"
-            },
-            {
-              "channel_count": 1,
-              "name": "Markers",
-              "nominal_srate": 0.0,
-              "source_id": "html_markers",
-              "type": "Markers"
-            },
-            {
               "channel_count": 3,
               "name": "LSLOutletStreamName-Accelerometer",
               "nominal_srate": 100.0,
@@ -450,10 +497,10 @@
             },
             {
               "channel_count": 8,
-              "name": "LSLOutletStreamName-EEG",
-              "nominal_srate": 500.0,
-              "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
-              "type": "EEG"
+              "name": "LSLOutletStreamName-Quality",
+              "nominal_srate": 1.0,
+              "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E) Quality",
+              "type": "Quality"
             },
             {
               "channel_count": 1,
@@ -464,14 +511,14 @@
             },
             {
               "channel_count": 8,
-              "name": "LSLOutletStreamName-Quality",
-              "nominal_srate": 1.0,
-              "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E) Quality",
-              "type": "Quality"
+              "name": "LSLOutletStreamName-EEG",
+              "nominal_srate": 500.0,
+              "source_id": "ENOBIO-8-NE-Wifi(00:07:80:0D:72:3E)",
+              "type": "EEG"
             }
           ]
         },
-        "detail": "found 7 streams",
+        "detail": "found 4 streams",
         "name": "lsl",
         "status": "ok"
       },
@@ -516,22 +563,10 @@
         "status": "ok"
       },
       {
-        "data": {
-          "candidate_eeg_stream_count": 1,
-          "failures": [],
-          "matching_eeg_stream_count": 1,
-          "realtime_requested": true,
-          "require_eeg": true,
-          "warnings": [],
-          "worker_launch": {
-            "module_launch": true,
-            "python": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\.venv\\Scripts\\python.exe",
-            "shell": false
-          }
-        },
-        "detail": "realtime worker launch path is portable",
+        "data": {},
+        "detail": "realtime processor disabled",
         "name": "realtime_ready",
-        "status": "ok"
+        "status": "skip"
       },
       {
         "data": {
@@ -572,8 +607,8 @@
       },
       {
         "data": {
-          "first_lsl_timestamp": 80814.1884854272,
-          "last_lsl_timestamp": 80816.23448539994,
+          "first_lsl_timestamp": 491161.0734403606,
+          "last_lsl_timestamp": 491163.11944035,
           "probe_seconds": 2.0,
           "sample_count": 1024,
           "status": "ok",
@@ -591,7 +626,7 @@
       }
     ],
     "processes": {
-      "manager_summary_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\logs\\feedback_manager.json",
+      "manager_summary_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\logs\\feedback_manager.json",
       "normalized_processes": {
         "dashboard": {
           "backend": "http",
@@ -611,8 +646,8 @@
           "timeout_seconds": 120.0
         },
         "realtime_processor": {
-          "backend": "lsl",
-          "enabled": true,
+          "backend": "disabled",
+          "enabled": false,
           "model": "causal_bandpower_logreg",
           "preprocessor": "causal_bandpass_notch",
           "startup_timeout_seconds": 8.0
@@ -626,9 +661,7 @@
       },
       "notes": [
         "recorder status is failed",
-        "realtime_processor status is failed",
-        "recorder produced no EEG samples",
-        "realtime processor received no EEG samples"
+        "recorder produced no EEG samples"
       ],
       "processes": {
         "dashboard": {
@@ -637,16 +670,16 @@
           "name": "dashboard",
           "reason": "dashboard disabled by experiment settings",
           "status": "disabled",
-          "updated_at": "2026-07-09T15:28:48"
+          "updated_at": "2026-07-14T09:27:48"
         },
         "offline_analyzer": {
           "backend": "minimal",
-          "elapsed_seconds": 1.389999999999418,
+          "elapsed_seconds": 1.6089999999967404,
           "name": "offline_analyzer",
           "status": "complete",
           "summary": {
             "alpha": {
-              "alpha_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\realtime\\alpha_power.jsonl",
+              "alpha_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\realtime\\alpha_power.jsonl",
               "calibration": null,
               "offline_alpha": {
                 "band": {
@@ -654,7 +687,7 @@
                   "low_hz": 8.0
                 },
                 "channel_count": 8,
-                "file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\reports\\alpha\\offline_alpha_timeseries.csv",
+                "file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\reports\\alpha\\offline_alpha_timeseries.csv",
                 "posterior_channels": [
                   "Fz",
                   "Cz",
@@ -667,7 +700,7 @@
                 ],
                 "status": "ok",
                 "step_seconds": 0.1,
-                "window_count": 203,
+                "window_count": 345,
                 "window_seconds": 1.0
               },
               "reason": "no realtime alpha estimates found",
@@ -691,7 +724,7 @@
                 "valid_fraction": 0.0
               },
               "status": "missing",
-              "trial_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\events\\stimulus_manifest.json"
+              "trial_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\events\\stimulus_manifest.json"
             },
             "analysis_status": {
               "alpha": "missing",
@@ -707,21 +740,21 @@
               "scalp_maps": "pending_raw_eeg"
             },
             "behavior": {
-              "mean_rt_seconds": 0.3861475055552243,
-              "median_rt_seconds": 0.3815761500009103,
+              "mean_rt_seconds": 0.3185401624941733,
+              "median_rt_seconds": 0.3178842499910388,
               "misses": 0,
               "premature_responses": 0,
-              "responses": 36,
+              "responses": 8,
               "status": "ok",
               "too_fast_responses": 0,
-              "trials": 50
+              "trials": 10
             },
-            "behavior_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\events\\behavior.csv",
+            "behavior_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\events\\behavior.csv",
             "classification": {
               "status": "disabled"
             },
             "epochs": {
-              "manifest_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\realtime\\epochs\\manifest.json",
+              "manifest_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\realtime\\epochs\\manifest.json",
               "status": "missing"
             },
             "erp": {
@@ -732,30 +765,29 @@
               "status": "disabled"
             },
             "html_report": {
-              "display_timebase": "lsl",
-              "html_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\reports\\experiment_summary.html",
+              "display_timebase": "monotonic",
+              "html_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\reports\\experiment_summary.html",
               "legacy_continuous_alpha_count": 0,
               "live_alpha_count": 0,
               "live_alpha_source": "legacy_continuous_alpha",
-              "marker_count": 342,
+              "marker_count": 50,
               "offline_alpha_status": "ok",
-              "raw_sample_count": 10624,
+              "raw_sample_count": 17728,
               "raw_status": "ok",
-              "session_dir": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822",
+              "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728",
               "staged_alpha_packet_count": 0,
               "status": "ok",
               "timebase_diagnostics": {
-                "lsl_overlap_markers": 1,
-                "monotonic_overlap_markers": 1,
-                "raw_lsl_duration_seconds": 21.245997,
-                "raw_lsl_start": 80822.446484064,
-                "raw_monotonic_duration_seconds": 20.72,
-                "raw_monotonic_start": 80823.014000066
+                "lsl_overlap_markers": 60,
+                "monotonic_overlap_markers": 70,
+                "raw_lsl_duration_seconds": 35.454003,
+                "raw_lsl_start": 491169.3474379,
+                "raw_monotonic_duration_seconds": 34.923,
+                "raw_monotonic_start": 491169.842000052
               }
             },
             "processes": {
               "failed_processes": [
-                "realtime_processor",
                 "recorder"
               ],
               "processes": {
@@ -765,46 +797,44 @@
                   "name": "dashboard",
                   "reason": "dashboard disabled by experiment settings",
                   "status": "disabled",
-                  "updated_at": "2026-07-09T15:28:48"
+                  "updated_at": "2026-07-14T09:27:48"
                 },
                 "offline_analyzer": {
                   "backend": "minimal",
-                  "elapsed_seconds": 0.014999999999417923,
+                  "elapsed_seconds": 0.0,
                   "name": "offline_analyzer",
-                  "session_dir": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822",
+                  "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728",
                   "status": "running",
-                  "updated_at": "2026-07-09T15:30:34"
+                  "updated_at": "2026-07-14T09:28:24"
                 },
                 "realtime_processor": {
-                  "backend": "lsl",
-                  "elapsed_seconds": 0.01600000000325963,
-                  "error": "PermissionError: [WinError 5] Access is denied: 'C:\\\\Users\\\\Surettej\\\\AppData\\\\Local\\\\eegle\\\\data\\\\participants\\\\sub-1\\\\sessions\\\\2026-07-09\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260709T152822\\\\logs\\\\processes\\\\realtime_processor.status.json.tmp' -> 'C:\\\\Users\\\\Surettej\\\\AppData\\\\Local\\\\eegle\\\\data\\\\participants\\\\sub-1\\\\sessions\\\\2026-07-09\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260709T152822\\\\logs\\\\processes\\\\realtime_processor.status.json'",
+                  "backend": "disabled",
+                  "elapsed_seconds": 0.0,
                   "name": "realtime_processor",
-                  "reason": "worker exited with return code 1",
-                  "returncode": 1,
-                  "status": "failed",
-                  "updated_at": "2026-07-09T15:30:33"
+                  "reason": "realtime processor disabled by experiment settings",
+                  "status": "disabled",
+                  "updated_at": "2026-07-14T09:27:48"
                 },
                 "recorder": {
                   "backend": "lsl_csv",
                   "elapsed_seconds": 0.0,
-                  "error": "PermissionError: [WinError 5] Access is denied: 'C:\\\\Users\\\\Surettej\\\\AppData\\\\Local\\\\eegle\\\\data\\\\participants\\\\sub-1\\\\sessions\\\\2026-07-09\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260709T152822\\\\logs\\\\processes\\\\recorder.status.json.tmp' -> 'C:\\\\Users\\\\Surettej\\\\AppData\\\\Local\\\\eegle\\\\data\\\\participants\\\\sub-1\\\\sessions\\\\2026-07-09\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260709T152822\\\\logs\\\\processes\\\\recorder.status.json'",
+                  "error": "PermissionError: [WinError 5] Access is denied: 'C:\\\\Users\\\\Surettej\\\\Documents\\\\Codespace\\\\eegle\\\\data\\\\participants\\\\sub-001\\\\sessions\\\\2026-07-14\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260714T092728\\\\logs\\\\processes\\\\recorder.status.json.tmp' -> 'C:\\\\Users\\\\Surettej\\\\Documents\\\\Codespace\\\\eegle\\\\data\\\\participants\\\\sub-001\\\\sessions\\\\2026-07-14\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260714T092728\\\\logs\\\\processes\\\\recorder.status.json'",
                   "name": "recorder",
                   "reason": "worker exited with return code 1",
                   "returncode": 1,
                   "status": "failed",
-                  "updated_at": "2026-07-09T15:30:33"
+                  "updated_at": "2026-07-14T09:28:24"
                 }
               },
               "status": "failed"
             },
             "raw_eeg": {
               "channel_count": 8,
-              "duration_seconds": 21.24599732599745,
-              "first_lsl_timestamp": 80822.446484064,
-              "last_lsl_timestamp": 80843.69248139,
+              "duration_seconds": 35.45400264998898,
+              "first_lsl_timestamp": 491169.3474379,
+              "last_lsl_timestamp": 491204.80144055,
               "metadata": {
-                "duration_seconds": 21.24599732529896,
+                "duration_seconds": 35.45400264993077,
                 "eeg_config": {
                   "allow_type_only_fallback": false,
                   "expected_channel_counts": [
@@ -825,14 +855,14 @@
                   "stream_timeout_seconds": 5.0
                 },
                 "error": null,
-                "finished_at_monotonic": 80844.25,
-                "first_lsl_timestamp": 80822.44648406447,
-                "last_lsl_timestamp": 80843.69248138976,
-                "metadata_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\raw\\eeg_metadata.json",
+                "finished_at_monotonic": 491205.265,
+                "first_lsl_timestamp": 491169.3474379002,
+                "last_lsl_timestamp": 491204.80144055013,
+                "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\raw\\eeg_metadata.json",
                 "notes": [],
-                "raw_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\raw\\eeg.csv",
-                "sample_count": 10624,
-                "started_at_monotonic": 80823.125,
+                "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\raw\\eeg.csv",
+                "sample_count": 17728,
+                "started_at_monotonic": 491169.953,
                 "status": "stopped",
                 "stream": {
                   "channel_count": 8,
@@ -847,7 +877,7 @@
                     "P4",
                     "Oz"
                   ],
-                  "initial_time_correction_seconds": 1.1000010999850929e-06,
+                  "initial_time_correction_seconds": -1.4500110410153866e-06,
                   "lsl_processing": [
                     "clocksync",
                     "dejitter",
@@ -859,134 +889,76 @@
                   "type": "EEG"
                 }
               },
-              "metadata_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\raw\\eeg_metadata.json",
-              "raw_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\raw\\eeg.csv",
-              "sample_count": 10624,
+              "metadata_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\raw\\eeg_metadata.json",
+              "raw_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\raw\\eeg.csv",
+              "sample_count": 17728,
               "status": "ok"
             },
             "realtime": {
               "decision_count": 0,
-              "decisions_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\realtime\\decisions.jsonl",
+              "decisions_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\realtime\\decisions.jsonl",
               "latest_decision": null,
-              "marker_count": 146,
-              "markers_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\realtime\\markers.jsonl",
+              "marker_count": 0,
+              "markers_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\realtime\\markers.jsonl",
               "status": "missing"
             },
             "realtime_feature_replay": {
               "status": "missing"
             },
-            "session_dir": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822"
+            "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728"
           },
-          "updated_at": "2026-07-09T15:30:35"
+          "updated_at": "2026-07-14T09:28:26"
         },
         "realtime_processor": {
-          "backend": "lsl",
-          "elapsed_seconds": 0.01600000000325963,
-          "error": "PermissionError: [WinError 5] Access is denied: 'C:\\\\Users\\\\Surettej\\\\AppData\\\\Local\\\\eegle\\\\data\\\\participants\\\\sub-1\\\\sessions\\\\2026-07-09\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260709T152822\\\\logs\\\\processes\\\\realtime_processor.status.json.tmp' -> 'C:\\\\Users\\\\Surettej\\\\AppData\\\\Local\\\\eegle\\\\data\\\\participants\\\\sub-1\\\\sessions\\\\2026-07-09\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260709T152822\\\\logs\\\\processes\\\\realtime_processor.status.json'",
+          "backend": "disabled",
+          "elapsed_seconds": 0.0,
           "name": "realtime_processor",
-          "reason": "worker exited with return code 1",
-          "returncode": 1,
-          "status": "failed",
-          "updated_at": "2026-07-09T15:30:33"
+          "reason": "realtime processor disabled by experiment settings",
+          "status": "disabled",
+          "updated_at": "2026-07-14T09:27:48"
         },
         "recorder": {
           "backend": "lsl_csv",
           "elapsed_seconds": 0.0,
-          "error": "PermissionError: [WinError 5] Access is denied: 'C:\\\\Users\\\\Surettej\\\\AppData\\\\Local\\\\eegle\\\\data\\\\participants\\\\sub-1\\\\sessions\\\\2026-07-09\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260709T152822\\\\logs\\\\processes\\\\recorder.status.json.tmp' -> 'C:\\\\Users\\\\Surettej\\\\AppData\\\\Local\\\\eegle\\\\data\\\\participants\\\\sub-1\\\\sessions\\\\2026-07-09\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260709T152822\\\\logs\\\\processes\\\\recorder.status.json'",
+          "error": "PermissionError: [WinError 5] Access is denied: 'C:\\\\Users\\\\Surettej\\\\Documents\\\\Codespace\\\\eegle\\\\data\\\\participants\\\\sub-001\\\\sessions\\\\2026-07-14\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260714T092728\\\\logs\\\\processes\\\\recorder.status.json.tmp' -> 'C:\\\\Users\\\\Surettej\\\\Documents\\\\Codespace\\\\eegle\\\\data\\\\participants\\\\sub-001\\\\sessions\\\\2026-07-14\\\\attention8_dry_electrode_calibration\\\\go_nogo\\\\run-20260714T092728\\\\logs\\\\processes\\\\recorder.status.json'",
           "name": "recorder",
           "reason": "worker exited with return code 1",
           "returncode": 1,
           "status": "failed",
-          "updated_at": "2026-07-09T15:30:33"
+          "updated_at": "2026-07-14T09:28:24"
         }
       },
       "status": "failed"
     },
-    "session_dir": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822",
+    "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728",
     "status": "failed",
-    "summary_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\session_summary.json",
+    "summary_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\session_summary.json",
     "task": {
       "mode": "psychopy",
       "summary": {
         "aborted": false,
-        "accuracy": 0.98,
-        "button_presses": 36,
-        "commission_errors": 1,
-        "duration_seconds": 76.43799999999464,
-        "finish_monotonic": 80933.0,
-        "mean_go_rt_seconds": 0.38832285142852924,
+        "accuracy": 1.0,
+        "button_presses": 8,
+        "commission_errors": 0,
+        "duration_seconds": 14.687999999965541,
+        "finish_monotonic": 491203.578,
+        "mean_go_rt_seconds": 0.3185401624941733,
         "omission_errors": 0,
-        "start_monotonic": 80856.562,
-        "trials": 50
+        "start_monotonic": 491188.89,
+        "trials": 10
       },
       "task": "go_nogo"
     },
     "telemetry": {
-      "debug_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\logs\\debug.jsonl",
-      "telemetry_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\logs\\telemetry.jsonl"
+      "debug_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\logs\\debug.jsonl",
+      "telemetry_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\logs\\telemetry.jsonl"
     }
   },
   "operator_notes": [
-    "Only 0 usable attention8 epochs were exported from 50 marker attempts; collect more usable EEG/marker data before training.",
-    "Rejected epochs outnumber usable epochs; inspect realtime/epochs/epochs.jsonl for rejection reasons and verify the dry electrode signal plus marker stream stayed connected.",
-    "Epoch rejection reasons: {'EEG samples do not extend to epoch end timestamp': 50}"
+    "Only 10 usable attention8 epochs were exported from 10 marker attempts; collect more usable EEG/marker data before training."
   ],
-  "protocol_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\protocol.json",
-  "session_dir": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822",
+  "protocol_file": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728\\protocol.json",
+  "session_dir": "C:\\Users\\Surettej\\Documents\\Codespace\\eegle\\data\\participants\\sub-001\\sessions\\2026-07-14\\attention8_dry_electrode_calibration\\go_nogo\\run-20260714T092728",
   "status": "failed",
   "workflow": "attention8.collect"
-}
-(.venv) PS C:\Users\Surettej\Documents\Codespace\eegle>  $Cal = "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822"                                                                        
-(.venv) PS C:\Users\Surettej\Documents\Codespace\eegle> eegle extract-epochs --config "$Cal\parameters.json" --session-dir $Cal --source stimulus_manifest --tmin -2.0 --tmax 0.0                                                                                                                        
-{                             
-  "channel_names": [                                                   
-    "Fz",          
-    "Cz",
-    "Pz",
-    "C3",
-    "C4",
-    "P3",
-    "P4",
-    "Oz"
-  ],
-  "created_at": "2026-07-09T15:31:52",
-  "data_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\realtime\\epochs\\epochs.npz",
-  "data_key": "X",
-  "data_layout": "epochs_x_channels_x_samples",
-  "epoch_count": 0,
-  "epoch_shape": [
-    0,
-    8,
-    1001
-  ],
-  "epoch_timestamp_key": "epoch_timestamps",
-  "epoching_config": {
-    "data_source": "causal_preprocessed",
-    "drop_incomplete": true,
-    "enabled": true,
-    "include_practice_trials": false,
-    "marker_prefix": "go_nogo_stimulus_onset",
-    "sample_tolerance_seconds": 0.01,
-    "timebase": "local_received",
-    "tmax_seconds": 0.0,
-    "tmin_seconds": -2.0
-  },
-  "label_key": "y",
-  "marker_source_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\events\\stimulus_manifest.json",
-  "marker_source_sha256": "9ee48eda501507a0d361474280e88979236181c55c600145f3a279c39378dc8c",
-  "metadata_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\realtime\\epochs\\epochs.jsonl",
-  "raw_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\sub-1\\sessions\\2026-07-09\\attention8_dry_electrode_calibration\\go_nogo\\run-20260709T152822\\raw\\eeg.csv",
-  "raw_file_unchanged": true,
-  "raw_sha256": "5bfe162b09416a501bce1f20aafa63bca3d0442ae1f4f4c849431a8148487b43",
-  "raw_sha256_after_epoch_export": "5bfe162b09416a501bce1f20aafa63bca3d0442ae1f4f4c849431a8148487b43",
-  "rejected_count": 50,
-  "rejection_reasons": {
-    "EEG samples do not extend to epoch end timestamp": 50
-  },
-  "relative_time_key": "times",
-  "sample_rate_hz": 500.0,
-  "schema_version": 1,
-  "source": "stimulus_manifest",
-  "status": "ok",
-  "timestamp_column": "local_received_time"
 }
