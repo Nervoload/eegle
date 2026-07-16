@@ -114,6 +114,42 @@
         "randomize": false
       }
     },
+    "dynamic_sart": {
+      "digits": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+      "no_go_digit": 3,
+      "response_keys": ["space"],
+      "escape_keys": ["escape", "q"],
+      "stimulus_seconds": 0.25,
+      "response_window_seconds": 1.15,
+      "inter_trial_jitter_min_seconds": 0.0,
+      "inter_trial_jitter_max_seconds": 0.15,
+      "minimum_valid_rt_seconds": 0.1,
+      "no_go_probability": 0.1111111111,
+      "minimum_go_trials_between_no_go": 2,
+      "master_seed": 42,
+      "blocks": [
+        {"name": "support_1", "phase": "support", "trials": 160},
+        {"name": "support_2", "phase": "support", "trials": 160, "break_after": true},
+        {"name": "query_1", "phase": "query", "trials": 160},
+        {"name": "query_2", "phase": "query", "trials": 160, "break_after": true},
+        {"name": "query_3", "phase": "query", "trials": 160},
+        {"name": "query_4", "phase": "query", "trials": 160}
+      ],
+      "practice": {
+        "enabled": true,
+        "trials_per_round": 27,
+        "no_go_trials": 3,
+        "max_rounds": 3,
+        "go_accuracy": 0.8,
+        "no_go_accuracy": 0.6666666667,
+        "max_anticipatory_response_rate": 0.15,
+        "feedback_seconds": 0.35
+      },
+      "thought_probes": {"enabled": false},
+      "allow_task_adaptation": false,
+      "allow_stimulation": false,
+      "completion_auto_close_seconds": 30.0
+    },
     "n_back": {
       "n": 2,
       "blocks": 3,

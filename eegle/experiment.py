@@ -31,7 +31,12 @@ class ForwardExperimentResult:
     calibration: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        status = "failed" if self.task is None or (self.processes or {}).get("status") == "failed" else "complete"
+        task_aborted = self.task is not None and bool(self.task.summary.get("aborted"))
+        status = (
+            "failed"
+            if self.task is None or task_aborted or (self.processes or {}).get("status") == "failed"
+            else "complete"
+        )
         return {
             "status": status,
             "session_dir": str(self.session_dir),
@@ -78,10 +83,12 @@ class ForwardExperimentRunner:
         self.calibration_suite = calibration_suite or config.get("experiment", {}).get("calibration_suite")
         self.preflight_results = preflight_results
         self.telemetry: Telemetry | None = None
+        self.session_dir: Path | None = None
 
     def run(self) -> ForwardExperimentResult:
         get_task_spec(self.task_name)
         paths = create_session(self.config, task=self.task_name, participant_id=self.participant_id)
+        self.session_dir = paths.root
         # Session creation adds run-unique stream identifiers. All components must
         # use the persisted config so they agree on the exact LSL marker stream.
         self.config = load_config(paths.parameters)
@@ -124,6 +131,7 @@ class ForwardExperimentRunner:
             manager = FeedbackManager(self.config, paths, record_eeg=self.record_eeg)
             task_result = None
             calibration_result = None
+            task_failure: BaseException | None = None
             try:
                 if self.calibration_suite:
                     manager.start_recorder()
@@ -178,8 +186,16 @@ class ForwardExperimentRunner:
                         message=f"Task {self.task_name} ended",
                         metadata={"task": task_result.task, "mode": task_result.mode, "summary": task_result.summary},
                     )
+            except BaseException as exc:
+                task_failure = exc
+                raise
             finally:
-                manager.stop_after_task()
+                try:
+                    manager.stop_after_task()
+                except Exception as cleanup_exc:
+                    if task_failure is None:
+                        raise
+                    task_failure.add_note(f"Additional managed-process cleanup error: {cleanup_exc}")
 
             with self.telemetry.span("analysis", component="experiment", message="Post-session analysis"):
                 analysis = manager.run_offline_analysis()

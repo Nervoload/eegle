@@ -21,6 +21,14 @@ TASK_SPECS: dict[str, TaskSpec] = {
         closed_loop_ready=True,
         notes=("Records exact stimulus onset/offset markers and all button presses for EEG alignment.",),
     ),
+    "dynamic_sart": TaskSpec(
+        name="dynamic_sart",
+        display_name="Dynamic-State SART",
+        status="implemented",
+        description="Digit SART with criterion practice, immutable support/query phases, and causal behavioral labels.",
+        closed_loop_ready=True,
+        notes=("Observe-only: predictions cannot change task timing, sequence, probability, feedback, or stimulation.",),
+    ),
     "n_back": TaskSpec(
         name="n_back",
         display_name="N-back",

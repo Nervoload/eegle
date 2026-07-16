@@ -13,6 +13,10 @@ The JSON files in this directory are experiment presets. They are loaded by
 - `forward_go_nogo_inhibition8.json`: observe-only inhibition workflow.
 - `forward_go_nogo_classifier8.json`: GO/NO-GO condition-classifier capture,
   training, online testing, dashboard, and analysis defaults.
+- `forward_dynamic_sart.json`: formal standalone Dynamic-State SART recipe.
+- `record_dsart8.json` and `record_dsart32.json`: recording-first two-session
+  Dynamic-State SART visit recipes; keep their task protocol identical and put
+  montage-specific differences under `hardware.eeg`.
 
 ## Editing Rules
 

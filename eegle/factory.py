@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from eegle.devices.lsl_eeg import LslEegRecorder
+from eegle.tasks.dynamic_sart import DynamicSartTask
 from eegle.tasks.go_nogo import GoNoGoTask
 from eegle.tasks.pvt import PVTTask
 
@@ -16,11 +17,13 @@ def make_task_component(
     task_mode: str,
     trials: int | None,
     participant_id: str | None,
-) -> PVTTask | GoNoGoTask:
+) -> PVTTask | GoNoGoTask | DynamicSartTask:
     if component_name == "pvt":
         return PVTTask(config, mode=task_mode, trials=trials, participant_id=participant_id)
     if component_name == "go_nogo":
         return GoNoGoTask(config, mode=task_mode, trials=trials, participant_id=participant_id)
+    if component_name == "dynamic_sart":
+        return DynamicSartTask(config, mode=task_mode, trials=trials, participant_id=participant_id)
     raise NotImplementedError(f"task component '{component_name}' is not implemented")
 
 

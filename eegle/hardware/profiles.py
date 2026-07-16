@@ -49,4 +49,4 @@ def _is_generic_channel_name(name: str) -> bool:
         return True
     if normalized.startswith(("ch_", "channel_")):
         return True
-    return re.fullmatch(r"(ch|chan|channel|data)[-_ ]?\d+", normalized) is not None
+    return re.fullmatch(r"(ch|chan|channel|data|eeg)[-_ ]?\d+", normalized) is not None

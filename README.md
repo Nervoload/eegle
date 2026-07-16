@@ -205,7 +205,7 @@ POSIX-like development shells, not the Windows-native operator path.
 | `eegle evaluate-model` | `python -m eegle.cli evaluate-model` | Score classifier predictions against the stimulus manifest |
 | `eegle replay-classifier` | `python -m eegle.cli replay-classifier` | Replay classifier predictions from captured EEG and markers |
 
-The `alpha8`, `inhibition8`, `classify8`, and `attention8` installed scripts
+The `alpha8`, `inhibition8`, `classify8`, `attention8`, `dsart8`, and `dsart32` installed scripts
 have equivalent source-module forms. They run the posterior-alpha,
 response-inhibition, participant-specific GO/NO-GO classification, and
 attention-lapse system-test pipelines respectively:
@@ -215,10 +215,13 @@ alpha8 --help
 inhibition8 --help
 classify8 --help
 attention8 --help
+dsart8 --help
+dsart32 --help
 python -m eegle.pipelines.alpha8 --help
 python -m eegle.pipelines.inhibition8 --help
 python -m eegle.pipelines.classify8 --help
 python -m eegle.pipelines.attention8 --help
+python -m eegle.pipelines.dsart_recording --help
 ```
 
 ### Windows PowerShell Command Forms
@@ -271,6 +274,77 @@ Run the complete posterior-alpha calibration plus 100-trial Go/No-go pipeline:
 alpha8 full --participant sub-001
 ```
 
+Run the formal Dynamic-State SART recipe with raw EEG recording and no online
+model or task adaptation:
+
+```bash
+eegle run-forward \
+  --config configs/forward_dynamic_sart.json \
+  --task dynamic_sart \
+  --task-mode psychopy \
+  --participant sub-001 \
+  --require-eeg
+```
+
+For a software-only contract check, add `--trials 24 --skip-eeg
+--allow-missing-eeg --task-mode dry-run`. That override creates 12 support and
+12 query trials rather than truncating the full recipe.
+
+For participant acquisition, use the recording suites rather than the generic
+single-session command. Each suite owns the complete visit: initial preflight,
+120 seconds eyes open, 120 seconds eyes closed, 600-trial DSART session 1,
+10-minute break, a fresh preflight/electrode gate, and an independent 600-trial
+DSART session 2:
+
+Both recording recipes are raw pass-through paths: no filtering, resampling,
+re-referencing, artifact rejection, online capture, model process, or dashboard
+runs during acquisition. Original EEG outlet timestamps and their measured LSL
+clock corrections are retained alongside the corrected marker-alignment
+timestamp. See the recording runbook for the exact column and render-path
+contract.
+
+```bash
+dsart8 --participant sub-001 --visit-id visit-20260716 --operator operator-id
+dsart32 --participant sub-002 --visit-id visit-20260716 --operator operator-id --confirm-channel-map
+```
+
+For a short, visible, no-EEG suite rehearsal, run ten experimental trials in
+each session, two seconds for each baseline condition, and no timed break:
+
+```bash
+dsart8 --participant local-smoke --visit-id smoke-001 --task-mode psychopy \
+  --trials 10 --baseline-seconds 2 --break-seconds 0 --skip-eeg \
+  --window-size 1000 700 --output-root data/rehearsal
+```
+
+Shortened `--trials` runs skip participant qualification practice by default,
+so this presents exactly ten experimental trials per session. Add
+`--include-practice` only when specifically rehearsing the practice and
+qualification flow. Full 600-trial participant runs include session-1 practice
+automatically.
+
+Do not add `--confirm-electrodes` during normal interactive acquisition. The
+suite prints the signal/contact report and requires the operator to type `YES`
+after both the initial and post-break electrode checks. The flag exists only
+for a deliberately noninteractive, externally documented contact check.
+
+The supplied 32-channel map listed both Fp1 and FC5 as device channel 17 and
+did not list channel 18. `record_dsart32.json` uses the only one-to-one repair
+consistent with that list: FC5=17 and Fp1=18. The `dsart32` command will not
+start unless the operator verifies that physical mapping in NIC/cable labels
+and passes `--confirm-channel-map`.
+
+If a completed phase is followed by an abort or process failure, rerun the same
+identity with `--resume`. Completed child sessions are retained; an incomplete
+task attempt gets a new run directory and is linked as a partial recording:
+
+```bash
+dsart8 --participant sub-001 --visit-id visit-20260716 --operator operator-id --resume
+```
+
+See `docs/DSART_RECORDING.md` for the tomorrow-of-acquisition checklist,
+software-only rehearsal, artifact layout, and stop/restart rules.
+
 Windows PowerShell forms (after activation):
 
 ```powershell
@@ -292,10 +366,67 @@ analysis:
 | `configs/forward_go_nogo_enobio8.json` | Go/No-go with the posterior-alpha 8-channel montage |
 | `configs/forward_go_nogo_inhibition8.json` | Observe-only Go/No-go with the inhibition montage |
 | `configs/forward_go_nogo_classifier8.json` | Capture and observe-only GO/NO-GO EEG condition classification |
+| `configs/forward_dynamic_sart.json` | Formal digit SART with raw recording, support/query phases, strict prestimulus epoch settings, and no active model |
+| `configs/record_dsart8.json` | Two-session 600-trial DSART recording suite for the Enobio 8 dry montage |
+| `configs/record_dsart32.json` | Same two-session DSART suite for the supplied Enobio 32 wet montage; repaired Fp1 mapping requires confirmation |
 
 Hardware expectations live under `hardware.eeg`. Before collecting data, check
 the configured channel count, sample rate, LSL stream type/name patterns, and
 montage. Task and calibration durations also live in the selected config.
+
+## Dynamic-State SART Data Contract
+
+`dynamic_sart` is an independent task, not a renamed Go/No-go preset. It shows
+digits 1 through 9, records a response to frequent go digits, and uses one
+fixed configurable digit as the no-go stimulus. The default pilot plan is six
+160-trial blocks: two support blocks followed by four query blocks. Practice is
+criterion based, and the complete behavior-independent plan, seeds, conditions,
+jitter, phase assignments, and marker labels are written before experimental
+execution.
+
+The final support block ends with exactly one
+`dynamic_sart_support_complete` event. At that boundary EEGle freezes a
+support-only behavioral reference; query trials cannot change that reference.
+The task then continues with the same timing and stimulus probabilities. This
+event does not mean a model was trained or loaded. Support and query trials are
+intentionally visually identical and are not announced to the participant:
+`support` is the reference-estimation segment, while `query` is the later
+segment evaluated relative to that frozen reference. Keeping the display and
+response rule unchanged avoids making phase identity an experimental cue.
+
+Immediately before experimental trial 1, after practice passes or is skipped,
+the task displays `5`, `4`, `3`, `2`, `1`, and `GO!` for one second each.
+Every countdown display has a flip-synchronized marker. Escape/Q remains active,
+and countdown keypresses are recorded without being assigned to a trial.
+
+Task-specific artifacts are written under `events/`:
+
+```text
+dynamic_sart_trials.csv
+dynamic_sart_trials.jsonl
+dynamic_sart_key_events.jsonl
+dynamic_sart_blocks.csv
+dynamic_sart_results.json
+dynamic_sart_support_reference.json
+dynamic_sart_labels.csv
+dynamic_sart_label_contract.json
+dynamic_sart_probes.jsonl
+stimulus_manifest.json
+```
+
+Raw trial and key-event files are incrementally flushed. Derived labels keep
+current behavior, past-only causal features, and future outcomes separate.
+They include dense valid-go reaction-time targets plus distinct commission,
+omission, premature, too-fast, multiple-response, and wrong-key facts; they do
+not claim to observe a true latent attention state. Practice is excluded from
+the support reference, labels, and default epoch extraction.
+
+The task is observe-only. An incoming `observe_only` action can be audited, but
+actions that would alter sequence, probability, timing, salience, feedback, or
+stimulation are rejected. The provided recipe disables online inference,
+feedback effects, task adaptation, stimulation, and optional thought probes.
+Model training, participant-specific heads, and live calibration after support
+completion remain separate future work.
 
 ## Development Runs
 
@@ -775,7 +906,7 @@ not enable task adaptation or stimulation.
 
 ## Current Scope
 
-EEGle currently supports PVT and Go/No-go execution, Enobio/NIC2 and Neuracle
-LSL checks, CSV recording, marker and telemetry logs, posterior-alpha calibration,
-realtime/replay scaffolding, ERP analysis, and HTML reports. N-back, Sternberg,
-and anti-VEA remain registered future-task scaffolds.
+EEGle currently supports PVT, Go/No-go, and Dynamic-State SART execution,
+Enobio/NIC2 and Neuracle LSL checks, CSV recording, marker and telemetry logs,
+posterior-alpha calibration, realtime/replay scaffolding, ERP analysis, and HTML
+reports. N-back, Sternberg, and anti-VEA remain registered future-task scaffolds.

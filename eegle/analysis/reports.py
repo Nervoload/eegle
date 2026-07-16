@@ -10,9 +10,11 @@ from typing import Any
 
 from eegle.analysis.alpha import run_alpha_validation
 from eegle.analysis.classification import evaluate_classifier_session, replay_classifier_session
+from eegle.analysis.dynamic_sart import analyze_dynamic_sart_session
 from eegle.analysis.erp import run_erp_analysis
 from eegle.analysis.html_summary import generate_experiment_html_report
 from eegle.analysis.inhibition8 import run_feature_behavior_analysis
+from eegle.eeg_csv import eeg_channel_columns
 
 
 def analyze_session(session_dir: str | Path) -> dict[str, Any]:
@@ -24,6 +26,10 @@ def analyze_session(session_dir: str | Path) -> dict[str, Any]:
     erp_config = parameters.get("analysis", {}).get("erp", {})
     alpha_config = parameters.get("analysis", {}).get("alpha", {})
     event_features_enabled = bool(parameters.get("realtime", {}).get("event_features", {}).get("enabled", False))
+    dynamic_sart_enabled = (
+        parameters.get("experiment", {}).get("task") == "dynamic_sart"
+        or (root / "events" / "dynamic_sart_trials.jsonl").exists()
+    )
     classifier_enabled = (
         bool(parameters.get("realtime", {}).get("epoching", {}).get("enabled", False))
         and bool(parameters.get("realtime", {}).get("classifier", {}).get("enabled", False))
@@ -37,6 +43,7 @@ def analyze_session(session_dir: str | Path) -> dict[str, Any]:
         root,
         parameters.get("analysis", {}).get("inhibition8", {}),
     ) if event_features_enabled else {"status": "disabled"}
+    dynamic_sart = analyze_dynamic_sart_session(root, parameters) if dynamic_sart_enabled else {"status": "disabled"}
     if classifier_enabled:
         try:
             classifier_replay = replay_classifier_session(root)
@@ -66,6 +73,7 @@ def analyze_session(session_dir: str | Path) -> dict[str, Any]:
         "alpha": alpha,
         "realtime_feature_replay": replay,
         "exploratory_feature_behavior": inhibition8_behavior,
+        "dynamic_sart": dynamic_sart,
         "classification": classification,
         "html_report": html_report,
         "analysis_status": {
@@ -80,6 +88,7 @@ def analyze_session(session_dir: str | Path) -> dict[str, Any]:
             "realtime_feature_replay": replay.get("status"),
             "realtime_feature_quality": replay.get("quality_status"),
             "exploratory_feature_behavior": inhibition8_behavior.get("status"),
+            "dynamic_sart": dynamic_sart.get("status"),
         },
     }
     target = reports / "summary.json"
@@ -197,7 +206,7 @@ def _raw_eeg_summary(raw_path: Path, metadata_path: Path) -> dict[str, Any]:
         "raw_file": str(raw_path),
         "metadata_file": str(metadata_path),
         "sample_count": rows,
-        "channel_count": max(0, len(header or []) - 2),
+        "channel_count": len(eeg_channel_columns(header or [])),
         "first_lsl_timestamp": first_timestamp,
         "last_lsl_timestamp": last_timestamp,
         "duration_seconds": duration,

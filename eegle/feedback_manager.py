@@ -150,10 +150,23 @@ class FeedbackManager:
 
     def stop_after_task(self) -> None:
         self.telemetry.emit("manager.stop", level="default", message="Feedback manager stopping processes")
+        failures = []
         for name in ("dashboard", "realtime_processor", "recorder"):
             worker = self._workers.get(name)
             if worker is not None:
-                self._stop_worker(worker)
+                try:
+                    self._stop_worker(worker)
+                except Exception as exc:
+                    if name != "dashboard":
+                        failures.append(f"{name}: {type(exc).__name__}: {exc}")
+                    self.telemetry.emit(
+                        "process.stop_failed",
+                        level="default",
+                        message=f"Failed to stop {name} cleanly",
+                        metadata={"name": name, "exception_type": type(exc).__name__, "exception": str(exc)},
+                    )
+        if failures:
+            raise RuntimeError("one or more managed processes did not stop cleanly: " + "; ".join(failures))
 
     def run_offline_analysis(self) -> dict[str, Any] | None:
         analyzer = self.processes["offline_analyzer"]
@@ -221,34 +234,41 @@ class FeedbackManager:
         timeout_seconds: float,
     ) -> None:
         worker = self._make_worker(name, module, extra_args)
-        worker.stdout_handle = worker.stdout_file.open("ab")
-        worker.stderr_handle = worker.stderr_file.open("ab")
-        worker.stop_file.unlink(missing_ok=True)
-        self.telemetry.emit(
-            "process.start",
-            level="default",
-            message=f"Starting {name}",
-            metadata={
-                "name": name,
-                "backend": worker.backend,
-                "module": module,
-                "command": worker.command,
-                "stdout_file": str(worker.stdout_file),
-                "stderr_file": str(worker.stderr_file),
-            },
-        )
-        with self.telemetry.span(
-            "worker_launch",
-            component="feedback_manager",
-            metadata={"name": name, "backend": worker.backend, "command": worker.command},
-        ):
-            worker.process = subprocess.Popen(
-                worker.command,
-                cwd=str(PROJECT_ROOT),
-                stdout=worker.stdout_handle,
-                stderr=worker.stderr_handle,
-                env=self._worker_env(),
+        try:
+            worker.stdout_handle = worker.stdout_file.open("ab")
+            worker.stderr_handle = worker.stderr_file.open("ab")
+            worker.stop_file.unlink(missing_ok=True)
+            self.telemetry.emit(
+                "process.start",
+                level="default",
+                message=f"Starting {name}",
+                metadata={
+                    "name": name,
+                    "backend": worker.backend,
+                    "module": module,
+                    "command": worker.command,
+                    "stdout_file": str(worker.stdout_file),
+                    "stderr_file": str(worker.stderr_file),
+                },
             )
+            with self.telemetry.span(
+                "worker_launch",
+                component="feedback_manager",
+                metadata={"name": name, "backend": worker.backend, "command": worker.command},
+            ):
+                worker.process = subprocess.Popen(
+                    worker.command,
+                    cwd=str(PROJECT_ROOT),
+                    stdout=worker.stdout_handle,
+                    stderr=worker.stderr_handle,
+                    env=self._worker_env(),
+                )
+        except BaseException:
+            try:
+                self._close_worker_logs(worker)
+            except Exception:
+                pass
+            raise
         worker.started_at_monotonic = monotonic()
         self._workers[name] = worker
         ready_status = self._wait_for_status(worker, wait_states, timeout_seconds)
@@ -281,9 +301,16 @@ class FeedbackManager:
             raise RuntimeError(f"{name} did not become ready within {timeout_seconds:.1f}s")
 
     def _run_worker_to_completion(self, worker: WorkerHandle, timeout_seconds: float) -> None:
-        worker.stdout_handle = worker.stdout_file.open("ab")
-        worker.stderr_handle = worker.stderr_file.open("ab")
-        worker.stop_file.unlink(missing_ok=True)
+        try:
+            worker.stdout_handle = worker.stdout_file.open("ab")
+            worker.stderr_handle = worker.stderr_file.open("ab")
+            worker.stop_file.unlink(missing_ok=True)
+        except BaseException:
+            try:
+                self._close_worker_logs(worker)
+            except Exception:
+                pass
+            raise
         self.telemetry.emit(
             "process.start",
             level="default",
@@ -338,6 +365,7 @@ class FeedbackManager:
     def _stop_worker(self, worker: WorkerHandle) -> None:
         if worker.process is None:
             return
+        failures = []
         if worker.process.poll() is None:
             self.telemetry.emit(
                 "process.stop",
@@ -345,24 +373,46 @@ class FeedbackManager:
                 message=f"Stopping {worker.name}",
                 metadata={"name": worker.name, "backend": worker.backend},
             )
-            self._request_worker_stop(worker)
             try:
-                worker.process.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                self.telemetry.emit(
-                    "process.timeout",
-                    level="default",
-                    message=f"{worker.name} did not stop after cooperative request",
-                    metadata={"name": worker.name, "backend": worker.backend},
-                )
-                worker.process.terminate()
+                self._request_worker_stop(worker)
+            except Exception as exc:
+                failures.append(f"cooperative stop request failed: {type(exc).__name__}: {exc}")
+            else:
                 try:
                     worker.process.wait(timeout=5.0)
                 except subprocess.TimeoutExpired:
-                    worker.process.kill()
-                    self._write_forced_status(worker, "killed", "worker did not stop after terminate")
+                    self.telemetry.emit(
+                        "process.timeout",
+                        level="default",
+                        message=f"{worker.name} did not stop after cooperative request",
+                        metadata={"name": worker.name, "backend": worker.backend},
+                    )
+                except Exception as exc:
+                    failures.append(f"waiting for cooperative stop failed: {type(exc).__name__}: {exc}")
+
+            if worker.process.poll() is None:
+                try:
+                    worker.process.terminate()
                     worker.process.wait(timeout=5.0)
-        self._ensure_terminal_worker_status(worker)
+                except subprocess.TimeoutExpired:
+                    try:
+                        worker.process.kill()
+                        self._write_forced_status(worker, "killed", "worker did not stop after terminate")
+                        worker.process.wait(timeout=5.0)
+                    except Exception as exc:
+                        failures.append(f"forced kill failed: {type(exc).__name__}: {exc}")
+                except Exception as exc:
+                    failures.append(f"terminate failed: {type(exc).__name__}: {exc}")
+                    if worker.process.poll() is None:
+                        try:
+                            worker.process.kill()
+                            worker.process.wait(timeout=5.0)
+                        except Exception as kill_exc:
+                            failures.append(f"fallback kill failed: {type(kill_exc).__name__}: {kill_exc}")
+        try:
+            self._ensure_terminal_worker_status(worker)
+        except Exception as exc:
+            failures.append(f"terminal status update failed: {type(exc).__name__}: {exc}")
         worker.stopped_at_monotonic = monotonic()
         self.telemetry.emit(
             "process.stop",
@@ -374,7 +424,17 @@ class FeedbackManager:
                 "elapsed_seconds": None if worker.started_at_monotonic is None else worker.stopped_at_monotonic - worker.started_at_monotonic,
             },
         )
-        self._close_worker_logs(worker)
+        try:
+            self._close_worker_logs(worker)
+        except Exception as exc:
+            self.telemetry.emit(
+                "process.log_cleanup_warning",
+                level="default",
+                message=f"{worker.name} stopped but its manager log handles did not close cleanly",
+                metadata={"name": worker.name, "exception_type": type(exc).__name__, "exception": str(exc)},
+            )
+        if failures:
+            raise RuntimeError("; ".join(failures))
 
     def _make_worker(self, name: str, module: str, extra_args: list[str]) -> WorkerHandle:
         backend = extra_args[extra_args.index("--backend") + 1] if "--backend" in extra_args else "default"
@@ -509,11 +569,18 @@ class FeedbackManager:
         return env
 
     def _close_worker_logs(self, worker: WorkerHandle) -> None:
+        failures = []
         for handle_name in ("stdout_handle", "stderr_handle"):
             handle = getattr(worker, handle_name)
             if handle is not None:
-                handle.close()
-                setattr(worker, handle_name, None)
+                try:
+                    handle.close()
+                except Exception as exc:
+                    failures.append(f"{handle_name}: {type(exc).__name__}: {exc}")
+                finally:
+                    setattr(worker, handle_name, None)
+        if failures:
+            raise RuntimeError("; ".join(failures))
 
 
 def normalize_processes(config: dict[str, Any], record_eeg: bool = True) -> dict[str, Any]:

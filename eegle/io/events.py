@@ -47,6 +47,7 @@ class EventLogger:
             fieldnames=["trial", "label", "event_type", "timestamp", "value", "metadata"],
         )
         self._writer.writeheader()
+        self.telemetry_error: str | None = None
 
     def mark(
         self,
@@ -86,24 +87,42 @@ class EventLogger:
         event = _telemetry_event(record)
         message = _telemetry_message(record)
         payload = asdict(record)
-        self.telemetry.emit(
-            event,
-            component=self.component,
-            level=level,
-            message=message,
-            metadata=payload,
-        )
+        try:
+            self.telemetry.emit(
+                event,
+                component=self.component,
+                level=level,
+                message=message,
+                metadata=payload,
+            )
+        except Exception as exc:
+            # Behavioral ledgers are primary acquisition artifacts. Optional
+            # observability must never invalidate an event that was already
+            # flushed successfully to all three primary ledgers.
+            self.telemetry_error = f"{type(exc).__name__}: {exc}"
 
     def close(self) -> None:
-        self._csv.close()
-        self._jsonl.close()
-        self._triggers.close()
+        failures = []
+        for name, handle in (("behavior CSV", self._csv), ("events JSONL", self._jsonl), ("triggers", self._triggers)):
+            try:
+                if not handle.closed:
+                    handle.close()
+            except Exception as exc:
+                failures.append(f"{name}: {type(exc).__name__}: {exc}")
+        if failures:
+            raise RuntimeError("event logger cleanup failed: " + "; ".join(failures))
 
     def __enter__(self) -> "EventLogger":
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
-        self.close()
+        try:
+            self.close()
+        except Exception as cleanup_exc:
+            if isinstance(exc, BaseException):
+                exc.add_note(f"Additional cleanup error: {cleanup_exc}")
+                return
+            raise
 
 
 def _telemetry_level(record: EventRecord) -> str:

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from eegle.analysis.alpha import run_alpha_validation
+from eegle.eeg_csv import eeg_channel_indices
 
 
 def generate_experiment_html_report(
@@ -141,7 +142,8 @@ def _load_raw_preview(path: Path, max_points: int) -> dict[str, Any]:
         reader = csv.reader(handle)
         header = next(reader, [])
         rows = [[float(value) for value in row] for row in reader if row]
-    channel_names = [str(value) for value in header[2:]]
+    channel_indices = eeg_channel_indices(header)
+    channel_names = [str(header[index]) for index in channel_indices]
     if not rows:
         return {"status": "empty", "file": str(path), "channels": channel_names, "times": [], "samples": []}
     stride = max(1, math.ceil(len(rows) / max(1, int(max_points))))
@@ -159,7 +161,7 @@ def _load_raw_preview(path: Path, max_points: int) -> dict[str, Any]:
                 "monotonic": _round(monotonic - monotonic_start),
             }
         )
-        samples.append([_round(value) for value in row[2:]])
+        samples.append([_round(row[index]) for index in channel_indices])
     return {
         "status": "ok",
         "file": str(path),

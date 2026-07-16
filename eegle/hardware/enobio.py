@@ -95,6 +95,44 @@ ENOBIO_PROFILES: dict[str, EnobioProfile] = {
             "TRG",
         ),
     ),
+    "enobio32_dsart_wet": EnobioProfile(
+        "enobio32_dsart_wet",
+        32,
+        (
+            "T7",
+            "CP1",
+            "C1",
+            "Pz",
+            "CP2",
+            "T8",
+            "Cz",
+            "Oz",
+            "FC6",
+            "AF4",
+            "P8",
+            "F4",
+            "Fp2",
+            "F8",
+            "P7",
+            "F7",
+            "FC5",
+            "Fp1",
+            "AF3",
+            "Fz",
+            "PO4",
+            "C2",
+            "C4",
+            "FC2",
+            "CP6",
+            "P4",
+            "P3",
+            "CP5",
+            "C3",
+            "FC1",
+            "F3",
+            "PO3",
+        ),
+    ),
     "enobio64": EnobioProfile(
         "enobio64",
         64,
@@ -131,7 +169,12 @@ def mapped_channel_names(channel_names: list[str], eeg_config: dict[str, Any]) -
 
 def _is_generic_channel_name(name: str) -> bool:
     normalized = str(name).strip().lower()
-    return normalized.startswith("ch_") or normalized.startswith("channel_") or normalized.isdigit()
+    return (
+        normalized.startswith(("ch_", "channel_", "eeg_"))
+        or normalized.isdigit()
+        or normalized.removeprefix("eeg").isdigit()
+        or normalized.removeprefix("ch").isdigit()
+    )
 
 
 def stream_matches_enobio(stream: dict[str, Any], config: dict[str, Any]) -> bool:

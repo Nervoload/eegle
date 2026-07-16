@@ -57,6 +57,7 @@ class Telemetry:
         self.trace_enabled = bool(trace_enabled)
         self._heartbeat_seconds = float(heartbeat_seconds)
         self.default_component = default_component
+        self.last_error: str | None = None
         self.paths.telemetry_jsonl.parent.mkdir(parents=True, exist_ok=True)
         self.paths.debug_jsonl.parent.mkdir(parents=True, exist_ok=True)
 
@@ -108,9 +109,17 @@ class Telemetry:
             "message": message,
             "metadata": _json_safe(metadata or {}),
         }
-        self._write_for_level(record, event_level)
+        try:
+            self._write_for_level(record, event_level)
+        except Exception as exc:
+            # Telemetry is an observer. Primary task/event/EEG writers enforce
+            # their own integrity and must not be taken down by this side log.
+            self.last_error = f"telemetry write failed: {type(exc).__name__}: {exc}"
         if console and _should_print(self.console_level, event_level):
-            self._print(record)
+            try:
+                self._print(record)
+            except Exception as exc:
+                self.last_error = f"telemetry console failed: {type(exc).__name__}: {exc}"
         return record
 
     @contextmanager

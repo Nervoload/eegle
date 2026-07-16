@@ -1,0 +1,206 @@
+{
+  "runtime": {
+    "project_name": "eegle",
+    "session_root": "data",
+    "runtime_cache_dir": ".runtime"
+  },
+  "telemetry": {
+    "console_level": "default",
+    "file_level": "default",
+    "trace_enabled": false,
+    "heartbeat_seconds": 5.0
+  },
+  "recording_suite": {
+    "recipe": "dsart32",
+    "baseline": {
+      "eyes_open_seconds": 120.0,
+      "eyes_closed_seconds": 120.0,
+      "repeat_before_session_2": false
+    },
+    "session_count": 2,
+    "trials_per_session": 600,
+    "break_seconds": 600.0,
+    "second_preflight_required": true,
+    "recorder_stall_timeout_seconds": 5.0,
+    "session_2": {"repeat_practice": false},
+    "resume_at_completed_phase_boundaries": true
+  },
+  "hardware": {
+    "eeg": {
+      "family": "Enobio",
+      "profile": "enobio32_dsart_wet",
+      "expected_channel_counts": [32],
+      "expected_sample_rate_hz": 500,
+      "lsl_stream_type": "EEG",
+      "lsl_name_patterns": ["enobio", "nic", "neuroelectrics", "LSLOutletStreamName-EEG"],
+      "allow_type_only_fallback": false,
+      "stream_timeout_seconds": 5.0,
+      "sample_probe_seconds": 3.0,
+      "required_for_run": true,
+      "raw_sample_mode": "passthrough",
+      "recording_lsl_processing": "source_preserving",
+      "mapping_source": "participant-protocol-2026-07-15-with-explicit-fp1-repair",
+      "mapping_version": 1,
+      "mapping_confirmation_required": true,
+      "mapping_confirmation_note": "The supplied map assigned both Fp1 and FC5 to device channel 17 and omitted channel 18. This recipe uses FC5=17 and infers Fp1=18 to create a one-to-one 32-channel map. Confirm this against NIC/electrode cable labels before recording.",
+      "channel_number_map": {
+        "Fp1": 18,
+        "Fp2": 13,
+        "AF3": 19,
+        "AF4": 10,
+        "F3": 31,
+        "F4": 12,
+        "F7": 16,
+        "F8": 14,
+        "Fz": 20,
+        "FC1": 30,
+        "FC2": 24,
+        "FC5": 17,
+        "FC6": 9,
+        "T7": 1,
+        "T8": 6,
+        "P7": 15,
+        "P8": 11,
+        "C1": 3,
+        "C2": 22,
+        "Cz": 7,
+        "CP1": 2,
+        "CP2": 5,
+        "C3": 29,
+        "C4": 23,
+        "CP5": 28,
+        "CP6": 25,
+        "Pz": 4,
+        "P3": 27,
+        "P4": 26,
+        "PO3": 32,
+        "PO4": 21,
+        "Oz": 8
+      },
+      "reference": "CMS",
+      "ground": "DRL"
+    },
+    "markers": {
+      "lsl_stream_name": "EEGleMarkers",
+      "lsl_stream_type": "Markers",
+      "required_for_realtime": true
+    },
+    "display": {
+      "screen_index": 0,
+      "full_screen": false,
+      "win_type": "pyglet",
+      "allow_gui": true,
+      "size": [1000, 700],
+      "units": "height",
+      "background_color": "black",
+      "photodiode_patch": false,
+      "expected_refresh_rate_hz": 60.0,
+      "fixed_display_latency_ms": 0.0
+    }
+  },
+  "experiment": {
+    "experiment_id": "dsart32_recording",
+    "participant_id": "example-participant",
+    "task": "dynamic_sart",
+    "mode": "forward",
+    "components": {
+      "preflight": "default",
+      "task": "dynamic_sart",
+      "eeg_recorder": "lsl_csv",
+      "realtime_processor": "disabled",
+      "feedback": "disabled",
+      "analysis": "minimal"
+    },
+    "output_formats": ["csv", "jsonl", "triggers_txt", "raw_json"],
+    "procedures": ["preflight", "eeg_recording", "task", "post_analysis"]
+  },
+  "processes": {
+    "recorder": {
+      "enabled": true,
+      "backend": "lsl_csv",
+      "csv_mirror": true,
+      "startup_timeout_seconds": 10.0
+    },
+    "realtime_processor": {"enabled": false, "backend": "disabled", "startup_timeout_seconds": 8.0},
+    "feedback": {"enabled": false, "backend": "disabled"},
+    "dashboard": {"enabled": false, "backend": "http", "host": "127.0.0.1", "port": 8765},
+    "offline_analyzer": {"enabled": false, "backend": "disabled", "timeout_seconds": 180.0}
+  },
+  "tasks": {
+    "dynamic_sart": {
+      "digits": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+      "no_go_digit": 3,
+      "response_keys": ["space"],
+      "escape_keys": ["escape", "q"],
+      "stimulus_seconds": 0.25,
+      "response_window_seconds": 1.15,
+      "inter_trial_jitter_min_seconds": 0.0,
+      "inter_trial_jitter_max_seconds": 0.15,
+      "minimum_valid_rt_seconds": 0.1,
+      "no_go_probability": 0.1111111111,
+      "planned_no_go_count": 67,
+      "minimum_go_trials_between_no_go": 2,
+      "master_seed": 42,
+      "blocks": [
+        {"name": "support_1", "phase": "support", "trials": 100},
+        {"name": "support_2", "phase": "support", "trials": 100, "break_after": true, "break_seconds": 30.0},
+        {"name": "query_1", "phase": "query", "trials": 100},
+        {"name": "query_2", "phase": "query", "trials": 100, "break_after": true, "break_seconds": 30.0},
+        {"name": "query_3", "phase": "query", "trials": 100},
+        {"name": "query_4", "phase": "query", "trials": 100}
+      ],
+      "practice": {
+        "enabled": true,
+        "trials_per_round": 27,
+        "no_go_trials": 3,
+        "max_rounds": 3,
+        "go_accuracy": 0.8,
+        "no_go_accuracy": 0.6666666667,
+        "max_anticipatory_response_rate": 0.15,
+        "feedback_seconds": 0.35
+      },
+      "thought_probes": {"enabled": false},
+      "allow_task_adaptation": false,
+      "allow_stimulation": false,
+      "completion_auto_close_seconds": 30.0
+    }
+  },
+  "realtime": {
+    "enabled": false,
+    "inference": {"enabled": false},
+    "classifier": {"enabled": false},
+    "capture": {"enabled": false},
+    "epoching": {
+      "enabled": true,
+      "marker_prefix": "dynamic_sart_stimulus_onset",
+      "tmin_seconds": -2.0,
+      "tmax_seconds": -0.05,
+      "timebase": "lsl",
+      "sample_tolerance_seconds": 0.01,
+      "drop_incomplete": true,
+      "include_practice_trials": false,
+      "data_source": "raw"
+    },
+    "decision_policy": {
+      "kind": "observe_only",
+      "enabled": false,
+      "allow_task_adaptation": false,
+      "allow_stimulation": false,
+      "actions": ["observe_only"]
+    },
+    "feedback": {
+      "mode": "observe_only",
+      "allow_task_adaptation": false,
+      "allow_stimulation": false,
+      "client": {"enabled": false, "backend": "disabled"}
+    },
+    "event_features": {"enabled": false}
+  },
+  "analysis": {
+    "dynamic_sart": {"enabled": true},
+    "erp": {"enabled": false},
+    "alpha": {"enabled": false},
+    "html": {"enabled": true, "max_raw_points": 120000, "max_alpha_points": 12000},
+    "reports": {"behavior": true, "raw_eeg_summary": true, "dynamic_sart": true}
+  }
+}

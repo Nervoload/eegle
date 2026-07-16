@@ -10,6 +10,8 @@ from typing import Any
 
 import numpy as np
 
+from eegle.eeg_csv import eeg_channel_indices
+
 
 def run_alpha_validation(session_dir: str | Path, config: dict[str, Any] | None = None) -> dict[str, Any]:
     root = Path(session_dir).expanduser().resolve()
@@ -415,22 +417,24 @@ def _load_raw_eeg(path: Path) -> dict[str, Any] | None:
         reader = csv.reader(handle)
         header = next(reader, [])
         rows = [[float(value) for value in row] for row in reader if row]
+    channel_indices = eeg_channel_indices(header)
+    channel_names = [str(header[index]) for index in channel_indices]
     if not rows:
         return {
             "data": np.empty((0, 0)),
             "lsl_timestamps": np.empty((0,)),
             "monotonic_timestamps": np.empty((0,)),
-            "channel_names": header[2:],
+            "channel_names": channel_names,
             "sample_rate_hz": 0.0,
         }
     array = np.asarray(rows, dtype=float)
     lsl = array[:, 0]
     monotonic = array[:, 1] if len(header) > 1 and header[1] == "local_received_time" else array[:, 0]
     return {
-        "data": array[:, 2:],
+        "data": array[:, channel_indices],
         "lsl_timestamps": lsl,
         "monotonic_timestamps": monotonic,
-        "channel_names": [str(value) for value in header[2:]],
+        "channel_names": channel_names,
         "sample_rate_hz": _infer_sample_rate(lsl),
     }
 

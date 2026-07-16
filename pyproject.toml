@@ -96,6 +96,8 @@ alpha8 = "eegle.pipelines.alpha8:main"
 inhibition8 = "eegle.pipelines.inhibition8:main"
 classify8 = "eegle.pipelines.classify8:main"
 attention8 = "eegle.pipelines.attention8:main"
+dsart8 = "eegle.pipelines.dsart_recording:main_dsart8"
+dsart32 = "eegle.pipelines.dsart_recording:main_dsart32"
 
 [tool.setuptools.packages.find]
 include = ["configs*", "eegle*"]

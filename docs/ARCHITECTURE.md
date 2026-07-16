@@ -51,9 +51,42 @@ The current implemented forward stack is:
 default preflight -> FeedbackManager -> task -> managed recorder/realtime workers -> minimal analysis
 ```
 
+The task slot is selected through `eegle.factory` and the public task registry.
+PVT, Go/No-go, and Dynamic-State SART share `SessionPaths`, lifecycle logging,
+telemetry, marker-stream creation, managed workers, and analysis dispatch, while
+retaining task-specific sequence, state-machine, scoring, and artifact
+contracts. In particular, `DynamicSartTask` does not inherit from or call
+private helpers in `GoNoGoTask`: support/query semantics and causal forecasting
+labels are not response-inhibition aliases.
+
 When `--calibration-suite posterior_alpha` is selected for Go/No-go, the runner starts the recorder, runs the posterior alpha calibration suite, writes the individualized or fallback alpha band into `parameters.json`, then starts realtime alpha measurement before the main task.
 
 `alpha8 full` is the top-level Enobio8 posterior-alpha orchestration command. It runs a required Enobio8 setup/preflight check, then invokes the existing forward runner with `posterior_alpha`, 100 main Go/No-go stimuli, realtime alpha measurement, post-analysis, and `reports/experiment_summary.html` generation in strict sequence. The dry validation form is `alpha8 full --task-mode dry-run --skip-eeg --allow-missing-eeg --trials 2`.
+
+`dsart8` and `dsart32` add a visit-level recording orchestrator above the
+single-session runner. The parent manifest is an atomic phase ledger over
+initial preflight, resting baseline, DSART session 1, break, second preflight,
+and DSART session 2. Baseline and each task attempt get independent session and
+recorder lifecycles. Visual DSART child sessions also run in fresh Python
+processes so native PsychoPy/Pyglet window state cannot leak from one session
+into the next; the parent and child exchange JSON request/result artifacts
+under the visit ledger. Resume skips only completed parent phases and allocates a
+new child run directory for an incomplete attempt; it never appends a new task
+to a stopped raw file. Live inference and managed offline analysis are disabled
+during acquisition. Task-aware validation is attempted after recorder shutdown,
+but its failure is a warning rather than a request to overwrite valid raw data.
+`eegle.recording_health` is the task-independent live guard used by DSART to
+detect recorder exit, stale status heartbeats, and a non-advancing sample count
+at trial boundaries.
+
+DSART recording uses the source-preserving LSL inlet mode. EEG amplitudes pass
+through unchanged. The raw CSV stores the original source timestamp, measured
+LSL time correction, their corrected local-LSL timestamp, and a monotonic
+receive estimate as separate columns. Dejitter and monotonization are derived
+analysis choices, not acquisition-time mutations. Display-flip callbacks push
+timestamped markers but defer disk logging until after the flip returns; large
+manifest checkpoints occur at block boundaries and labels are generated only
+after recorder shutdown.
 
 `eegle.session` creates a BciPy-inspired session layout:
 
@@ -70,6 +103,15 @@ data/participants/<participant-id>/sessions/<date>/<experiment-id>/<task>/run-<t
     behavior.csv
     events.jsonl
     stimulus_manifest.json
+    dynamic_sart_trials.csv
+    dynamic_sart_trials.jsonl
+    dynamic_sart_key_events.jsonl
+    dynamic_sart_blocks.csv
+    dynamic_sart_results.json
+    dynamic_sart_support_reference.json
+    dynamic_sart_labels.csv
+    dynamic_sart_label_contract.json
+    dynamic_sart_probes.jsonl
   calibration/
     metadata.json
     events.jsonl
@@ -132,6 +174,17 @@ Telemetry augments the canonical experiment files. Stimulus timing still lives i
 
 The feedback contract is action-oriented: model predictions become `TaskAction` records such as `increase_no_go_probability`, `adjust_isi`, `repeat_condition`, `show_reward`, or `set_visual_alpha`. The PsychoPy Go/No-go task consumes these through `TaskFeedbackClient` only at deterministic boundaries and writes received/accepted/rejected/applied action records into task events and the stimulus manifest.
 
+Dynamic SART uses the same feedback client boundary only for audit. It accepts
+`observe_only` without changing state and rejects actions that would alter
+timing, sequence, probability, salience, participant feedback, or stimulation.
+The task-only recipe disables the realtime processor and inference but retains a
+strict offline-capable prestimulus epoch contract: the versioned
+`dynamic_sart_stimulus_onset__key=value` marker, LSL timebase, raw data,
+`[-2.0, -0.05]` seconds, and practice exclusion. The epoch parser and manifest
+loader understand this generic marker contract while preserving the legacy
+positional Go/No-go fallback. Digit, condition, block, and phase are alignment
+metadata only and are not added to model-safe inference metadata.
+
 The first posterior alpha pipeline is observe-only. Calibration uses MNE/Welch PSD plus FOOOF/specparam when installed to select an individualized alpha band. If no accepted posterior alpha peak is available, the suite writes a `low_confidence_fallback` result with an 8-12 Hz band. Realtime alpha uses causal filtering, posterior aggregation, artifact gating, Hilbert-envelope power snapshots, and optional baseline z-scoring.
 
 The `FeedbackManager` reports worker `process.start`, `process.ready`, `process.stop`, `process.failed`, and timeout events into telemetry. Worker status JSON files remain the compact machine-readable process state; telemetry adds timestamped history for reproducibility and debugging.
@@ -139,6 +192,15 @@ The `FeedbackManager` reports worker `process.start`, `process.ready`, `process.
 ## Layer 3: Post-Experiment Analysis
 
 `eegle.analysis` summarizes task behavior, process state, realtime logs, raw EEG metadata, alpha validation, and Go/No-go ERP/P300 outputs when a Go/No-go stimulus manifest and EEG CSV are present. The ERP path uses MNE to build stimulus-locked epochs, ROI waveforms, P300 metrics, per-trial P300 CSVs, and a static HTML dashboard made of fixed-width stimulus-locked interval cards. Each card shows the saved stimulus, the single-trial ROI waveform with the detected P3 point, and montage frames across that stimulus interval.
+
+For Dynamic SART, task analysis regenerates the fixed support-only reference,
+verifies its hash, checks marker/trial parity, reports support/query and
+go/no-go outcomes, and writes `reports/dynamic_sart_summary.json`. Label
+generation never mutates raw trials. Past-facing features use trials strictly
+before the anchor; future targets begin at the next physical or next eligible
+valid-go trial as declared in `dynamic_sart_label_contract.json`. Current
+behavioral facts, operational targets, and any later learned latent model state
+remain separate concepts.
 
 Alpha validation joins `realtime/alpha_power.jsonl` to Go/No-go trial timing, writes `reports/alpha/trial_alpha.csv`, computes `reports/alpha/offline_alpha_timeseries.csv` from raw EEG, and summarizes whether pre-stimulus alpha predicts reaction time or accuracy in `reports/alpha/alpha_summary.json`. `reports/experiment_summary.html` embeds a decimated replay view with raw channel traces, marker toggles, live alpha estimates, and the offline alpha overlay.
 

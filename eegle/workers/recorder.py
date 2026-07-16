@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import threading
 from time import monotonic, sleep
 
@@ -27,6 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     status = StatusWriter(paths.process_logs / "recorder.status.json", "recorder", args.backend, telemetry)
     stop_event = threading.Event()
     install_stop_signal_handlers(stop_event, paths.process_logs / "recorder.stop")
+    manager_pid = os.getppid()
 
     if args.backend in {"disabled", "none"}:
         status.update("disabled", reason="recorder backend disabled")
@@ -80,6 +82,15 @@ def main(argv: list[str] | None = None) -> int:
     last_health_event = monotonic()
     try:
         while not stop_event.is_set():
+            if _manager_process_disappeared(manager_pid):
+                telemetry.emit(
+                    "recorder.parent_lost",
+                    level="default",
+                    message="Recorder manager process disappeared; stopping raw EEG acquisition",
+                    metadata={"manager_pid": manager_pid, "current_parent_pid": os.getppid()},
+                )
+                stop_event.set()
+                break
             if not recorder.is_alive():
                 snapshot = recorder.snapshot()
                 status.update(snapshot.get("status", "stopped"), summary=snapshot, error=snapshot.get("error"))
@@ -103,6 +114,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         status.update(final_status, summary=summary, error=summary.get("error"))
     return 0
+
+
+def _manager_process_disappeared(manager_pid: int) -> bool:
+    """Detect Unix-style reparenting without making normal shutdown depend on it."""
+    current_parent = os.getppid()
+    return manager_pid > 1 and current_parent != manager_pid
 
 
 if __name__ == "__main__":

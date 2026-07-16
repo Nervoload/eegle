@@ -11,6 +11,7 @@ from typing import Any, Iterable
 
 import numpy as np
 
+from eegle.eeg_csv import eeg_channel_columns
 from eegle.hardware.profiles import expected_profile
 
 
@@ -222,21 +223,33 @@ def should_epoch_marker(marker: MarkerEvent, config: EpochingConfig) -> bool:
         return False
     parsed = marker.parsed_metadata(config.marker_prefix)
     trial = parsed.get("trial")
-    if not config.include_practice_trials and isinstance(trial, int) and trial < 1:
-        return False
+    if not config.include_practice_trials:
+        if parsed.get("practice") in {True, 1, "1", "true", "True"} or str(parsed.get("phase", "")).lower() == "practice":
+            return False
+        if isinstance(trial, int) and trial < 1:
+            return False
     return True
 
 
 def parse_marker_label(label: str, marker_prefix: str = DEFAULT_MARKER_PREFIX) -> dict[str, Any]:
-    """Parse the scaffold's Go/No-go marker labels into training metadata."""
+    """Parse versioned key-value markers, then legacy positional Go/No-go labels."""
     metadata: dict[str, Any] = {"label": label}
     if not marker_matches(label, marker_prefix):
         return metadata
 
-    remainder = label[len(marker_prefix) :].lstrip("_")
+    remainder = label[len(marker_prefix) :]
     if not remainder:
         return metadata
+    if remainder.startswith("__"):
+        fields = remainder[2:].split("__")
+        if fields and all("=" in field for field in fields):
+            for field in fields:
+                key, value = field.split("=", 1)
+                if key:
+                    metadata[key] = _coerce_marker_scalar(key, value)
+            return metadata
 
+    remainder = remainder.lstrip("_")
     parts = remainder.split("_")
     if parts and parts[0].lstrip("-").isdigit():
         metadata["trial"] = int(parts.pop(0))
@@ -251,6 +264,19 @@ def parse_marker_label(label: str, marker_prefix: str = DEFAULT_MARKER_PREFIX) -
     if parts:
         metadata["color"] = "_".join(parts)
     return metadata
+
+
+def _coerce_marker_scalar(key: str, value: str) -> Any:
+    if key == "practice" and value in {"0", "1"}:
+        return value == "1"
+    if value.lstrip("-").isdigit():
+        return int(value)
+    try:
+        if any(character in value for character in (".", "e", "E")):
+            return float(value)
+    except ValueError:
+        pass
+    return value
 
 
 def training_label_from_marker(metadata: dict[str, Any]) -> int:
@@ -345,7 +371,7 @@ def load_eeg_csv_for_epoching(
     if "lsl_timestamp" not in frame:
         raise ValueError("EEG CSV must include lsl_timestamp")
 
-    channel_columns = [column for column in frame.columns if column not in {"lsl_timestamp", "local_received_time"}]
+    channel_columns = eeg_channel_columns(frame.columns)
     metadata = _load_json(metadata_path) if metadata_path else {}
     parameters = _load_json(parameters_path) if parameters_path else {}
     lsl_timestamps = frame["lsl_timestamp"].to_numpy(dtype=float)
@@ -415,23 +441,36 @@ def load_stimulus_manifest_markers(
     markers = []
     for trial in manifest.get("trials", []):
         stimulus = dict(trial.get("stimulus") or {})
-        condition = "no_go" if stimulus.get("is_no_go") else "go"
-        shape = stimulus.get("shape", "unknown")
-        color = stimulus.get("color", "unknown")
-        trial_number = int(trial["trial"])
-        label = f"{config.marker_prefix}_{trial_number}_{condition}_{shape}_{color}"
-        timestamp_key = "onset_lsl_timestamp" if timebase == "lsl" else "onset_monotonic"
-        timestamp_value = trial.get(timestamp_key)
+        condition = trial.get("condition") or ("no_go" if stimulus.get("is_no_go") else "go")
+        trial_value = trial.get("global_trial_index", trial.get("trial"))
+        label = trial.get("stimulus_marker_label")
+        if not label:
+            if trial_value is None:
+                continue
+            shape = stimulus.get("shape", "unknown")
+            color = stimulus.get("color", "unknown")
+            label = f"{config.marker_prefix}_{int(trial_value)}_{condition}_{shape}_{color}"
+        if timebase == "lsl":
+            timestamp_value = _first_manifest_value(trial, "stimulus_onset_lsl", "onset_lsl_timestamp")
+        else:
+            timestamp_value = _first_manifest_value(trial, "stimulus_onset_monotonic", "onset_monotonic")
         if timestamp_value is None:
             continue
+        parsed = parse_marker_label(str(label), config.marker_prefix)
+        trial_number = parsed.get("trial", trial_value)
         marker = MarkerEvent(
-            label=label,
+            label=str(label),
             timestamp=float(timestamp_value),
             timebase="lsl" if timebase == "lsl" else "local_received",
             source=str(target),
             metadata={
-                "trial": trial_number,
+                "task": trial.get("task_name") or manifest.get("task_name") or manifest.get("task"),
+                "trial": int(trial_number) if trial_number is not None else None,
+                "block": trial.get("block_index", trial.get("block")),
+                "phase": trial.get("phase"),
+                "practice": bool(trial.get("is_practice", trial.get("practice", False))),
                 "condition": condition,
+                "digit": trial.get("digit", stimulus.get("digit")),
                 "stimulus_id": trial.get("stimulus_id"),
                 "stimulus": stimulus,
                 "response": trial.get("response", {}),
@@ -440,6 +479,14 @@ def load_stimulus_manifest_markers(
         if should_epoch_marker(marker, config):
             markers.append(marker)
     return markers
+
+
+def _first_manifest_value(row: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = row.get(key)
+        if value is not None:
+            return value
+    return None
 
 
 def extract_epochs_for_session(

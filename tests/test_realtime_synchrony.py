@@ -530,6 +530,36 @@ class RealtimeSynchronyTests(unittest.TestCase):
         self.assertEqual(worker.command[0], sys.executable)
         self.assertEqual(worker.command[1:3], ["-m", "eegle.workers.realtime_processor"])
 
+    def test_manager_attempts_every_worker_shutdown_before_reporting_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = {
+                "runtime": {"session_root": tmp},
+                "experiment": {"experiment_id": "test", "participant_id": "p1", "task": "go_nogo"},
+            }
+            paths = create_session(config, root=Path(tmp))
+            manager = FeedbackManager(config, paths, record_eeg=False)
+            workers = {
+                "dashboard": object(),
+                "realtime_processor": object(),
+                "recorder": object(),
+            }
+            manager._workers = workers
+            attempted = []
+
+            def stop(worker: object) -> None:
+                attempted.append(worker)
+                if worker is workers["dashboard"]:
+                    raise OSError("simulated dashboard cleanup failure")
+                if worker is workers["recorder"]:
+                    raise OSError("simulated recorder cleanup failure")
+
+            with patch.object(manager, "_stop_worker", side_effect=stop):
+                with self.assertRaisesRegex(RuntimeError, "recorder") as raised:
+                    manager.stop_after_task()
+
+        self.assertEqual(attempted, list(workers.values()))
+        self.assertNotIn("dashboard", str(raised.exception))
+
     def test_enabled_realtime_without_markers_or_alpha_is_invalid(self) -> None:
         failures = _pipeline_validity_failures(
             {

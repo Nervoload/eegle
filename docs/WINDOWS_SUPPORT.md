@@ -7,8 +7,8 @@ commands, module launches, and explicit hardware checks.
 ## Supported Surface
 
 - Package import and public APIs: OS-agnostic Python.
-- CLI commands: installed `eegle`, `alpha8`, `inhibition8`, `classify8`, and
-  `attention8` scripts, or `py -3.10 -m eegle.cli ...`.
+- CLI commands: installed `eegle`, `alpha8`, `inhibition8`, `classify8`,
+  `attention8`, `dsart8`, and `dsart32` scripts, or module forms.
 - Worker processes: launched with the current Python executable, `-m`, and
   `shell=False`.
 - Session output: created through `pathlib`, with relative paths documented for
@@ -46,6 +46,7 @@ eegle run-forward --config configs\default_experiment.json --task pvt --task-mod
 alpha8 full --task-mode dry-run --skip-eeg --allow-missing-eeg --trials 2
 inhibition8 full --task-mode dry-run --skip-eeg --allow-missing-eeg --trials 2
 attention8 collect --task-mode dry-run --skip-eeg --allow-missing-eeg --trials 2
+dsart8 --participant rehearsal --visit-id rehearsal --task-mode dry-run --skip-eeg --allow-missing-eeg --break-seconds 0
 ```
 
 Use module form when console scripts are not on `PATH`:
@@ -54,6 +55,7 @@ Use module form when console scripts are not on `PATH`:
 py -3.10 -m eegle.cli --help
 py -3.10 -m eegle.pipelines.classify8 --help
 py -3.10 -m eegle.pipelines.attention8 --help
+py -3.10 -m eegle.pipelines.dsart_recording --help
 ```
 
 Makefile targets and repository-root `./alpha8` wrappers are POSIX conveniences,

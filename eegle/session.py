@@ -71,7 +71,7 @@ def create_session(
     session_root = resolve_session_root(config, root)
     now = datetime.now()
     run_stamp = now.strftime("run-%Y%m%dT%H%M%S")
-    session_dir = (
+    session_dir = _unique_session_dir(
         session_root
         / "participants"
         / participant
@@ -188,6 +188,17 @@ def create_session(
         handle.write("\n")
 
     return paths
+
+
+def _unique_session_dir(candidate: Path) -> Path:
+    """Avoid reusing a child recording directory when attempts start in one second."""
+    if not candidate.exists():
+        return candidate
+    for suffix in range(1, 1000):
+        alternate = candidate.with_name(f"{candidate.name}-{suffix:02d}")
+        if not alternate.exists():
+            return alternate
+    raise RuntimeError(f"could not allocate a unique session directory beside {candidate}")
 
 
 def paths_for_existing_session(root: str | Path) -> SessionPaths:

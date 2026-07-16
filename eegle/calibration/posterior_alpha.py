@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 
 from eegle.config import merged_config, write_config
+from eegle.eeg_csv import eeg_channel_indices
 from eegle.hardware.profiles import expected_profile, mapped_channel_names
 from eegle.lsl import LslMarkerOutlet, NullMarkerOutlet, lsl_local_clock, session_marker_source_id
 from eegle.realtime.alpha import (
@@ -510,12 +511,14 @@ class AlphaCalibrationAnalyzer:
             reader = csv.reader(handle)
             header = next(reader, [])
             rows = [[float(value) for value in row] for row in reader if row]
+        channel_indices = eeg_channel_indices(header)
+        channel_headers = [header[index] for index in channel_indices]
         if not rows:
-            return {"data": np.empty((0, 0)), "timestamps": np.empty((0,)), "channel_names": header[2:], "sample_rate_hz": 0.0}
+            return {"data": np.empty((0, 0)), "timestamps": np.empty((0,)), "channel_names": channel_headers, "sample_rate_hz": 0.0}
         array = np.asarray(rows, dtype=float)
         timestamps = array[:, 1] if "local_received_time" in header else array[:, 0]
-        data = array[:, 2:]
-        channel_names = _infer_channel_names(header[2:], self.config)
+        data = array[:, channel_indices]
+        channel_names = _infer_channel_names(channel_headers, self.config)
         return {
             "data": data,
             "timestamps": timestamps,

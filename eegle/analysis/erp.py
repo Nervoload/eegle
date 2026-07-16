@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 
+from eegle.eeg_csv import eeg_channel_columns
 from eegle.hardware.profiles import expected_profile
 
 
@@ -264,7 +265,7 @@ def _load_eeg_csv(root: Path, cfg: dict[str, Any], mne: Any) -> EegBundle:
     if "lsl_timestamp" not in frame or "local_received_time" not in frame:
         raise ValueError("EEG CSV must include lsl_timestamp and local_received_time columns")
 
-    channel_columns = [column for column in frame.columns if column not in {"lsl_timestamp", "local_received_time"}]
+    channel_columns = eeg_channel_columns(frame.columns)
     if not channel_columns:
         raise ValueError("EEG CSV has no channel columns")
 

@@ -1,0 +1,152 @@
+{
+  "runtime": {
+    "project_name": "eegle",
+    "session_root": "data",
+    "runtime_cache_dir": ".runtime"
+  },
+  "telemetry": {
+    "console_level": "default",
+    "file_level": "realtime",
+    "trace_enabled": false,
+    "heartbeat_seconds": 5.0
+  },
+  "hardware": {
+    "eeg": {
+      "family": "Enobio",
+      "profile": "enobio8_inhibition",
+      "expected_channel_counts": [8],
+      "expected_sample_rate_hz": 500,
+      "lsl_stream_type": "EEG",
+      "lsl_name_patterns": ["enobio", "nic", "neuroelectrics", "LSLOutletStreamName-EEG"],
+      "allow_type_only_fallback": false,
+      "stream_timeout_seconds": 5.0,
+      "sample_probe_seconds": 2.0,
+      "required_for_run": true
+    },
+    "markers": {
+      "lsl_stream_name": "EEGleMarkers",
+      "lsl_stream_type": "Markers",
+      "required_for_realtime": false
+    },
+    "display": {
+      "screen_index": 0,
+      "full_screen": false,
+      "win_type": "pyglet",
+      "allow_gui": true,
+      "size": [1000, 700],
+      "units": "height",
+      "background_color": "black",
+      "photodiode_patch": false,
+      "expected_refresh_rate_hz": 60.0,
+      "fixed_display_latency_ms": 0.0
+    }
+  },
+  "experiment": {
+    "experiment_id": "dynamic_state_sart",
+    "participant_id": "example-participant",
+    "task": "dynamic_sart",
+    "mode": "forward",
+    "components": {
+      "preflight": "default",
+      "task": "dynamic_sart",
+      "eeg_recorder": "lsl_csv",
+      "realtime_processor": "disabled",
+      "feedback": "disabled",
+      "analysis": "minimal"
+    },
+    "output_formats": ["csv", "jsonl", "triggers_txt", "raw_json"],
+    "procedures": ["preflight", "eeg_recording", "task", "post_analysis"]
+  },
+  "processes": {
+    "recorder": {
+      "enabled": true,
+      "backend": "lsl_csv",
+      "csv_mirror": true,
+      "startup_timeout_seconds": 8.0
+    },
+    "realtime_processor": {
+      "enabled": false,
+      "backend": "disabled",
+      "startup_timeout_seconds": 8.0
+    },
+    "feedback": {"enabled": false, "backend": "disabled"},
+    "dashboard": {"enabled": false, "backend": "http", "host": "127.0.0.1", "port": 8765},
+    "offline_analyzer": {"enabled": true, "backend": "minimal", "timeout_seconds": 180.0}
+  },
+  "tasks": {
+    "dynamic_sart": {
+      "digits": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+      "no_go_digit": 3,
+      "response_keys": ["space"],
+      "escape_keys": ["escape", "q"],
+      "stimulus_seconds": 0.25,
+      "response_window_seconds": 1.15,
+      "inter_trial_jitter_min_seconds": 0.0,
+      "inter_trial_jitter_max_seconds": 0.15,
+      "minimum_valid_rt_seconds": 0.1,
+      "no_go_probability": 0.1111111111,
+      "minimum_go_trials_between_no_go": 2,
+      "master_seed": 42,
+      "blocks": [
+        {"name": "support_1", "phase": "support", "trials": 160},
+        {"name": "support_2", "phase": "support", "trials": 160, "break_after": true, "break_seconds": 30.0},
+        {"name": "query_1", "phase": "query", "trials": 160},
+        {"name": "query_2", "phase": "query", "trials": 160, "break_after": true, "break_seconds": 30.0},
+        {"name": "query_3", "phase": "query", "trials": 160},
+        {"name": "query_4", "phase": "query", "trials": 160}
+      ],
+      "practice": {
+        "enabled": true,
+        "trials_per_round": 27,
+        "no_go_trials": 3,
+        "max_rounds": 3,
+        "go_accuracy": 0.8,
+        "no_go_accuracy": 0.6666666667,
+        "max_anticipatory_response_rate": 0.15,
+        "feedback_seconds": 0.35
+      },
+      "thought_probes": {"enabled": false},
+      "allow_task_adaptation": false,
+      "allow_stimulation": false,
+      "completion_auto_close_seconds": 30.0
+    }
+  },
+  "realtime": {
+    "enabled": false,
+    "inference": {"enabled": false},
+    "classifier": {"enabled": false},
+    "capture": {"enabled": true},
+    "epoching": {
+      "enabled": true,
+      "marker_prefix": "dynamic_sart_stimulus_onset",
+      "tmin_seconds": -2.0,
+      "tmax_seconds": -0.05,
+      "timebase": "lsl",
+      "sample_tolerance_seconds": 0.01,
+      "drop_incomplete": true,
+      "include_practice_trials": false,
+      "data_source": "raw"
+    },
+    "decision_policy": {
+      "kind": "observe_only",
+      "enabled": false,
+      "allow_task_adaptation": false,
+      "allow_stimulation": false,
+      "actions": ["observe_only"]
+    },
+    "feedback": {
+      "mode": "observe_only",
+      "allow_task_adaptation": false,
+      "allow_stimulation": false,
+      "client": {"enabled": false, "backend": "disabled"}
+    },
+    "event_features": {"enabled": false}
+  },
+  "analysis": {
+    "dynamic_sart": {"enabled": true},
+    "erp": {"enabled": false},
+    "alpha": {"enabled": false},
+    "html": {"enabled": true, "max_raw_points": 120000, "max_alpha_points": 12000},
+    "reports": {"behavior": true, "raw_eeg_summary": true, "dynamic_sart": true}
+  }
+}

@@ -1,0 +1,2176 @@
+"""Formal Dynamic-State Sustained Attention to Response Task."""
+
+from __future__ import annotations
+
+import csv
+import json
+import math
+import random
+from copy import deepcopy
+from pathlib import Path
+from statistics import median
+from time import monotonic, sleep
+from typing import Any, Iterable
+
+from eegle.analysis.dynamic_sart_labels import compute_support_reference
+from eegle.io.events import EventLogger
+from eegle.lsl import LslMarkerOutlet, NullMarkerOutlet, lsl_local_clock, session_marker_source_id
+from eegle.psychopy_input import clear_psychopy_keys, poll_psychopy_keys
+from eegle.realtime.policy import TaskAction
+from eegle.realtime.task_feedback import TaskFeedbackClient
+from eegle.recording_health import RecorderHealthMonitor
+from eegle.runtime import apply_pyglet_macos_notification_patch, ensure_runtime_environment
+from eegle.session import SessionPaths, create_session
+from eegle.tasks.base import TaskRunResult
+from eegle.tasks.dynamic_sart_schema import (
+    BLOCK_SCHEMA,
+    KEY_EVENT_SCHEMA,
+    PLAN_SCHEMA,
+    PROBE_SCHEMA,
+    SUMMARY_SCHEMA,
+    TASK_NAME,
+    TASK_VERSION,
+    TRIAL_SCHEMA,
+    DynamicSartConfig,
+)
+from eegle.tasks.dynamic_sart_sequence import build_dynamic_sart_plan, marker_label, validate_dynamic_sart_plan
+from eegle.telemetry import Telemetry
+
+
+EXPERIMENTAL_COUNTDOWN = ("5", "4", "3", "2", "1", "GO!")
+
+
+TRIAL_CSV_FIELDS = (
+    "schema_version",
+    "schema",
+    "task_name",
+    "task_version",
+    "session_id",
+    "participant_id",
+    "global_trial_index",
+    "block_index",
+    "block_trial_index",
+    "block_name",
+    "phase",
+    "regime",
+    "is_practice",
+    "sequence_id",
+    "master_seed",
+    "block_seed",
+    "digit",
+    "condition",
+    "is_no_go",
+    "expected_action",
+    "stimulus_marker_label",
+    "planned_stimulus_seconds",
+    "planned_response_window_seconds",
+    "planned_jitter_seconds",
+    "planned_onset_offset_seconds",
+    "stimulus_onset_monotonic",
+    "stimulus_onset_lsl",
+    "stimulus_offset_monotonic",
+    "stimulus_offset_lsl",
+    "response_window_close_monotonic",
+    "response_window_close_lsl",
+    "next_trial_onset_monotonic",
+    "actual_stimulus_seconds",
+    "actual_response_window_seconds",
+    "actual_trial_duration_seconds",
+    "display_timing_status",
+    "expected_visual_onset_uncertainty_ms",
+    "all_key_event_ids",
+    "first_response_key",
+    "first_response_timestamp_monotonic",
+    "first_response_timestamp_lsl",
+    "first_valid_response_key",
+    "first_valid_response_timestamp_monotonic",
+    "reaction_time_seconds",
+    "response_count",
+    "response_key_count",
+    "primary_outcome",
+    "correct",
+    "commission_error",
+    "omission_error",
+    "premature_response",
+    "too_fast_response",
+    "multiple_response",
+    "wrong_key_response",
+    "late_response",
+    "aborted",
+    "invalid",
+    "time_on_task_seconds",
+    "time_since_break_seconds",
+    "previous_trial_index",
+    "trials_since_no_go",
+    "probe_id",
+    "probe_proximity",
+    "applied_task_actions",
+    "eeg_quality_join_key",
+    "presented",
+)
+
+
+class DynamicSartTask:
+    """Digit SART with immutable planning and explicit support/query phases."""
+
+    def __init__(
+        self,
+        config: dict[str, Any],
+        mode: str = "dry-run",
+        trials: int | None = None,
+        participant_id: str | None = None,
+    ) -> None:
+        self.config = config
+        self.mode = mode
+        self.trial_override = trials
+        self.participant_id = participant_id
+        self.task_config = DynamicSartConfig.from_mapping(config.get("tasks", {}).get(TASK_NAME, {}))
+
+    def run(self, paths: SessionPaths | None = None) -> TaskRunResult:
+        paths = paths or create_session(self.config, task=TASK_NAME, participant_id=self.participant_id)
+        plan = build_dynamic_sart_plan(self.task_config, trial_override=self.trial_override)
+        validate_dynamic_sart_plan(plan, self.task_config)
+        if self.mode == "dry-run":
+            summary = self._run_dry(paths, plan)
+        elif self.mode == "psychopy":
+            summary = self._run_psychopy(paths, plan)
+        else:
+            raise ValueError(f"Unsupported Dynamic SART mode: {self.mode}")
+        return TaskRunResult(TASK_NAME, paths.root, self.mode, summary)
+
+    def _run_dry(self, paths: SessionPaths, plan: dict[str, Any]) -> dict[str, Any]:
+        participant = _participant_id(paths, self.participant_id)
+        telemetry = Telemetry.from_config(self.config, paths, component="task.dynamic_sart")
+        marker_outlet: LslMarkerOutlet | NullMarkerOutlet = NullMarkerOutlet("dynamic_sart dry-run")
+        virtual_time = monotonic()
+        task_start = virtual_time
+        aborted = False
+        abort_reason = None
+        support_complete = False
+        support_reference: dict[str, Any] | None = None
+        experimental_completed = 0
+        store = DynamicSartArtifactStore(paths, plan, self.task_config, participant)
+        feedback_client = _make_task_feedback_client(self.config, paths)
+        primary_error: BaseException | None = None
+        summary: dict[str, Any] | None = None
+        try:
+            with EventLogger(paths.behavior_csv, paths.events_jsonl, paths.triggers, telemetry, "task.dynamic_sart") as logger:
+                _emit(logger, marker_outlet, marker_label("task_start"), event_type="SYSTEM", timestamp=virtual_time, mode="dry-run", task=TASK_NAME)
+                practice_passed = not self.task_config.practice_enabled
+                if self.task_config.practice_enabled:
+                    _emit(logger, marker_outlet, marker_label("practice_start"), event_type="SYSTEM", timestamp=virtual_time, task=TASK_NAME)
+                    for round_index, practice_plan in enumerate(plan["practice_rounds"], start=1):
+                        round_records = []
+                        for trial in practice_plan:
+                            record, virtual_time = _simulate_trial(
+                                trial,
+                                self.task_config,
+                                store,
+                                logger,
+                                marker_outlet,
+                                task_start,
+                                virtual_time,
+                                plan_trial_count=len(plan["planned_trials"]),
+                                force_practice_correct=True,
+                            )
+                            round_records.append(record)
+                        criteria = practice_criteria(round_records, self.task_config, comprehension_confirmed=True)
+                        store.append_block(_block_result(practice_plan, round_records, criteria=criteria))
+                        if criteria["passed"]:
+                            practice_passed = True
+                            break
+                    _emit(
+                        logger,
+                        marker_outlet,
+                        marker_label("practice_end"),
+                        event_type="SYSTEM",
+                        timestamp=virtual_time,
+                        task=TASK_NAME,
+                        passed=practice_passed,
+                    )
+                if not practice_passed:
+                    aborted = True
+                    abort_reason = "practice_criteria_not_met"
+
+                if not aborted:
+                    virtual_time = _run_dry_countdown(
+                        logger,
+                        marker_outlet,
+                        virtual_time,
+                        self.task_config.countdown_step_seconds,
+                    )
+
+                blocks = list(plan["planned_blocks"])
+                trials_by_block = {
+                    int(block["block_index"]): [
+                        trial for trial in plan["planned_trials"] if int(trial["block_index"]) == int(block["block_index"])
+                    ]
+                    for block in blocks
+                }
+                final_support_block = max(int(block["block_index"]) for block in blocks if block["phase"] == "support")
+                abort_after = _optional_int(self.task_config.dry_run.get("abort_after_trial"))
+                last_break_monotonic = task_start
+                for block in blocks:
+                    if aborted:
+                        break
+                    block_index = int(block["block_index"])
+                    _emit(
+                        logger,
+                        marker_outlet,
+                        marker_label("block_start", block=block_index, phase=block["phase"]),
+                        event_type="SYSTEM",
+                        timestamp=virtual_time,
+                        block_index=block_index,
+                        block_name=block["block_name"],
+                        phase=block["phase"],
+                    )
+                    block_records = []
+                    for trial in trials_by_block[block_index]:
+                        action_audits = _poll_and_audit_dynamic_sart_feedback(
+                            feedback_client,
+                            logger,
+                            trial_index=int(trial["global_trial_index"]),
+                            block_index=block_index,
+                        )
+                        record, virtual_time = _simulate_trial(
+                            trial,
+                            self.task_config,
+                            store,
+                            logger,
+                            marker_outlet,
+                            task_start,
+                            virtual_time,
+                            plan_trial_count=len(plan["planned_trials"]),
+                            applied_task_actions=action_audits,
+                            last_break_monotonic=last_break_monotonic,
+                        )
+                        block_records.append(record)
+                        if bool(record.get("probe_after")):
+                            virtual_time = _record_dry_probe(
+                                store,
+                                logger,
+                                marker_outlet,
+                                record,
+                                self.task_config,
+                                virtual_time,
+                            )
+                        experimental_completed += 1
+                        if abort_after is not None and experimental_completed >= abort_after:
+                            aborted = True
+                            abort_reason = "dry_run_abort_after_trial"
+                            break
+                    _emit(
+                        logger,
+                        marker_outlet,
+                        marker_label("block_end", block=block_index, phase=block["phase"]),
+                        event_type="SYSTEM",
+                        timestamp=virtual_time,
+                        block_index=block_index,
+                        block_name=block["block_name"],
+                        phase=block["phase"],
+                        completed_trials=len(block_records),
+                    )
+                    store.append_block(_block_result(trials_by_block[block_index], block_records))
+                    if not aborted and block_index == final_support_block:
+                        support_reference = _complete_support(
+                            store,
+                            self.task_config,
+                            virtual_time,
+                            logger,
+                            marker_outlet,
+                        )
+                        support_complete = True
+                    if not aborted and bool(block.get("break_after")):
+                        _emit(logger, marker_outlet, marker_label("break_start", block=block_index), event_type="SYSTEM", timestamp=virtual_time)
+                        virtual_time += float(block.get("break_seconds", 0.0))
+                        _emit(logger, marker_outlet, marker_label("break_end", block=block_index), event_type="SYSTEM", timestamp=virtual_time)
+                        last_break_monotonic = virtual_time
+
+                if aborted:
+                    _emit(
+                        logger,
+                        marker_outlet,
+                        marker_label("abort"),
+                        event_type="SYSTEM",
+                        timestamp=virtual_time,
+                        reason=abort_reason,
+                        completed_experimental_trials=experimental_completed,
+                    )
+                _emit(
+                    logger,
+                    marker_outlet,
+                    marker_label("task_end"),
+                    event_type="SYSTEM",
+                    timestamp=virtual_time,
+                    task=TASK_NAME,
+                    aborted=aborted,
+                )
+            summary = summarize_dynamic_sart(
+                store.records,
+                aborted=aborted,
+                abort_reason=abort_reason,
+                support_complete=support_complete,
+                planned_experimental_trials=len(plan["planned_trials"]),
+            )
+            store.finalize(summary, aborted=aborted, abort_reason=abort_reason)
+            return summary
+        except Exception as exc:
+            primary_error = exc
+            abort_reason = f"exception:{type(exc).__name__}"
+            summary = summarize_dynamic_sart(
+                store.records,
+                aborted=True,
+                abort_reason=abort_reason,
+                support_complete=support_complete,
+                planned_experimental_trials=len(plan["planned_trials"]),
+            )
+            try:
+                store.finalize(summary, aborted=True, abort_reason=abort_reason)
+            except Exception as finalize_exc:
+                exc.add_note(f"Additional DSART finalization error: {finalize_exc}")
+            raise
+        except BaseException as exc:
+            primary_error = exc
+            raise
+        finally:
+            critical_cleanup_errors = _close_task_resources(("artifact store", store))
+            cleanup_warnings = _close_task_resources(("marker outlet", marker_outlet))
+            _attach_cleanup_warnings(summary, telemetry, cleanup_warnings)
+            if critical_cleanup_errors:
+                detail = "; ".join(critical_cleanup_errors)
+                if primary_error is not None:
+                    primary_error.add_note(f"Additional DSART cleanup error: {detail}")
+                else:
+                    raise RuntimeError(f"DSART cleanup failed: {detail}")
+
+    def _run_psychopy(self, paths: SessionPaths, plan: dict[str, Any]) -> dict[str, Any]:
+        ensure_runtime_environment(self.config.get("runtime", {}).get("runtime_cache_dir", ".runtime"))
+        from psychopy import core, event, visual
+
+        apply_pyglet_macos_notification_patch()
+        participant = _participant_id(paths, self.participant_id)
+        display = dict(self.config.get("hardware", {}).get("display", {}))
+        markers = dict(self.config.get("hardware", {}).get("markers", {}))
+        telemetry = Telemetry.from_config(self.config, paths, component="task.dynamic_sart")
+        marker_outlet: LslMarkerOutlet | NullMarkerOutlet | None = None
+        store: DynamicSartArtifactStore | None = None
+        win = None
+        aborted = False
+        abort_reason = None
+        support_complete = False
+        support_reference = None
+        task_start = monotonic()
+        primary_error: BaseException | None = None
+        summary: dict[str, Any] | None = None
+        suite_config = dict(self.config.get("recording_suite", {}) or {})
+        recorder_monitor = RecorderHealthMonitor(
+            paths.process_logs / "recorder.status.json",
+            required=bool(suite_config.get("require_live_recorder", False)),
+            stall_timeout_seconds=float(suite_config.get("recorder_stall_timeout_seconds", 5.0)),
+        )
+        try:
+            marker_outlet = _make_marker_outlet(markers, paths)
+            store = DynamicSartArtifactStore(paths, plan, self.task_config, participant)
+            feedback_client = _make_task_feedback_client(self.config, paths)
+            win = visual.Window(
+                fullscr=bool(display.get("full_screen", False)),
+                screen=int(display.get("screen_index", 0)),
+                size=tuple(display.get("size", [1000, 700])),
+                winType=str(display.get("win_type", "pyglet")),
+                units=str(display.get("units", "height")),
+                color=display.get("background_color", "black"),
+                allowGUI=bool(display.get("allow_gui", True)),
+            )
+            timing = _display_timing_config(display, getattr(win, "monitorFramePeriod", None))
+            keyboard = PersistentKeyboardCollector(
+                event,
+                core.Clock(),
+                store,
+                self.task_config.response_keys,
+                self.task_config.escape_keys,
+            )
+            with EventLogger(paths.behavior_csv, paths.events_jsonl, paths.triggers, telemetry, "task.dynamic_sart") as logger:
+                keyboard.logger = logger
+                task_start = monotonic()
+                _emit(logger, marker_outlet, marker_label("task_start"), event_type="SYSTEM", mode="psychopy")
+                if not _recorder_health_gate(recorder_monitor, logger, marker_outlet):
+                    aborted = True
+                    abort_reason = "recorder_health_failure"
+                understood = False if aborted else _show_screen(
+                    win,
+                    visual,
+                    keyboard,
+                    (
+                        f"A digit from 1 to 9 will appear in the centre of the screen.\n\n"
+                        f"Press SPACE for every digit except {self.task_config.no_go_digit}.\n"
+                        f"When {self.task_config.no_go_digit} appears, do not press.\n\n"
+                        "Respond quickly while remaining accurate.\n\nPress SPACE to continue."
+                    ),
+                    state="INSTRUCTIONS",
+                    allowed_continue=self.task_config.response_keys,
+                )
+                if not aborted and not understood:
+                    aborted = True
+                    abort_reason = "instruction_abort"
+
+                if not aborted and self.task_config.practice_enabled:
+                    _emit(logger, marker_outlet, marker_label("practice_start"), event_type="SYSTEM")
+                    practice_passed = False
+                    practice_rounds = list(plan["practice_rounds"])
+                    for practice_round_index, practice_plan in enumerate(practice_rounds, start=1):
+                        round_records = []
+                        practice_premature: list[dict[str, Any]] = []
+                        for trial_index, trial in enumerate(practice_plan):
+                            if not _recorder_health_gate(recorder_monitor, logger, marker_outlet, trial=trial):
+                                aborted = True
+                                abort_reason = "recorder_health_failure"
+                                break
+                            next_trial = practice_plan[trial_index + 1] if trial_index + 1 < len(practice_plan) else None
+                            record, trial_aborted, practice_premature = _present_psychopy_trial(
+                                win,
+                                visual,
+                                keyboard,
+                                logger,
+                                marker_outlet,
+                                store,
+                                trial,
+                                self.task_config,
+                                timing,
+                                task_start,
+                                premature_events=practice_premature,
+                                next_trial=next_trial,
+                            )
+                            if trial_aborted:
+                                aborted = True
+                                abort_reason = "escape_abort"
+                                break
+                            if record is not None:
+                                round_records.append(record)
+                                feedback_text = "Correct" if record["correct"] else _practice_feedback(record, self.task_config.no_go_digit)
+                                feedback_ok = _show_timed_text(
+                                    win,
+                                    visual,
+                                    keyboard,
+                                    feedback_text,
+                                    self.task_config.practice_feedback_seconds,
+                                )
+                                if not feedback_ok:
+                                    aborted = True
+                                    abort_reason = "escape_abort"
+                                    break
+                        criteria = practice_criteria(round_records, self.task_config, comprehension_confirmed=True)
+                        store.append_block(_block_result(practice_plan, round_records, criteria=criteria))
+                        if aborted or criteria["passed"]:
+                            practice_passed = criteria["passed"]
+                            break
+                        final_practice_round = practice_round_index == len(practice_rounds)
+                        continued = _show_screen(
+                            win,
+                            visual,
+                            keyboard,
+                            _practice_status_text(
+                                criteria,
+                                self.task_config,
+                                will_repeat=not final_practice_round,
+                            ),
+                            state="PRACTICE_FEEDBACK",
+                            allowed_continue=self.task_config.response_keys,
+                        )
+                        if not continued:
+                            aborted = True
+                            abort_reason = "practice_abort"
+                            break
+                    _emit(logger, marker_outlet, marker_label("practice_end"), event_type="SYSTEM", passed=practice_passed)
+                    if not aborted and not practice_passed:
+                        aborted = True
+                        abort_reason = "practice_criteria_not_met"
+
+                if not aborted:
+                    countdown_ok, countdown_reason = _run_psychopy_countdown(
+                        win,
+                        visual,
+                        keyboard,
+                        logger,
+                        marker_outlet,
+                        timing,
+                        recorder_monitor,
+                        self.task_config.countdown_step_seconds,
+                    )
+                    if not countdown_ok:
+                        aborted = True
+                        abort_reason = countdown_reason
+
+                blocks = list(plan["planned_blocks"])
+                final_support_block = max(int(block["block_index"]) for block in blocks if block["phase"] == "support")
+                premature_for_next: list[dict[str, Any]] = []
+                last_break_monotonic = task_start
+                for block in blocks:
+                    if aborted:
+                        break
+                    block_index = int(block["block_index"])
+                    block_trials = [row for row in plan["planned_trials"] if int(row["block_index"]) == block_index]
+                    _emit(
+                        logger,
+                        marker_outlet,
+                        marker_label("block_start", block=block_index, phase=block["phase"]),
+                        event_type="SYSTEM",
+                        block_index=block_index,
+                        phase=block["phase"],
+                    )
+                    block_records = []
+                    for local_index, trial in enumerate(block_trials):
+                        if not _recorder_health_gate(recorder_monitor, logger, marker_outlet, trial=trial):
+                            aborted = True
+                            abort_reason = "recorder_health_failure"
+                            break
+                        next_trial = _next_experimental_trial(plan["planned_trials"], int(trial["global_trial_index"]))
+                        action_audits = _poll_and_audit_dynamic_sart_feedback(
+                            feedback_client,
+                            logger,
+                            trial_index=int(trial["global_trial_index"]),
+                            block_index=block_index,
+                        )
+                        record, trial_aborted, premature_for_next = _present_psychopy_trial(
+                            win,
+                            visual,
+                            keyboard,
+                            logger,
+                            marker_outlet,
+                            store,
+                            trial,
+                            self.task_config,
+                            timing,
+                            task_start,
+                            premature_events=premature_for_next,
+                            next_trial=next_trial,
+                            applied_task_actions=action_audits,
+                            last_break_monotonic=last_break_monotonic,
+                        )
+                        if trial_aborted:
+                            aborted = True
+                            abort_reason = "escape_abort"
+                            break
+                        if record is not None:
+                            block_records.append(record)
+                            if bool(record.get("probe_after")):
+                                probe_ok = _present_psychopy_probe(
+                                    win,
+                                    visual,
+                                    keyboard,
+                                    logger,
+                                    marker_outlet,
+                                    store,
+                                    record,
+                                    self.task_config,
+                                )
+                                if not probe_ok:
+                                    aborted = True
+                                    abort_reason = "probe_abort"
+                                    break
+                    _emit(
+                        logger,
+                        marker_outlet,
+                        marker_label("block_end", block=block_index, phase=block["phase"]),
+                        event_type="SYSTEM",
+                        block_index=block_index,
+                        phase=block["phase"],
+                        completed_trials=len(block_records),
+                    )
+                    store.append_block(_block_result(block_trials, block_records))
+                    if not aborted and block_index == final_support_block:
+                        support_reference = _complete_support(store, self.task_config, monotonic(), logger, marker_outlet)
+                        support_complete = True
+                    if not aborted and bool(block.get("break_after")):
+                        _emit(logger, marker_outlet, marker_label("break_start", block=block_index), event_type="SYSTEM")
+                        continued = _show_bounded_break(
+                            win,
+                            visual,
+                            keyboard,
+                            float(block.get("break_seconds", 30.0)),
+                        )
+                        _emit(logger, marker_outlet, marker_label("break_end", block=block_index), event_type="SYSTEM")
+                        last_break_monotonic = monotonic()
+                        if not continued:
+                            aborted = True
+                            abort_reason = "break_abort"
+
+                if aborted:
+                    _emit(logger, marker_outlet, marker_label("abort"), event_type="SYSTEM", reason=abort_reason)
+                _emit(logger, marker_outlet, marker_label("task_end"), event_type="SYSTEM", aborted=aborted)
+                summary = summarize_dynamic_sart(
+                    store.records,
+                    aborted=aborted,
+                    abort_reason=abort_reason,
+                    support_complete=support_complete,
+                    planned_experimental_trials=len(plan["planned_trials"]),
+                )
+                store.finalize(summary, aborted=aborted, abort_reason=abort_reason)
+                _show_completion(win, visual, keyboard, paths, summary, self.task_config.completion_auto_close_seconds)
+                return summary
+        except KeyboardInterrupt:
+            aborted = True
+            abort_reason = "keyboard_interrupt"
+            summary = summarize_dynamic_sart(
+                store.records,
+                aborted=True,
+                abort_reason=abort_reason,
+                support_complete=support_complete,
+                planned_experimental_trials=len(plan["planned_trials"]),
+            )
+            store.finalize(summary, aborted=True, abort_reason=abort_reason)
+            return summary
+        except Exception as exc:
+            primary_error = exc
+            aborted = True
+            abort_reason = f"exception:{type(exc).__name__}"
+            if store is not None:
+                summary = summarize_dynamic_sart(
+                    store.records,
+                    aborted=True,
+                    abort_reason=abort_reason,
+                    support_complete=support_complete,
+                    planned_experimental_trials=len(plan["planned_trials"]),
+                )
+                try:
+                    store.finalize(summary, aborted=True, abort_reason=abort_reason)
+                except Exception as finalize_exc:
+                    exc.add_note(f"Additional DSART finalization error: {finalize_exc}")
+            raise
+        except BaseException as exc:
+            primary_error = exc
+            raise
+        finally:
+            critical_cleanup_errors = _close_task_resources(("artifact store", store))
+            cleanup_warnings = _close_task_resources(
+                ("marker outlet", marker_outlet),
+                ("PsychoPy window", win),
+            )
+            _attach_cleanup_warnings(summary, telemetry, cleanup_warnings)
+            if critical_cleanup_errors:
+                detail = "; ".join(critical_cleanup_errors)
+                if primary_error is not None:
+                    primary_error.add_note(f"Additional DSART cleanup error: {detail}")
+                else:
+                    raise RuntimeError(f"DSART cleanup failed: {detail}")
+
+
+class DynamicSartArtifactStore:
+    """Incrementally flush raw task artifacts while keeping plan values immutable."""
+
+    def __init__(
+        self,
+        paths: SessionPaths,
+        plan: dict[str, Any],
+        config: DynamicSartConfig,
+        participant_id: str,
+    ) -> None:
+        self.paths = paths
+        self.plan = plan
+        self.config = config
+        self.participant_id = participant_id
+        self.records: list[dict[str, Any]] = []
+        self.key_events: list[dict[str, Any]] = []
+        self.trials_jsonl_path = paths.events / "dynamic_sart_trials.jsonl"
+        self.trials_csv_path = paths.events / "dynamic_sart_trials.csv"
+        self.key_events_path = paths.events / "dynamic_sart_key_events.jsonl"
+        self.blocks_path = paths.events / "dynamic_sart_blocks.csv"
+        self.results_path = paths.events / "dynamic_sart_results.json"
+        self.reference_path = paths.events / "dynamic_sart_support_reference.json"
+        self.probes_path = paths.events / "dynamic_sart_probes.jsonl"
+        self.manifest_path = paths.events / "stimulus_manifest.json"
+        self._trial_jsonl = None
+        self._key_jsonl = None
+        self._probes_jsonl = None
+        self._trial_csv = None
+        self._blocks_csv = None
+        try:
+            self._trial_jsonl = self.trials_jsonl_path.open("w", encoding="utf-8")
+            self._key_jsonl = self.key_events_path.open("w", encoding="utf-8")
+            self._probes_jsonl = self.probes_path.open("w", encoding="utf-8")
+            self._trial_csv = self.trials_csv_path.open("w", encoding="utf-8", newline="")
+            self._trial_writer = csv.DictWriter(self._trial_csv, fieldnames=list(TRIAL_CSV_FIELDS))
+            self._trial_writer.writeheader()
+            self._blocks_csv = self.blocks_path.open("w", encoding="utf-8", newline="")
+            self._block_fields = [
+                "schema",
+                "block_index",
+                "block_name",
+                "phase",
+                "planned_trials",
+                "completed_trials",
+                "correct_trials",
+                "start_trial",
+                "end_trial",
+                "criteria",
+            ]
+            self._block_writer = csv.DictWriter(self._blocks_csv, fieldnames=self._block_fields)
+            self._block_writer.writeheader()
+            self.manifest = self._initial_manifest()
+            _write_json_atomic(self.manifest_path, self.manifest)
+        except BaseException:
+            _close_task_resources(("partial DSART artifact store", self))
+            raise
+
+    def _initial_manifest(self) -> dict[str, Any]:
+        practice = [deepcopy(row) for round_rows in self.plan["practice_rounds"] for row in round_rows]
+        experimental = [deepcopy(row) for row in self.plan["planned_trials"]]
+        planned = [*practice, *experimental]
+        for row in planned:
+            row["stimulus_marker_label"] = marker_label("stimulus_onset", row)
+        mutable = [{**deepcopy(row), "presented": False, "completion_status": "planned", "abort_status": None} for row in planned]
+        return {
+            "schema_version": 1,
+            "schema": PLAN_SCHEMA,
+            "task": TASK_NAME,
+            "task_name": TASK_NAME,
+            "task_version": TASK_VERSION,
+            "participant_id": self.participant_id,
+            "session_id": self.paths.root.name,
+            "master_seed": self.plan["master_seed"],
+            "block_seeds": self.plan["block_seeds"],
+            "sequence_id": self.plan["sequence_id"],
+            "configuration_hash": self.plan["configuration_hash"],
+            "planned_blocks": self.plan["planned_blocks"],
+            "planned_trials": planned,
+            "planned_digits": list(self.config.digits),
+            "planned_conditions": ["go", "no_go"],
+            "planned_jitter": [row.get("planned_jitter_seconds") for row in experimental],
+            "smoke_test_override": self.plan["smoke_test_override"],
+            "requested_trial_override": self.plan["requested_trial_override"],
+            "normal_recipe_trial_count": self.plan["normal_recipe_trial_count"],
+            "trials": mutable,
+            "support_complete": False,
+            "aborted": False,
+        }
+
+    def append_trial(self, record: dict[str, Any]) -> None:
+        immutable = deepcopy(record)
+        self.records.append(immutable)
+        self._trial_jsonl.write(json.dumps(immutable, sort_keys=True) + "\n")
+        self._trial_jsonl.flush()
+        self._trial_writer.writerow({field: _csv_value(immutable.get(field)) for field in TRIAL_CSV_FIELDS})
+        self._trial_csv.flush()
+        target = next(
+            (
+                row
+                for row in self.manifest["trials"]
+                if int(row.get("global_trial_index")) == int(immutable["global_trial_index"])
+            ),
+            None,
+        )
+        if target is not None:
+            target.update(deepcopy(immutable))
+            target["completion_status"] = "complete"
+
+    def append_key_event(self, event: dict[str, Any]) -> None:
+        immutable = deepcopy(event)
+        self.key_events.append(immutable)
+        self._key_jsonl.write(json.dumps(immutable, sort_keys=True) + "\n")
+        self._key_jsonl.flush()
+
+    def append_probe(self, probe: dict[str, Any]) -> None:
+        self._probes_jsonl.write(json.dumps(deepcopy(probe), sort_keys=True) + "\n")
+        self._probes_jsonl.flush()
+
+    def append_block(self, result: dict[str, Any]) -> None:
+        self._block_writer.writerow({field: _csv_value(result.get(field)) for field in self._block_fields})
+        self._blocks_csv.flush()
+        self.manifest["last_checkpoint"] = {
+            "completed_record_count": len(self.records),
+            "last_completed_trial_index": (
+                None if not self.records else self.records[-1].get("global_trial_index")
+            ),
+            "block_index": result.get("block_index"),
+            "block_name": result.get("block_name"),
+        }
+        _write_json_atomic(self.manifest_path, self.manifest)
+
+    def write_support_reference(self, reference: dict[str, Any]) -> None:
+        _write_json_atomic(self.reference_path, reference)
+        self.manifest["support_complete"] = True
+        self.manifest["support_reference_hash"] = reference.get("reference_hash")
+        _write_json_atomic(self.manifest_path, self.manifest)
+
+    def finalize(self, summary: dict[str, Any], *, aborted: bool, abort_reason: str | None) -> None:
+        self.manifest["aborted"] = aborted
+        self.manifest["abort_reason"] = abort_reason
+        self.manifest["presented_trial_count"] = len(self.records)
+        self.manifest["completed_experimental_trial_count"] = sum(int(not row.get("is_practice")) for row in self.records)
+        _write_json_atomic(self.manifest_path, self.manifest)
+        _write_json_atomic(
+            self.results_path,
+            {
+                "schema": SUMMARY_SCHEMA,
+                "task": TASK_NAME,
+                "settings": self.config.payload(),
+                "sequence_id": self.plan["sequence_id"],
+                "summary": summary,
+                "aborted": aborted,
+                "abort_reason": abort_reason,
+                "artifact_files": {
+                    "trials_jsonl": str(self.trials_jsonl_path),
+                    "trials_csv": str(self.trials_csv_path),
+                    "key_events_jsonl": str(self.key_events_path),
+                    "blocks_csv": str(self.blocks_path),
+                    "support_reference_json": str(self.reference_path),
+                    "probes_jsonl": str(self.probes_path),
+                },
+            },
+        )
+
+    def close(self) -> None:
+        failures = []
+        for handle in (self._trial_jsonl, self._key_jsonl, self._probes_jsonl, self._trial_csv, self._blocks_csv):
+            if handle is None:
+                continue
+            try:
+                if not handle.closed:
+                    handle.close()
+            except Exception as exc:
+                failures.append(f"{type(exc).__name__}: {exc}")
+        if failures:
+            raise RuntimeError("one or more DSART artifact files did not close: " + "; ".join(failures))
+
+
+def _close_task_resources(*resources: tuple[str, Any]) -> list[str]:
+    failures = []
+    for name, resource in resources:
+        if resource is None:
+            continue
+        try:
+            resource.close()
+        except Exception as exc:
+            failures.append(f"{name}: {type(exc).__name__}: {exc}")
+    return failures
+
+
+def _attach_cleanup_warnings(
+    summary: dict[str, Any] | None,
+    telemetry: Telemetry,
+    warnings: list[str],
+) -> None:
+    if not warnings:
+        return
+    if summary is not None:
+        summary.setdefault("warnings", []).extend(warnings)
+    telemetry.emit(
+        "task.cleanup_warning",
+        level="default",
+        message="DSART completed with non-critical cleanup warnings",
+        metadata={"warnings": warnings},
+    )
+
+
+class PersistentKeyboardCollector:
+    """Poll one persistent PsychoPy keyboard clock without per-trial clearing."""
+
+    def __init__(
+        self,
+        event_module: Any,
+        clock: Any,
+        store: DynamicSartArtifactStore,
+        response_keys: Iterable[str],
+        escape_keys: Iterable[str],
+    ) -> None:
+        self.event_module = event_module
+        self.clock = clock
+        self.store = store
+        self.response_keys = {str(key).strip().lower() for key in response_keys}
+        self.escape_keys = {str(key).strip().lower() for key in escape_keys}
+        self.sequence = 0
+        self.logger: EventLogger | None = None
+        self.clock.reset()
+        elapsed = float(self.clock.getTime())
+        self.origin_monotonic = monotonic() - elapsed
+        current_lsl = lsl_local_clock()
+        self.origin_lsl = None if current_lsl is None else current_lsl - elapsed
+        clear_psychopy_keys(self.event_module)
+
+    def poll(
+        self,
+        *,
+        task_state: str,
+        assigned_trial: int | None = None,
+        assigned_block: int | None = None,
+        assigned_phase: str | None = None,
+        premature: bool = False,
+        late: bool = False,
+    ) -> list[dict[str, Any]]:
+        rows = []
+        for value in poll_psychopy_keys(self.event_module, clock=self.clock):
+            self.sequence += 1
+            keyboard_time = _optional_float(value.rt)
+            timestamp = monotonic() if keyboard_time is None else self.origin_monotonic + keyboard_time
+            lsl_timestamp = None if self.origin_lsl is None or keyboard_time is None else self.origin_lsl + keyboard_time
+            key = value.name
+            row = {
+                "schema": KEY_EVENT_SCHEMA,
+                "event_id": f"key-{self.sequence:08d}",
+                "key": key,
+                "timestamp_monotonic": timestamp,
+                "timestamp_lsl_if_available": lsl_timestamp,
+                "keyboard_time": keyboard_time,
+                "task_state": task_state,
+                "assigned_trial": assigned_trial,
+                "assigned_block": assigned_block,
+                "assigned_phase": assigned_phase,
+                "is_response_key": key in self.response_keys,
+                "is_escape_key": key in self.escape_keys,
+                "is_premature": premature and key in self.response_keys,
+                "is_late": late and key in self.response_keys,
+            }
+            self.store.append_key_event(row)
+            if self.logger is not None:
+                self.logger.mark(
+                    "dynamic_sart_key_event",
+                    event_type="EVENT",
+                    timestamp=timestamp,
+                    trial=assigned_trial,
+                    value=key,
+                    **{field: data for field, data in row.items() if field not in {"key", "timestamp_monotonic", "assigned_trial"}},
+                )
+            rows.append(row)
+        return rows
+
+
+def score_dynamic_sart_trial(
+    planned: dict[str, Any],
+    key_events: Iterable[dict[str, Any]],
+    config: DynamicSartConfig,
+    *,
+    session_id: str,
+    participant_id: str,
+    task_start_monotonic: float,
+    stimulus_onset_monotonic: float,
+    stimulus_onset_lsl: float | None,
+    stimulus_offset_monotonic: float,
+    stimulus_offset_lsl: float | None,
+    response_window_close_monotonic: float,
+    response_window_close_lsl: float | None,
+    next_trial_onset_monotonic: float | None,
+    display_timing: dict[str, Any] | None = None,
+    time_since_break_seconds: float | None = None,
+    previous_trial_index: int | None = None,
+    trials_since_no_go: int | None = None,
+    applied_task_actions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    events = sorted((dict(row) for row in key_events), key=lambda row: float(row.get("timestamp_monotonic", 0.0)))
+    in_window = [
+        row
+        for row in events
+        if stimulus_onset_monotonic <= float(row.get("timestamp_monotonic", -math.inf)) <= response_window_close_monotonic
+        and not bool(row.get("is_escape_key"))
+    ]
+    response_events = [row for row in in_window if bool(row.get("is_response_key"))]
+    first_response = in_window[0] if in_window else None
+    first_response_key = str(first_response.get("key")) if first_response else None
+    first_response_timestamp = _optional_float(first_response.get("timestamp_monotonic")) if first_response else None
+    first_response_lsl = _optional_float(first_response.get("timestamp_lsl_if_available")) if first_response else None
+    valid_response_events = [
+        row
+        for row in response_events
+        if float(row["timestamp_monotonic"]) - stimulus_onset_monotonic >= config.minimum_valid_rt_seconds
+    ]
+    first_valid = valid_response_events[0] if valid_response_events else None
+    first_valid_timestamp = _optional_float(first_valid.get("timestamp_monotonic")) if first_valid else None
+    reaction_time = None if first_valid_timestamp is None else first_valid_timestamp - stimulus_onset_monotonic
+    has_response = bool(response_events)
+    is_no_go = bool(planned["is_no_go"])
+    if is_no_go and has_response:
+        outcome = "commission_error"
+    elif is_no_go:
+        outcome = "correct_no_go"
+    elif has_response:
+        outcome = "correct_go"
+    else:
+        outcome = "omission_error"
+    correct = outcome in {"correct_go", "correct_no_go"}
+    too_fast = any(
+        float(row["timestamp_monotonic"]) - stimulus_onset_monotonic < config.minimum_valid_rt_seconds
+        for row in response_events
+    )
+    timing = dict(display_timing or {})
+    actual_trial_duration = None if next_trial_onset_monotonic is None else next_trial_onset_monotonic - stimulus_onset_monotonic
+    return {
+        **deepcopy(planned),
+        "schema_version": 1,
+        "schema": TRIAL_SCHEMA,
+        "task_name": TASK_NAME,
+        "task_version": TASK_VERSION,
+        "session_id": session_id,
+        "participant_id": participant_id,
+        "stimulus_marker_label": marker_label("stimulus_onset", planned),
+        "stimulus_onset_monotonic": stimulus_onset_monotonic,
+        "stimulus_onset_lsl": stimulus_onset_lsl,
+        "stimulus_offset_monotonic": stimulus_offset_monotonic,
+        "stimulus_offset_lsl": stimulus_offset_lsl,
+        "response_window_close_monotonic": response_window_close_monotonic,
+        "response_window_close_lsl": response_window_close_lsl,
+        "next_trial_onset_monotonic": next_trial_onset_monotonic,
+        "actual_stimulus_seconds": stimulus_offset_monotonic - stimulus_onset_monotonic,
+        "actual_response_window_seconds": response_window_close_monotonic - stimulus_onset_monotonic,
+        "actual_trial_duration_seconds": actual_trial_duration,
+        "display_timing_status": timing.get("status", "modeled"),
+        "expected_visual_onset_uncertainty_ms": timing.get("expected_visual_onset_uncertainty_ms"),
+        "all_key_event_ids": [row.get("event_id") for row in events],
+        "first_response_key": first_response_key,
+        "first_response_timestamp_monotonic": first_response_timestamp,
+        "first_response_timestamp_lsl": first_response_lsl,
+        "first_valid_response_key": str(first_valid.get("key")) if first_valid else None,
+        "first_valid_response_timestamp_monotonic": first_valid_timestamp,
+        "reaction_time_seconds": reaction_time,
+        "response_count": len(in_window),
+        "response_key_count": len(response_events),
+        "primary_outcome": outcome,
+        "correct": correct,
+        "commission_error": outcome == "commission_error",
+        "omission_error": outcome == "omission_error",
+        "premature_response": any(bool(row.get("is_premature")) for row in events),
+        "too_fast_response": too_fast,
+        "multiple_response": len(response_events) > 1,
+        "wrong_key_response": any(not bool(row.get("is_response_key")) for row in in_window),
+        "late_response": any(bool(row.get("is_late")) for row in events),
+        "aborted": False,
+        "invalid": False,
+        "time_on_task_seconds": stimulus_onset_monotonic - task_start_monotonic,
+        "time_since_break_seconds": time_since_break_seconds,
+        "previous_trial_index": previous_trial_index,
+        "trials_since_no_go": trials_since_no_go,
+        "probe_id": planned.get("probe_id"),
+        "probe_proximity": planned.get("probe_proximity"),
+        "applied_task_actions": list(applied_task_actions or []),
+        "eeg_quality_join_key": f"dynamic_sart:{planned['global_trial_index']}",
+        "presented": True,
+    }
+
+
+def practice_criteria(
+    records: Iterable[dict[str, Any]],
+    config: DynamicSartConfig,
+    *,
+    comprehension_confirmed: bool,
+) -> dict[str, Any]:
+    rows = list(records)
+    go = [row for row in rows if row.get("condition") == "go"]
+    no_go = [row for row in rows if row.get("condition") == "no_go"]
+    correct_go_count = sum(int(bool(row.get("correct"))) for row in go)
+    correct_no_go_count = sum(int(bool(row.get("correct"))) for row in no_go)
+    go_accuracy = correct_go_count / len(go) if go else 0.0
+    no_go_accuracy = correct_no_go_count / len(no_go) if no_go else 0.0
+    required_correct_go_count = _required_correct_count(config.practice_go_accuracy, len(go))
+    required_correct_no_go_count = _required_correct_count(config.practice_no_go_accuracy, len(no_go))
+    anticipatory_rate = sum(int(bool(row.get("premature_response"))) for row in rows) / len(rows) if rows else 1.0
+    passed = (
+        correct_go_count >= required_correct_go_count
+        and correct_no_go_count >= required_correct_no_go_count
+        and len(no_go) >= config.practice_no_go_trials
+        and anticipatory_rate <= config.practice_max_anticipatory_rate
+        and comprehension_confirmed
+    )
+    return {
+        "passed": passed,
+        "go_accuracy": go_accuracy,
+        "no_go_accuracy": no_go_accuracy,
+        "go_correct_count": correct_go_count,
+        "go_trial_count": len(go),
+        "go_required_correct_count": required_correct_go_count,
+        "no_go_correct_count": correct_no_go_count,
+        "no_go_trial_count": len(no_go),
+        "no_go_required_correct_count": required_correct_no_go_count,
+        "anticipatory_response_rate": anticipatory_rate,
+        "maximum_anticipatory_response_rate": config.practice_max_anticipatory_rate,
+        "response_rule_comprehension_confirmed": comprehension_confirmed,
+    }
+
+
+def _required_correct_count(threshold: float, trial_count: int) -> int:
+    if trial_count <= 0:
+        return 0
+    return min(trial_count, int(math.ceil(float(threshold) * trial_count - 1e-9)))
+
+
+def _practice_status_text(
+    criteria: dict[str, Any],
+    config: DynamicSartConfig,
+    *,
+    will_repeat: bool,
+) -> str:
+    heading = "Practice will repeat." if will_repeat else "Practice did not meet the required criteria."
+    next_step = (
+        f"Remember: press SPACE for every digit except {config.no_go_digit}.\n\nPress SPACE to repeat practice."
+        if will_repeat
+        else "The experimental session will not start.\n\nPress SPACE to continue."
+    )
+    return (
+        f"{heading}\n\n"
+        f"Go responses: {int(criteria.get('go_correct_count', 0))}/{int(criteria.get('go_trial_count', 0))} correct "
+        f"(need {int(criteria.get('go_required_correct_count', 0))}).\n"
+        f"No-go withholding: {int(criteria.get('no_go_correct_count', 0))}/{int(criteria.get('no_go_trial_count', 0))} correct "
+        f"(need {int(criteria.get('no_go_required_correct_count', 0))}).\n"
+        f"Premature-response rate: {float(criteria.get('anticipatory_response_rate', 0.0)):.1%} "
+        f"(maximum {float(criteria.get('maximum_anticipatory_response_rate', 0.0)):.1%}).\n\n"
+        f"{next_step}"
+    )
+
+
+def audit_dynamic_sart_action(action: TaskAction) -> dict[str, Any]:
+    accepted = action.action == "observe_only"
+    return {
+        "status": "accepted" if accepted else "rejected",
+        "reason": "observe-only action audited without task change" if accepted else "dynamic_sart rejects task-changing actions",
+        "action": action.to_payload(),
+        "applied": False,
+    }
+
+
+def _make_task_feedback_client(config: dict[str, Any], paths: SessionPaths) -> TaskFeedbackClient:
+    feedback_config = dict(config.get("realtime", {}).get("feedback", {}) or {})
+    client_config = dict(feedback_config.get("client", {}) or {})
+    client_config.setdefault("enabled", False)
+    client_config.setdefault("backend", feedback_config.get("emitter", "disabled"))
+    return TaskFeedbackClient(client_config, default_jsonl_path=paths.realtime_feedback_jsonl)
+
+
+def _poll_and_audit_dynamic_sart_feedback(
+    client: TaskFeedbackClient,
+    logger: EventLogger,
+    *,
+    trial_index: int,
+    block_index: int,
+) -> list[dict[str, Any]]:
+    actions = client.poll("between_trials", trial_index, block_index)
+    for record in client.audit_records:
+        if record.status in {"pending", "accepted"}:
+            continue
+        logger.mark(
+            f"dynamic_sart_feedback_action_{record.status}",
+            event_type="SYSTEM",
+            trial=trial_index,
+            value=record.reason,
+            audit=record.to_payload(),
+            task=TASK_NAME,
+        )
+    audits = []
+    for action in actions:
+        audit = audit_dynamic_sart_action(action)
+        audits.append(audit)
+        logger.mark(
+            f"dynamic_sart_feedback_action_{audit['status']}",
+            event_type="SYSTEM",
+            trial=trial_index,
+            value=action.action,
+            audit=audit,
+            task=TASK_NAME,
+        )
+    return audits
+
+
+def summarize_dynamic_sart(
+    records: Iterable[dict[str, Any]],
+    *,
+    aborted: bool,
+    abort_reason: str | None,
+    support_complete: bool,
+    planned_experimental_trials: int,
+) -> dict[str, Any]:
+    rows = list(records)
+    experimental = [row for row in rows if not bool(row.get("is_practice"))]
+    practice = [row for row in rows if bool(row.get("is_practice"))]
+    go = [row for row in experimental if row.get("condition") == "go"]
+    no_go = [row for row in experimental if row.get("condition") == "no_go"]
+    valid_rts = [float(row["reaction_time_seconds"]) for row in go if row.get("reaction_time_seconds") is not None and not row.get("too_fast_response")]
+    return {
+        "schema": SUMMARY_SCHEMA,
+        "task": TASK_NAME,
+        "task_version": TASK_VERSION,
+        "planned_experimental_trials": planned_experimental_trials,
+        "experimental_trials": len(experimental),
+        "practice_trials": len(practice),
+        "support_trials": sum(int(row.get("phase") == "support") for row in experimental),
+        "query_trials": sum(int(row.get("phase") == "query") for row in experimental),
+        "support_complete": support_complete,
+        "accuracy": sum(int(bool(row.get("correct"))) for row in experimental) / len(experimental) if experimental else 0.0,
+        "go_accuracy": sum(int(bool(row.get("correct"))) for row in go) / len(go) if go else None,
+        "no_go_accuracy": sum(int(bool(row.get("correct"))) for row in no_go) / len(no_go) if no_go else None,
+        "valid_go_rt_count": len(valid_rts),
+        "mean_valid_go_rt_seconds": sum(valid_rts) / len(valid_rts) if valid_rts else None,
+        "median_valid_go_rt_seconds": median(valid_rts) if valid_rts else None,
+        "go_trial_count": len(go),
+        "no_go_trial_count": len(no_go),
+        "commission_errors": sum(int(bool(row.get("commission_error"))) for row in experimental),
+        "omission_errors": sum(int(bool(row.get("omission_error"))) for row in experimental),
+        "premature_responses": sum(int(bool(row.get("premature_response"))) for row in experimental),
+        "too_fast_responses": sum(int(bool(row.get("too_fast_response"))) for row in experimental),
+        "multiple_responses": sum(int(bool(row.get("multiple_response"))) for row in experimental),
+        "wrong_key_responses": sum(int(bool(row.get("wrong_key_response"))) for row in experimental),
+        "aborted": aborted,
+        "abort_reason": abort_reason,
+        "partial_run": aborted or len(experimental) != planned_experimental_trials,
+    }
+
+
+def _simulate_trial(
+    planned: dict[str, Any],
+    config: DynamicSartConfig,
+    store: DynamicSartArtifactStore,
+    logger: EventLogger,
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet,
+    task_start: float,
+    onset: float,
+    *,
+    plan_trial_count: int,
+    force_practice_correct: bool = False,
+    applied_task_actions: list[dict[str, Any]] | None = None,
+    last_break_monotonic: float | None = None,
+) -> tuple[dict[str, Any], float]:
+    stimulus_offset = onset + config.stimulus_seconds
+    response_close = onset + config.response_window_seconds
+    next_onset = response_close + float(planned["planned_jitter_seconds"])
+    rng = random.Random(int(planned["block_seed"]) ^ abs(int(planned["global_trial_index"])) * 7919)
+    events: list[dict[str, Any]] = []
+    response_specs: list[tuple[str, float]] = []
+    if not force_practice_correct and rng.random() < 0.02:
+        events.append(_sim_key_event(store, logger, planned, "space", onset - 0.04, premature=True))
+    onset_label = marker_label("stimulus_onset", planned)
+    _emit(logger, marker_outlet, onset_label, timestamp=onset, trial=int(planned["global_trial_index"]), **_marker_metadata(planned))
+    drift = max(0.0, int(planned.get("global_trial_index", 0))) / max(1, plan_trial_count)
+    state_shift = 0.08 if drift >= 0.65 else 0.0
+    if planned["is_no_go"]:
+        commission = False if force_practice_correct else rng.random() < 0.10 + 0.08 * drift
+        if commission:
+            rt = max(0.05, min(config.response_window_seconds - 0.02, rng.gauss(0.34 + state_shift, 0.07)))
+            response_specs.append(("space", onset + rt))
+    else:
+        omission = False if force_practice_correct else rng.random() < 0.02 + 0.04 * drift
+        if not omission:
+            rt = max(0.04, min(config.response_window_seconds - 0.02, rng.gauss(0.38 + 0.12 * drift + state_shift, 0.06)))
+            if not force_practice_correct and rng.random() < 0.015:
+                rt = config.minimum_valid_rt_seconds * 0.65
+            if not force_practice_correct and rng.random() < 0.015:
+                response_specs.append(("x", onset + max(0.02, rt - 0.04)))
+            response_specs.append(("space", onset + rt))
+            if not force_practice_correct and rng.random() < 0.04:
+                second = min(response_close - 0.005, onset + rt + rng.uniform(0.04, 0.15))
+                response_specs.append(("space", second))
+    response_specs.sort(key=lambda item: item[1])
+    before_offset = [item for item in response_specs if item[1] <= stimulus_offset]
+    after_offset = [item for item in response_specs if item[1] > stimulus_offset]
+    events.extend(_sim_key_event(store, logger, planned, key, timestamp) for key, timestamp in before_offset)
+    _emit(
+        logger,
+        marker_outlet,
+        marker_label("stimulus_offset", planned),
+        timestamp=stimulus_offset,
+        trial=int(planned["global_trial_index"]),
+        **_marker_metadata(planned),
+    )
+    events.extend(_sim_key_event(store, logger, planned, key, timestamp) for key, timestamp in after_offset)
+    _emit(
+        logger,
+        marker_outlet,
+        marker_label("response_window_close", planned),
+        timestamp=response_close,
+        trial=int(planned["global_trial_index"]),
+        **_marker_metadata(planned),
+    )
+    previous_experimental = max((int(row["global_trial_index"]) for row in store.records if not row.get("is_practice")), default=None)
+    record = score_dynamic_sart_trial(
+        planned,
+        events,
+        config,
+        session_id=store.paths.root.name,
+        participant_id=store.participant_id,
+        task_start_monotonic=task_start,
+        stimulus_onset_monotonic=onset,
+        stimulus_onset_lsl=None,
+        stimulus_offset_monotonic=stimulus_offset,
+        stimulus_offset_lsl=None,
+        response_window_close_monotonic=response_close,
+        response_window_close_lsl=None,
+        next_trial_onset_monotonic=next_onset,
+        display_timing={"status": "virtual", "expected_visual_onset_uncertainty_ms": 0.0},
+        time_since_break_seconds=None if last_break_monotonic is None else onset - last_break_monotonic,
+        previous_trial_index=previous_experimental,
+        trials_since_no_go=_trials_since_no_go(store.records),
+        applied_task_actions=applied_task_actions,
+    )
+    store.append_trial(record)
+    _emit(
+        logger,
+        marker_outlet,
+        marker_label("trial_complete", planned),
+        timestamp=response_close,
+        trial=int(planned["global_trial_index"]),
+        primary_outcome=record["primary_outcome"],
+        correct=record["correct"],
+        reaction_time_seconds=record["reaction_time_seconds"],
+        **_marker_metadata(planned),
+    )
+    return record, next_onset
+
+
+def _sim_key_event(
+    store: DynamicSartArtifactStore,
+    logger: EventLogger,
+    planned: dict[str, Any],
+    key: str,
+    timestamp: float,
+    *,
+    premature: bool = False,
+) -> dict[str, Any]:
+    event_id = f"key-{len(store.key_events) + 1:08d}"
+    row = {
+        "schema": KEY_EVENT_SCHEMA,
+        "event_id": event_id,
+        "key": key,
+        "timestamp_monotonic": timestamp,
+        "timestamp_lsl_if_available": None,
+        "keyboard_time": None,
+        "task_state": "INTERTRIAL_INTERVAL" if premature else "STIMULUS_VISIBLE",
+        "assigned_trial": int(planned["global_trial_index"]),
+        "assigned_block": int(planned["block_index"]),
+        "assigned_phase": planned["phase"],
+        "is_response_key": key in store.config.response_keys,
+        "is_escape_key": key in store.config.escape_keys,
+        "is_premature": premature,
+        "is_late": False,
+    }
+    store.append_key_event(row)
+    logger.mark(
+        "dynamic_sart_key_event",
+        event_type="EVENT",
+        timestamp=timestamp,
+        trial=int(planned["global_trial_index"]),
+        value=key,
+        event_id=event_id,
+        task_state=row["task_state"],
+        phase=planned["phase"],
+        practice=bool(planned["is_practice"]),
+        is_response_key=row["is_response_key"],
+        is_premature=premature,
+    )
+    return row
+
+
+def _record_dry_probe(
+    store: DynamicSartArtifactStore,
+    logger: EventLogger,
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet,
+    anchor: dict[str, Any],
+    config: DynamicSartConfig,
+    onset: float,
+) -> float:
+    probe_id = str(anchor["probe_id"])
+    response_timestamp = onset + min(0.2, config.thought_probe_max_seconds)
+    selected_key = "1"
+    selected_response = config.thought_probe_choices[0]
+    _emit(
+        logger,
+        marker_outlet,
+        marker_label("probe_onset", v=1, probe=probe_id),
+        timestamp=onset,
+        event_type="SYSTEM",
+        trial=int(anchor["global_trial_index"]),
+        probe_id=probe_id,
+    )
+    event = {
+        "schema": KEY_EVENT_SCHEMA,
+        "event_id": f"key-{len(store.key_events) + 1:08d}",
+        "key": selected_key,
+        "timestamp_monotonic": response_timestamp,
+        "timestamp_lsl_if_available": None,
+        "keyboard_time": None,
+        "task_state": "PROBE",
+        "assigned_trial": None,
+        "assigned_block": int(anchor["block_index"]),
+        "assigned_phase": str(anchor["phase"]),
+        "is_response_key": False,
+        "is_escape_key": False,
+        "is_premature": False,
+        "is_late": False,
+    }
+    store.append_key_event(event)
+    logger.mark(
+        "dynamic_sart_key_event",
+        timestamp=response_timestamp,
+        value=selected_key,
+        event_id=event["event_id"],
+        task_state="PROBE",
+        task=TASK_NAME,
+    )
+    _emit(
+        logger,
+        marker_outlet,
+        marker_label("probe_response", v=1, probe=probe_id),
+        timestamp=response_timestamp,
+        event_type="SYSTEM",
+        trial=int(anchor["global_trial_index"]),
+        value=selected_response,
+        probe_id=probe_id,
+    )
+    store.append_probe(
+        _probe_record(
+            anchor,
+            config,
+            onset=onset,
+            offset=response_timestamp,
+            selected_key=selected_key,
+            selected_response=selected_response,
+        )
+    )
+    return response_timestamp
+
+
+def _present_psychopy_probe(
+    win: Any,
+    visual: Any,
+    keyboard: PersistentKeyboardCollector,
+    logger: EventLogger,
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet,
+    store: DynamicSartArtifactStore,
+    anchor: dict[str, Any],
+    config: DynamicSartConfig,
+) -> bool:
+    choices = list(config.thought_probe_choices)
+    choice_lines = "\n".join(f"{index}. {choice.replace('_', ' ')}" for index, choice in enumerate(choices, start=1))
+    prompt = visual.TextStim(
+        win,
+        text=f"{config.thought_probe_question}\n\n{choice_lines}",
+        height=0.045,
+        color="white",
+        wrapWidth=1.5,
+    )
+    probe_id = str(anchor["probe_id"])
+    holder: dict[str, Any] = {}
+    prompt.draw()
+    win.callOnFlip(
+        _capture_probe_onset,
+        holder,
+        logger,
+        marker_outlet,
+        probe_id,
+        int(anchor["global_trial_index"]),
+    )
+    win.flip()
+    onset = float(holder["onset"])
+    deadline = onset + config.thought_probe_max_seconds
+    selected_key = None
+    selected_response = None
+    while monotonic() < deadline:
+        rows = keyboard.poll(
+            task_state="PROBE",
+            assigned_block=int(anchor["block_index"]),
+            assigned_phase=str(anchor["phase"]),
+        )
+        if any(row["is_escape_key"] for row in rows):
+            return False
+        for row in rows:
+            key = str(row["key"])
+            if key.isdigit() and 1 <= int(key) <= len(choices):
+                selected_key = key
+                selected_response = choices[int(key) - 1]
+                break
+        if selected_response is not None:
+            break
+        sleep(0.005)
+    offset = monotonic()
+    _emit(
+        logger,
+        marker_outlet,
+        marker_label("probe_response", v=1, probe=probe_id),
+        event_type="SYSTEM",
+        timestamp=offset,
+        trial=int(anchor["global_trial_index"]),
+        value=selected_response or "no_response",
+        probe_id=probe_id,
+    )
+    store.append_probe(
+        _probe_record(
+            anchor,
+            config,
+            onset=onset,
+            offset=offset,
+            selected_key=selected_key,
+            selected_response=selected_response,
+        )
+    )
+    return True
+
+
+def _capture_probe_onset(
+    holder: dict[str, Any],
+    logger: EventLogger,
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet,
+    probe_id: str,
+    trial_index: int,
+) -> None:
+    onset = monotonic()
+    holder["onset"] = onset
+    _emit(
+        logger,
+        marker_outlet,
+        marker_label("probe_onset", v=1, probe=probe_id),
+        event_type="SYSTEM",
+        timestamp=onset,
+        trial=trial_index,
+        probe_id=probe_id,
+        scheduled_on_flip=True,
+    )
+
+
+def _probe_record(
+    anchor: dict[str, Any],
+    config: DynamicSartConfig,
+    *,
+    onset: float,
+    offset: float,
+    selected_key: str | None,
+    selected_response: str | None,
+) -> dict[str, Any]:
+    trial_index = int(anchor["global_trial_index"])
+    window = config.thought_probe_exclusion_window_trials
+    return {
+        "schema": PROBE_SCHEMA,
+        "probe_id": anchor.get("probe_id"),
+        "after_trial_index": trial_index,
+        "block_index": int(anchor["block_index"]),
+        "phase": anchor.get("phase"),
+        "question": config.thought_probe_question,
+        "response_choices": list(config.thought_probe_choices),
+        "onset_monotonic": onset,
+        "offset_monotonic": offset,
+        "selected_key": selected_key,
+        "selected_response": selected_response,
+        "response_time_seconds": None if selected_response is None else offset - onset,
+        "neighboring_trials": list(range(max(1, trial_index - window), trial_index + window + 1)),
+        "exclusion_window_trials": window,
+    }
+
+
+def _present_psychopy_trial(
+    win: Any,
+    visual: Any,
+    keyboard: PersistentKeyboardCollector,
+    logger: EventLogger,
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet,
+    store: DynamicSartArtifactStore,
+    planned: dict[str, Any],
+    config: DynamicSartConfig,
+    timing: dict[str, Any],
+    task_start: float,
+    *,
+    premature_events: list[dict[str, Any]],
+    next_trial: dict[str, Any] | None,
+    applied_task_actions: list[dict[str, Any]] | None = None,
+    last_break_monotonic: float | None = None,
+) -> tuple[dict[str, Any] | None, bool, list[dict[str, Any]]]:
+    digit = visual.TextStim(win, text=str(planned["digit"]), height=0.22, color="white")
+    fixation = visual.TextStim(win, text="+", height=0.08, color="white")
+    holder: dict[str, Any] = {}
+    digit.draw()
+    win.callOnFlip(_capture_flip_event, holder, marker_outlet, marker_label("stimulus_onset", planned), planned, timing, "onset")
+    win.flip()
+    _log_captured_flip_event(holder, logger, "onset")
+    onset = float(holder["onset_monotonic"])
+    onset_lsl = _optional_float(holder.get("onset_lsl"))
+    events = list(premature_events)
+    while monotonic() < onset + config.stimulus_seconds:
+        polled = keyboard.poll(
+            task_state="STIMULUS_VISIBLE",
+            assigned_trial=int(planned["global_trial_index"]),
+            assigned_block=int(planned["block_index"]),
+            assigned_phase=str(planned["phase"]),
+        )
+        events.extend(polled)
+        if any(row["is_escape_key"] for row in polled):
+            return None, True, []
+        sleep(0.002)
+    fixation.draw()
+    win.callOnFlip(_capture_flip_event, holder, marker_outlet, marker_label("stimulus_offset", planned), planned, timing, "offset")
+    win.flip()
+    _log_captured_flip_event(holder, logger, "offset")
+    response_close = onset + config.response_window_seconds
+    while monotonic() < response_close:
+        polled = keyboard.poll(
+            task_state="RESPONSE_WINDOW_MASK",
+            assigned_trial=int(planned["global_trial_index"]),
+            assigned_block=int(planned["block_index"]),
+            assigned_phase=str(planned["phase"]),
+        )
+        events.extend(polled)
+        if any(row["is_escape_key"] for row in polled):
+            return None, True, []
+        sleep(0.002)
+    response_close_lsl = None if onset_lsl is None else onset_lsl + config.response_window_seconds
+    _emit(
+        logger,
+        marker_outlet,
+        marker_label("response_window_close", planned),
+        timestamp=response_close,
+        lsl_timestamp=response_close_lsl,
+        trial=int(planned["global_trial_index"]),
+        **_marker_metadata(planned),
+    )
+    previous_experimental = max((int(row["global_trial_index"]) for row in store.records if not row.get("is_practice")), default=None)
+    record = score_dynamic_sart_trial(
+        planned,
+        events,
+        config,
+        session_id=store.paths.root.name,
+        participant_id=store.participant_id,
+        task_start_monotonic=task_start,
+        stimulus_onset_monotonic=onset,
+        stimulus_onset_lsl=onset_lsl,
+        stimulus_offset_monotonic=float(holder["offset_monotonic"]),
+        stimulus_offset_lsl=_optional_float(holder.get("offset_lsl")),
+        response_window_close_monotonic=response_close,
+        response_window_close_lsl=response_close_lsl,
+        next_trial_onset_monotonic=response_close + float(planned["planned_jitter_seconds"]),
+        display_timing=timing,
+        time_since_break_seconds=None if last_break_monotonic is None else onset - last_break_monotonic,
+        previous_trial_index=previous_experimental,
+        trials_since_no_go=_trials_since_no_go(store.records),
+        applied_task_actions=applied_task_actions,
+    )
+    store.append_trial(record)
+    _emit(
+        logger,
+        marker_outlet,
+        marker_label("trial_complete", planned),
+        timestamp=response_close,
+        lsl_timestamp=response_close_lsl,
+        trial=int(planned["global_trial_index"]),
+        primary_outcome=record["primary_outcome"],
+        correct=record["correct"],
+        reaction_time_seconds=record["reaction_time_seconds"],
+        **_marker_metadata(planned),
+    )
+    upcoming = []
+    jitter_end = response_close + float(planned["planned_jitter_seconds"])
+    while monotonic() < jitter_end:
+        assigned = int(next_trial["global_trial_index"]) if next_trial is not None else None
+        polled = keyboard.poll(
+            task_state="INTERTRIAL_INTERVAL",
+            assigned_trial=assigned,
+            assigned_block=int(next_trial["block_index"]) if next_trial is not None else None,
+            assigned_phase=str(next_trial["phase"]) if next_trial is not None else None,
+            premature=next_trial is not None,
+            late=next_trial is None,
+        )
+        upcoming.extend(polled)
+        if any(row["is_escape_key"] for row in polled):
+            return record, True, upcoming
+        sleep(0.002)
+    return record, False, upcoming
+
+
+def _capture_flip_event(
+    holder: dict[str, Any],
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet,
+    label: str,
+    planned: dict[str, Any],
+    timing: dict[str, Any],
+    kind: str,
+) -> None:
+    flip_monotonic = monotonic()
+    flip_lsl = lsl_local_clock()
+    latency = float(timing.get("fixed_display_latency_ms", 0.0)) / 1000.0
+    modeled_monotonic = flip_monotonic + latency
+    modeled_lsl = None if flip_lsl is None else flip_lsl + latency
+    if isinstance(marker_outlet, LslMarkerOutlet) and modeled_lsl is None:
+        raise RuntimeError("LSL local clock is unavailable for a required display-flip marker")
+    marker_outlet.push(label, timestamp=modeled_lsl)
+    holder[f"{kind}_monotonic"] = modeled_monotonic
+    holder[f"{kind}_lsl"] = modeled_lsl
+    holder[f"{kind}_event"] = {
+        "label": label,
+        "timestamp": modeled_monotonic,
+        "trial": int(planned["global_trial_index"]),
+        "lsl_timestamp": modeled_lsl,
+        "scheduled_on_flip": True,
+        "flip_monotonic": flip_monotonic,
+        "flip_lsl_timestamp": flip_lsl,
+        "expected_visual_onset_monotonic": modeled_monotonic,
+        "expected_visual_onset_lsl_timestamp": modeled_lsl,
+        "fixed_display_latency_ms": timing.get("fixed_display_latency_ms"),
+        "expected_visual_onset_uncertainty_ms": timing.get("expected_visual_onset_uncertainty_ms"),
+        "photodiode_verification_enabled": timing.get("photodiode_verification_enabled", False),
+        "timing_model": "psychopy_callOnFlip_plus_fixed_display_latency",
+        "task": TASK_NAME,
+        "marker_stream_name": getattr(marker_outlet, "name", None),
+        "marker_stream_type": getattr(marker_outlet, "stream_type", None),
+        "marker_stream_source_id": getattr(marker_outlet, "source_id", None),
+        "marker_emit_attempted": True,
+        **_marker_metadata(planned),
+    }
+
+
+def _capture_countdown_flip(
+    holder: dict[str, Any],
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet,
+    label: str,
+    display_value: str,
+    countdown_index: int,
+    timing: dict[str, Any],
+) -> None:
+    flip_monotonic = monotonic()
+    flip_lsl = lsl_local_clock()
+    latency = float(timing.get("fixed_display_latency_ms", 0.0)) / 1000.0
+    modeled_monotonic = flip_monotonic + latency
+    modeled_lsl = None if flip_lsl is None else flip_lsl + latency
+    if isinstance(marker_outlet, LslMarkerOutlet) and modeled_lsl is None:
+        raise RuntimeError("LSL local clock is unavailable for a required countdown display marker")
+    marker_outlet.push(label, timestamp=modeled_lsl)
+    holder["event"] = {
+        "label": label,
+        "timestamp": modeled_monotonic,
+        "lsl_timestamp": modeled_lsl,
+        "value": display_value,
+        "countdown_index": int(countdown_index),
+        "countdown_value": display_value,
+        "scheduled_on_flip": True,
+        "flip_monotonic": flip_monotonic,
+        "flip_lsl_timestamp": flip_lsl,
+        "expected_visual_onset_monotonic": modeled_monotonic,
+        "expected_visual_onset_lsl_timestamp": modeled_lsl,
+        "fixed_display_latency_ms": timing.get("fixed_display_latency_ms"),
+        "expected_visual_onset_uncertainty_ms": timing.get("expected_visual_onset_uncertainty_ms"),
+        "photodiode_verification_enabled": timing.get("photodiode_verification_enabled", False),
+        "timing_model": "psychopy_callOnFlip_plus_fixed_display_latency",
+        "task": TASK_NAME,
+        "task_state": "COUNTDOWN",
+        "marker_stream_name": getattr(marker_outlet, "name", None),
+        "marker_stream_type": getattr(marker_outlet, "stream_type", None),
+        "marker_stream_source_id": getattr(marker_outlet, "source_id", None),
+        "marker_emit_attempted": True,
+    }
+
+
+def _log_captured_countdown_flip(holder: dict[str, Any], logger: EventLogger) -> None:
+    payload = dict(holder["event"])
+    label = str(payload.pop("label"))
+    timestamp = float(payload.pop("timestamp"))
+    logger.mark(label, timestamp=timestamp, **payload)
+
+
+def _log_captured_flip_event(holder: dict[str, Any], logger: EventLogger, kind: str) -> None:
+    payload = dict(holder[f"{kind}_event"])
+    label = str(payload.pop("label"))
+    timestamp = float(payload.pop("timestamp"))
+    trial = int(payload.pop("trial"))
+    logger.mark(label, timestamp=timestamp, trial=trial, **payload)
+
+
+def _complete_support(
+    store: DynamicSartArtifactStore,
+    config: DynamicSartConfig,
+    timestamp: float,
+    logger: EventLogger,
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet,
+) -> dict[str, Any]:
+    reference = compute_support_reference(
+        store.records,
+        minimum_valid_rt_seconds=config.minimum_valid_rt_seconds,
+        response_window_seconds=config.response_window_seconds,
+        created_at_support_boundary=timestamp,
+    )
+    store.write_support_reference(reference)
+    _emit(
+        logger,
+        marker_outlet,
+        marker_label("support_complete"),
+        event_type="SYSTEM",
+        timestamp=timestamp,
+        task=TASK_NAME,
+        reference_hash=reference["reference_hash"],
+        valid_support_go_count=reference["valid_support_go_count"],
+    )
+    return reference
+
+
+def _recorder_health_gate(
+    monitor: RecorderHealthMonitor,
+    logger: EventLogger,
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet,
+    *,
+    trial: dict[str, Any] | None = None,
+) -> bool:
+    health = monitor.check()
+    if health.ok:
+        return True
+    _emit(
+        logger,
+        marker_outlet,
+        marker_label("recorder_failure", trial),
+        event_type="SYSTEM",
+        trial=None if trial is None else int(trial.get("global_trial_index", 0)),
+        reason=health.reason,
+        recorder_status=health.status.get("status"),
+        recorder_summary=health.status.get("summary"),
+    )
+    return False
+
+
+def _emit(
+    logger: EventLogger,
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet,
+    label: str,
+    *,
+    event_type: str = "EVENT",
+    timestamp: float | None = None,
+    lsl_timestamp: float | None = None,
+    trial: int | None = None,
+    value: str | None = None,
+    **metadata: Any,
+) -> Any:
+    monotonic_timestamp = monotonic() if timestamp is None else float(timestamp)
+    marker_timestamp = lsl_local_clock() if lsl_timestamp is None else lsl_timestamp
+    if isinstance(marker_outlet, LslMarkerOutlet) and marker_timestamp is None:
+        raise RuntimeError("LSL local clock is unavailable for a required DSART marker")
+    marker_outlet.push(label, timestamp=marker_timestamp)
+    metadata.setdefault("task", TASK_NAME)
+    metadata.setdefault("marker_stream_name", getattr(marker_outlet, "name", None))
+    metadata.setdefault("marker_stream_type", getattr(marker_outlet, "stream_type", None))
+    metadata.setdefault("marker_stream_source_id", getattr(marker_outlet, "source_id", None))
+    metadata.setdefault("marker_emit_attempted", True)
+    return logger.mark(
+        label,
+        event_type=event_type,
+        timestamp=monotonic_timestamp,
+        trial=trial,
+        value=value,
+        lsl_timestamp=marker_timestamp,
+        **metadata,
+    )
+
+
+def _run_dry_countdown(
+    logger: EventLogger,
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet,
+    timestamp: float,
+    step_seconds: float,
+) -> float:
+    _emit(
+        logger,
+        marker_outlet,
+        marker_label("countdown_start"),
+        event_type="SYSTEM",
+        timestamp=timestamp,
+        countdown_steps=list(EXPERIMENTAL_COUNTDOWN),
+    )
+    current = float(timestamp)
+    for index, display_value in enumerate(EXPERIMENTAL_COUNTDOWN, start=1):
+        _emit(
+            logger,
+            marker_outlet,
+            marker_label("countdown_step", step=index, value=display_value.rstrip("!")),
+            event_type="EVENT",
+            timestamp=current,
+            value=display_value,
+            countdown_index=index,
+            countdown_value=display_value,
+            scheduled_on_flip=False,
+        )
+        current += float(step_seconds)
+    _emit(
+        logger,
+        marker_outlet,
+        marker_label("countdown_end"),
+        event_type="SYSTEM",
+        timestamp=current,
+    )
+    return current
+
+
+def _run_psychopy_countdown(
+    win: Any,
+    visual: Any,
+    keyboard: PersistentKeyboardCollector,
+    logger: EventLogger,
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet,
+    timing: dict[str, Any],
+    recorder_monitor: RecorderHealthMonitor,
+    step_seconds: float,
+) -> tuple[bool, str | None]:
+    _emit(
+        logger,
+        marker_outlet,
+        marker_label("countdown_start"),
+        event_type="SYSTEM",
+        countdown_steps=list(EXPERIMENTAL_COUNTDOWN),
+    )
+    for index, display_value in enumerate(EXPERIMENTAL_COUNTDOWN, start=1):
+        if not _recorder_health_gate(recorder_monitor, logger, marker_outlet):
+            return False, "recorder_health_failure"
+        prompt = visual.TextStim(
+            win,
+            text=display_value,
+            height=0.18 if display_value != "GO!" else 0.14,
+            color="white",
+        )
+        holder: dict[str, Any] = {}
+        label = marker_label("countdown_step", step=index, value=display_value.rstrip("!"))
+        win.callOnFlip(
+            _capture_countdown_flip,
+            holder,
+            marker_outlet,
+            label,
+            display_value,
+            index,
+            timing,
+        )
+        prompt.draw()
+        win.flip()
+        _log_captured_countdown_flip(holder, logger)
+        deadline = monotonic() + float(step_seconds)
+        while monotonic() < deadline:
+            rows = keyboard.poll(task_state="COUNTDOWN")
+            if any(row["is_escape_key"] for row in rows):
+                return False, "escape_abort"
+            sleep(0.005)
+    _emit(
+        logger,
+        marker_outlet,
+        marker_label("countdown_end"),
+        event_type="SYSTEM",
+    )
+    return True, None
+
+
+def _show_screen(
+    win: Any,
+    visual: Any,
+    keyboard: PersistentKeyboardCollector,
+    text: str,
+    *,
+    state: str,
+    allowed_continue: Iterable[str],
+) -> bool:
+    allowed = set(allowed_continue)
+    prompt = visual.TextStim(win, text=text, height=0.045, color="white", wrapWidth=1.5)
+    prompt.draw()
+    win.flip()
+    while True:
+        rows = keyboard.poll(task_state=state)
+        if any(row["is_escape_key"] for row in rows):
+            return False
+        if any(row["key"] in allowed for row in rows):
+            return True
+        sleep(0.01)
+
+
+def _show_bounded_break(win: Any, visual: Any, keyboard: PersistentKeyboardCollector, seconds: float) -> bool:
+    prompt = visual.TextStim(
+        win,
+        text="Break\n\nMaintain your setup. Press SPACE when ready to continue.",
+        height=0.05,
+        color="white",
+        wrapWidth=1.5,
+    )
+    prompt.draw()
+    win.flip()
+    deadline = monotonic() + max(0.0, seconds)
+    while monotonic() < deadline:
+        rows = keyboard.poll(task_state="BREAK")
+        if any(row["is_escape_key"] for row in rows):
+            return False
+        if any(row["is_response_key"] for row in rows):
+            return True
+        sleep(0.01)
+    return True
+
+
+def _show_timed_text(
+    win: Any,
+    visual: Any,
+    keyboard: PersistentKeyboardCollector,
+    text: str,
+    seconds: float,
+) -> bool:
+    prompt = visual.TextStim(win, text=text, height=0.06, color="white")
+    prompt.draw()
+    win.flip()
+    deadline = monotonic() + max(0.0, seconds)
+    while monotonic() < deadline:
+        rows = keyboard.poll(task_state="PRACTICE_FEEDBACK")
+        if any(row["is_escape_key"] for row in rows):
+            return False
+        sleep(0.005)
+    return True
+
+
+def _show_completion(
+    win: Any,
+    visual: Any,
+    keyboard: PersistentKeyboardCollector,
+    paths: SessionPaths,
+    summary: dict[str, Any],
+    max_wait: float,
+) -> None:
+    prompt = visual.TextStim(
+        win,
+        text=_completion_text(paths, summary),
+        height=0.04,
+        color="white",
+        wrapWidth=1.6,
+    )
+    prompt.draw()
+    win.flip()
+    deadline = monotonic() + max(0.0, max_wait)
+    while monotonic() < deadline:
+        rows = keyboard.poll(task_state="COMPLETE")
+        if any(row["is_response_key"] or row["is_escape_key"] for row in rows):
+            return
+        sleep(0.02)
+
+
+def _completion_text(paths: SessionPaths, summary: dict[str, Any]) -> str:
+    completed = int(summary.get("experimental_trials") or 0)
+    planned = int(summary.get("planned_experimental_trials") or completed)
+    if not bool(summary.get("aborted")):
+        return (
+            "Dynamic SART complete\n\n"
+            f"Recorded {completed} experimental trials.\n"
+            f"Session: {paths.root}\n\nPress SPACE to close."
+        )
+    reason = str(summary.get("abort_reason") or "unknown")
+    reason_text = {
+        "practice_criteria_not_met": "Practice criteria were not met; the experimental session did not start.",
+        "escape_abort": "The task was stopped with Escape.",
+        "keyboard_interrupt": "The task was interrupted by the operator.",
+        "recorder_health_failure": "The EEG recorder stopped or became unhealthy.",
+    }.get(reason, f"The task stopped early ({reason}).")
+    return (
+        "Dynamic SART did not complete\n\n"
+        f"{reason_text}\n"
+        f"Recorded {completed} of {planned} experimental trials.\n"
+        f"Session: {paths.root}\n\nPress SPACE to close."
+    )
+
+
+def _display_timing_config(display: dict[str, Any], measured_period: Any) -> dict[str, Any]:
+    expected = max(1.0, float(display.get("expected_refresh_rate_hz", 60.0)))
+    period = _optional_float(measured_period)
+    measured = 1.0 / period if period is not None and period > 0 else expected
+    return {
+        "status": "modeled",
+        "expected_refresh_rate_hz": expected,
+        "measured_refresh_rate_hz": measured,
+        "fixed_display_latency_ms": float(display.get("fixed_display_latency_ms", 0.0)),
+        "expected_visual_onset_uncertainty_ms": 500.0 / measured,
+        "photodiode_verification_enabled": bool(display.get("photodiode_patch", False)),
+    }
+
+
+def _make_marker_outlet(markers: dict[str, Any], paths: SessionPaths) -> LslMarkerOutlet | NullMarkerOutlet:
+    try:
+        return LslMarkerOutlet(
+            name=str(markers.get("lsl_stream_name", "EEGleMarkers")),
+            stream_type=str(markers.get("lsl_stream_type", "Markers")),
+            source_id=str(markers.get("source_id") or session_marker_source_id(paths.root)),
+        )
+    except Exception as exc:
+        if bool(markers.get("required_for_realtime", False)):
+            raise RuntimeError(f"required LSL marker outlet could not be created: {type(exc).__name__}: {exc}") from exc
+        return NullMarkerOutlet(f"{type(exc).__name__}: {exc}")
+
+
+def _practice_feedback(record: dict[str, Any], no_go_digit: int) -> str:
+    if record["primary_outcome"] == "commission_error":
+        return f"Do not press for {no_go_digit}."
+    if record["primary_outcome"] == "omission_error":
+        return "Press SPACE for go digits."
+    return "Check the response rule."
+
+
+def _block_result(
+    planned: list[dict[str, Any]],
+    completed: list[dict[str, Any]],
+    *,
+    criteria: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    first = planned[0] if planned else {}
+    return {
+        "schema": BLOCK_SCHEMA,
+        "block_index": first.get("block_index"),
+        "block_name": first.get("block_name"),
+        "phase": first.get("phase"),
+        "planned_trials": len(planned),
+        "completed_trials": len(completed),
+        "correct_trials": sum(int(bool(row.get("correct"))) for row in completed),
+        "start_trial": first.get("global_trial_index"),
+        "end_trial": planned[-1].get("global_trial_index") if planned else None,
+        "criteria": criteria,
+    }
+
+
+def _marker_metadata(planned: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "phase": planned.get("phase"),
+        "practice": bool(planned.get("is_practice")),
+        "condition": planned.get("condition"),
+        "digit": planned.get("digit"),
+        "block": planned.get("block_index"),
+        "sequence_id": planned.get("sequence_id"),
+    }
+
+
+def _next_experimental_trial(rows: list[dict[str, Any]], current: int) -> dict[str, Any] | None:
+    return next((row for row in rows if int(row["global_trial_index"]) == current + 1), None)
+
+
+def _trials_since_no_go(records: list[dict[str, Any]]) -> int | None:
+    experimental = [row for row in records if not row.get("is_practice")]
+    for distance, row in enumerate(reversed(experimental), start=1):
+        if bool(row.get("is_no_go")):
+            return distance
+    return None
+
+
+def _participant_id(paths: SessionPaths, explicit: str | None) -> str:
+    if explicit:
+        return explicit
+    try:
+        with paths.manifest.open("r", encoding="utf-8") as handle:
+            return str(json.load(handle).get("participant_id", "unknown-participant"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return "unknown-participant"
+
+
+def _csv_value(value: Any) -> Any:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return value
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    temporary.replace(path)
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None

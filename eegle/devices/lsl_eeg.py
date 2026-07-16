@@ -10,6 +10,8 @@ from pathlib import Path
 from time import monotonic
 from typing import Any
 
+import numpy as np
+
 from eegle.hardware.eeg_device import matching_eeg_streams
 from eegle.hardware.profiles import mapped_channel_names
 from eegle.lsl import inlet_time_correction, lsl_processing_flags
@@ -107,6 +109,7 @@ class LslEegRecorder:
             self._write_metadata()
             return
 
+        inlet: Any | None = None
         try:
             info, stream = _select_lsl_info(pylsl, self.eeg_config, self.stream_timeout_seconds)
             if info is None:
@@ -121,18 +124,24 @@ class LslEegRecorder:
                 max_buflen=60,
                 max_chunklen=32,
                 recover=True,
-                processing_flags=lsl_processing_flags(pylsl, dejitter=True),
+                processing_flags=_eeg_inlet_processing_flags(pylsl, self.eeg_config),
             )
             inlet.open_stream(timeout=self.stream_timeout_seconds)
             raw_channel_labels = _channel_labels(info) or _default_channel_labels(info.channel_count())
             channel_labels, mapping_source = mapped_channel_names(raw_channel_labels, self.eeg_config)
+            source_preserving = _source_preserving_recording(self.eeg_config)
+            time_correction = inlet_time_correction(inlet)
             stream = dict(stream or {})
             stream.update(
                 {
                     "channel_names": channel_labels,
+                    "original_channel_names": raw_channel_labels,
                     "channel_mapping_source": mapping_source,
-                    "lsl_processing": ["clocksync", "dejitter", "monotonize"],
-                    "initial_time_correction_seconds": inlet_time_correction(inlet),
+                    "channel_value_order_changed": False,
+                    "lsl_processing": [] if source_preserving else ["clocksync", "dejitter", "monotonize"],
+                    "recording_timestamp_mode": "source_preserving" if source_preserving else "legacy_processed",
+                    "initial_time_correction_seconds": time_correction,
+                    "amplitude_transformations": [],
                 }
             )
             self._summary.stream = stream
@@ -142,27 +151,56 @@ class LslEegRecorder:
 
             with self.raw_file.open("w", encoding="utf-8", newline="") as handle:
                 writer = csv.writer(handle)
-                writer.writerow(["lsl_timestamp", "local_received_time", *channel_labels])
+                timestamp_columns = ["lsl_timestamp", "local_received_time"]
+                if source_preserving:
+                    timestamp_columns.extend(["source_lsl_timestamp", "lsl_time_correction_seconds"])
+                writer.writerow([*timestamp_columns, *channel_labels])
+                last_correction_refresh = monotonic()
                 while not self._stop.is_set():
                     samples, timestamps = inlet.pull_chunk(timeout=0.2, max_samples=64)
                     if not samples:
                         continue
+                    if len(samples) != len(timestamps):
+                        raise RuntimeError(
+                            f"LSL EEG chunk sample/timestamp count mismatch: {len(samples)} samples, "
+                            f"{len(timestamps)} timestamps"
+                        )
                     received_at = monotonic()
+                    if source_preserving and received_at - last_correction_refresh >= 10.0:
+                        refreshed = inlet_time_correction(inlet, timeout=0.05)
+                        if refreshed is not None:
+                            time_correction = refreshed
+                        last_correction_refresh = received_at
                     received_times = _local_received_times_for_chunk(timestamps, received_at)
-                    for sample, timestamp, received_time in zip(samples, timestamps, received_times):
-                        writer.writerow([f"{timestamp:.9f}", f"{received_time:.9f}", *sample])
+                    for sample, source_timestamp, received_time in zip(samples, timestamps, received_times):
+                        if len(sample) != len(channel_labels):
+                            raise RuntimeError(
+                                f"LSL EEG sample width changed: expected {len(channel_labels)} values, got {len(sample)}"
+                            )
+                        row, corrected_timestamp = _recorded_eeg_row(
+                            sample,
+                            source_timestamp=float(source_timestamp),
+                            received_time=float(received_time),
+                            time_correction=time_correction,
+                            source_preserving=source_preserving,
+                        )
+                        writer.writerow(row)
                         self._summary.sample_count += 1
                         if self._summary.first_lsl_timestamp is None:
-                            self._summary.first_lsl_timestamp = float(timestamp)
-                        self._summary.last_lsl_timestamp = float(timestamp)
+                            self._summary.first_lsl_timestamp = corrected_timestamp
+                        self._summary.last_lsl_timestamp = corrected_timestamp
                     handle.flush()
             self._summary.status = "stopped"
-            inlet.close_stream()
         except Exception as exc:
             self._summary.status = "failed"
             self._summary.error = f"{type(exc).__name__}: {exc}"
             self._ready.set()
         finally:
+            if inlet is not None:
+                try:
+                    inlet.close_stream()
+                except Exception as exc:
+                    self._summary.notes.append(f"LSL inlet cleanup failed: {type(exc).__name__}: {exc}")
             self._write_metadata()
 
     def _write_metadata(self) -> None:
@@ -170,6 +208,23 @@ class LslEegRecorder:
         payload["started_at_monotonic"] = self._started_at
         payload["finished_at_monotonic"] = self._finished_at
         payload["eeg_config"] = self.eeg_config
+        payload["raw_sample_contract"] = {
+            "amplitude_samples_modified": False,
+            "amplitude_transformations": [],
+            "channel_value_order_modified": False,
+            "recording_timestamp_mode": (
+                "source_preserving" if _source_preserving_recording(self.eeg_config) else "legacy_processed"
+            ),
+            "source_timestamp_retained": _source_preserving_recording(self.eeg_config),
+            "initial_time_correction_available": (
+                (self._summary.stream or {}).get("initial_time_correction_seconds") is not None
+            ),
+            "corrected_timestamp_formula": "source_lsl_timestamp + lsl_time_correction_seconds",
+            "filtering": "none",
+            "resampling": "none",
+            "rereferencing": "none",
+            "artifact_rejection": "none",
+        }
         self.metadata_file.parent.mkdir(parents=True, exist_ok=True)
         with self.metadata_file.open("w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
@@ -197,6 +252,31 @@ def _local_received_times_for_chunk(timestamps: list[float], received_at: float)
     return received
 
 
+def _recorded_eeg_row(
+    sample: list[float],
+    *,
+    source_timestamp: float,
+    received_time: float,
+    time_correction: float | None,
+    source_preserving: bool,
+) -> tuple[list[Any], float]:
+    corrected_timestamp = float(source_timestamp)
+    if source_preserving and time_correction is not None:
+        corrected_timestamp += float(time_correction)
+    if source_preserving:
+        return (
+            [
+                f"{corrected_timestamp:.9f}",
+                f"{received_time:.9f}",
+                f"{float(source_timestamp):.9f}",
+                "nan" if time_correction is None else f"{float(time_correction):.9f}",
+                *sample,
+            ],
+            corrected_timestamp,
+        )
+    return [f"{corrected_timestamp:.9f}", f"{received_time:.9f}", *sample], corrected_timestamp
+
+
 def probe_eeg_stream(eeg_config: dict[str, Any], seconds: float = 2.0, timeout: float = 5.0) -> dict[str, Any]:
     """Connect to a matching EEG stream and count samples for a short period."""
     try:
@@ -208,26 +288,40 @@ def probe_eeg_stream(eeg_config: dict[str, Any], seconds: float = 2.0, timeout: 
     if info is None:
         return {"status": "missing", "error": "no matching LSL EEG stream found"}
 
+    inlet: Any | None = None
     try:
         inlet = pylsl.StreamInlet(
             info,
             max_buflen=10,
             max_chunklen=32,
             recover=True,
-            processing_flags=lsl_processing_flags(pylsl, dejitter=True),
+            processing_flags=_eeg_inlet_processing_flags(pylsl, eeg_config),
         )
         inlet.open_stream(timeout=timeout)
+        time_correction = inlet_time_correction(inlet)
         deadline = monotonic() + seconds
         sample_count = 0
         first_ts = None
         last_ts = None
+        captured_samples: list[list[float]] = []
+        captured_timestamps: list[float] = []
         while monotonic() < deadline:
             samples, timestamps = inlet.pull_chunk(timeout=0.2, max_samples=64)
             sample_count += len(samples)
+            captured_samples.extend(samples)
+            captured_timestamps.extend(float(value) for value in timestamps)
             if timestamps:
                 first_ts = timestamps[0] if first_ts is None else first_ts
                 last_ts = timestamps[-1]
-        inlet.close_stream()
+        raw_channel_names = _channel_labels(info) or _default_channel_labels(info.channel_count())
+        channel_names, mapping_source = mapped_channel_names(raw_channel_names, eeg_config)
+        quality = _eeg_probe_quality(
+            captured_samples,
+            captured_timestamps,
+            channel_names,
+            float(info.nominal_srate() or eeg_config.get("expected_sample_rate_hz", 0) or 0),
+            eeg_config,
+        )
         return {
             "status": "ok" if sample_count > 0 else "warn",
             "stream": stream,
@@ -235,9 +329,113 @@ def probe_eeg_stream(eeg_config: dict[str, Any], seconds: float = 2.0, timeout: 
             "first_lsl_timestamp": first_ts,
             "last_lsl_timestamp": last_ts,
             "probe_seconds": seconds,
+            "original_channel_names": raw_channel_names,
+            "mapped_channel_names": channel_names,
+            "channel_mapping_source": mapping_source,
+            "initial_time_correction_seconds": time_correction,
+            "recording_timestamp_mode": (
+                "source_preserving" if _source_preserving_recording(eeg_config) else "legacy_processed"
+            ),
+            "quality": quality,
         }
     except Exception as exc:
         return {"status": "failed", "stream": stream, "error": f"{type(exc).__name__}: {exc}"}
+    finally:
+        if inlet is not None:
+            try:
+                inlet.close_stream()
+            except Exception:
+                pass
+
+
+def _eeg_probe_quality(
+    samples: list[list[float]],
+    timestamps: list[float],
+    channel_names: list[str],
+    sample_rate_hz: float,
+    eeg_config: dict[str, Any],
+) -> dict[str, Any]:
+    quality_config = dict(eeg_config.get("quality_check", {}) or {})
+    minimum_std = float(quality_config.get("minimum_channel_std", 1e-12))
+    maximum_abs_value = quality_config.get("maximum_absolute_value")
+    maximum_abs = None if maximum_abs_value is None else float(maximum_abs_value)
+    signal_units = str(eeg_config.get("lsl_signal_units") or "native_lsl_units")
+    mains_hz = float(quality_config.get("line_noise_hz", 60.0))
+    line_ratio_warning = float(quality_config.get("line_noise_ratio_warning", 0.25))
+    valid_rows = [row for row in samples if len(row) >= len(channel_names)]
+    values = np.asarray([row[: len(channel_names)] for row in valid_rows], dtype=float) if valid_rows else np.empty((0, len(channel_names)))
+    timestamp_values = np.asarray(timestamps, dtype=float)
+    timestamp_differences = np.diff(timestamp_values) if timestamp_values.size > 1 else np.asarray([], dtype=float)
+    channel_results = []
+    for index, name in enumerate(channel_names):
+        column = values[:, index] if values.size else np.asarray([], dtype=float)
+        finite = np.isfinite(column)
+        finite_values = column[finite]
+        finite_fraction = float(np.mean(finite)) if column.size else 0.0
+        std = float(np.std(finite_values)) if finite_values.size else None
+        peak_to_peak = float(np.ptp(finite_values)) if finite_values.size else None
+        max_abs = float(np.max(np.abs(finite_values))) if finite_values.size else None
+        line_ratio = _line_noise_ratio(finite_values, sample_rate_hz, mains_hz)
+        flat = std is not None and std < minimum_std
+        extreme = maximum_abs is not None and max_abs is not None and max_abs > maximum_abs
+        warnings = []
+        if finite_fraction < 1.0:
+            warnings.append("non_finite_samples")
+        if flat:
+            warnings.append("flat_channel")
+        if extreme:
+            warnings.append("extreme_amplitude")
+        if line_ratio is not None and line_ratio > line_ratio_warning:
+            warnings.append("line_noise")
+        channel_results.append(
+            {
+                "channel_index": index + 1,
+                "channel_name": name,
+                "finite_sample_fraction": finite_fraction,
+                "standard_deviation_native_units": std,
+                "peak_to_peak_native_units": peak_to_peak,
+                "maximum_absolute_native_units": max_abs,
+                "line_noise_ratio": line_ratio,
+                "flatline": flat,
+                "extreme_amplitude": extreme,
+                "status": "warning" if warnings else "good",
+                "warnings": warnings,
+            }
+        )
+    return {
+        "sample_count": int(values.shape[0]),
+        "channel_count": len(channel_names),
+        "sample_rate_hz": sample_rate_hz,
+        "signal_units": signal_units,
+        "timestamps_finite": bool(timestamp_values.size and np.all(np.isfinite(timestamp_values))),
+        "timestamps_strictly_increasing": bool(timestamp_differences.size and np.all(timestamp_differences > 0)),
+        "median_timestamp_step_seconds": float(np.median(timestamp_differences)) if timestamp_differences.size else None,
+        "maximum_timestamp_gap_seconds": float(np.max(timestamp_differences)) if timestamp_differences.size else None,
+        "channels": channel_results,
+        "warning_channels": [row["channel_name"] for row in channel_results if row["status"] != "good"],
+    }
+
+
+def _line_noise_ratio(values: np.ndarray, sample_rate_hz: float, mains_hz: float) -> float | None:
+    if values.size < 16 or sample_rate_hz <= 0 or mains_hz <= 0 or mains_hz >= sample_rate_hz / 2:
+        return None
+    centered = values - float(np.mean(values))
+    power = np.abs(np.fft.rfft(centered)) ** 2
+    frequencies = np.fft.rfftfreq(centered.size, d=1.0 / sample_rate_hz)
+    total_mask = (frequencies >= 1.0) & (frequencies <= min(100.0, sample_rate_hz / 2))
+    line_mask = np.abs(frequencies - mains_hz) <= 1.0
+    total = float(np.sum(power[total_mask]))
+    return None if total <= 0 else float(np.sum(power[line_mask])) / total
+
+
+def _source_preserving_recording(eeg_config: dict[str, Any]) -> bool:
+    return str(eeg_config.get("recording_lsl_processing", "legacy_processed")) == "source_preserving"
+
+
+def _eeg_inlet_processing_flags(pylsl: Any, eeg_config: dict[str, Any]) -> int:
+    if _source_preserving_recording(eeg_config):
+        return int(getattr(pylsl, "proc_none", 0))
+    return lsl_processing_flags(pylsl, dejitter=True)
 
 
 def _select_lsl_info(pylsl: Any, eeg_config: dict[str, Any], timeout: float) -> tuple[Any | None, dict[str, Any] | None]:

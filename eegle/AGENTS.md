@@ -7,7 +7,7 @@
 
 - `cli.py`: generic command parser and command handlers.
 - `pipelines/`: top-level operator workflows that configure and call shared
-  orchestration.
+  orchestration, including the abort-safe `dsart8`/`dsart32` recording suite.
 - `experiment.py`: forward task plus recording orchestration.
 - `feedback_manager.py`: managed process lifecycle for recorder, realtime
   processor, dashboard, and offline analyzer.
