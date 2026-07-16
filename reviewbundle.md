@@ -290,3 +290,53 @@ $LASTEXITCODE
 ```
 
 If a formal recording is interrupted, rerun its exact command with `--resume`.
+
+You’re right—the config-writing function was unnecessary. Do not use `Write-DsartConfig`, `New-Object`, or any PowerShell script. Run these directly from the repository folder.
+
+```powershell
+Set-Location "C:\Users\Surettej\Documents\Codespace\eegle"
+```
+
+### 1. PsychoPy tests without EEG
+
+```powershell
+.\.venv\Scripts\dsart8.exe --config .\configs\record_dsart8.json --participant smoke-dsart8 --visit-id smoke-dsart8-001 --task-mode psychopy --trials 10 --baseline-seconds 2 --break-seconds 0 --skip-eeg --window-size 1000 700 --session-root "$env:LOCALAPPDATA\EEGle\data"
+```
+
+```powershell
+.\.venv\Scripts\dsart32.exe --config .\configs\record_dsart32.json --participant smoke-dsart32 --visit-id smoke-dsart32-001 --task-mode psychopy --trials 10 --baseline-seconds 2 --break-seconds 0 --skip-eeg --window-size 1000 700 --session-root "$env:LOCALAPPDATA\EEGle\data"
+```
+
+### 2. Check EEG input
+
+Connect/start the DSART8 EEG outlet:
+
+```powershell
+.\.venv\Scripts\eegle.exe check-setup --config .\configs\record_dsart8.json --require-eeg --lsl-wait 10 --save "$env:LOCALAPPDATA\EEGle\dsart8-check.json"
+```
+
+Then switch to the DSART32 outlet:
+
+```powershell
+.\.venv\Scripts\eegle.exe check-setup --config .\configs\record_dsart32.json --require-eeg --lsl-wait 10 --save "$env:LOCALAPPDATA\EEGle\dsart32-check.json"
+```
+
+### 3. Full DSART8 recording
+
+```powershell
+.\.venv\Scripts\dsart8.exe --config .\configs\record_dsart8.json --participant sub-001 --visit-id dsart8-visit-001 --operator operator-id --task-mode psychopy --session-root "$env:LOCALAPPDATA\EEGle\data" --lsl-wait 10
+```
+
+### 4. Full DSART32 recording
+
+```powershell
+.\.venv\Scripts\dsart32.exe --config .\configs\record_dsart32.json --participant sub-001 --visit-id dsart32-visit-001 --operator operator-id --task-mode psychopy --session-root "$env:LOCALAPPDATA\EEGle\data" --lsl-wait 10
+```
+
+These commands only invoke executables and pass arguments. The Python suite creates the directories itself, and the recordings go under:
+
+```text
+C:\Users\Surettej\AppData\Local\EEGle\data
+```
+
+No PowerShell language features beyond ordinary environment-variable expansion are required.
