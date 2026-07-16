@@ -332,6 +332,7 @@ approved user-writable root:
 ```powershell
 $EegleData = Join-Path $env:LOCALAPPDATA "EEGle\data"
 $env:EEGLE_SESSION_ROOT = $EegleData
+$env:EEGLE_RUNTIME_CACHE_ROOT = "$env:LOCALAPPDATA\EEGle\runtime"
 dsart8 --participant local-smoke --visit-id smoke-001 --task-mode psychopy --trials 10 --baseline-seconds 2 --break-seconds 0 --skip-eeg --window-size 1000 700 --session-root $EegleData
 ```
 
@@ -344,6 +345,8 @@ visit manifest and child `parameters.json` files before any PsychoPy runtime
 code redirects cache-related environment variables. Relative runtime caches
 such as `.runtime` are also resolved beneath that approved root, so PsychoPy,
 Matplotlib, and LSL do not write back into the repository in `Documents`.
+`EEGLE_RUNTIME_CACHE_ROOT` provides a direct override for constrained-language
+shells and setup checks without requiring a generated JSON config.
 
 This does not copy experiment data or runtime caches back into the checkout. If
 `$EegleData` points at `LOCALAPPDATA`, both remain there unless an operator

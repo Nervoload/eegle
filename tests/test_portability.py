@@ -20,7 +20,7 @@ from eegle.hardware.os_support import check_os_support
 from eegle.hardware.system import CheckResult, check_platform, check_python
 from eegle.lsl import LslStream
 from eegle.preflight import run_preflight
-from eegle.runtime import _disable_psychopy_glfw, ensure_runtime_environment
+from eegle.runtime import _disable_psychopy_glfw, ensure_runtime_environment, resolve_runtime_cache_root
 from eegle.session import create_session
 
 
@@ -96,6 +96,40 @@ class PortabilityTests(unittest.TestCase):
                 self.assertEqual(os.environ["LOCALAPPDATA"], str(root / "local_appdata"))
                 self.assertEqual(os.environ["CLOSEDLOOP_ORIGINAL_USERPROFILE"], "C:\\Users\\RealUser")
                 self.assertTrue((root / "lsl_api.cfg").exists())
+
+    def test_runtime_cache_env_override_supports_constrained_windows_shells(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "approved-runtime"
+            with patch.dict(
+                os.environ,
+                {"EEGLE_RUNTIME_CACHE_ROOT": str(cache)},
+                clear=True,
+            ):
+                self.assertEqual(resolve_runtime_cache_root(".runtime"), cache.resolve())
+                self.assertEqual(ensure_runtime_environment(".runtime"), cache.resolve())
+
+    def test_relative_runtime_cache_falls_back_below_session_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session_root = Path(tmp) / "approved-data"
+            with patch.dict(
+                os.environ,
+                {"EEGLE_SESSION_ROOT": str(session_root)},
+                clear=True,
+            ):
+                self.assertEqual(
+                    resolve_runtime_cache_root(".runtime"),
+                    (session_root / ".runtime").resolve(),
+                )
+
+    def test_absolute_runtime_cache_is_not_replaced_by_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            explicit = Path(tmp) / "explicit-runtime"
+            with patch.dict(
+                os.environ,
+                {"EEGLE_RUNTIME_CACHE_ROOT": str(Path(tmp) / "environment-runtime")},
+                clear=True,
+            ):
+                self.assertEqual(resolve_runtime_cache_root(explicit), explicit.resolve())
 
     def test_eegle_session_root_env_overrides_default_session_data_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

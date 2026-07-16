@@ -70,6 +70,7 @@ baseline/DSART child sessions:
 ```powershell
 $EegleData = Join-Path $env:LOCALAPPDATA "EEGle\data"
 $env:EEGLE_SESSION_ROOT = $EegleData
+$env:EEGLE_RUNTIME_CACHE_ROOT = "$env:LOCALAPPDATA\EEGle\runtime"
 dsart8 --participant sub-001 --visit-id visit-20260716 --operator operator-id --session-root $EegleData
 ```
 
@@ -79,6 +80,18 @@ suite resolves and persists this path before the PsychoPy runtime redirects
 `LOCALAPPDATA` for dependency caches, so parent manifests, preflights,
 baselines, isolated worker artifacts, and both DSART sessions stay together.
 Use the same root and identity when resuming.
+
+In PowerShell Constrained Language Mode, avoid shell-side JSON conversion and
+static .NET calls. Simple environment assignments are sufficient:
+
+```powershell
+$env:EEGLE_SESSION_ROOT = "$env:LOCALAPPDATA\EEGle\data"
+$env:EEGLE_RUNTIME_CACHE_ROOT = "$env:LOCALAPPDATA\EEGle\runtime"
+```
+
+Relative runtime-cache settings then resolve below the approved cache root.
+Commands may be launched directly through `.venv\Scripts\*.exe` without
+activating the virtual environment.
 
 The selected root is write-probed before acquisition. Atomic suite reports use
 unique temporary files and retry short-lived Windows access/sharing denials;

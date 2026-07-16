@@ -7,11 +7,37 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_CACHE_ROOT_ENV_VARS = ("EEGLE_RUNTIME_CACHE_ROOT", "CLOSEDLOOP_RUNTIME_CACHE_ROOT")
+SESSION_ROOT_ENV_VARS = ("EEGLE_SESSION_ROOT", "CLOSEDLOOP_SESSION_ROOT")
+
+
+def resolve_runtime_cache_root(cache_dir: str | Path = ".runtime") -> Path:
+    """Resolve caches without requiring shell-side JSON rewriting.
+
+    Absolute config paths remain authoritative. Relative paths may be moved by
+    a dedicated cache-root environment variable, then by the selected session
+    root. This keeps constrained Windows shells to simple environment-variable
+    assignments.
+    """
+
+    candidate = Path(os.path.expandvars(str(cache_dir))).expanduser()
+    if candidate.is_absolute():
+        return candidate.resolve()
+    for name in RUNTIME_CACHE_ROOT_ENV_VARS:
+        value = os.environ.get(name)
+        if value is not None and value.strip():
+            return Path(os.path.expandvars(value)).expanduser().resolve()
+    for name in SESSION_ROOT_ENV_VARS:
+        value = os.environ.get(name)
+        if value is not None and value.strip():
+            session_root = Path(os.path.expandvars(value)).expanduser()
+            return (session_root / candidate).resolve()
+    return (PROJECT_ROOT / candidate).resolve()
 
 
 def ensure_runtime_environment(cache_dir: str | Path = ".runtime") -> Path:
     """Create local writable runtime cache dirs and export useful env vars."""
-    cache_root = (PROJECT_ROOT / cache_dir).resolve()
+    cache_root = resolve_runtime_cache_root(cache_dir)
     matplotlib_dir = cache_root / "matplotlib"
     psychopy_home = cache_root / "psychopy_home"
     psychopy_dir = psychopy_home / ".psychopy3"

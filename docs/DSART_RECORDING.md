@@ -106,6 +106,7 @@ the same approved-root pattern as `attention8`:
 ```powershell
 $EegleData = Join-Path $env:LOCALAPPDATA "EEGle\data"
 $env:EEGLE_SESSION_ROOT = $EegleData
+$env:EEGLE_RUNTIME_CACHE_ROOT = "$env:LOCALAPPDATA\EEGle\runtime"
 dsart8 --participant local-smoke --visit-id smoke-001 --task-mode psychopy --trials 10 --baseline-seconds 2 --break-seconds 0 --skip-eeg --window-size 1000 700 --session-root $EegleData
 ```
 
@@ -126,6 +127,9 @@ Relative runtime caches are resolved below the same approved root. This route
 therefore does not silently mirror participant data or PsychoPy, Matplotlib, or
 LSL caches back into the Git checkout. Data under `$EegleData` stays under
 `LOCALAPPDATA` until deliberately copied to an approved analysis location.
+For Constrained Language Mode, set `EEGLE_SESSION_ROOT` and
+`EEGLE_RUNTIME_CACHE_ROOT` directly and run the virtual-environment executables;
+no PowerShell functions or JSON rewriting are required.
 
 Shortened `--trials` rehearsals skip participant qualification practice by
 default, so `--trials 10` means exactly ten experimental trials in each

@@ -174,3 +174,119 @@ if ($LASTEXITCODE -ne 0) {
 ```
 
 If a formal visit is interrupted, rerun its exact command with `--resume`; keep the same participant, visit ID, config, and session root.
+
+I changed the runtime so JSON rewriting is no longer necessary. Relative caches now honor:
+
+- `EEGLE_RUNTIME_CACHE_ROOT`
+- Otherwise, `EEGLE_SESSION_ROOT`
+
+This works for `eegle check-setup` as well as both DSART suites. The full suite passes: **252 tests**.
+
+Use these Constrained Language Mode-safe commands. They avoid activation scripts, PowerShell functions, `New-Object`, JSON conversion, and static .NET calls.
+
+### Preparation
+
+```powershell
+Set-Location "C:\Users\Surettej\Documents\Codespace\eegle"
+
+$env:EEGLE_SESSION_ROOT = "$env:LOCALAPPDATA\EEGle\data"
+$env:EEGLE_RUNTIME_CACHE_ROOT = "$env:LOCALAPPDATA\EEGle\runtime"
+
+.\.venv\Scripts\python.exe -m pip install -e ".[runtime,ml]"
+```
+
+The Python code creates the data and runtime directories automatically.
+
+### 1. PsychoPy tests without EEG
+
+Use new visit IDs if you repeat these tests.
+
+```powershell
+.\.venv\Scripts\dsart8.exe `
+  --config .\configs\record_dsart8.json `
+  --participant smoke-noeeg-dsart8 `
+  --visit-id smoke-dsart8-001 `
+  --task-mode psychopy `
+  --trials 10 `
+  --baseline-seconds 2 `
+  --break-seconds 0 `
+  --skip-eeg `
+  --window-size 1000 700 `
+  --session-root "$env:EEGLE_SESSION_ROOT"
+```
+
+```powershell
+.\.venv\Scripts\dsart32.exe `
+  --config .\configs\record_dsart32.json `
+  --participant smoke-noeeg-dsart32 `
+  --visit-id smoke-dsart32-001 `
+  --task-mode psychopy `
+  --trials 10 `
+  --baseline-seconds 2 `
+  --break-seconds 0 `
+  --skip-eeg `
+  --window-size 1000 700 `
+  --session-root "$env:EEGLE_SESSION_ROOT"
+```
+
+### 2. Check live EEG
+
+Start only the DSART8/NIC2 outlet:
+
+```powershell
+.\.venv\Scripts\eegle.exe check-setup `
+  --config .\configs\record_dsart8.json `
+  --require-eeg `
+  --lsl-wait 10 `
+  --save "$env:EEGLE_SESSION_ROOT\setup-checks\dsart8-check.json"
+```
+
+Stop DSART8, then start only the DSART32/NIC2 outlet:
+
+```powershell
+.\.venv\Scripts\eegle.exe check-setup `
+  --config .\configs\record_dsart32.json `
+  --require-eeg `
+  --lsl-wait 10 `
+  --save "$env:EEGLE_SESSION_ROOT\setup-checks\dsart32-check.json"
+```
+
+Only proceed when each command exits successfully and reports exactly one matching stream, the expected channel count, and 500 Hz.
+
+### 3. Full DSART8 recording
+
+Restart the DSART8/NIC2 outlet and replace the identifiers:
+
+```powershell
+.\.venv\Scripts\dsart8.exe `
+  --config .\configs\record_dsart8.json `
+  --participant sub-001 `
+  --visit-id dsart8-visit-001 `
+  --operator operator-id `
+  --task-mode psychopy `
+  --session-root "$env:EEGLE_SESSION_ROOT" `
+  --lsl-wait 10
+```
+
+### 4. Full DSART32 recording
+
+Stop DSART8, start the DSART32/NIC2 outlet, and replace the identifiers:
+
+```powershell
+.\.venv\Scripts\dsart32.exe `
+  --config .\configs\record_dsart32.json `
+  --participant sub-002 `
+  --visit-id dsart32-visit-001 `
+  --operator operator-id `
+  --task-mode psychopy `
+  --session-root "$env:EEGLE_SESSION_ROOT" `
+  --lsl-wait 10
+```
+
+Run each command separately and confirm `$LASTEXITCODE` is `0` before proceeding:
+
+```powershell
+$LASTEXITCODE
+```
+
+If a formal recording is interrupted, rerun its exact command with `--resume`.
