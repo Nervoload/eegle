@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import csv
 import json
+import os
+import shutil
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from time import monotonic
+from time import monotonic, monotonic_ns, sleep
 from typing import Any
 
 import numpy as np
@@ -27,6 +29,11 @@ class EegRecorderSummary:
     first_lsl_timestamp: float | None = None
     last_lsl_timestamp: float | None = None
     duration_seconds: float | None = None
+    timestamp_gap_count: int = 0
+    largest_timestamp_gap_seconds: float = 0.0
+    estimated_missing_samples: int = 0
+    nonmonotonic_timestamp_count: int = 0
+    minimum_free_bytes_observed: int | None = None
     error: str | None = None
     notes: list[str] = field(default_factory=list)
 
@@ -40,6 +47,11 @@ class EegRecorderSummary:
             "first_lsl_timestamp": self.first_lsl_timestamp,
             "last_lsl_timestamp": self.last_lsl_timestamp,
             "duration_seconds": self.duration_seconds,
+            "timestamp_gap_count": self.timestamp_gap_count,
+            "largest_timestamp_gap_seconds": self.largest_timestamp_gap_seconds,
+            "estimated_missing_samples": self.estimated_missing_samples,
+            "nonmonotonic_timestamp_count": self.nonmonotonic_timestamp_count,
+            "minimum_free_bytes_observed": self.minimum_free_bytes_observed,
             "error": self.error,
             "notes": self.notes,
         }
@@ -59,6 +71,19 @@ class LslEegRecorder:
         self.raw_file = Path(raw_file)
         self.metadata_file = Path(metadata_file)
         self.stream_timeout_seconds = stream_timeout_seconds
+        self.maximum_timestamp_gap_seconds = max(
+            0.01,
+            float(eeg_config.get("maximum_timestamp_gap_seconds", 0.1)),
+        )
+        self.abort_on_timestamp_gap = bool(eeg_config.get("abort_on_timestamp_gap", False))
+        self.minimum_free_bytes = max(
+            0,
+            int(eeg_config.get("minimum_free_bytes_during_recording", 512 * 1024 * 1024)),
+        )
+        self.disk_check_interval_seconds = max(
+            1.0,
+            float(eeg_config.get("disk_check_interval_seconds", 5.0)),
+        )
         self._stop = threading.Event()
         self._ready = threading.Event()
         self._thread: threading.Thread | None = None
@@ -92,7 +117,11 @@ class LslEegRecorder:
     def stop(self) -> dict[str, Any]:
         self._stop.set()
         if self._thread:
-            self._thread.join(timeout=3.0)
+            self._thread.join(timeout=10.0)
+            if self._thread.is_alive():
+                self._summary.status = "failed"
+                self._summary.error = "EEG recorder thread did not stop within 10 seconds"
+                self._summary.notes.append("raw CSV writer may not have closed cleanly")
         self._finished_at = monotonic()
         if self._summary.first_lsl_timestamp is not None and self._summary.last_lsl_timestamp is not None:
             self._summary.duration_seconds = self._summary.last_lsl_timestamp - self._summary.first_lsl_timestamp
@@ -156,6 +185,14 @@ class LslEegRecorder:
                     timestamp_columns.extend(["source_lsl_timestamp", "lsl_time_correction_seconds"])
                 writer.writerow([*timestamp_columns, *channel_labels])
                 last_correction_refresh = monotonic()
+                last_disk_check = monotonic()
+                last_source_timestamp: float | None = None
+                expected_sample_rate = float(
+                    stream.get("nominal_srate")
+                    or self.eeg_config.get("expected_sample_rate_hz")
+                    or 0.0
+                )
+                self._check_disk_space()
                 while not self._stop.is_set():
                     samples, timestamps = inlet.pull_chunk(timeout=0.2, max_samples=64)
                     if not samples:
@@ -166,6 +203,9 @@ class LslEegRecorder:
                             f"{len(timestamps)} timestamps"
                         )
                     received_at = monotonic()
+                    if received_at - last_disk_check >= self.disk_check_interval_seconds:
+                        self._check_disk_space()
+                        last_disk_check = received_at
                     if source_preserving and received_at - last_correction_refresh >= 10.0:
                         refreshed = inlet_time_correction(inlet, timeout=0.05)
                         if refreshed is not None:
@@ -177,9 +217,35 @@ class LslEegRecorder:
                             raise RuntimeError(
                                 f"LSL EEG sample width changed: expected {len(channel_labels)} values, got {len(sample)}"
                             )
+                        source_timestamp = float(source_timestamp)
+                        if last_source_timestamp is not None:
+                            gap = source_timestamp - last_source_timestamp
+                            if gap <= 0:
+                                self._summary.nonmonotonic_timestamp_count += 1
+                                raise RuntimeError(
+                                    "LSL EEG source timestamps are not strictly increasing "
+                                    f"({last_source_timestamp:.9f} then {source_timestamp:.9f})"
+                                )
+                            if gap > self.maximum_timestamp_gap_seconds:
+                                self._summary.timestamp_gap_count += 1
+                                self._summary.largest_timestamp_gap_seconds = max(
+                                    self._summary.largest_timestamp_gap_seconds,
+                                    gap,
+                                )
+                                if expected_sample_rate > 0:
+                                    self._summary.estimated_missing_samples += max(
+                                        0,
+                                        round(gap * expected_sample_rate) - 1,
+                                    )
+                                if self.abort_on_timestamp_gap:
+                                    raise RuntimeError(
+                                        "LSL EEG timestamp gap exceeded the acquisition limit: "
+                                        f"{gap:.6f}s > {self.maximum_timestamp_gap_seconds:.6f}s"
+                                    )
+                        last_source_timestamp = source_timestamp
                         row, corrected_timestamp = _recorded_eeg_row(
                             sample,
-                            source_timestamp=float(source_timestamp),
+                            source_timestamp=source_timestamp,
                             received_time=float(received_time),
                             time_correction=time_correction,
                             source_preserving=source_preserving,
@@ -202,6 +268,19 @@ class LslEegRecorder:
                 except Exception as exc:
                     self._summary.notes.append(f"LSL inlet cleanup failed: {type(exc).__name__}: {exc}")
             self._write_metadata()
+
+    def _check_disk_space(self) -> None:
+        usage = shutil.disk_usage(self.raw_file.parent)
+        if (
+            self._summary.minimum_free_bytes_observed is None
+            or usage.free < self._summary.minimum_free_bytes_observed
+        ):
+            self._summary.minimum_free_bytes_observed = int(usage.free)
+        if usage.free < self.minimum_free_bytes:
+            raise OSError(
+                "recording storage fell below the live safety reserve: "
+                f"{usage.free} free bytes < {self.minimum_free_bytes} required bytes"
+            )
 
     def _write_metadata(self) -> None:
         payload = self._summary.as_dict()
@@ -226,9 +305,28 @@ class LslEegRecorder:
             "artifact_rejection": "none",
         }
         self.metadata_file.parent.mkdir(parents=True, exist_ok=True)
-        with self.metadata_file.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
+        temporary = self.metadata_file.with_name(
+            f".{self.metadata_file.name}.{os.getpid()}.{monotonic_ns()}.tmp"
+        )
+        try:
+            with temporary.open("w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+            last_error: OSError | None = None
+            for delay in (0.0, 0.01, 0.025, 0.05, 0.1, 0.2, 0.4, 0.8):
+                if delay:
+                    sleep(delay)
+                try:
+                    temporary.replace(self.metadata_file)
+                    return
+                except OSError as exc:
+                    if not isinstance(exc, PermissionError) and getattr(exc, "winerror", None) not in {5, 32, 33}:
+                        raise
+                    last_error = exc
+            if last_error is not None:
+                raise last_error
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def _local_received_times_for_chunk(timestamps: list[float], received_at: float) -> list[float]:
@@ -442,7 +540,7 @@ def _select_lsl_info(pylsl: Any, eeg_config: dict[str, Any], timeout: float) -> 
     infos = pylsl.resolve_streams(wait_time=timeout)
     stream_infos = [_stream_dict(info) for info in infos]
     matches = matching_eeg_streams(stream_infos, eeg_config)
-    if matches:
+    if len(matches) == 1:
         for match in matches:
             for info, stream in zip(infos, stream_infos):
                 if stream == match:

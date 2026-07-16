@@ -12,8 +12,10 @@ from unittest.mock import MagicMock, patch
 
 from eegle.config import load_config
 from eegle.devices.lsl_eeg import LslEegRecorder, _eeg_inlet_processing_flags, _eeg_probe_quality, _recorded_eeg_row
+from eegle.devices.lsl_markers import LslMarkerReceiptRecorder
 from eegle.eeg_csv import eeg_channel_columns
 from eegle.hardware.profiles import mapped_channel_names
+from eegle.hardware.system import CheckResult
 from eegle.io.events import EventLogger
 from eegle.experiment import ForwardExperimentResult
 from eegle.pipelines.dsart_recording import (
@@ -24,8 +26,10 @@ from eegle.pipelines.dsart_recording import (
     _child_session_validation,
     _close_resources,
     _configure_practice_policy,
+    _marker_receipt_integrity,
     _run_dsart_child_session_inline,
     _run_dsart_child_session_isolated,
+    _runtime_cache_root,
     _options_from_args,
     _psychopy_baseline_phase,
     _raw_eeg_integrity,
@@ -37,6 +41,7 @@ from eegle.pipelines.dsart_recording import (
     run_recording_suite,
     run_dsart_child_session,
     run_inter_session_break,
+    run_recording_preflight,
     validate_recording_config,
     write_dsart8_overlap_manifest,
 )
@@ -349,6 +354,58 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertFalse(options.record_eeg)
         self.assertFalse(options.require_eeg)
 
+    def test_suite_rejects_smoke_runs_shorter_than_task_sequence_contract(self) -> None:
+        options = DsartRecordingOptions(
+            recipe="dsart32",
+            config_path=CONFIG_32,
+            participant_id="unit-too-short",
+            trials_per_session=9,
+            record_eeg=False,
+            require_eeg=False,
+        )
+        with self.assertRaisesRegex(ValueError, "at least 10"):
+            run_recording_suite(options)
+
+    def test_software_only_preflight_skips_all_acquisition_dependent_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "eegle.pipelines.dsart_recording.run_preflight",
+            return_value=[CheckResult("display_ready", "ok", "ready")],
+        ) as preflight, patch(
+            "eegle.pipelines.dsart_recording._electrode_report"
+        ) as electrode_report:
+            report = run_recording_preflight(
+                load_config(CONFIG_32),
+                recipe="dsart32",
+                participant_id="unit-no-eeg",
+                visit_id="visit-no-eeg",
+                phase="initial_preflight",
+                output_dir=Path(tmp),
+                require_eeg=False,
+                record_eeg=False,
+                lsl_wait_seconds=30.0,
+                electrode_quality_file=None,
+                electrode_note=None,
+                electrodes_confirmed=False,
+                initial_preflight=None,
+                require_display=True,
+            )
+
+        preflight.assert_called_once_with(
+            unittest.mock.ANY,
+            lsl_wait=30.0,
+            require_eeg=False,
+            check_eeg=False,
+        )
+        electrode_report.assert_not_called()
+        checks = {row["name"]: row for row in report["checks"]}
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["channel_contract"]["status"], "skip")
+        self.assertEqual(checks["dsart_sample_contract"]["status"], "skip")
+        self.assertEqual(checks["electrode_quality"]["status"], "skip")
+        self.assertEqual(checks["marker_loopback"]["status"], "skip")
+        self.assertIsNone(report["electrode_quality_file"])
+        self.assertEqual(report["warnings"], [])
+
     def test_session_root_cli_alias_maps_to_the_suite_output_root(self) -> None:
         args = build_parser().parse_args(
             ["--recipe", "dsart8", "--participant", "unit", "--session-root", "approved-data"]
@@ -377,6 +434,9 @@ class DsartRecordingTests(unittest.TestCase):
                 result = run_recording_suite(options)
 
             manifest = json.loads(Path(result["manifest_file"]).read_text(encoding="utf-8"))
+            child_parameters = json.loads(
+                (Path(result["dsart_session_1_directory"]) / "parameters.json").read_text(encoding="utf-8")
+            )
 
         self.assertEqual(result["status"], "completed")
         self.assertTrue(Path(result["manifest_file"]).is_relative_to(session_root))
@@ -384,6 +444,10 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertTrue(Path(result["dsart_session_1_directory"]).is_relative_to(session_root))
         self.assertTrue(Path(result["dsart_session_2_directory"]).is_relative_to(session_root))
         self.assertEqual(os.path.realpath(manifest["session_root"]), os.path.realpath(session_root))
+        self.assertEqual(
+            os.path.realpath(child_parameters["runtime"]["runtime_cache_dir"]),
+            os.path.realpath(session_root / ".runtime"),
+        )
 
     def test_suite_reports_locked_session_root_before_acquisition(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -643,6 +707,61 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertEqual(result["failure_kind"], "child_session_exception")
         self.assertIn("AttributeError: native window failure", traceback_text)
 
+    def test_post_recording_metadata_failure_preserves_child_session_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / "completed-raw-session"
+            session.mkdir()
+            config = load_config(CONFIG_32)
+            config["runtime"]["session_root"] = tmp
+            options = DsartRecordingOptions(
+                recipe="dsart32",
+                config_path=CONFIG_32,
+                participant_id="unit",
+                task_mode="psychopy",
+                trials_per_session=10,
+                record_eeg=True,
+                require_eeg=True,
+                output_root=tmp,
+            )
+            forward = MagicMock()
+            forward.session_dir = session
+            forward.as_dict.return_value = {"task": {"summary": {}}}
+            runner = MagicMock()
+            runner.run.return_value = forward
+            with patch(
+                "eegle.pipelines.dsart_recording.ForwardExperimentRunner",
+                return_value=runner,
+            ), patch(
+                "eegle.pipelines.dsart_recording._write_json_atomic",
+                side_effect=PermissionError("policy lock"),
+            ):
+                result = _run_dsart_child_session_inline(
+                    config,
+                    options,
+                    visit_id="visit",
+                    session_index=1,
+                    seed=123,
+                    preflight={"checks": []},
+                )
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["session_dir"], str(session))
+        self.assertTrue(result["raw_recording_retained"])
+        self.assertEqual(result["failure_kind"], "post_recording_metadata_failure")
+
+    def test_relative_runtime_cache_follows_the_approved_session_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "approved"
+            self.assertEqual(
+                _runtime_cache_root({"runtime": {"runtime_cache_dir": ".runtime"}}, root),
+                (root / ".runtime").resolve(),
+            )
+            explicit = Path(tmp) / "explicit-cache"
+            self.assertEqual(
+                _runtime_cache_root({"runtime": {"runtime_cache_dir": str(explicit)}}, root),
+                explicit.resolve(),
+            )
+
     def test_recipes_share_task_and_recording_contract(self) -> None:
         dsart8 = load_config(CONFIG_8)
         dsart32 = load_config(CONFIG_32)
@@ -742,6 +861,169 @@ class DsartRecordingTests(unittest.TestCase):
             integrity = _raw_eeg_integrity(session, required=True)
         self.assertEqual(integrity["status"], "fail")
         self.assertTrue(any("physical device order" in failure for failure in integrity["failures"]))
+
+    def test_raw_integrity_requires_clean_stop_and_rejects_timestamp_gaps(self) -> None:
+        config = load_config(CONFIG_8)
+        expected = list(config["hardware"]["eeg"]["channel_number_map"])
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp)
+            (session / "raw").mkdir()
+            (session / "parameters.json").write_text(json.dumps(config), encoding="utf-8")
+            (session / "raw" / "eeg.csv").write_text(
+                ",".join([
+                    "lsl_timestamp", "local_received_time", "source_lsl_timestamp",
+                    "lsl_time_correction_seconds", *expected,
+                ]) + "\n",
+                encoding="utf-8",
+            )
+            metadata = {
+                "status": "recording",
+                "sample_count": 10,
+                "timestamp_gap_count": 1,
+                "nonmonotonic_timestamp_count": 0,
+                "stream": {
+                    "channel_names": expected,
+                    "channel_value_order_changed": False,
+                    "amplitude_transformations": [],
+                    "lsl_processing": [],
+                    "initial_time_correction_seconds": 0.001,
+                },
+                "raw_sample_contract": {
+                    "amplitude_samples_modified": False,
+                    "amplitude_transformations": [],
+                    "channel_value_order_modified": False,
+                    "recording_timestamp_mode": "source_preserving",
+                    "source_timestamp_retained": True,
+                    "initial_time_correction_available": True,
+                    "filtering": "none",
+                    "resampling": "none",
+                    "rereferencing": "none",
+                    "artifact_rejection": "none",
+                },
+            }
+            (session / "raw" / "eeg_metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+            integrity = _raw_eeg_integrity(session, required=True)
+
+        self.assertTrue(any("status is not stopped" in row for row in integrity["failures"]))
+        self.assertTrue(any("timestamp gaps" in row for row in integrity["failures"]))
+
+    def test_independent_marker_receipt_must_match_ledger_order_and_timestamps(self) -> None:
+        ledger = [
+            {"label": "dynamic_sart_stimulus_onset__trial=1", "metadata": {"lsl_timestamp": 10.0}},
+            {"label": "dynamic_sart_stimulus_offset__trial=1", "metadata": {"lsl_timestamp": 10.25}},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp)
+            (session / "raw").mkdir()
+            (session / "raw" / "lsl_markers_received_metadata.json").write_text(
+                json.dumps({"status": "stopped", "received_count": 2}),
+                encoding="utf-8",
+            )
+            receipt = session / "raw" / "lsl_markers_received.csv"
+            receipt.write_text(
+                "marker_label,lsl_timestamp,local_received_lsl_timestamp\n"
+                "dynamic_sart_stimulus_onset__trial=1,10.000000000,10.01\n"
+                "dynamic_sart_stimulus_offset__trial=1,10.250000000,10.26\n",
+                encoding="utf-8",
+            )
+            passed = _marker_receipt_integrity(session, ledger, required=True)
+            receipt.write_text(
+                "marker_label,lsl_timestamp,local_received_lsl_timestamp\n"
+                "dynamic_sart_stimulus_offset__trial=1,10.250000000,10.26\n",
+                encoding="utf-8",
+            )
+            failed = _marker_receipt_integrity(session, ledger, required=True)
+
+        self.assertEqual(passed["status"], "pass")
+        self.assertEqual(failed["status"], "fail")
+        self.assertTrue(any("order/count" in row for row in failed["failures"]))
+
+    def test_raw_recorder_aborts_on_large_source_timestamp_gap(self) -> None:
+        class Info:
+            def channel_count(self) -> int:
+                return 1
+
+            def desc(self):
+                raise RuntimeError("no metadata")
+
+        class Inlet:
+            def __init__(self, *_args, **_kwargs) -> None:
+                return None
+
+            def open_stream(self, **_kwargs) -> None:
+                return None
+
+            def time_correction(self, **_kwargs) -> float:
+                return 0.0
+
+            def pull_chunk(self, **_kwargs):
+                return [[1.0], [2.0]], [1.0, 1.2]
+
+            def close_stream(self) -> None:
+                return None
+
+        pylsl = ModuleType("pylsl")
+        pylsl.StreamInlet = Inlet
+        pylsl.proc_none = 0
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules, {"pylsl": pylsl}), patch(
+            "eegle.devices.lsl_eeg._select_lsl_info",
+            return_value=(Info(), {"name": "unit-eeg", "channel_count": 1, "nominal_srate": 500.0}),
+        ):
+            recorder = LslEegRecorder(
+                {
+                    "recording_lsl_processing": "source_preserving",
+                    "expected_sample_rate_hz": 500,
+                    "maximum_timestamp_gap_seconds": 0.1,
+                    "abort_on_timestamp_gap": True,
+                    "minimum_free_bytes_during_recording": 0,
+                },
+                Path(tmp) / "eeg.csv",
+                Path(tmp) / "eeg_metadata.json",
+            )
+            recorder._record()
+            summary = recorder.snapshot()
+
+        self.assertEqual(summary["status"], "failed")
+        self.assertEqual(summary["timestamp_gap_count"], 1)
+        self.assertGreater(summary["estimated_missing_samples"], 0)
+        self.assertIn("timestamp gap exceeded", summary["error"])
+
+    def test_marker_receipt_recorder_persists_delivered_lsl_sample(self) -> None:
+        recorder_holder = {}
+
+        class Inlet:
+            def __init__(self, *_args, **_kwargs) -> None:
+                return None
+
+            def open_stream(self, **_kwargs) -> None:
+                return None
+
+            def pull_sample(self, **_kwargs):
+                recorder_holder["recorder"]._stop.set()
+                return ["dynamic_sart_stimulus_onset__trial=1"], 10.0
+
+            def close_stream(self) -> None:
+                return None
+
+        pylsl = ModuleType("pylsl")
+        pylsl.resolve_byprop = lambda *_args, **_kwargs: [object()]
+        pylsl.StreamInlet = Inlet
+        pylsl.local_clock = lambda: 10.01
+        pylsl.proc_none = 0
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules, {"pylsl": pylsl}):
+            recorder = LslMarkerReceiptRecorder(
+                "run-source",
+                Path(tmp) / "markers.csv",
+                Path(tmp) / "markers.json",
+            )
+            recorder_holder["recorder"] = recorder
+            recorder._record()
+            summary = recorder.snapshot()
+            rows = (Path(tmp) / "markers.csv").read_text(encoding="utf-8")
+
+        self.assertEqual(summary["status"], "stopped")
+        self.assertEqual(summary["received_count"], 1)
+        self.assertIn("dynamic_sart_stimulus_onset__trial=1", rows)
 
     def test_full_plan_has_exact_trial_phase_and_no_go_counts(self) -> None:
         for path in (CONFIG_8, CONFIG_32):

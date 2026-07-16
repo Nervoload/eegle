@@ -21,6 +21,7 @@ from typing import Any, Iterable
 
 from eegle.analysis.dynamic_sart import analyze_dynamic_sart_session
 from eegle.config import load_config, resolve_session_root
+from eegle.devices.lsl_markers import LslMarkerReceiptRecorder
 from eegle.experiment import ForwardExperimentRunner
 from eegle.feedback_manager import FeedbackManager
 from eegle.hardware.profiles import expected_profile
@@ -129,7 +130,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=600,
         help=(
             "Experimental trials per DSART session; shortened smoke runs skip participant practice "
-            "unless --include-practice is supplied (minimum 4)"
+            "unless --include-practice is supplied (minimum 10)"
         ),
     )
     parser.add_argument(
@@ -209,8 +210,10 @@ def run_recording_suite(options: DsartRecordingOptions) -> dict[str, Any]:
         raise ValueError(f"unknown DSART recording recipe {options.recipe}")
     if not options.participant_id.strip():
         raise ValueError("--participant must be nonempty")
-    if options.trials_per_session < 4:
-        raise ValueError("--trials must be at least 4 so smoke runs retain support and query phases")
+    if options.trials_per_session < 10:
+        raise ValueError(
+            "--trials must be at least 10 so smoke runs retain support/query and the configured leading/trailing go trials"
+        )
     if options.baseline_seconds is not None and options.baseline_seconds < 0:
         raise ValueError("--baseline-seconds must be nonnegative")
     if options.window_size is not None and any(value <= 0 for value in options.window_size):
@@ -234,7 +237,9 @@ def run_recording_suite(options: DsartRecordingOptions) -> dict[str, Any]:
     if options.window_size is not None:
         config.setdefault("hardware", {}).setdefault("display", {})["size"] = list(options.window_size)
     output_root = resolve_session_root(config, options.output_root)
-    config.setdefault("runtime", {})["session_root"] = str(output_root)
+    runtime_config = config.setdefault("runtime", {})
+    runtime_config["session_root"] = str(output_root)
+    runtime_config["runtime_cache_dir"] = str(_runtime_cache_root(config, output_root))
     _probe_session_root_writable(output_root)
     visit_id = _resolve_visit_id(options, output_root)
     visit_dir = output_root / "recording_suites" / options.participant_id / visit_id / options.recipe
@@ -472,6 +477,18 @@ def validate_recording_config(config: dict[str, Any], recipe: str) -> list[dict[
         issues.append(_issue("fail", "hardware.eeg.raw_sample_mode must be passthrough"))
     if eeg.get("recording_lsl_processing") != "source_preserving":
         issues.append(_issue("fail", "hardware.eeg.recording_lsl_processing must be source_preserving"))
+    maximum_gap = float(eeg.get("maximum_timestamp_gap_seconds", 0.0))
+    if maximum_gap <= 0.0 or maximum_gap > 0.1:
+        issues.append(_issue("fail", "hardware.eeg.maximum_timestamp_gap_seconds must be in (0, 0.1]"))
+    if not bool(eeg.get("abort_on_timestamp_gap", False)):
+        issues.append(_issue("fail", "hardware.eeg.abort_on_timestamp_gap must be true"))
+    if int(eeg.get("minimum_free_bytes_during_recording", 0)) < 512 * 1024 * 1024:
+        issues.append(
+            _issue("fail", "hardware.eeg.minimum_free_bytes_during_recording must reserve at least 512 MiB")
+        )
+    disk_interval = float(eeg.get("disk_check_interval_seconds", 0.0))
+    if disk_interval < 1.0 or disk_interval > 5.0:
+        issues.append(_issue("fail", "hardware.eeg.disk_check_interval_seconds must be between 1 and 5 seconds"))
     if float(eeg.get("expected_sample_rate_hz", 0.0)) != 500.0:
         issues.append(_issue("fail", "hardware.eeg.expected_sample_rate_hz must be 500"))
     try:
@@ -617,8 +634,9 @@ def run_recording_preflight(
     output_dir.mkdir(parents=True, exist_ok=True)
     checks = run_preflight(
         config,
-        lsl_wait=lsl_wait_seconds if record_eeg else 0.2,
+        lsl_wait=lsl_wait_seconds,
         require_eeg=require_eeg,
+        check_eeg=record_eeg,
     )
     check_payloads = [result.__dict__ for result in checks]
     display_check = next((result for result in checks if result.name == "display_ready"), None)
@@ -635,13 +653,30 @@ def run_recording_preflight(
     eeg = dict(config.get("hardware", {}).get("eeg", {}) or {})
     profile = expected_profile(str(eeg["profile"]), eeg.get("family"))
     probe = next((result.data for result in checks if result.name == "eeg_sample_probe"), {}) or {}
-    channel_contract = assess_channel_contract(
-        list(probe.get("mapped_channel_names") or []),
-        list(profile.channel_names),
-        original_names=list(probe.get("original_channel_names") or []),
-        mapping_source=probe.get("channel_mapping_source"),
-        require_eeg=require_eeg,
-    )
+    if record_eeg:
+        channel_contract = assess_channel_contract(
+            list(probe.get("mapped_channel_names") or []),
+            list(profile.channel_names),
+            original_names=list(probe.get("original_channel_names") or []),
+            mapping_source=probe.get("channel_mapping_source"),
+            require_eeg=require_eeg,
+        )
+    else:
+        channel_contract = {
+            "status": "skip",
+            "detail": "EEG channel contract skipped because recording is disabled",
+            "expected_channel_order": list(profile.channel_names),
+            "observed_channel_order": [],
+            "original_device_labels": [],
+            "mapping_source": None,
+            "mapping_version": eeg.get("mapping_version"),
+            "count_matches": None,
+            "order_matches": None,
+            "missing_channels": [],
+            "unexpected_channels": [],
+            "duplicate_channels": [],
+            "skipped": True,
+        }
     check_payloads.append(
         CheckResult(
             "dsart_channel_contract",
@@ -650,7 +685,17 @@ def run_recording_preflight(
             channel_contract,
         ).__dict__
     )
-    sample_contract = assess_sample_probe(probe, eeg, require_eeg=require_eeg)
+    sample_contract = (
+        assess_sample_probe(probe, eeg, require_eeg=require_eeg)
+        if record_eeg
+        else {
+            "status": "skip",
+            "detail": "EEG sample contract skipped because recording is disabled",
+            "skipped": True,
+            "failures": [],
+            "warnings": [],
+        }
+    )
     check_payloads.append(
         CheckResult(
             "dsart_sample_contract",
@@ -659,7 +704,10 @@ def run_recording_preflight(
             sample_contract,
         ).__dict__
     )
-    storage = _storage_check(Path(config.get("runtime", {}).get("session_root", "data")))
+    storage = _storage_check(
+        Path(config.get("runtime", {}).get("session_root", "data")),
+        record_eeg=record_eeg,
+    )
     check_payloads.append(storage.__dict__)
     identity = CheckResult(
         "visit_identity",
@@ -671,32 +719,44 @@ def run_recording_preflight(
     marker = _marker_loopback_check(config, participant_id, visit_id, phase, enabled=record_eeg)
     check_payloads.append(marker.__dict__)
 
-    electrode_report = _electrode_report(
-        profile.channel_names,
-        probe,
-        recipe=recipe,
-        quality_file=electrode_quality_file,
-        operator_note=electrode_note,
-        operator_confirmed=electrodes_confirmed,
-    )
-    electrode_path = output_dir / f"{phase}_electrode_quality.json"
-    _write_json_atomic(electrode_path, electrode_report)
-    electrode_status = "ok"
-    if any(row["quality_status"] == "failed" for row in electrode_report["channels"]):
-        electrode_status = "fail"
-    elif any(row["quality_status"] in {"warning", "unavailable"} for row in electrode_report["channels"]):
-        electrode_status = "warn"
-    check_payloads.append(
-        CheckResult(
+    electrode_path: Path | None = None
+    if record_eeg:
+        electrode_report = _electrode_report(
+            profile.channel_names,
+            probe,
+            recipe=recipe,
+            quality_file=electrode_quality_file,
+            operator_note=electrode_note,
+            operator_confirmed=electrodes_confirmed,
+        )
+        electrode_path = output_dir / f"{phase}_electrode_quality.json"
+        _write_json_atomic(electrode_path, electrode_report)
+        electrode_status = "ok"
+        if any(row["quality_status"] == "failed" for row in electrode_report["channels"]):
+            electrode_status = "fail"
+        elif any(row["quality_status"] in {"warning", "unavailable"} for row in electrode_report["channels"]):
+            electrode_status = "warn"
+        electrode_check = CheckResult(
             "electrode_quality",
             electrode_status,
             f"electrode quality {electrode_status}; report={electrode_path}",
             {"report_file": str(electrode_path), "operator_confirmed": electrodes_confirmed},
-        ).__dict__
-    )
+        )
+    else:
+        electrode_check = CheckResult(
+            "electrode_quality",
+            "skip",
+            "electrode quality check skipped because EEG recording is disabled",
+            {"skipped": True},
+        )
+    check_payloads.append(electrode_check.__dict__)
     statuses = [str(item.get("status")) for item in check_payloads]
     status = "fail" if "fail" in statuses else ("warning" if "warn" in statuses else "pass")
-    comparison = compare_preflights(initial_preflight, probe, channel_contract) if phase == "second_preflight" else None
+    comparison = (
+        compare_preflights(initial_preflight, probe, channel_contract)
+        if phase == "second_preflight" and record_eeg
+        else None
+    )
     if comparison and comparison.get("status") == "fail":
         status = "fail"
     elif comparison and comparison.get("status") == "warning" and status == "pass":
@@ -712,7 +772,7 @@ def run_recording_preflight(
         "checks": check_payloads,
         "eeg_probe": probe,
         "channel_contract": channel_contract,
-        "electrode_quality_file": str(electrode_path),
+        "electrode_quality_file": None if electrode_path is None else str(electrode_path),
         "comparison_to_initial": comparison,
         "warnings": [item["detail"] for item in check_payloads if item.get("status") == "warn"],
         "failures": [item["detail"] for item in check_payloads if item.get("status") == "fail"],
@@ -1049,8 +1109,16 @@ def run_resting_baseline(
     if baseline_validation["failures"]:
         result["status"] = "failed"
         result.setdefault("warnings", []).extend(baseline_validation["failures"])
-    _write_json_atomic(paths.events / "dsart_baseline_results.json", result)
-    _write_json_atomic(paths.completion_summary, result)
+    try:
+        _write_json_atomic(paths.events / "dsart_baseline_results.json", result)
+        _write_json_atomic(paths.completion_summary, result)
+    except Exception as exc:
+        result["status"] = "failed"
+        result["failure_kind"] = "post_recording_metadata_failure"
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        result.setdefault("warnings", []).append(
+            "baseline raw data were retained, but one or more completion metadata files could not be published"
+        )
     return result
 
 
@@ -1132,6 +1200,7 @@ def _run_baseline_psychopy(
     display = dict(config.get("hardware", {}).get("display", {}) or {})
     win = None
     outlet: LslMarkerOutlet | NullMarkerOutlet | None = None
+    marker_receipt: LslMarkerReceiptRecorder | None = None
     phases = []
     aborted = False
     abort_reason: str | None = None
@@ -1156,6 +1225,8 @@ def _run_baseline_psychopy(
         )
         clear_psychopy_keys(event)
         outlet = _make_marker_outlet(config, paths)
+        if record_eeg:
+            marker_receipt = _start_marker_receipt_recorder(outlet, paths)
         with EventLogger(paths.behavior_csv, paths.events_jsonl, paths.triggers, telemetry, "dsart.baseline") as logger:
             if not _baseline_instruction(
                 win,
@@ -1223,7 +1294,13 @@ def _run_baseline_psychopy(
     except Exception as exc:
         failure = f"{type(exc).__name__}: {exc}"
     finally:
-        cleanup_warnings.extend(_close_resources(("marker outlet", outlet), ("PsychoPy window", win)))
+        cleanup_warnings.extend(
+            _close_resources(
+                ("marker receipt recorder", marker_receipt),
+                ("marker outlet", outlet),
+                ("PsychoPy window", win),
+            )
+        )
     actual_duration = sum(float(row.get("actual_duration_seconds") or 0.0) for row in phases)
     result = {
         "schema": BASELINE_SCHEMA,
@@ -1537,7 +1614,7 @@ def _run_dsart_child_session_inline(
             dict(row.get("data") or {}),
         )
         for row in preflight.get("checks", [])
-        if row.get("name") and row.get("status") in {"ok", "warn", "fail"}
+        if row.get("name") and row.get("status") in {"ok", "warn", "fail", "skip"}
     ]
     runner = ForwardExperimentRunner(
         child_config,
@@ -1573,25 +1650,51 @@ def _run_dsart_child_session_inline(
         }
     forward_payload = forward.as_dict()
     session_dir = Path(forward.session_dir)
-    _write_json_atomic(session_dir / "logs" / "suite_preflight.json", preflight)
-    task_summary = dict((forward_payload.get("task") or {}).get("summary") or {})
-    sequence_manifest = _load_json(session_dir / "events" / "stimulus_manifest.json") or {}
-    if options.recipe == "dsart32":
-        write_dsart8_overlap_manifest(session_dir, child_config)
+    try:
+        _write_json_atomic(session_dir / "logs" / "suite_preflight.json", preflight)
+        task_summary = dict((forward_payload.get("task") or {}).get("summary") or {})
+        sequence_manifest = _load_json(session_dir / "events" / "stimulus_manifest.json") or {}
+        if options.recipe == "dsart32":
+            write_dsart8_overlap_manifest(session_dir, child_config)
+    except Exception as exc:
+        return {
+            "status": "partial",
+            "session_index": session_index,
+            "session_dir": str(session_dir),
+            "session_id": session_dir.name,
+            "seed": int(seed),
+            "error": f"{type(exc).__name__}: {exc}",
+            "failure_kind": "post_recording_metadata_failure",
+            "practice_status": "skipped" if not practice_enabled else "unknown",
+            "raw_recording_retained": True,
+        }
     analysis_error = None
     try:
         dynamic_report = analyze_dynamic_sart_session(session_dir, child_config)
     except Exception as exc:
         dynamic_report = {}
         analysis_error = f"{type(exc).__name__}: {exc}"
-    validation = _child_session_validation(
-        session_dir,
-        task_summary,
-        sequence_manifest,
-        record_eeg=options.record_eeg,
-        dynamic_report=dynamic_report,
-        analysis_error=analysis_error,
-    )
+    try:
+        validation = _child_session_validation(
+            session_dir,
+            task_summary,
+            sequence_manifest,
+            record_eeg=options.record_eeg,
+            dynamic_report=dynamic_report,
+            analysis_error=analysis_error,
+        )
+    except Exception as exc:
+        return {
+            "status": "partial",
+            "session_index": session_index,
+            "session_dir": str(session_dir),
+            "session_id": session_dir.name,
+            "seed": int(seed),
+            "error": f"{type(exc).__name__}: {exc}",
+            "failure_kind": "post_recording_validation_failure",
+            "practice_status": "skipped" if not practice_enabled else "unknown",
+            "raw_recording_retained": True,
+        }
     status = "completed" if not validation["failures"] else "partial"
     return {
         "status": status,
@@ -1912,6 +2015,7 @@ def _task_marker_integrity(
     rows = []
     offset_rows = []
     display_marker_sequence: list[str] = []
+    display_marker_rows: list[dict[str, Any]] = []
     path = session_dir / "events" / "events.jsonl"
     if path.exists():
         with path.open("r", encoding="utf-8") as handle:
@@ -1926,9 +2030,11 @@ def _task_marker_integrity(
                 if family == "dynamic_sart_stimulus_onset":
                     rows.append(row)
                     display_marker_sequence.append(family)
+                    display_marker_rows.append(row)
                 elif family == "dynamic_sart_stimulus_offset":
                     offset_rows.append(row)
                     display_marker_sequence.append(family)
+                    display_marker_rows.append(row)
     trial_records: list[dict[str, Any]] = []
     trials_path = session_dir / "events" / "dynamic_sart_trials.jsonl"
     if trials_path.exists():
@@ -2037,6 +2143,9 @@ def _task_marker_integrity(
             failures.append("raw EEG metadata lacks the timestamp span needed to verify marker overlap")
         elif raw_first > min(onset_lsl_timestamps) or raw_last < max(onset_lsl_timestamps):
             failures.append("raw EEG timestamp span does not cover every stimulus-onset marker")
+    marker_receipt = _marker_receipt_integrity(session_dir, display_marker_rows, required=require_markers)
+    failures.extend(marker_receipt["failures"])
+    warnings.extend(marker_receipt["warnings"])
     return {
         "status": "fail" if failures else ("warning" if warnings else "pass"),
         "events_file": str(path),
@@ -2056,9 +2165,80 @@ def _task_marker_integrity(
             second <= first for first, second in zip(onset_lsl_timestamps, onset_lsl_timestamps[1:])
         ),
         "raw_eeg_timestamp_span": {"first": raw_first, "last": raw_last},
+        "independent_marker_receipt": marker_receipt,
         "failures": failures,
         "warnings": warnings,
         "transport_loopback_scope": "preflight verifies receipt; task ledger verifies emitted label, flip timestamp, and source identity",
+    }
+
+
+def _marker_receipt_integrity(
+    session_dir: Path,
+    ledger_rows: list[dict[str, Any]],
+    *,
+    required: bool,
+) -> dict[str, Any]:
+    csv_path = session_dir / "raw" / "lsl_markers_received.csv"
+    metadata_path = session_dir / "raw" / "lsl_markers_received_metadata.json"
+    metadata = _load_json(metadata_path) or {}
+    expected = []
+    for row in ledger_rows:
+        marker_metadata = dict(row.get("metadata") or {})
+        expected.append(
+            {
+                "label": str(row.get("label") or ""),
+                "lsl_timestamp": _optional_float(marker_metadata.get("lsl_timestamp")),
+            }
+        )
+    expected_labels = [row["label"] for row in expected]
+    expected_label_set = set(expected_labels)
+    received = []
+    if csv_path.exists():
+        with csv_path.open("r", encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                label = str(row.get("marker_label") or "")
+                if label in expected_label_set:
+                    received.append(
+                        {
+                            "label": label,
+                            "lsl_timestamp": _optional_float(row.get("lsl_timestamp")),
+                        }
+                    )
+    failures = []
+    warnings = []
+    target = failures if required else warnings
+    if required and metadata.get("status") != "stopped":
+        failures.append("independent marker receipt recorder status is not stopped")
+    if not csv_path.exists():
+        target.append("independent LSL marker receipt CSV is missing")
+    elif [row["label"] for row in received] != expected_labels:
+        target.append("independently received marker order/count does not match the task marker ledger")
+    timestamp_mismatches = []
+    if len(received) == len(expected):
+        for index, (emitted, observed) in enumerate(zip(expected, received), start=1):
+            emitted_timestamp = emitted["lsl_timestamp"]
+            observed_timestamp = observed["lsl_timestamp"]
+            if (
+                emitted_timestamp is None
+                or observed_timestamp is None
+                or abs(observed_timestamp - emitted_timestamp) > 0.000001
+            ):
+                timestamp_mismatches.append(index)
+    if timestamp_mismatches:
+        target.append(
+            f"{len(timestamp_mismatches)} independently received markers do not preserve their emitted LSL timestamp"
+        )
+    return {
+        "status": "fail" if failures else ("warning" if warnings else "pass"),
+        "required": required,
+        "csv_file": str(csv_path),
+        "metadata_file": str(metadata_path),
+        "metadata": metadata,
+        "expected_count": len(expected),
+        "received_count": len(received),
+        "timestamp_mismatch_indices": timestamp_mismatches,
+        "failures": failures,
+        "warnings": warnings,
     }
 
 
@@ -2085,10 +2265,14 @@ def _raw_eeg_integrity(session_dir: Path, *, required: bool) -> dict[str, Any]:
     if required:
         if not raw_path.exists():
             failures.append("raw EEG CSV is missing")
-        if metadata.get("status") not in {"stopped", "recording"}:
-            failures.append("raw EEG recorder status is not stopped/recording")
+        if metadata.get("status") != "stopped":
+            failures.append("raw EEG recorder status is not stopped")
         if int(metadata.get("sample_count") or 0) <= 0:
             failures.append("raw EEG recorder did not retain any samples")
+        if int(metadata.get("timestamp_gap_count") or 0) > 0:
+            failures.append("raw EEG contains one or more timestamp gaps above the configured acquisition limit")
+        if int(metadata.get("nonmonotonic_timestamp_count") or 0) > 0:
+            failures.append("raw EEG contains nonmonotonic source timestamps")
         if contract.get("amplitude_samples_modified") is not False:
             failures.append("raw EEG metadata does not prove amplitude pass-through")
         if list(contract.get("amplitude_transformations") or []) != []:
@@ -2187,6 +2371,9 @@ def _baseline_recording_validation(
             target.append(f"baseline marker {row.get('label')} lacks an LSL timestamp")
         if expected_source_id and metadata.get("marker_stream_source_id") != expected_source_id:
             target.append(f"baseline marker {row.get('label')} has the wrong source ID")
+    marker_receipt = _marker_receipt_integrity(paths.root, marker_rows, required=record_eeg)
+    failures.extend(marker_receipt["failures"])
+    warnings.extend(marker_receipt["warnings"])
     raw = _raw_eeg_integrity(paths.root, required=record_eeg)
     failures.extend(raw["failures"])
     warnings.extend(raw["warnings"])
@@ -2214,6 +2401,7 @@ def _baseline_recording_validation(
         "warnings": warnings,
         "expected_marker_source_id": expected_source_id,
         "marker_labels": observed_labels,
+        "independent_marker_receipt": marker_receipt,
         "raw_integrity": raw,
     }
 
@@ -2274,7 +2462,7 @@ def _marker_loopback_check(
     enabled: bool,
 ) -> CheckResult:
     if not enabled:
-        return CheckResult("marker_loopback", "warn", "marker loopback skipped for software-only run", {"skipped": True})
+        return CheckResult("marker_loopback", "skip", "marker loopback skipped for software-only run", {"skipped": True})
     marker_cfg = dict(config.get("hardware", {}).get("markers", {}) or {})
     source_id = f"eegle-preflight-{_safe_token(participant_id)}-{_safe_token(visit_id)}-{phase}"
     label = f"dsart_preflight_test__phase={phase}"
@@ -2320,7 +2508,7 @@ def _marker_loopback_check(
         _close_resources(("preflight marker outlet", outlet))
 
 
-def _storage_check(output_root: Path) -> CheckResult:
+def _storage_check(output_root: Path, *, record_eeg: bool = True) -> CheckResult:
     try:
         output_root.mkdir(parents=True, exist_ok=True)
         probe = output_root / ".eegle_dsart_write_probe"
@@ -2328,8 +2516,12 @@ def _storage_check(output_root: Path) -> CheckResult:
             handle.write("ok\n")
         probe.unlink(missing_ok=True)
         usage = shutil.disk_usage(output_root)
-        fail_below = 1 * 1024 * 1024 * 1024
-        warn_below = 5 * 1024 * 1024 * 1024
+        if record_eeg:
+            fail_below = 5 * 1024 * 1024 * 1024
+            warn_below = 10 * 1024 * 1024 * 1024
+        else:
+            fail_below = 128 * 1024 * 1024
+            warn_below = 512 * 1024 * 1024
         status = "fail" if usage.free < fail_below else ("warn" if usage.free < warn_below else "ok")
         detail = f"output writable; {usage.free / (1024 ** 3):.1f} GiB free"
         return CheckResult(
@@ -2341,10 +2533,21 @@ def _storage_check(output_root: Path) -> CheckResult:
                 "free_bytes": usage.free,
                 "fail_below_bytes": fail_below,
                 "warn_below_bytes": warn_below,
+                "record_eeg": record_eeg,
             },
         )
     except Exception as exc:
         return CheckResult("recording_storage", "fail", f"output is not writable: {type(exc).__name__}: {exc}", {"output_root": str(output_root)})
+
+
+def _runtime_cache_root(config: dict[str, Any], output_root: Path) -> Path:
+    """Keep relative third-party caches on the same approved root as the visit."""
+
+    configured = config.get("runtime", {}).get("runtime_cache_dir", ".runtime")
+    candidate = Path(os.path.expandvars(str(configured))).expanduser()
+    if not candidate.is_absolute():
+        candidate = output_root / candidate
+    return candidate.resolve()
 
 
 def _probe_session_root_writable(output_root: Path) -> None:
@@ -2391,6 +2594,29 @@ def _make_marker_outlet(config: dict[str, Any], paths: SessionPaths) -> LslMarke
         if bool(marker_cfg.get("required_for_realtime", False)):
             raise RuntimeError(f"required baseline marker outlet failed: {type(exc).__name__}: {exc}") from exc
         return NullMarkerOutlet(str(exc))
+
+
+def _start_marker_receipt_recorder(
+    outlet: LslMarkerOutlet | NullMarkerOutlet,
+    paths: SessionPaths,
+) -> LslMarkerReceiptRecorder:
+    if not isinstance(outlet, LslMarkerOutlet):
+        raise RuntimeError("independent marker receipt requires a live LSL marker outlet")
+    recorder = LslMarkerReceiptRecorder(
+        outlet.source_id,
+        paths.raw / "lsl_markers_received.csv",
+        paths.raw / "lsl_markers_received_metadata.json",
+    )
+    recorder.start()
+    recorder.wait_until_ready()
+    summary = recorder.snapshot()
+    if summary.get("status") != "recording":
+        recorder.stop()
+        raise RuntimeError(
+            "independent LSL marker receipt did not start: "
+            + str(summary.get("error") or summary.get("status"))
+        )
+    return recorder
 
 
 def _baseline_instruction(

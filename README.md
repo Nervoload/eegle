@@ -315,7 +315,15 @@ each session, two seconds for each baseline condition, and no timed break:
 dsart8 --participant local-smoke --visit-id smoke-001 --task-mode psychopy \
   --trials 10 --baseline-seconds 2 --break-seconds 0 --skip-eeg \
   --window-size 1000 700 --output-root data/rehearsal
+
+dsart32 --participant local-smoke-32 --visit-id smoke-32-001 --task-mode psychopy \
+  --trials 10 --baseline-seconds 2 --break-seconds 0 --skip-eeg \
+  --window-size 1000 700 --output-root data/rehearsal
 ```
+
+For both suites, `--skip-eeg` bypasses LSL stream discovery, EEG sample/channel
+validation, electrode checks, and marker loopback. The preflight records these
+as skipped and continues to validate PsychoPy, storage, and visit identity.
 
 On a Windows desktop where Controlled Folder Access or enterprise policy blocks
 the repository's `Documents\...\data` directory, put the complete visit on an
@@ -333,12 +341,13 @@ explicit `--session-root`, then `EEGLE_SESSION_ROOT`, then the config's
 The resolved root owns both `recording_suites\...` parent manifests and every
 `participants\...` baseline/DSART child session. It is persisted into the
 visit manifest and child `parameters.json` files before any PsychoPy runtime
-code redirects cache-related environment variables.
+code redirects cache-related environment variables. Relative runtime caches
+such as `.runtime` are also resolved beneath that approved root, so PsychoPy,
+Matplotlib, and LSL do not write back into the repository in `Documents`.
 
-This does not copy experiment data back into the checkout. The repository-local
-`.runtime` directory contains dependency caches only. If `$EegleData` points at
-`LOCALAPPDATA`, the acquisition data remains there unless an operator performs
-a separate reviewed copy after the visit.
+This does not copy experiment data or runtime caches back into the checkout. If
+`$EegleData` points at `LOCALAPPDATA`, both remain there unless an operator
+performs a separate reviewed copy after the visit.
 
 Shortened `--trials` runs skip participant qualification practice by default,
 so this presents exactly ten experimental trials per session. Add

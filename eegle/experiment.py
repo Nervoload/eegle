@@ -245,6 +245,7 @@ class ForwardExperimentRunner:
             self.config,
             lsl_wait=lsl_wait,
             require_eeg=require_eeg,
+            check_eeg=self.record_eeg,
         )
         write_preflight_report(results, paths.logs / "preflight.json")
         if self.telemetry is not None:

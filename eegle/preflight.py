@@ -36,7 +36,13 @@ OPTIONAL_PACKAGES = [
 ]
 
 
-def run_preflight(config: dict[str, Any], lsl_wait: float = 1.0, require_eeg: bool | None = None) -> list[CheckResult]:
+def run_preflight(
+    config: dict[str, Any],
+    lsl_wait: float = 1.0,
+    require_eeg: bool | None = None,
+    *,
+    check_eeg: bool = True,
+) -> list[CheckResult]:
     runtime = config.get("runtime", {})
     hardware = config.get("hardware", {})
     computer = hardware.get("computer", {})
@@ -58,6 +64,36 @@ def run_preflight(config: dict[str, Any], lsl_wait: float = 1.0, require_eeg: bo
     checks.extend(check_packages(REQUIRED_PACKAGES, OPTIONAL_PACKAGES))
     checks.append(check_display_ready(config))
 
+    if not check_eeg:
+        checks.append(
+            CheckResult(
+                "eeg_acquisition",
+                "skip",
+                "EEG stream discovery and sample probing skipped for software-only run",
+                {
+                    "skipped": True,
+                    "family": eeg.get("family"),
+                    "profile": eeg.get("profile"),
+                },
+            )
+        )
+        checks.append(
+            check_realtime_ready(
+                config,
+                [],
+                None,
+                CheckResult(
+                    "eeg_device",
+                    "skip",
+                    "EEG device discovery skipped for software-only run",
+                    {"matches": [], "candidate_eeg_streams": []},
+                ),
+                require_eeg=False,
+            )
+        )
+        checks.append(check_training_ready(training_model_kinds_from_config(config)))
+        return checks
+
     streams, error = resolve_streams(wait_time=lsl_wait)
     if error:
         checks.append(CheckResult("lsl", "warn", error))
@@ -77,7 +113,20 @@ def run_preflight(config: dict[str, Any], lsl_wait: float = 1.0, require_eeg: bo
     eeg_matches = matching_eeg_streams(stream_dicts, eeg)
     device_check_name = _device_stream_check_name(eeg)
     device_label = _device_stream_label(eeg)
-    if eeg_matches:
+    if len(eeg_matches) > 1:
+        detail = ", ".join(
+            f"{stream['name']} ({stream['channel_count']} ch, source_id={stream.get('source_id') or 'missing'})"
+            for stream in eeg_matches
+        )
+        checks.append(
+            CheckResult(
+                device_check_name,
+                "fail",
+                f"multiple matching {device_label} EEG LSL streams detected; close duplicates before recording: {detail}",
+                {"matches": eeg_matches, "ambiguous": True},
+            )
+        )
+    elif eeg_matches:
         detail = ", ".join(f"{stream['name']} ({stream['channel_count']} ch)" for stream in eeg_matches)
         checks.append(CheckResult(device_check_name, "ok", detail, {"matches": eeg_matches}))
         probe = probe_eeg_stream(

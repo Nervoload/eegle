@@ -13,6 +13,7 @@ from time import monotonic, sleep
 from typing import Any, Iterable
 
 from eegle.analysis.dynamic_sart_labels import compute_support_reference
+from eegle.devices.lsl_markers import LslMarkerReceiptRecorder
 from eegle.io.events import EventLogger
 from eegle.lsl import LslMarkerOutlet, NullMarkerOutlet, lsl_local_clock, session_marker_source_id
 from eegle.psychopy_input import clear_psychopy_keys, poll_psychopy_keys
@@ -385,6 +386,7 @@ class DynamicSartTask:
         markers = dict(self.config.get("hardware", {}).get("markers", {}))
         telemetry = Telemetry.from_config(self.config, paths, component="task.dynamic_sart")
         marker_outlet: LslMarkerOutlet | NullMarkerOutlet | None = None
+        marker_receipt: LslMarkerReceiptRecorder | None = None
         store: DynamicSartArtifactStore | None = None
         win = None
         aborted = False
@@ -402,6 +404,8 @@ class DynamicSartTask:
         )
         try:
             marker_outlet = _make_marker_outlet(markers, paths)
+            if recorder_monitor.required:
+                marker_receipt = _start_marker_receipt_recorder(marker_outlet, paths)
             store = DynamicSartArtifactStore(paths, plan, self.task_config, participant)
             feedback_client = _make_task_feedback_client(self.config, paths)
             win = visual.Window(
@@ -692,7 +696,10 @@ class DynamicSartTask:
             primary_error = exc
             raise
         finally:
-            critical_cleanup_errors = _close_task_resources(("artifact store", store))
+            critical_cleanup_errors = _close_task_resources(
+                ("marker receipt recorder", marker_receipt),
+                ("artifact store", store),
+            )
             cleanup_warnings = _close_task_resources(
                 ("marker outlet", marker_outlet),
                 ("PsychoPy window", win),
@@ -2197,6 +2204,29 @@ def _make_marker_outlet(markers: dict[str, Any], paths: SessionPaths) -> LslMark
         if bool(markers.get("required_for_realtime", False)):
             raise RuntimeError(f"required LSL marker outlet could not be created: {type(exc).__name__}: {exc}") from exc
         return NullMarkerOutlet(f"{type(exc).__name__}: {exc}")
+
+
+def _start_marker_receipt_recorder(
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet,
+    paths: SessionPaths,
+) -> LslMarkerReceiptRecorder:
+    if not isinstance(marker_outlet, LslMarkerOutlet):
+        raise RuntimeError("independent marker receipt requires a live LSL marker outlet")
+    recorder = LslMarkerReceiptRecorder(
+        marker_outlet.source_id,
+        paths.raw / "lsl_markers_received.csv",
+        paths.raw / "lsl_markers_received_metadata.json",
+    )
+    recorder.start()
+    recorder.wait_until_ready()
+    summary = recorder.snapshot()
+    if summary.get("status") != "recording":
+        recorder.stop()
+        raise RuntimeError(
+            "independent LSL marker receipt did not start: "
+            + str(summary.get("error") or summary.get("status"))
+        )
+    return recorder
 
 
 def _practice_feedback(record: dict[str, Any], no_go_digit: int) -> str:

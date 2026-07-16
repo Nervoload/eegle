@@ -43,14 +43,15 @@ onsets that were not captured on a display flip, invalid onset/offset/response
 ordering, overlapping response windows, and EEG timestamp spans that do not
 cover the recorded task or baseline markers.
 
-The current CSV recorder does not independently subscribe to and persist the
-marker stream during the task. The task ledger proves the label, source ID, and
-explicit timestamp supplied to LSL; the preflight loopback proves that a local
-subscriber can receive that stream before acquisition. It does not prove
-receipt of every runtime marker by a second process. If independent receipt in
-one multi-stream container is required, record the EEG and marker outlets with
-LabRecorder/XDF as an additional validated recording path before participant
-collection; that path is not yet managed by these recipes.
+For live baseline and task sessions, a second LSL inlet independently subscribes
+to the run-specific marker outlet before the first marker is emitted. Received
+labels and their LSL timestamps are flushed to
+`raw/lsl_markers_received.csv`, with lifecycle evidence in
+`raw/lsl_markers_received_metadata.json`. Post-session validation requires the
+received onset/offset or baseline-boundary sequence and timestamps to match the
+task ledger exactly. This preserves EEG as CSV while providing independent
+runtime receipt evidence. LabRecorder/XDF remains optional and is not managed
+by these recipes.
 
 Per-stimulus telemetry is disabled in these recipes. Raw task rows still flush
 incrementally, while the large stimulus manifest checkpoints only at block
@@ -72,11 +73,15 @@ baseline time, so it does not take the real visit duration:
 
 ```bash
 dsart8 --participant rehearsal --visit-id rehearsal-001 --task-mode dry-run \
-  --skip-eeg --allow-missing-eeg --break-seconds 0 --output-root data/rehearsal
+  --skip-eeg --break-seconds 0 --output-root data/rehearsal
 ```
 
 Do not use `--allow-missing-eeg` for participant acquisition. The suite rejects
 that flag unless `--skip-eeg` explicitly selects a software-only recording.
+`--skip-eeg` is sufficient for either `dsart8` or `dsart32`: it bypasses LSL
+stream discovery, sample and channel contracts, electrode checks, and marker
+loopback without waiting for an EEG source. Those checks are recorded as
+`skip`, while software, display, storage, and visit-identity checks still run.
 
 To exercise the real PsychoPy windows and complete suite lifecycle without EEG,
 run ten experimental trials per session, two seconds per baseline condition,
@@ -84,6 +89,10 @@ and no inter-session wait:
 
 ```bash
 dsart8 --participant local-smoke --visit-id smoke-001 --task-mode psychopy \
+  --trials 10 --baseline-seconds 2 --break-seconds 0 --skip-eeg \
+  --window-size 1000 700 --output-root data/rehearsal
+
+dsart32 --participant local-smoke-32 --visit-id smoke-32-001 --task-mode psychopy \
   --trials 10 --baseline-seconds 2 --break-seconds 0 --skip-eeg \
   --window-size 1000 700 --output-root data/rehearsal
 ```
@@ -113,10 +122,10 @@ short-lived Windows access/sharing denials with unique temporary files. A
 durable policy denial still stops before acquisition and reports the root that
 must be changed.
 
-This route does not silently mirror data back into the Git checkout. EEGle's
-repository-local `.runtime` tree is for Matplotlib, PsychoPy, and LSL caches;
-participant data under `$EegleData` stays under `LOCALAPPDATA` until it is
-deliberately copied to an approved analysis location after acquisition.
+Relative runtime caches are resolved below the same approved root. This route
+therefore does not silently mirror participant data or PsychoPy, Matplotlib, or
+LSL caches back into the Git checkout. Data under `$EegleData` stays under
+`LOCALAPPDATA` until deliberately copied to an approved analysis location.
 
 Shortened `--trials` rehearsals skip participant qualification practice by
 default, so `--trials 10` means exactly ten experimental trials in each
@@ -260,6 +269,12 @@ acceptable. A JSON quality report is retained even if the gate is declined.
   managed recorder status, heartbeat freshness, and advancing sample count at
   every trial boundary. Recorder exit or a five-second sample stall aborts the
   task while preserving all completed rows and raw samples.
+- Live recording checks free space every five seconds and stops before the
+  volume falls below a 512 MiB reserve. Live preflight requires at least 5 GiB
+  free and warns below 10 GiB; software-only rehearsals use smaller thresholds.
+- Source timestamps must increase continuously. A gap above 100 ms or any
+  nonmonotonic timestamp stops the recorder and invalidates the child instead
+  of allowing an internal dropout to pass a first/last-span check.
 - The same recorder-health monitor runs throughout both resting phases. The
   eyes-open fixation is drawn and flipped once, then key and recorder status are
   polled without continuously re-flipping an unchanged screen.
@@ -305,6 +320,8 @@ every child directory it references. A usable child contains at least:
 
 - `parameters.json` and `manifest.json`;
 - `raw/eeg.csv` and `raw/eeg_metadata.json`;
+- `raw/lsl_markers_received.csv` and
+  `raw/lsl_markers_received_metadata.json` for live recordings;
 - `events/events.jsonl`, `events/behavior.csv`, and `triggers.txt`;
 - `events/stimulus_manifest.json` and `events/dynamic_sart_trials.jsonl`;
 - `reports/dynamic_sart_summary.json`, `reports/dynamic_sart_timing.csv`, and

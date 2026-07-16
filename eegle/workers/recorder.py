@@ -80,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
     last_update = monotonic()
     heartbeat_seconds = float(telemetry_config.get("heartbeat_seconds", 5.0))
     last_health_event = monotonic()
+    final_status = "failed"
     try:
         while not stop_event.is_set():
             if _manager_process_disappeared(manager_pid):
@@ -113,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
             metadata=summary,
         )
         status.update(final_status, summary=summary, error=summary.get("error"))
-    return 0
+    return 0 if final_status == "stopped" else 1
 
 
 def _manager_process_disappeared(manager_pid: int) -> bool:

@@ -39,6 +39,10 @@
       "required_for_run": true,
       "raw_sample_mode": "passthrough",
       "recording_lsl_processing": "source_preserving",
+      "maximum_timestamp_gap_seconds": 0.1,
+      "abort_on_timestamp_gap": true,
+      "minimum_free_bytes_during_recording": 536870912,
+      "disk_check_interval_seconds": 5.0,
       "mapping_source": "experimenter-confirmed-dsart32-montage-2026-07-16",
       "mapping_version": 2,
       "channel_number_map": {

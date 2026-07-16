@@ -270,6 +270,55 @@ class PortabilityTests(unittest.TestCase):
         self.assertEqual(by_name["eeg_device"].data["family"], "Enobio")
         self.assertEqual(by_name["eeg_device"].data["profile"], "enobio8_inhibition")
 
+    def test_preflight_rejects_multiple_matching_eeg_streams(self) -> None:
+        config = {
+            "hardware": {
+                "eeg": {
+                    "family": "Enobio",
+                    "profile": "enobio8_inhibition",
+                    "expected_channel_counts": [8],
+                    "expected_sample_rate_hz": 500,
+                    "lsl_stream_type": "EEG",
+                    "lsl_name_patterns": ["enobio", "nic"],
+                }
+            }
+        }
+        streams = [
+            LslStream("Enobio EEG", "EEG", 8, 500.0, "enobio-a"),
+            LslStream("NIC EEG", "EEG", 8, 500.0, "enobio-b"),
+        ]
+        with patch("eegle.preflight.check_packages", return_value=[]), patch(
+            "eegle.preflight.resolve_streams", return_value=(streams, None)
+        ), patch("eegle.preflight.probe_eeg_stream") as probe:
+            results = run_preflight(config, lsl_wait=0, require_eeg=True)
+
+        by_name = {result.name: result for result in results}
+        self.assertEqual(by_name["enobio_lsl"].status, "fail")
+        self.assertTrue(by_name["enobio_lsl"].data["ambiguous"])
+        probe.assert_not_called()
+
+    def test_preflight_skips_lsl_resolution_when_eeg_checks_are_disabled(self) -> None:
+        config = {
+            "hardware": {
+                "eeg": {
+                    "family": "Enobio",
+                    "profile": "enobio32_dsart_wet",
+                    "required_for_run": True,
+                }
+            },
+            "realtime": {"enabled": False},
+        }
+        with patch("eegle.preflight.check_packages", return_value=[]), patch(
+            "eegle.preflight.resolve_streams"
+        ) as resolve:
+            results = run_preflight(config, lsl_wait=30, require_eeg=False, check_eeg=False)
+
+        resolve.assert_not_called()
+        by_name = {result.name: result for result in results}
+        self.assertEqual(by_name["eeg_acquisition"].status, "skip")
+        self.assertTrue(by_name["eeg_acquisition"].ok)
+        self.assertNotIn("eeg_sample_probe", by_name)
+
     def test_unknown_device_family_warns_without_forking_runtime(self) -> None:
         result = identify_eeg_device([], {"family": "FutureHeadset", "profile": "pilot"})
         self.assertEqual(result.status, "warn")
