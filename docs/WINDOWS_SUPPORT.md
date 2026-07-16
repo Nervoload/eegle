@@ -61,6 +61,31 @@ py -3.10 -m eegle.pipelines.dsart_recording --help
 Makefile targets and repository-root `./alpha8` wrappers are POSIX conveniences,
 not the Windows operator path.
 
+## DSART Recording Suites on Restricted Desktops
+
+Do not record a DSART visit below the checkout when enterprise policy blocks
+writes under `Documents`. Select one approved root for the parent visit and all
+baseline/DSART child sessions:
+
+```powershell
+$EegleData = Join-Path $env:LOCALAPPDATA "EEGle\data"
+$env:EEGLE_SESSION_ROOT = $EegleData
+dsart8 --participant sub-001 --visit-id visit-20260716 --operator operator-id --session-root $EegleData
+```
+
+`--session-root` has highest priority; `EEGLE_SESSION_ROOT` is next; the recipe
+config is the fallback. `--output-root` remains a compatibility alias. The
+suite resolves and persists this path before the PsychoPy runtime redirects
+`LOCALAPPDATA` for dependency caches, so parent manifests, preflights,
+baselines, isolated worker artifacts, and both DSART sessions stay together.
+Use the same root and identity when resuming.
+
+The selected root is write-probed before acquisition. Atomic suite reports use
+unique temporary files and retry short-lived Windows access/sharing denials;
+ongoing policy denials still fail with the exact root to replace. No automatic
+copy is made back into the repository. See `docs/DSART_RECORDING.md` for the
+full visit lifecycle and artifact contract.
+
 ## Attention8 Dry-Electrode Pilot Suite
 
 Install the runtime plus model-training extras, then verify the dry-electrode

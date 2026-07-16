@@ -16,11 +16,11 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from time import monotonic, sleep
+from time import monotonic, monotonic_ns, sleep
 from typing import Any, Iterable
 
 from eegle.analysis.dynamic_sart import analyze_dynamic_sart_session
-from eegle.config import load_config
+from eegle.config import load_config, resolve_session_root
 from eegle.experiment import ForwardExperimentRunner
 from eegle.feedback_manager import FeedbackManager
 from eegle.hardware.profiles import expected_profile
@@ -53,6 +53,7 @@ PHASE_ORDER = (
     "dsart_session_2",
 )
 DSART8_CHANNELS = ("Fz", "Cz", "Pz", "C3", "C4", "P3", "P4", "Oz")
+_ATOMIC_REPLACE_RETRY_DELAYS_SECONDS = (0.0, 0.01, 0.025, 0.05, 0.1, 0.2, 0.4, 0.8)
 
 
 @dataclass(frozen=True)
@@ -79,7 +80,6 @@ class DsartRecordingOptions:
     electrode_quality_file: str | Path | None = None
     electrode_note: str | None = None
     electrodes_confirmed: bool = False
-    channel_map_confirmed: bool = False
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -155,7 +155,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip-eeg", action="store_true")
     parser.add_argument("--allow-missing-eeg", action="store_true")
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--output-root", default=None)
+    parser.add_argument(
+        "--session-root",
+        "--output-root",
+        dest="output_root",
+        default=None,
+        help=(
+            "Root for all parent-suite and child-session data; --output-root remains a compatibility alias. "
+            "Use an approved writable Windows path such as $env:LOCALAPPDATA\\EEGle\\data when Documents is restricted."
+        ),
+    )
     parser.add_argument("--lsl-wait", type=float, default=5.0)
     parser.add_argument("--electrode-quality-file", default=None, help="Optional JSON channel quality or impedance report")
     parser.add_argument("--electrode-note", default=None)
@@ -163,11 +172,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--confirm-electrodes",
         action="store_true",
         help="Noninteractive attestation that contact/impedance was checked; otherwise each live preflight prompts",
-    )
-    parser.add_argument(
-        "--confirm-channel-map",
-        action="store_true",
-        help="Required for recipes whose supplied channel map needed an explicit repair",
     )
     return parser
 
@@ -197,7 +201,6 @@ def _options_from_args(args: argparse.Namespace) -> DsartRecordingOptions:
         electrode_quality_file=args.electrode_quality_file,
         electrode_note=args.electrode_note,
         electrodes_confirmed=bool(args.confirm_electrodes),
-        channel_map_confirmed=bool(args.confirm_channel_map),
     )
 
 
@@ -230,10 +233,9 @@ def run_recording_suite(options: DsartRecordingOptions) -> dict[str, Any]:
         )
     if options.window_size is not None:
         config.setdefault("hardware", {}).setdefault("display", {})["size"] = list(options.window_size)
-    if options.output_root is not None:
-        config.setdefault("runtime", {})["session_root"] = str(Path(options.output_root).expanduser().resolve())
-    output_root = Path(config.get("runtime", {}).get("session_root", "data")).expanduser().resolve()
-    output_root.mkdir(parents=True, exist_ok=True)
+    output_root = resolve_session_root(config, options.output_root)
+    config.setdefault("runtime", {})["session_root"] = str(output_root)
+    _probe_session_root_writable(output_root)
     visit_id = _resolve_visit_id(options, output_root)
     visit_dir = output_root / "recording_suites" / options.participant_id / visit_id / options.recipe
     manifest_path = visit_dir / "recording_suite.json"
@@ -245,13 +247,6 @@ def run_recording_suite(options: DsartRecordingOptions) -> dict[str, Any]:
     hard_issues = [issue for issue in config_issues if issue["status"] == "fail"]
     if hard_issues:
         raise ValueError("recording configuration invalid: " + "; ".join(issue["detail"] for issue in hard_issues))
-    mapping_confirmation_required = bool(
-        config.get("hardware", {}).get("eeg", {}).get("mapping_confirmation_required", False)
-    )
-    if mapping_confirmation_required and not options.channel_map_confirmed:
-        note = str(config["hardware"]["eeg"].get("mapping_confirmation_note") or "channel map needs confirmation")
-        raise ValueError(f"{note} Re-run with --confirm-channel-map only after verifying the physical mapping.")
-
     session_1_seed = options.session_1_seed or derive_session_seed(
         options.participant_id, visit_id, 1, options.master_seed
     )
@@ -563,8 +558,6 @@ def validate_recording_config(config: dict[str, Any], recipe: str) -> list[dict[
     )
     if not epoching_ready:
         issues.append(_issue("fail", "realtime.epoching must use the strict raw LSL DSART prestimulus contract"))
-    if eeg.get("mapping_confirmation_required"):
-        issues.append(_issue("warn", str(eeg.get("mapping_confirmation_note") or "channel mapping needs operator confirmation")))
     return issues
 
 
@@ -725,7 +718,6 @@ def run_recording_preflight(
         "failures": [item["detail"] for item in check_payloads if item.get("status") == "fail"],
     }
     report_path = output_dir / f"{phase}.json"
-    _write_json_atomic(report_path, report)
     report["report_file"] = str(report_path)
     _write_json_atomic(report_path, report)
     return report
@@ -2355,6 +2347,38 @@ def _storage_check(output_root: Path) -> CheckResult:
         return CheckResult("recording_storage", "fail", f"output is not writable: {type(exc).__name__}: {exc}", {"output_root": str(output_root)})
 
 
+def _probe_session_root_writable(output_root: Path) -> None:
+    """Fail before acquisition when the selected suite root cannot be updated."""
+
+    probe_dir = output_root / ".eegle_dsart_write_probe"
+    probe_file = probe_dir / f"{os.getpid()}.json"
+    try:
+        _write_json_atomic(probe_file, {"probe": 1})
+        _write_json_atomic(probe_file, {"probe": 2})
+    except OSError as exc:
+        message = _session_root_error_message(output_root, exc)
+        if isinstance(exc, PermissionError):
+            raise PermissionError(message) from exc
+        raise OSError(message) from exc
+    finally:
+        try:
+            probe_file.unlink(missing_ok=True)
+        except OSError:
+            pass
+        try:
+            probe_dir.rmdir()
+        except OSError:
+            pass
+
+
+def _session_root_error_message(output_root: Path, exc: OSError) -> str:
+    return (
+        f"DSART session root is not writable by the current Python process: {output_root} "
+        f"({type(exc).__name__}: {exc}). Choose an approved data location with --session-root, "
+        "for example $env:LOCALAPPDATA\\EEGle\\data on Windows, then rerun the same dsart8 or dsart32 command."
+    )
+
+
 def _make_marker_outlet(config: dict[str, Any], paths: SessionPaths) -> LslMarkerOutlet | NullMarkerOutlet:
     marker_cfg = dict(config.get("hardware", {}).get("markers", {}) or {})
     try:
@@ -2499,7 +2523,6 @@ def _initial_manifest(
         "participant_id": options.participant_id,
         "visit_id": visit_id,
         "hardware_profile": hardware.get("profile"),
-        "channel_map_confirmed": options.channel_map_confirmed,
         "channel_mapping_source": hardware.get("mapping_source"),
         "channel_mapping_version": hardware.get("mapping_version"),
         "operator": options.operator or os.environ.get("USER") or os.environ.get("USERNAME") or "unspecified",
@@ -2538,6 +2561,7 @@ def _initial_manifest(
         "software_version": _software_version(),
         "configuration_hashes": {"recording_recipe": _hash_payload(config)},
         "config_path": str(Path(options.config_path).expanduser().resolve()),
+        "session_root": str(config.get("runtime", {}).get("session_root", "data")),
         "visit_directory": str(visit_dir),
         "phase_order": list(PHASE_ORDER),
         "phases": {phase: {"status": "planned", "attempts": []} for phase in PHASE_ORDER},
@@ -2696,6 +2720,7 @@ def _public_suite_result(manifest: dict[str, Any], manifest_path: Path) -> dict[
         "participant_id": manifest.get("participant_id"),
         "visit_id": manifest.get("visit_id"),
         "manifest_file": str(manifest_path),
+        "session_root": manifest.get("session_root"),
         "baseline_session_directory": manifest.get("baseline_session_directory"),
         "dsart_session_1_directory": manifest.get("dsart_session_1_directory"),
         "dsart_session_2_directory": manifest.get("dsart_session_2_directory"),
@@ -2731,21 +2756,49 @@ def _append_jsonl_atomic_event(path: Path, payload: dict[str, Any]) -> None:
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp")
-    with temporary.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, sort_keys=True)
-        handle.write("\n")
-    temporary.replace(path)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{monotonic_ns()}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        _replace_atomic_file(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _write_text_atomic(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp")
-    with temporary.open("w", encoding="utf-8") as handle:
-        handle.write(text)
-        if text and not text.endswith("\n"):
-            handle.write("\n")
-    temporary.replace(path)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{monotonic_ns()}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as handle:
+            handle.write(text)
+            if text and not text.endswith("\n"):
+                handle.write("\n")
+        _replace_atomic_file(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _replace_atomic_file(source: Path, target: Path) -> None:
+    """Publish a suite artifact despite short-lived Windows file locks."""
+
+    last_error: OSError | None = None
+    for delay in _ATOMIC_REPLACE_RETRY_DELAYS_SECONDS:
+        if delay:
+            sleep(delay)
+        try:
+            source.replace(target)
+            return
+        except OSError as exc:
+            if not _is_transient_replace_error(exc):
+                raise
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+
+
+def _is_transient_replace_error(exc: OSError) -> bool:
+    return isinstance(exc, PermissionError) or getattr(exc, "winerror", None) in {5, 32, 33}
 
 
 def _load_json(path: Path) -> dict[str, Any] | None:

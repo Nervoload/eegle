@@ -88,6 +88,36 @@ dsart8 --participant local-smoke --visit-id smoke-001 --task-mode psychopy \
   --window-size 1000 700 --output-root data/rehearsal
 ```
 
+### Locked-down Windows data root
+
+If Windows Controlled Folder Access, OneDrive policy, endpoint protection, or
+enterprise permissions block writes below the repository in `Documents`, use
+the same approved-root pattern as `attention8`:
+
+```powershell
+$EegleData = Join-Path $env:LOCALAPPDATA "EEGle\data"
+$env:EEGLE_SESSION_ROOT = $EegleData
+dsart8 --participant local-smoke --visit-id smoke-001 --task-mode psychopy --trials 10 --baseline-seconds 2 --break-seconds 0 --skip-eeg --window-size 1000 700 --session-root $EegleData
+```
+
+Use the same root on `--resume`. Resolution is explicit `--session-root`, then
+`EEGLE_SESSION_ROOT`, then `runtime.session_root` from the recipe. The legacy
+`--output-root` option remains an alias for `--session-root`. One resolved
+absolute root is written into the suite manifest and child configs, keeping the
+parent `recording_suites` files, baseline, both DSART sessions, and isolated
+phase-worker request/result files together.
+
+The suite probes both initial creation and replacement of a small JSON file at
+that root before creating the visit. Suite JSON/text publication also retries
+short-lived Windows access/sharing denials with unique temporary files. A
+durable policy denial still stops before acquisition and reports the root that
+must be changed.
+
+This route does not silently mirror data back into the Git checkout. EEGle's
+repository-local `.runtime` tree is for Matplotlib, PsychoPy, and LSL caches;
+participant data under `$EegleData` stays under `LOCALAPPDATA` until it is
+deliberately copied to an approved analysis location after acquisition.
+
 Shortened `--trials` rehearsals skip participant qualification practice by
 default, so `--trials 10` means exactly ten experimental trials in each
 session. Add `--include-practice` when the purpose of the rehearsal is to test
@@ -130,8 +160,8 @@ DSART32 uses this device-channel order:
 
 | Device channel | Label | Device channel | Label |
 | ---: | --- | ---: | --- |
-| 1 | T7 | 17 | FC5 |
-| 2 | CP1 | 18 | Fp1 |
+| 1 | T7 | 17 | Fp1 |
+| 2 | CP1 | 18 | FC5 |
 | 3 | C1 | 19 | AF3 |
 | 4 | Pz | 20 | Fz |
 | 5 | CP2 | 21 | PO4 |
@@ -147,13 +177,9 @@ DSART32 uses this device-channel order:
 | 15 | P7 | 31 | F3 |
 | 16 | F7 | 32 | PO3 |
 
-The supplied mapping contained a collision: Fp1=17 and FC5=17, with channel 18
-unused. The recipe infers Fp1=18 and retains FC5=17. This is an explicit
-assumption, not a silently corrected fact. Confirm it against the configured
-NIC montage and physical electrode/cable labels before using
-`--confirm-channel-map`. If the physical layout differs, change the profile and
-config before recording; do not relabel the data afterward without a versioned
-correction record.
+The DSART32 device mapping is confirmed: Fp1=17 and FC5=18. The recipe and
+shared Enobio profile both use this order, so generic NIC channel labels are
+mapped consistently without an additional operator confirmation step.
 
 The 32-channel session also writes `events/dsart8_overlap_channels.json` so the
 eight labels shared with DSART8 can be selected reproducibly later. All 32
@@ -169,8 +195,7 @@ dsart8 --participant sub-001 --visit-id visit-20260716 --operator operator-id
 ```
 
 ```bash
-dsart32 --participant sub-002 --visit-id visit-20260716 --operator operator-id \
-  --confirm-channel-map
+dsart32 --participant sub-002 --visit-id visit-20260716 --operator operator-id
 ```
 
 The command performs, in order:
@@ -264,8 +289,7 @@ dsart8 --participant sub-001 --visit-id visit-20260716 --operator operator-id --
 ```
 
 ```bash
-dsart32 --participant sub-002 --visit-id visit-20260716 --operator operator-id \
-  --confirm-channel-map --resume
+dsart32 --participant sub-002 --visit-id visit-20260716 --operator operator-id --resume
 ```
 
 The suite skips completed phases and creates a new child run directory for an

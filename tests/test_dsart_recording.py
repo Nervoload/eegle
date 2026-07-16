@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -29,6 +30,7 @@ from eegle.pipelines.dsart_recording import (
     _psychopy_baseline_phase,
     _raw_eeg_integrity,
     _run_baseline_psychopy,
+    _write_json_atomic,
     assess_sample_probe,
     build_parser,
     run_resting_baseline,
@@ -347,6 +349,80 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertFalse(options.record_eeg)
         self.assertFalse(options.require_eeg)
 
+    def test_session_root_cli_alias_maps_to_the_suite_output_root(self) -> None:
+        args = build_parser().parse_args(
+            ["--recipe", "dsart8", "--participant", "unit", "--session-root", "approved-data"]
+        )
+        self.assertEqual(_options_from_args(args).output_root, "approved-data")
+
+    def test_suite_honors_eegle_session_root_for_parent_and_child_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session_root = Path(tmp) / "approved-data"
+            options = DsartRecordingOptions(
+                recipe="dsart8",
+                config_path=CONFIG_8,
+                participant_id="unit-env-root",
+                visit_id="visit-env-root",
+                task_mode="dry-run",
+                trials_per_session=10,
+                baseline_seconds=2.0,
+                break_seconds=0.0,
+                record_eeg=False,
+                require_eeg=False,
+            )
+            with patch.dict(os.environ, {"EEGLE_SESSION_ROOT": str(session_root)}, clear=False), patch(
+                "eegle.pipelines.dsart_recording.run_recording_preflight",
+                side_effect=self._passing_preflight,
+            ):
+                result = run_recording_suite(options)
+
+            manifest = json.loads(Path(result["manifest_file"]).read_text(encoding="utf-8"))
+
+        self.assertEqual(result["status"], "completed")
+        self.assertTrue(Path(result["manifest_file"]).is_relative_to(session_root))
+        self.assertTrue(Path(result["baseline_session_directory"]).is_relative_to(session_root))
+        self.assertTrue(Path(result["dsart_session_1_directory"]).is_relative_to(session_root))
+        self.assertTrue(Path(result["dsart_session_2_directory"]).is_relative_to(session_root))
+        self.assertEqual(os.path.realpath(manifest["session_root"]), os.path.realpath(session_root))
+
+    def test_suite_reports_locked_session_root_before_acquisition(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            blocked_root = Path(tmp) / "not-a-directory"
+            blocked_root.write_text("blocked\n", encoding="utf-8")
+            options = DsartRecordingOptions(
+                recipe="dsart8",
+                config_path=CONFIG_8,
+                participant_id="unit-blocked-root",
+                output_root=blocked_root,
+                record_eeg=False,
+                require_eeg=False,
+            )
+            with self.assertRaisesRegex(OSError, r"--session-root.*LOCALAPPDATA"):
+                run_recording_suite(options)
+
+    def test_atomic_json_write_retries_transient_windows_access_denial(self) -> None:
+        original_replace = Path.replace
+        attempts = 0
+
+        def transient_replace(source: Path, target: Path) -> Path:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise PermissionError("simulated Windows access denial")
+            return original_replace(source, target)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "second_preflight.json"
+            target.write_text('{"old": true}\n', encoding="utf-8")
+            with patch.object(Path, "replace", new=transient_replace), patch(
+                "eegle.pipelines.dsart_recording.sleep"
+            ):
+                _write_json_atomic(target, {"updated": True})
+            payload = json.loads(target.read_text(encoding="utf-8"))
+
+        self.assertEqual(attempts, 2)
+        self.assertEqual(payload, {"updated": True})
+
     def test_practice_policy_skips_short_smoke_unless_explicitly_requested(self) -> None:
         smoke = DsartRecordingOptions(
             recipe="dsart8",
@@ -572,8 +648,7 @@ class DsartRecordingTests(unittest.TestCase):
         dsart32 = load_config(CONFIG_32)
         self.assertEqual(validate_recording_config(dsart8, "dsart8"), [])
         issues_32 = validate_recording_config(dsart32, "dsart32")
-        self.assertFalse([row for row in issues_32 if row["status"] == "fail"])
-        self.assertTrue([row for row in issues_32 if row["status"] == "warn"])
+        self.assertEqual(issues_32, [])
         self.assertEqual(dsart8["tasks"], dsart32["tasks"])
         self.assertEqual(dsart8["realtime"], dsart32["realtime"])
         self.assertFalse(dsart8["hardware"]["display"]["full_screen"])
@@ -681,16 +756,21 @@ class DsartRecordingTests(unittest.TestCase):
             self.assertEqual(sum(bool(row["is_no_go"]) for row in experimental), 67)
             self.assertEqual(sorted(block["planned_no_go_count"] for block in plan["planned_blocks"]), [11, 11, 11, 11, 11, 12])
 
-    def test_channel_maps_are_bijective_and_overlap_is_explicit(self) -> None:
+    def test_channel_maps_are_bijective_and_dsart32_uses_confirmed_device_order(self) -> None:
         dsart8 = load_config(CONFIG_8)["hardware"]["eeg"]
         dsart32 = load_config(CONFIG_32)["hardware"]["eeg"]
         self.assertEqual(dsart8["channel_number_map"], {
             "Fz": 1, "Cz": 2, "Pz": 3, "C3": 4, "C4": 5, "P3": 6, "P4": 7, "Oz": 8,
         })
         self.assertEqual(sorted(dsart32["channel_number_map"].values()), list(range(1, 33)))
-        self.assertEqual(dsart32["channel_number_map"]["Fp1"], 18)
-        self.assertEqual(dsart32["channel_number_map"]["FC5"], 17)
-        self.assertTrue(dsart32["mapping_confirmation_required"])
+        self.assertEqual(dsart32["channel_number_map"]["Fp1"], 17)
+        self.assertEqual(dsart32["channel_number_map"]["FC5"], 18)
+        self.assertEqual(dsart32["mapping_version"], 2)
+        self.assertNotIn("mapping_confirmation_required", dsart32)
+        self.assertNotIn("mapping_confirmation_note", dsart32)
+        mapped, source = mapped_channel_names([f"EEG{index}" for index in range(1, 33)], dsart32)
+        self.assertEqual(mapped[16:18], ["Fp1", "FC5"])
+        self.assertEqual(source, "profile:enobio32_dsart_wet")
         with tempfile.TemporaryDirectory() as tmp:
             session = Path(tmp)
             (session / "events").mkdir()
@@ -704,20 +784,10 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertEqual(mapped, list(config["channel_number_map"]))
         self.assertEqual(source, "profile:enobio8_inhibition")
 
-    def test_dsart32_refuses_unconfirmed_repaired_map(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            options = DsartRecordingOptions(
-                recipe="dsart32",
-                config_path=CONFIG_32,
-                participant_id="unit",
-                visit_id="visit-map",
-                task_mode="dry-run",
-                record_eeg=False,
-                require_eeg=False,
-                output_root=tmp,
-            )
-            with self.assertRaisesRegex(ValueError, "--confirm-channel-map"):
-                run_recording_suite(options)
+    def test_dsart32_command_has_no_channel_map_confirmation_gate(self) -> None:
+        self.assertNotIn("--confirm-channel-map", build_parser().format_help())
+        issues = validate_recording_config(load_config(CONFIG_32), "dsart32")
+        self.assertFalse(any("confirmation" in issue["detail"].lower() for issue in issues))
 
     def test_recording_cannot_weaken_the_required_eeg_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

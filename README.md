@@ -305,7 +305,7 @@ contract.
 
 ```bash
 dsart8 --participant sub-001 --visit-id visit-20260716 --operator operator-id
-dsart32 --participant sub-002 --visit-id visit-20260716 --operator operator-id --confirm-channel-map
+dsart32 --participant sub-002 --visit-id visit-20260716 --operator operator-id
 ```
 
 For a short, visible, no-EEG suite rehearsal, run ten experimental trials in
@@ -316,6 +316,29 @@ dsart8 --participant local-smoke --visit-id smoke-001 --task-mode psychopy \
   --trials 10 --baseline-seconds 2 --break-seconds 0 --skip-eeg \
   --window-size 1000 700 --output-root data/rehearsal
 ```
+
+On a Windows desktop where Controlled Folder Access or enterprise policy blocks
+the repository's `Documents\...\data` directory, put the complete visit on an
+approved user-writable root:
+
+```powershell
+$EegleData = Join-Path $env:LOCALAPPDATA "EEGle\data"
+$env:EEGLE_SESSION_ROOT = $EegleData
+dsart8 --participant local-smoke --visit-id smoke-001 --task-mode psychopy --trials 10 --baseline-seconds 2 --break-seconds 0 --skip-eeg --window-size 1000 700 --session-root $EegleData
+```
+
+`dsart8` and `dsart32` use the same resolution order as `attention8`: an
+explicit `--session-root`, then `EEGLE_SESSION_ROOT`, then the config's
+`runtime.session_root`. The older `--output-root` spelling remains an alias.
+The resolved root owns both `recording_suites\...` parent manifests and every
+`participants\...` baseline/DSART child session. It is persisted into the
+visit manifest and child `parameters.json` files before any PsychoPy runtime
+code redirects cache-related environment variables.
+
+This does not copy experiment data back into the checkout. The repository-local
+`.runtime` directory contains dependency caches only. If `$EegleData` points at
+`LOCALAPPDATA`, the acquisition data remains there unless an operator performs
+a separate reviewed copy after the visit.
 
 Shortened `--trials` runs skip participant qualification practice by default,
 so this presents exactly ten experimental trials per session. Add
@@ -328,11 +351,9 @@ suite prints the signal/contact report and requires the operator to type `YES`
 after both the initial and post-break electrode checks. The flag exists only
 for a deliberately noninteractive, externally documented contact check.
 
-The supplied 32-channel map listed both Fp1 and FC5 as device channel 17 and
-did not list channel 18. `record_dsart32.json` uses the only one-to-one repair
-consistent with that list: FC5=17 and Fp1=18. The `dsart32` command will not
-start unless the operator verifies that physical mapping in NIC/cable labels
-and passes `--confirm-channel-map`.
+The confirmed DSART32 montage uses Fp1 on device channel 17 and FC5 on device
+channel 18. This mapping is authoritative in both the recording recipe and the
+shared Enobio profile; no extra channel-map confirmation flag is required.
 
 If a completed phase is followed by an abort or process failure, rerun the same
 identity with `--resume`. Completed child sessions are retained; an incomplete
@@ -368,7 +389,7 @@ analysis:
 | `configs/forward_go_nogo_classifier8.json` | Capture and observe-only GO/NO-GO EEG condition classification |
 | `configs/forward_dynamic_sart.json` | Formal digit SART with raw recording, support/query phases, strict prestimulus epoch settings, and no active model |
 | `configs/record_dsart8.json` | Two-session 600-trial DSART recording suite for the Enobio 8 dry montage |
-| `configs/record_dsart32.json` | Same two-session DSART suite for the supplied Enobio 32 wet montage; repaired Fp1 mapping requires confirmation |
+| `configs/record_dsart32.json` | Same two-session DSART suite for the confirmed Enobio 32 wet montage |
 
 Hardware expectations live under `hardware.eeg`. Before collecting data, check
 the configured channel count, sample rate, LSL stream type/name patterns, and
