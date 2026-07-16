@@ -199,6 +199,23 @@ trial 1, after practice passes or is skipped, the task displays the mandatory
 one-second sequence `5`, `4`, `3`, `2`, `1`, `GO!`; all six display onsets are
 written as flip-synchronized countdown markers.
 
+Each block reserves its first four trials as go trials so the no-go stimulus
+cannot appear before a response tendency has begun to form. The two internal
+task breaks (after support trial 200 and query trial 400) enforce a 30-second
+minimum: early SPACE presses are logged and ignored, SPACE can continue after
+30 seconds, and the task continues automatically at 60 seconds. This is
+independent of the suite's 600-second break between Session 1 and Session 2.
+
+Trial timing separates scheduled deadlines from measurements. Response scoring
+uses the scheduled logical deadline, while the loop-exit timestamp and
+overshoot are measured separately. Actual inter-onset duration is derived from
+consecutive flip-captured stimulus onsets during analysis. q80 is the primary
+exploratory support-relative threshold for these pilots; q95 and q95-dependent
+composites remain explicitly secondary because the 200-trial support segment
+cannot supply 200 valid go trials. Future targets persist their maturity trial
+and phase, and support calibration must require target-specific
+`available_at_support_complete=true` rather than filtering on anchor phase.
+
 At each live preflight the terminal prints the report path and warnings. Inspect
 NIC contact/impedance and type the uppercase word `YES` only when the montage is
 acceptable. A JSON quality report is retained even if the gate is declined.
@@ -266,7 +283,8 @@ every child directory it references. A usable child contains at least:
 - `raw/eeg.csv` and `raw/eeg_metadata.json`;
 - `events/events.jsonl`, `events/behavior.csv`, and `triggers.txt`;
 - `events/stimulus_manifest.json` and `events/dynamic_sart_trials.jsonl`;
-- `reports/dynamic_sart_summary.json` and `session_summary.json`.
+- `reports/dynamic_sart_summary.json`, `reports/dynamic_sart_timing.csv`, and
+  `session_summary.json`.
 
 Do not use a folder name alone to infer completion. Use the parent phase status,
 child validation object, raw recorder status, completed trial count, marker/trial

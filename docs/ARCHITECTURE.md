@@ -132,6 +132,8 @@ data/participants/<participant-id>/sessions/<date>/<experiment-id>/<task>/run-<t
       manifest.json
   reports/
     summary.json
+    dynamic_sart_summary.json
+    dynamic_sart_timing.csv
     experiment_summary.html
     alpha/
       alpha_summary.json
@@ -201,6 +203,14 @@ before the anchor; future targets begin at the next physical or next eligible
 valid-go trial as declared in `dynamic_sart_label_contract.json`. Current
 behavioral facts, operational targets, and any later learned latent model state
 remain separate concepts.
+
+DSART timing v2 stores scheduled response/next-onset values separately from
+observed response-loop exit timestamps. Post-session analysis reconstructs
+actual inter-onset durations from consecutive flip-captured stimulus onsets and
+does not interpret planned breaks or probes as scheduler drift. Future-target
+maturity metadata is the calibration boundary: an anchor in support is not
+sufficient unless that specific target was also available by
+`dynamic_sart_support_complete`.
 
 Alpha validation joins `realtime/alpha_power.jsonl` to Go/No-go trial timing, writes `reports/alpha/trial_alpha.csv`, computes `reports/alpha/offline_alpha_timeseries.csv` from raw EEG, and summarizes whether pre-stimulus alpha predicts reaction time or accuracy in `reports/alpha/alpha_summary.json`. `reports/experiment_summary.html` embeds a decimated replay view with raw channel traces, marker toggles, live alpha estimates, and the offline alpha overlay.
 

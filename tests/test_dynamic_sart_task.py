@@ -21,10 +21,12 @@ from eegle.tasks.dynamic_sart import (
     _log_captured_countdown_flip,
     _practice_status_text,
     _run_psychopy_countdown,
+    _show_bounded_break,
     audit_dynamic_sart_action,
     practice_criteria,
     score_dynamic_sart_trial,
 )
+from eegle.analysis.dynamic_sart_labels import reconstruct_dynamic_sart_timing
 from eegle.tasks.dynamic_sart_schema import DynamicSartConfig
 from eegle.tasks.dynamic_sart_sequence import build_dynamic_sart_plan, validate_dynamic_sart_plan
 from eegle.tasks.registry import get_task_spec, list_task_specs
@@ -90,9 +92,11 @@ def _score(config: DynamicSartConfig, *, no_go: bool, events: list[dict]) -> dic
         stimulus_onset_lsl=20.0,
         stimulus_offset_monotonic=10.25,
         stimulus_offset_lsl=20.25,
-        response_window_close_monotonic=11.15,
-        response_window_close_lsl=21.15,
-        next_trial_onset_monotonic=11.25,
+        scheduled_response_window_close_monotonic=11.15,
+        scheduled_response_window_close_lsl=21.15,
+        response_window_close_monotonic=11.17,
+        response_window_close_lsl=21.17,
+        scheduled_next_trial_onset_monotonic=11.25,
     )
 
 
@@ -312,6 +316,7 @@ class DynamicSartTaskTests(unittest.TestCase):
             rows = [row for row in first["planned_trials"] if row["block_index"] == block_index]
             positions = [row["block_trial_index"] for row in rows if row["is_no_go"]]
             self.assertTrue(positions)
+            self.assertGreater(positions[0], config.minimum_leading_go_trials)
             self.assertTrue(all(right - left - 1 >= 2 for left, right in zip(positions, positions[1:])))
             counts = {}
             for row in rows:
@@ -351,6 +356,84 @@ class DynamicSartTaskTests(unittest.TestCase):
         self.assertEqual(wrong_then_valid["first_valid_response_key"], "space")
         self.assertTrue(wrong_then_valid["wrong_key_response"])
         self.assertTrue(wrong_then_valid["multiple_response"])
+
+    def test_timing_fields_distinguish_schedules_observations_and_next_flip_measurements(self) -> None:
+        config = DynamicSartConfig.from_mapping(_config()["tasks"]["dynamic_sart"])
+        record = _score(config, no_go=False, events=[_key("1", "space", 10.35)])
+        self.assertEqual(record["scheduled_response_window_close_monotonic"], 11.15)
+        self.assertEqual(record["response_window_close_monotonic"], 11.17)
+        self.assertAlmostEqual(record["response_window_close_overshoot_seconds"], 0.02)
+        self.assertEqual(record["scheduled_next_trial_onset_monotonic"], 11.25)
+        self.assertIsNone(record["actual_next_trial_onset_monotonic"])
+        self.assertIsNone(record["actual_trial_duration_seconds"])
+
+        next_record = dict(record)
+        next_record["global_trial_index"] = 2
+        next_record["stimulus_onset_monotonic"] = 11.31
+        next_record["stimulus_onset_lsl"] = 21.31
+        reconstructed = reconstruct_dynamic_sart_timing([record, next_record])
+        self.assertEqual(reconstructed[0]["actual_next_trial_onset_monotonic"], 11.31)
+        self.assertAlmostEqual(reconstructed[0]["actual_trial_duration_seconds"], 1.31)
+        self.assertEqual(reconstructed[0]["timing_finalization_status"], "measured_from_next_stimulus_flip")
+        self.assertEqual(reconstructed[1]["timing_finalization_status"], "terminal_no_following_stimulus_flip")
+
+    def test_response_scoring_uses_logical_deadline_not_observed_loop_exit(self) -> None:
+        config = DynamicSartConfig.from_mapping(_config()["tasks"]["dynamic_sart"])
+        record = _score(config, no_go=False, events=[_key("late", "space", 11.16)])
+        self.assertEqual(record["primary_outcome"], "omission_error")
+
+    def test_legacy_timing_is_reclassified_as_scheduled_without_fabricating_observations(self) -> None:
+        legacy = [
+            {
+                "global_trial_index": 1,
+                "stimulus_onset_monotonic": 10.0,
+                "response_window_close_monotonic": 11.15,
+                "next_trial_onset_monotonic": 11.25,
+                "actual_response_window_seconds": 1.15,
+            },
+            {"global_trial_index": 2, "stimulus_onset_monotonic": 11.31},
+        ]
+        reconstructed = reconstruct_dynamic_sart_timing(legacy)
+        self.assertEqual(reconstructed[0]["scheduled_response_window_close_monotonic"], 11.15)
+        self.assertEqual(reconstructed[0]["scheduled_next_trial_onset_monotonic"], 11.25)
+        self.assertIsNone(reconstructed[0]["response_window_close_monotonic"])
+        self.assertIsNone(reconstructed[0]["actual_response_window_seconds"])
+        self.assertEqual(reconstructed[0]["actual_next_trial_onset_monotonic"], 11.31)
+
+    def test_within_task_break_ignores_continue_until_minimum(self) -> None:
+        class Stimulus:
+            def __init__(self, _win, **_kwargs) -> None:
+                pass
+
+            def draw(self) -> None:
+                pass
+
+        class Window:
+            def flip(self) -> None:
+                pass
+
+        responses = iter(
+            [
+                [{"is_escape_key": False, "is_response_key": True}],
+                [{"is_escape_key": False, "is_response_key": True}],
+            ]
+        )
+        keyboard = SimpleNamespace(poll=lambda **_kwargs: next(responses))
+        with patch("eegle.tasks.dynamic_sart.monotonic", side_effect=[1.0, 1.0, 31.0, 31.0, 31.0]), patch(
+            "eegle.tasks.dynamic_sart.sleep"
+        ):
+            continued, result = _show_bounded_break(
+                Window(),
+                SimpleNamespace(TextStim=Stimulus),
+                keyboard,
+                30.0,
+                60.0,
+                started_at=0.0,
+            )
+        self.assertTrue(continued)
+        self.assertEqual(result["ignored_early_continue_presses"], 1)
+        self.assertEqual(result["break_end_reason"], "participant_continue_after_minimum")
+        self.assertGreaterEqual(result["actual_break_seconds"], 30.0)
 
     def test_practice_criteria_separate_go_and_no_go_accuracy(self) -> None:
         config = DynamicSartConfig.from_mapping(_config()["tasks"]["dynamic_sart"])

@@ -90,6 +90,19 @@ class DynamicSartLabelTests(unittest.TestCase):
         self.assertIsNone(reference["support_log_rt_median"])
         self.assertIn("support_log_rt_scale_unavailable", reference["warnings"])
 
+    def test_q80_is_primary_and_q95_is_explicitly_unattainable_for_pilot_support_budget(self) -> None:
+        rows = [_trial(index, phase="support", rt=0.3 + index / 10000) for index in range(1, 179)]
+        rows.extend(
+            _trial(index, phase="support", condition="no_go", rt=None)
+            for index in range(179, 201)
+        )
+        reference = compute_support_reference(rows, minimum_valid_rt_seconds=0.1, response_window_seconds=1.15)
+        self.assertEqual(reference["support_go_trial_budget"], 178)
+        self.assertEqual(reference["principal_support_relative_threshold"], "q80")
+        self.assertEqual(reference["support_q80_confidence"], "preferred")
+        self.assertFalse(reference["support_q95_preferred_attainable"])
+        self.assertEqual(reference["support_q95_confidence"], "low_unattainable_by_design")
+
     def test_causal_features_exclude_current_and_later_trials(self) -> None:
         rows = _rows()
         reference = compute_support_reference(rows, minimum_valid_rt_seconds=0.1, response_window_seconds=1.15)
@@ -132,6 +145,22 @@ class DynamicSartLabelTests(unittest.TestCase):
         self.assertIsNotNone(labels[4]["future_slow_any_next_3_valid_go_trials"])
         self.assertIsNone(labels[9]["future_slow_any_next_3_valid_go_trials"])
 
+    def test_future_targets_persist_maturity_and_support_boundary_availability(self) -> None:
+        rows = _rows()
+        reference = compute_support_reference(rows, minimum_valid_rt_seconds=0.1, response_window_seconds=1.15)
+        labels = {row["global_trial_index"]: row for row in generate_dynamic_sart_labels(rows, reference)}
+        crossing = labels[4]["future_target_maturity"]
+        self.assertEqual(crossing["next_valid_go_log_rt"]["target_maturity_trial"], 7)
+        self.assertEqual(crossing["next_valid_go_log_rt"]["target_maturity_phase"], "query")
+        self.assertFalse(crossing["next_valid_go_log_rt"]["available_at_support_complete"])
+        self.assertFalse(labels[4]["available_at_support_complete"])
+        self.assertNotIn("next_valid_go_log_rt", labels[4]["support_calibration_eligible_targets"])
+
+        early = labels[1]["future_target_maturity"]["next_valid_go_log_rt"]
+        self.assertEqual(early["target_maturity_trial"], 2)
+        self.assertTrue(early["available_at_support_complete"])
+        self.assertIn("next_valid_go_log_rt", labels[1]["support_calibration_eligible_targets"])
+
     def test_label_generation_is_idempotent_and_does_not_modify_raw_trials(self) -> None:
         rows = _rows()
         reference = compute_support_reference(rows, minimum_valid_rt_seconds=0.1, response_window_seconds=1.15)
@@ -168,10 +197,14 @@ class DynamicSartLabelTests(unittest.TestCase):
                 "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
             )
             result = analyze_dynamic_sart_session(root, {"tasks": {"dynamic_sart": {}}})
+            timing_rows = (root / "reports" / "dynamic_sart_timing.csv").read_text().splitlines()
         self.assertIn(result["status"], {"ok", "warn"})
         self.assertEqual(result["flag_counts"]["commission_error"], 0)
         self.assertEqual(result["flag_counts"]["omission_error"], 0)
         self.assertTrue(result["partial_run"])
+        self.assertEqual(result["timing_measurement"]["measured_inter_onset_count"], 1)
+        self.assertEqual(len(timing_rows), 3)
+        self.assertIn("actual_trial_duration_seconds", timing_rows[0])
 
 
 if __name__ == "__main__":

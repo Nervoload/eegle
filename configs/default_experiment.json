@@ -126,12 +126,14 @@
       "minimum_valid_rt_seconds": 0.1,
       "no_go_probability": 0.1111111111,
       "minimum_go_trials_between_no_go": 2,
+      "minimum_leading_go_trials": 4,
+      "minimum_trailing_go_trials": 0,
       "master_seed": 42,
       "blocks": [
         {"name": "support_1", "phase": "support", "trials": 160},
-        {"name": "support_2", "phase": "support", "trials": 160, "break_after": true},
+        {"name": "support_2", "phase": "support", "trials": 160, "break_after": true, "minimum_break_seconds": 30.0, "maximum_break_seconds": 60.0},
         {"name": "query_1", "phase": "query", "trials": 160},
-        {"name": "query_2", "phase": "query", "trials": 160, "break_after": true},
+        {"name": "query_2", "phase": "query", "trials": 160, "break_after": true, "minimum_break_seconds": 30.0, "maximum_break_seconds": 60.0},
         {"name": "query_3", "phase": "query", "trials": 160},
         {"name": "query_4", "phase": "query", "trials": 160}
       ],

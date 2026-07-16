@@ -19,7 +19,7 @@ def build_dynamic_sart_plan(
     blocks = config.blocks
     smoke_test_override = trial_override is not None and int(trial_override) != config.normal_recipe_trial_count
     if smoke_test_override:
-        blocks = _smoke_blocks(int(trial_override))
+        blocks = _smoke_blocks(int(trial_override), config)
     explicit_no_go_counts = (
         None
         if smoke_test_override or config.planned_no_go_count is None
@@ -42,6 +42,14 @@ def build_dynamic_sart_plan(
             block_seed,
             no_go_count_override=None if explicit_no_go_counts is None else explicit_no_go_counts[block_index - 1],
         )
+        if block_trials:
+            block_trials[-1]["planned_break_after_trial"] = bool(block.break_after)
+            block_trials[-1]["planned_break_minimum_seconds"] = (
+                block.minimum_break_seconds if block.break_after else None
+            )
+            block_trials[-1]["planned_break_maximum_seconds"] = (
+                block.maximum_break_seconds if block.break_after else None
+            )
         for trial in block_trials:
             global_trial += 1
             trial["global_trial_index"] = global_trial
@@ -117,6 +125,10 @@ def validate_dynamic_sart_plan(plan: dict[str, Any], config: DynamicSartConfig) 
         no_go_positions = [int(row["block_trial_index"]) for row in rows if bool(row["is_no_go"])]
         if not no_go_positions:
             raise ValueError(f"dynamic_sart block {block['block_name']} has no no-go trial")
+        if no_go_positions[0] <= config.minimum_leading_go_trials:
+            raise ValueError(f"dynamic_sart block {block['block_name']} violates the leading-go constraint")
+        if no_go_positions[-1] > len(rows) - config.minimum_trailing_go_trials:
+            raise ValueError(f"dynamic_sart block {block['block_name']} violates the trailing-go constraint")
         gap = config.minimum_go_trials_between_no_go
         if any(right - left - 1 < gap for left, right in zip(no_go_positions, no_go_positions[1:])):
             raise ValueError(f"dynamic_sart block {block['block_name']} violates no-go spacing")
@@ -164,14 +176,26 @@ def _build_block_trials(
         if no_go_count_override is None
         else int(no_go_count_override)
     )
-    maximum = _maximum_spaced_events(block.trials, config.minimum_go_trials_between_no_go)
+    maximum = _maximum_spaced_events(
+        block.trials,
+        config.minimum_go_trials_between_no_go,
+        config.minimum_leading_go_trials,
+        config.minimum_trailing_go_trials,
+    )
     if no_go_count > maximum:
         raise ValueError(
             f"tasks.dynamic_sart block {block.name} requests {no_go_count} no-go trials, "
             f"but spacing allows at most {maximum}"
         )
     no_go_positions = set(
-        _spaced_positions(block.trials, no_go_count, config.minimum_go_trials_between_no_go, rng)
+        _spaced_positions(
+            block.trials,
+            no_go_count,
+            config.minimum_go_trials_between_no_go,
+            rng,
+            config.minimum_leading_go_trials,
+            config.minimum_trailing_go_trials,
+        )
     )
     go_digits = [digit for digit in config.digits if digit != config.no_go_digit]
     go_count = block.trials - no_go_count
@@ -211,6 +235,9 @@ def _build_block_trials(
                     config.inter_trial_jitter_min_seconds,
                     config.inter_trial_jitter_max_seconds,
                 ),
+                "planned_break_after_trial": False,
+                "planned_break_minimum_seconds": None,
+                "planned_break_maximum_seconds": None,
             }
         )
     return rows
@@ -247,9 +274,14 @@ def _build_practice_rounds(config: DynamicSartConfig) -> list[list[dict[str, Any
     return rounds
 
 
-def _smoke_blocks(trials: int) -> tuple[DynamicSartBlock, ...]:
-    if trials < 4:
-        raise ValueError("dynamic_sart --trials smoke override must be at least 4 to preserve support and query")
+def _smoke_blocks(trials: int, config: DynamicSartConfig) -> tuple[DynamicSartBlock, ...]:
+    minimum_per_phase = config.minimum_leading_go_trials + config.minimum_trailing_go_trials + 1
+    minimum_trials = minimum_per_phase * 2
+    if trials < minimum_trials:
+        raise ValueError(
+            f"dynamic_sart --trials smoke override must be at least {minimum_trials} to preserve "
+            "support/query and the configured leading/trailing go trials"
+        )
     support = trials // 2
     query = trials - support
     return (
@@ -258,22 +290,44 @@ def _smoke_blocks(trials: int) -> tuple[DynamicSartBlock, ...]:
     )
 
 
-def _spaced_positions(length: int, count: int, minimum_go_gap: int, rng: random.Random) -> list[int]:
+def _spaced_positions(
+    length: int,
+    count: int,
+    minimum_go_gap: int,
+    rng: random.Random,
+    minimum_leading_go_trials: int = 0,
+    minimum_trailing_go_trials: int = 0,
+) -> list[int]:
     if count <= 0:
         return []
+    first_allowed = minimum_leading_go_trials
+    stop = length - minimum_trailing_go_trials
+    candidates = range(first_allowed, stop)
     for _attempt in range(20000):
-        positions = sorted(rng.sample(range(length), count))
+        positions = sorted(rng.sample(candidates, count))
         if all(right - left - 1 >= minimum_go_gap for left, right in zip(positions, positions[1:])):
             return positions
     # A deterministic evenly spaced fallback avoids an unbounded random search.
-    positions = [int(round(index * (length - 1) / max(1, count - 1))) for index in range(count)]
+    final_allowed = stop - 1
+    positions = [
+        first_allowed + int(round(index * (final_allowed - first_allowed) / max(1, count - 1)))
+        for index in range(count)
+    ]
     if all(right - left - 1 >= minimum_go_gap for left, right in zip(positions, positions[1:])):
         return positions
     raise ValueError("dynamic_sart no-go spacing is infeasible for the requested block")
 
 
-def _maximum_spaced_events(length: int, minimum_go_gap: int) -> int:
-    return (length + minimum_go_gap) // (minimum_go_gap + 1)
+def _maximum_spaced_events(
+    length: int,
+    minimum_go_gap: int,
+    minimum_leading_go_trials: int = 0,
+    minimum_trailing_go_trials: int = 0,
+) -> int:
+    eligible = length - minimum_leading_go_trials - minimum_trailing_go_trials
+    if eligible <= 0:
+        return 0
+    return (eligible + minimum_go_gap) // (minimum_go_gap + 1)
 
 
 def _distribute_no_go_count(
@@ -282,7 +336,12 @@ def _distribute_no_go_count(
     total: int,
 ) -> list[int]:
     capacities = [
-        _maximum_spaced_events(block.trials, config.minimum_go_trials_between_no_go)
+        _maximum_spaced_events(
+            block.trials,
+            config.minimum_go_trials_between_no_go,
+            config.minimum_leading_go_trials,
+            config.minimum_trailing_go_trials,
+        )
         for block in blocks
     ]
     counts = [0 for _block in blocks]

@@ -65,17 +65,29 @@ TRIAL_CSV_FIELDS = (
     "planned_stimulus_seconds",
     "planned_response_window_seconds",
     "planned_jitter_seconds",
+    "planned_break_after_trial",
+    "planned_break_minimum_seconds",
+    "planned_break_maximum_seconds",
     "planned_onset_offset_seconds",
     "stimulus_onset_monotonic",
     "stimulus_onset_lsl",
     "stimulus_offset_monotonic",
     "stimulus_offset_lsl",
+    "scheduled_response_window_close_monotonic",
+    "scheduled_response_window_close_lsl",
     "response_window_close_monotonic",
     "response_window_close_lsl",
+    "response_window_close_overshoot_seconds",
+    "scheduled_next_trial_onset_monotonic",
+    "actual_next_trial_onset_monotonic",
+    "actual_next_trial_onset_lsl",
     "next_trial_onset_monotonic",
     "actual_stimulus_seconds",
     "actual_response_window_seconds",
     "actual_trial_duration_seconds",
+    "actual_trial_duration_lsl_seconds",
+    "timing_semantics_version",
+    "timing_finalization_status",
     "display_timing_status",
     "expected_visual_onset_uncertainty_ms",
     "all_key_event_ids",
@@ -281,9 +293,29 @@ class DynamicSartTask:
                         )
                         support_complete = True
                     if not aborted and bool(block.get("break_after")):
-                        _emit(logger, marker_outlet, marker_label("break_start", block=block_index), event_type="SYSTEM", timestamp=virtual_time)
-                        virtual_time += float(block.get("break_seconds", 0.0))
-                        _emit(logger, marker_outlet, marker_label("break_end", block=block_index), event_type="SYSTEM", timestamp=virtual_time)
+                        break_minimum = float(block.get("minimum_break_seconds", 0.0))
+                        break_maximum = float(block.get("maximum_break_seconds", break_minimum))
+                        _emit(
+                            logger,
+                            marker_outlet,
+                            marker_label("break_start", block=block_index),
+                            event_type="SYSTEM",
+                            timestamp=virtual_time,
+                            minimum_break_seconds=break_minimum,
+                            maximum_break_seconds=break_maximum,
+                        )
+                        virtual_time += break_minimum
+                        _emit(
+                            logger,
+                            marker_outlet,
+                            marker_label("break_end", block=block_index),
+                            event_type="SYSTEM",
+                            timestamp=virtual_time,
+                            minimum_break_seconds=break_minimum,
+                            maximum_break_seconds=break_maximum,
+                            actual_break_seconds=break_minimum,
+                            break_end_reason="dry_run_minimum_elapsed",
+                        )
                         last_break_monotonic = virtual_time
 
                 if aborted:
@@ -581,14 +613,34 @@ class DynamicSartTask:
                         support_reference = _complete_support(store, self.task_config, monotonic(), logger, marker_outlet)
                         support_complete = True
                     if not aborted and bool(block.get("break_after")):
-                        _emit(logger, marker_outlet, marker_label("break_start", block=block_index), event_type="SYSTEM")
-                        continued = _show_bounded_break(
+                        break_minimum = float(block.get("minimum_break_seconds", 30.0))
+                        break_maximum = float(block.get("maximum_break_seconds", break_minimum))
+                        break_started = monotonic()
+                        _emit(
+                            logger,
+                            marker_outlet,
+                            marker_label("break_start", block=block_index),
+                            event_type="SYSTEM",
+                            timestamp=break_started,
+                            minimum_break_seconds=break_minimum,
+                            maximum_break_seconds=break_maximum,
+                        )
+                        continued, break_result = _show_bounded_break(
                             win,
                             visual,
                             keyboard,
-                            float(block.get("break_seconds", 30.0)),
+                            break_minimum,
+                            break_maximum,
+                            started_at=break_started,
                         )
-                        _emit(logger, marker_outlet, marker_label("break_end", block=block_index), event_type="SYSTEM")
+                        _emit(
+                            logger,
+                            marker_outlet,
+                            marker_label("break_end", block=block_index),
+                            event_type="SYSTEM",
+                            timestamp=float(break_result["ended_at_monotonic"]),
+                            **break_result,
+                        )
                         last_break_monotonic = monotonic()
                         if not continued:
                             aborted = True
@@ -945,9 +997,11 @@ def score_dynamic_sart_trial(
     stimulus_onset_lsl: float | None,
     stimulus_offset_monotonic: float,
     stimulus_offset_lsl: float | None,
+    scheduled_response_window_close_monotonic: float,
+    scheduled_response_window_close_lsl: float | None,
     response_window_close_monotonic: float,
     response_window_close_lsl: float | None,
-    next_trial_onset_monotonic: float | None,
+    scheduled_next_trial_onset_monotonic: float | None,
     display_timing: dict[str, Any] | None = None,
     time_since_break_seconds: float | None = None,
     previous_trial_index: int | None = None,
@@ -958,7 +1012,9 @@ def score_dynamic_sart_trial(
     in_window = [
         row
         for row in events
-        if stimulus_onset_monotonic <= float(row.get("timestamp_monotonic", -math.inf)) <= response_window_close_monotonic
+        if stimulus_onset_monotonic
+        <= float(row.get("timestamp_monotonic", -math.inf))
+        <= scheduled_response_window_close_monotonic
         and not bool(row.get("is_escape_key"))
     ]
     response_events = [row for row in in_window if bool(row.get("is_response_key"))]
@@ -990,10 +1046,9 @@ def score_dynamic_sart_trial(
         for row in response_events
     )
     timing = dict(display_timing or {})
-    actual_trial_duration = None if next_trial_onset_monotonic is None else next_trial_onset_monotonic - stimulus_onset_monotonic
     return {
         **deepcopy(planned),
-        "schema_version": 1,
+        "schema_version": 2,
         "schema": TRIAL_SCHEMA,
         "task_name": TASK_NAME,
         "task_version": TASK_VERSION,
@@ -1004,12 +1059,25 @@ def score_dynamic_sart_trial(
         "stimulus_onset_lsl": stimulus_onset_lsl,
         "stimulus_offset_monotonic": stimulus_offset_monotonic,
         "stimulus_offset_lsl": stimulus_offset_lsl,
+        "scheduled_response_window_close_monotonic": scheduled_response_window_close_monotonic,
+        "scheduled_response_window_close_lsl": scheduled_response_window_close_lsl,
         "response_window_close_monotonic": response_window_close_monotonic,
         "response_window_close_lsl": response_window_close_lsl,
-        "next_trial_onset_monotonic": next_trial_onset_monotonic,
+        "response_window_close_overshoot_seconds": max(
+            0.0,
+            response_window_close_monotonic - scheduled_response_window_close_monotonic,
+        ),
+        "scheduled_next_trial_onset_monotonic": scheduled_next_trial_onset_monotonic,
+        "actual_next_trial_onset_monotonic": None,
+        "actual_next_trial_onset_lsl": None,
+        # Retained as a backward-readable alias, but never populated with a schedule.
+        "next_trial_onset_monotonic": None,
         "actual_stimulus_seconds": stimulus_offset_monotonic - stimulus_onset_monotonic,
         "actual_response_window_seconds": response_window_close_monotonic - stimulus_onset_monotonic,
-        "actual_trial_duration_seconds": actual_trial_duration,
+        "actual_trial_duration_seconds": None,
+        "actual_trial_duration_lsl_seconds": None,
+        "timing_semantics_version": 2,
+        "timing_finalization_status": "awaiting_next_stimulus_flip",
         "display_timing_status": timing.get("status", "modeled"),
         "expected_visual_onset_uncertainty_ms": timing.get("expected_visual_onset_uncertainty_ms"),
         "all_key_event_ids": [row.get("event_id") for row in events],
@@ -1285,9 +1353,11 @@ def _simulate_trial(
         stimulus_onset_lsl=None,
         stimulus_offset_monotonic=stimulus_offset,
         stimulus_offset_lsl=None,
+        scheduled_response_window_close_monotonic=response_close,
+        scheduled_response_window_close_lsl=None,
         response_window_close_monotonic=response_close,
         response_window_close_lsl=None,
-        next_trial_onset_monotonic=next_onset,
+        scheduled_next_trial_onset_monotonic=next_onset,
         display_timing={"status": "virtual", "expected_visual_onset_uncertainty_ms": 0.0},
         time_since_break_seconds=None if last_break_monotonic is None else onset - last_break_monotonic,
         previous_trial_index=previous_experimental,
@@ -1589,8 +1659,8 @@ def _present_psychopy_trial(
     win.callOnFlip(_capture_flip_event, holder, marker_outlet, marker_label("stimulus_offset", planned), planned, timing, "offset")
     win.flip()
     _log_captured_flip_event(holder, logger, "offset")
-    response_close = onset + config.response_window_seconds
-    while monotonic() < response_close:
+    scheduled_response_close = onset + config.response_window_seconds
+    while monotonic() < scheduled_response_close:
         polled = keyboard.poll(
             task_state="RESPONSE_WINDOW_MASK",
             assigned_trial=int(planned["global_trial_index"]),
@@ -1601,7 +1671,9 @@ def _present_psychopy_trial(
         if any(row["is_escape_key"] for row in polled):
             return None, True, []
         sleep(0.002)
-    response_close_lsl = None if onset_lsl is None else onset_lsl + config.response_window_seconds
+    response_close = monotonic()
+    response_close_lsl = lsl_local_clock()
+    scheduled_response_close_lsl = None if onset_lsl is None else onset_lsl + config.response_window_seconds
     _emit(
         logger,
         marker_outlet,
@@ -1609,6 +1681,9 @@ def _present_psychopy_trial(
         timestamp=response_close,
         lsl_timestamp=response_close_lsl,
         trial=int(planned["global_trial_index"]),
+        scheduled_response_window_close_monotonic=scheduled_response_close,
+        scheduled_response_window_close_lsl=scheduled_response_close_lsl,
+        response_window_close_overshoot_seconds=max(0.0, response_close - scheduled_response_close),
         **_marker_metadata(planned),
     )
     previous_experimental = max((int(row["global_trial_index"]) for row in store.records if not row.get("is_practice")), default=None)
@@ -1623,9 +1698,11 @@ def _present_psychopy_trial(
         stimulus_onset_lsl=onset_lsl,
         stimulus_offset_monotonic=float(holder["offset_monotonic"]),
         stimulus_offset_lsl=_optional_float(holder.get("offset_lsl")),
+        scheduled_response_window_close_monotonic=scheduled_response_close,
+        scheduled_response_window_close_lsl=scheduled_response_close_lsl,
         response_window_close_monotonic=response_close,
         response_window_close_lsl=response_close_lsl,
-        next_trial_onset_monotonic=response_close + float(planned["planned_jitter_seconds"]),
+        scheduled_next_trial_onset_monotonic=scheduled_response_close + float(planned["planned_jitter_seconds"]),
         display_timing=timing,
         time_since_break_seconds=None if last_break_monotonic is None else onset - last_break_monotonic,
         previous_trial_index=previous_experimental,
@@ -1646,7 +1723,7 @@ def _present_psychopy_trial(
         **_marker_metadata(planned),
     )
     upcoming = []
-    jitter_end = response_close + float(planned["planned_jitter_seconds"])
+    jitter_end = scheduled_response_close + float(planned["planned_jitter_seconds"])
     while monotonic() < jitter_end:
         assigned = int(next_trial["global_trial_index"]) if next_trial is not None else None
         polled = keyboard.poll(
@@ -1959,25 +2036,72 @@ def _show_screen(
         sleep(0.01)
 
 
-def _show_bounded_break(win: Any, visual: Any, keyboard: PersistentKeyboardCollector, seconds: float) -> bool:
+def _show_bounded_break(
+    win: Any,
+    visual: Any,
+    keyboard: PersistentKeyboardCollector,
+    minimum_seconds: float,
+    maximum_seconds: float,
+    *,
+    started_at: float | None = None,
+) -> tuple[bool, dict[str, Any]]:
+    minimum_seconds = max(0.0, float(minimum_seconds))
+    maximum_seconds = max(minimum_seconds, float(maximum_seconds))
+    started = monotonic() if started_at is None else float(started_at)
+    if maximum_seconds == minimum_seconds:
+        instruction = f"Please rest for {minimum_seconds:g} seconds. The task will then continue automatically."
+    else:
+        instruction = (
+            f"Please rest for at least {minimum_seconds:g} seconds.\n"
+            f"After that, press SPACE when ready. The task resumes by {maximum_seconds:g} seconds."
+        )
     prompt = visual.TextStim(
         win,
-        text="Break\n\nMaintain your setup. Press SPACE when ready to continue.",
+        text=f"Break\n\nMaintain your setup.\n\n{instruction}",
         height=0.05,
         color="white",
         wrapWidth=1.5,
     )
     prompt.draw()
     win.flip()
-    deadline = monotonic() + max(0.0, seconds)
-    while monotonic() < deadline:
+    minimum_deadline = started + minimum_seconds
+    maximum_deadline = started + maximum_seconds
+    ignored_early_continue_presses = 0
+    while monotonic() < maximum_deadline:
         rows = keyboard.poll(task_state="BREAK")
         if any(row["is_escape_key"] for row in rows):
-            return False
+            ended = monotonic()
+            return False, {
+                "minimum_break_seconds": minimum_seconds,
+                "maximum_break_seconds": maximum_seconds,
+                "actual_break_seconds": max(0.0, ended - started),
+                "ended_at_monotonic": ended,
+                "break_end_reason": "escape_abort",
+                "ignored_early_continue_presses": ignored_early_continue_presses,
+            }
         if any(row["is_response_key"] for row in rows):
-            return True
+            if monotonic() < minimum_deadline:
+                ignored_early_continue_presses += 1
+            else:
+                ended = monotonic()
+                return True, {
+                    "minimum_break_seconds": minimum_seconds,
+                    "maximum_break_seconds": maximum_seconds,
+                    "actual_break_seconds": max(0.0, ended - started),
+                    "ended_at_monotonic": ended,
+                    "break_end_reason": "participant_continue_after_minimum",
+                    "ignored_early_continue_presses": ignored_early_continue_presses,
+                }
         sleep(0.01)
-    return True
+    ended = monotonic()
+    return True, {
+        "minimum_break_seconds": minimum_seconds,
+        "maximum_break_seconds": maximum_seconds,
+        "actual_break_seconds": max(0.0, ended - started),
+        "ended_at_monotonic": ended,
+        "break_end_reason": "maximum_elapsed",
+        "ignored_early_continue_presses": ignored_early_continue_presses,
+    }
 
 
 def _show_timed_text(

@@ -8,15 +8,15 @@ from typing import Any
 
 
 TASK_NAME = "dynamic_sart"
-TASK_VERSION = "1.0"
-PLAN_SCHEMA = "eegle.dynamic_sart.plan.v1"
-TRIAL_SCHEMA = "eegle.dynamic_sart.trial.v1"
+TASK_VERSION = "1.1"
+PLAN_SCHEMA = "eegle.dynamic_sart.plan.v2"
+TRIAL_SCHEMA = "eegle.dynamic_sart.trial.v2"
 KEY_EVENT_SCHEMA = "eegle.dynamic_sart.key_event.v1"
-BLOCK_SCHEMA = "eegle.dynamic_sart.block.v1"
-SUPPORT_REFERENCE_SCHEMA = "eegle.dynamic_sart.support_reference.v1"
-LABELS_SCHEMA = "eegle.dynamic_sart.labels.v1"
-LABEL_CONTRACT_SCHEMA = "eegle.dynamic_sart.label_contract.v1"
-SUMMARY_SCHEMA = "eegle.dynamic_sart.summary.v1"
+BLOCK_SCHEMA = "eegle.dynamic_sart.block.v2"
+SUPPORT_REFERENCE_SCHEMA = "eegle.dynamic_sart.support_reference.v2"
+LABELS_SCHEMA = "eegle.dynamic_sart.labels.v2"
+LABEL_CONTRACT_SCHEMA = "eegle.dynamic_sart.label_contract.v2"
+SUMMARY_SCHEMA = "eegle.dynamic_sart.summary.v2"
 PROBE_SCHEMA = "eegle.dynamic_sart.probe.v1"
 
 PHASES = ("practice", "support", "query")
@@ -37,7 +37,8 @@ class DynamicSartBlock:
     phase: str
     trials: int
     break_after: bool = False
-    break_seconds: float = 30.0
+    minimum_break_seconds: float = 30.0
+    maximum_break_seconds: float = 30.0
 
     def payload(self, index: int) -> dict[str, Any]:
         return {
@@ -47,7 +48,8 @@ class DynamicSartBlock:
             "phase": self.phase,
             "trials": self.trials,
             "break_after": self.break_after,
-            "break_seconds": self.break_seconds,
+            "minimum_break_seconds": self.minimum_break_seconds,
+            "maximum_break_seconds": self.maximum_break_seconds,
         }
 
 
@@ -65,6 +67,8 @@ class DynamicSartConfig:
     no_go_probability: float
     planned_no_go_count: int | None
     minimum_go_trials_between_no_go: int
+    minimum_leading_go_trials: int
+    minimum_trailing_go_trials: int
     master_seed: int
     blocks: tuple[DynamicSartBlock, ...]
     practice_enabled: bool
@@ -102,16 +106,20 @@ class DynamicSartConfig:
                 {"name": "query_3", "phase": "query", "trials": 160},
                 {"name": "query_4", "phase": "query", "trials": 160},
             ]
-        blocks = tuple(
-            DynamicSartBlock(
-                name=str(item.get("name", f"block_{index}")),
-                phase=str(item.get("phase", "query")),
-                trials=int(item.get("trials", 0)),
-                break_after=bool(item.get("break_after", False)),
-                break_seconds=float(item.get("break_seconds", raw.get("break_seconds", 30.0))),
+        parsed_blocks = []
+        for index, item in enumerate(blocks_value, start=1):
+            legacy_break_seconds = float(item.get("break_seconds", raw.get("break_seconds", 30.0)))
+            parsed_blocks.append(
+                DynamicSartBlock(
+                    name=str(item.get("name", f"block_{index}")),
+                    phase=str(item.get("phase", "query")),
+                    trials=int(item.get("trials", 0)),
+                    break_after=bool(item.get("break_after", False)),
+                    minimum_break_seconds=float(item.get("minimum_break_seconds", legacy_break_seconds)),
+                    maximum_break_seconds=float(item.get("maximum_break_seconds", legacy_break_seconds)),
+                )
             )
-            for index, item in enumerate(blocks_value, start=1)
-        )
+        blocks = tuple(parsed_blocks)
         config = cls(
             digits=tuple(int(item) for item in raw.get("digits", range(1, 10))),
             no_go_digit=int(raw.get("no_go_digit", 3)),
@@ -127,6 +135,8 @@ class DynamicSartConfig:
                 None if raw.get("planned_no_go_count") is None else int(raw["planned_no_go_count"])
             ),
             minimum_go_trials_between_no_go=int(raw.get("minimum_go_trials_between_no_go", 2)),
+            minimum_leading_go_trials=int(raw.get("minimum_leading_go_trials", 4)),
+            minimum_trailing_go_trials=int(raw.get("minimum_trailing_go_trials", 0)),
             master_seed=int(raw.get("master_seed", 42)),
             blocks=blocks,
             practice_enabled=bool(practice.get("enabled", True)),
@@ -174,6 +184,8 @@ class DynamicSartConfig:
             "no_go_probability": self.no_go_probability,
             "planned_no_go_count": self.planned_no_go_count,
             "minimum_go_trials_between_no_go": self.minimum_go_trials_between_no_go,
+            "minimum_leading_go_trials": self.minimum_leading_go_trials,
+            "minimum_trailing_go_trials": self.minimum_trailing_go_trials,
             "master_seed": self.master_seed,
             "blocks": [block.payload(index) for index, block in enumerate(self.blocks, start=1)],
             "practice": {
@@ -235,6 +247,10 @@ def validate_dynamic_sart_config(config: DynamicSartConfig) -> None:
         raise ValueError("tasks.dynamic_sart.no_go_probability must be between zero and one")
     if config.minimum_go_trials_between_no_go < 0:
         raise ValueError("tasks.dynamic_sart.minimum_go_trials_between_no_go must be nonnegative")
+    if config.minimum_leading_go_trials < 0:
+        raise ValueError("tasks.dynamic_sart.minimum_leading_go_trials must be nonnegative")
+    if config.minimum_trailing_go_trials < 0:
+        raise ValueError("tasks.dynamic_sart.minimum_trailing_go_trials must be nonnegative")
     if not config.blocks or any(block.trials < 1 for block in config.blocks):
         raise ValueError("tasks.dynamic_sart.blocks must each contain at least one trial")
     if config.planned_no_go_count is not None:
@@ -243,18 +259,27 @@ def validate_dynamic_sart_config(config: DynamicSartConfig) -> None:
             raise ValueError("tasks.dynamic_sart.planned_no_go_count must leave both go and no-go trials")
         if config.planned_no_go_count < len(config.blocks):
             raise ValueError("tasks.dynamic_sart.planned_no_go_count must allocate at least one no-go trial per block")
-        maximum_total = sum(
-            (block.trials + config.minimum_go_trials_between_no_go)
-            // (config.minimum_go_trials_between_no_go + 1)
-            for block in config.blocks
-        )
+        maximum_total = sum(_maximum_no_go_count(block, config) for block in config.blocks)
         if config.planned_no_go_count > maximum_total:
             raise ValueError("tasks.dynamic_sart.planned_no_go_count is infeasible for the block spacing constraints")
     for block in config.blocks:
         requested = max(1, int(round(block.trials * config.no_go_probability)))
-        maximum = (block.trials + config.minimum_go_trials_between_no_go) // (
-            config.minimum_go_trials_between_no_go + 1
-        )
+        if block.break_after:
+            for name, seconds in (
+                ("minimum_break_seconds", block.minimum_break_seconds),
+                ("maximum_break_seconds", block.maximum_break_seconds),
+            ):
+                if not math.isfinite(seconds) or seconds < 0:
+                    raise ValueError(f"tasks.dynamic_sart.blocks[{block.name}].{name} must be finite and nonnegative")
+            if block.maximum_break_seconds < block.minimum_break_seconds:
+                raise ValueError(
+                    f"tasks.dynamic_sart.blocks[{block.name}].maximum_break_seconds must be at least minimum_break_seconds"
+                )
+        maximum = _maximum_no_go_count(block, config)
+        if maximum < 1:
+            raise ValueError(
+                f"tasks.dynamic_sart.blocks[{block.name}] is too short for the leading/trailing go constraints"
+            )
         if requested > maximum:
             raise ValueError(
                 f"tasks.dynamic_sart.blocks[{block.name}] no-go count is infeasible for the spacing constraint"
@@ -279,9 +304,8 @@ def validate_dynamic_sart_config(config: DynamicSartConfig) -> None:
             raise ValueError("tasks.dynamic_sart.practice.no_go_trials must leave both go and no-go practice trials")
         if config.practice_max_rounds < 1:
             raise ValueError("tasks.dynamic_sart.practice.max_rounds must be at least 1")
-        practice_maximum = (config.practice_trials_per_round + config.minimum_go_trials_between_no_go) // (
-            config.minimum_go_trials_between_no_go + 1
-        )
+        practice_block = DynamicSartBlock("practice", "practice", config.practice_trials_per_round)
+        practice_maximum = _maximum_no_go_count(practice_block, config)
         if config.practice_no_go_trials > practice_maximum:
             raise ValueError("tasks.dynamic_sart.practice.no_go_trials is infeasible for the spacing constraint")
         for name, threshold in (
@@ -310,3 +334,12 @@ def validate_dynamic_sart_config(config: DynamicSartConfig) -> None:
         raise ValueError("tasks.dynamic_sart.allow_stimulation must remain false")
     if not math.isfinite(config.countdown_step_seconds) or config.countdown_step_seconds <= 0:
         raise ValueError("tasks.dynamic_sart.countdown_step_seconds must be finite and positive")
+
+
+def _maximum_no_go_count(block: DynamicSartBlock, config: DynamicSartConfig) -> int:
+    eligible = block.trials - config.minimum_leading_go_trials - config.minimum_trailing_go_trials
+    if eligible <= 0:
+        return 0
+    return (eligible + config.minimum_go_trials_between_no_go) // (
+        config.minimum_go_trials_between_no_go + 1
+    )

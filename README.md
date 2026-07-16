@@ -394,6 +394,13 @@ intentionally visually identical and are not announced to the participant:
 segment evaluated relative to that frozen reference. Keeping the display and
 response rule unchanged avoids making phase identity an experimental cue.
 
+Every block begins with four guaranteed go trials before a no-go can appear;
+the trailing-go reservation is configurable and is zero in the supplied
+recipes. The two within-session breaks in each 600-trial recording enforce a
+30-second minimum. SPACE is ignored before that minimum, is accepted from 30
+through 60 seconds, and the task resumes automatically at 60 seconds. These are
+separate from the recording suite's 10-minute inter-session break.
+
 Immediately before experimental trial 1, after practice passes or is skipped,
 the task displays `5`, `4`, `3`, `2`, `1`, and `GO!` for one second each.
 Every countdown display has a flip-synchronized marker. Escape/Q remains active,
@@ -414,12 +421,32 @@ dynamic_sart_probes.jsonl
 stimulus_manifest.json
 ```
 
+Post-session analysis also writes the immutable-derived per-trial timing ledger
+to `reports/dynamic_sart_timing.csv`.
+
 Raw trial and key-event files are incrementally flushed. Derived labels keep
 current behavior, past-only causal features, and future outcomes separate.
 They include dense valid-go reaction-time targets plus distinct commission,
 omission, premature, too-fast, multiple-response, and wrong-key facts; they do
 not claim to observe a true latent attention state. Practice is excluded from
 the support reference, labels, and default epoch extraction.
+
+Timing schema v2 distinguishes logical schedules from observations.
+`scheduled_response_window_close_*` and
+`scheduled_next_trial_onset_monotonic` are plans; the unprefixed response-close
+fields are sampled when the response loop actually exits. Actual inter-onset
+duration is reconstructed during analysis only from the following trial's
+flip-captured stimulus onset. The final presented trial therefore has no actual
+next onset. Reports exclude planned breaks and thought probes from scheduler
+drift summaries.
+
+For the 200-trial support recipe, q80 is the primary exploratory
+support-relative threshold. q95 remains secondary and explicitly
+low-confidence: the 67-no-go plan leaves about 178 possible support go trials,
+so the 200-valid-go preference rule cannot be reached. Every future label now
+records its maturity trial, maturity phase, and whether it was available at
+`support_complete`; selecting support anchors alone is not a leakage-safe
+calibration filter.
 
 The task is observe-only. An incoming `observe_only` action can be audited, but
 actions that would alter sequence, probability, timing, salience, feedback, or
