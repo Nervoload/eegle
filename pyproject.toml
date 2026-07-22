@@ -5,9 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "eegle"
 version = "0.1.0"
-description = "Reproducible realtime EEG/BCI experiments, model bundles, calibration, and causal replay."
+description = "Reproduce, record, replay, and validate synchronized neurophysiological model systems."
 readme = "README.md"
-requires-python = ">=3.10,<3.11"
+requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
   {name = "John Surette"},
@@ -21,12 +21,17 @@ classifiers = [
   "Intended Audience :: Science/Research",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering",
   "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
 dependencies = [
+  "jsonschema>=4.23,<5",
   "numpy>=2.0,<3",
+  "packaging>=24,<27",
+  "scipy>=1.14,<2",
 ]
 
 [project.optional-dependencies]
@@ -39,13 +44,11 @@ analysis = [
   "matplotlib>=3.10,<4",
   "mne>=1.12,<2",
   "pandas>=2.3,<3",
-  "scipy>=1.14,<2",
 ]
 ml = [
   "joblib>=1.5,<2",
   "pyriemann>=0.9,<1",
   "scikit-learn>=1.7,<2",
-  "scipy>=1.14,<2",
 ]
 torch = [
   "onnxruntime>=1.23,<2",

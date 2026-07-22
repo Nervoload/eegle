@@ -1,7 +1,9 @@
 # Config Guidance
 
-The JSON files in this directory are experiment presets. They are loaded by
-`eegle.config.load_config` and then refined by CLI flags or pipeline helpers.
+The JSON files in this directory are legacy experiment presets. They are loaded
+by `eegle.config.load_config` and then refined by CLI flags or pipeline helpers.
+They are current operator inputs, but they are not target `SuiteSpec` or
+`DeploymentSpec` formats and have no clean-break compatibility guarantee.
 
 ## Presets
 
@@ -20,6 +22,8 @@ The JSON files in this directory are experiment presets. They are loaded by
 
 ## Editing Rules
 
+- Make only fixes required by the still-running legacy workflows. New suites
+  belong to the typed specification/compiler design in Phases 2 and 5.
 - Keep hardware expectations, task parameters, realtime processing, process
   launch settings, and analysis settings in their existing top-level sections.
 - When adding a new config key, verify that the consumer code handles a missing

@@ -1,5 +1,10 @@
 # Architecture
 
+> **Legacy current-implementation document.** This describes EEGle before the
+> clean-break migration and remains only as implementation and behavior
+> evidence. [EEGLE.md](EEGLE.md) is the architecture authority;
+> [MIGRATION.md](MIGRATION.md) controls its replacement.
+
 The scaffold follows this data path:
 
 ```text

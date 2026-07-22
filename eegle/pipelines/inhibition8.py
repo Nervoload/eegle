@@ -17,7 +17,7 @@ from eegle.config import load_config
 from eegle.experiment import ForwardExperimentRunner
 from eegle.hardware.system import CheckResult
 from eegle.preflight import run_preflight, write_preflight_report
-from eegle.runtime import ensure_runtime_environment
+from eegle.integrations.task_environment import ensure_runtime_environment
 from eegle.telemetry import apply_cli_telemetry_overrides
 
 

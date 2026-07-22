@@ -1,23 +1,28 @@
 # Agent Orientation
 
-This repository is EEGle: a Python 3.10 toolkit for reproducible realtime EEG
-experiments. It combines PsychoPy tasks, Lab Streaming Layer acquisition,
-session recording, realtime closed-loop workers, and post-session analysis.
+This repository is migrating EEGle into an EEG-first, neurophysiology-general
+framework for reproducing, recording, replaying, and validating synchronized
+model systems. The target branch now requires Python 3.11+; substantial legacy
+EEG application code remains while the clean architecture is built.
 
 ## First Read
 
 Start here before changing code:
 
-1. `README.md` for installation, commands, session layout, and operator-facing
-   workflows.
-2. `docs/ARCHITECTURE.md` for the runtime data path and component boundaries.
-3. `docs/MODEL_TRAINING_TESTING_GOALS.md` for classifier training, evaluation,
-   and current model goals.
-4. `eegle/AGENTS.md` for package-level implementation guidance.
-5. `configs/AGENTS.md` before changing JSON experiment configs.
-6. `tests/AGENTS.md` before deciding which tests to run.
+1. `docs/EEGLE.md` for the accepted product and architecture.
+2. `docs/MIGRATION.md` for phase sequencing and gates.
+3. `docs/MIGRATION_STATUS.md` for the active phase, decisions, and tasks.
+4. `docs/PHASE0_INVENTORY.md` before moving, replacing, or deleting legacy code.
+5. `docs/PHASE2_FOUNDATIONS.md` before building engine or compiler behavior.
+6. `README.md` for the still-current legacy installation and operator workflow.
+7. `eegle/AGENTS.md` for package-level implementation guidance.
+8. `configs/AGENTS.md` before changing legacy JSON experiment configs.
+9. `tests/AGENTS.md` before deciding which tests to run.
 
-## Code Map
+`docs/ARCHITECTURE.md`, `docs/MODEL_TRAINING_TESTING_GOALS.md`, and other
+pre-vision documents are legacy implementation evidence, not design authority.
+
+## Legacy Current-Implementation Map
 
 - `eegle/cli.py`: installed `eegle` command and generic subcommands.
 - `eegle/pipelines/`: specialized operator workflows such as `alpha8`,
@@ -51,19 +56,23 @@ Start here before changing code:
   artifacts; they should not block PsychoPy task execution.
 - Generated model bundles are content-addressed by their manifests, metrics, and
   artifacts. Preserve hash validation when changing model storage.
+- New migration code follows the target boundaries and phase gates. Do not make
+  a legacy module the permanent authority merely because it currently works.
+- Do not delete a legacy path until the cleanup precondition in
+  `docs/PHASE0_INVENTORY.md` is satisfied.
 
-## Common Commands
+## Legacy Current-Implementation Commands
 
 Install for development:
 
 ```text
 macOS/Linux:
-  python3.10 -m venv .venv
+  python3.11 -m venv .venv
   source .venv/bin/activate
   python -m pip install -e ".[runtime,ml]"
 
 Windows PowerShell:
-  py -3.10 -m venv .venv
+  py -3.11 -m venv .venv
   .venv\Scripts\Activate.ps1
   python -m pip install -e ".[runtime,ml]"
 ```
@@ -98,6 +107,7 @@ agents should read before editing. The useful scopes today are the repository
 root, `eegle/`, `configs/`, and `tests/`. Avoid adding agent guidance under
 generated data directories.
 
-Use `docs/` for durable human-facing explanations. Model-training, evaluation,
-and research-goal material belongs in `docs/MODEL_TRAINING_TESTING_GOALS.md`,
-not inside inline code comments.
+Use `docs/` for durable human-facing explanations. Amend `docs/EEGLE.md` only
+for an intentional architecture decision, `docs/MIGRATION.md` for phase/gate
+changes, and `docs/MIGRATION_STATUS.md` for live progress. Treat legacy model,
+recipe, and operator documents as evidence until their replacements exist.

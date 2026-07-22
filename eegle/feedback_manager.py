@@ -11,7 +11,7 @@ from pathlib import Path
 from time import monotonic, sleep
 from typing import Any
 
-from eegle.runtime import PROJECT_ROOT
+from eegle.integrations.task_environment import PROJECT_ROOT
 from eegle.session import SessionPaths
 from eegle.telemetry import Telemetry
 from eegle.workers.common import StatusWriter, load_status

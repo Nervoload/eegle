@@ -1,5 +1,10 @@
 # Model Training, Testing, and Goals
 
+> **Legacy current-implementation document.** These goals describe the
+> pre-migration classifier applications and remain useful as scientific and
+> behavioral evidence. [EEGLE.md](EEGLE.md) is the product authority;
+> [MIGRATION.md](MIGRATION.md) controls replacement work.
+
 This document orients agents and contributors around the GO/NO-GO EEG
 condition-classifier path. The current goal is participant-specific,
 observe-only decoding of the displayed GO versus NO-GO condition from

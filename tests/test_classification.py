@@ -19,6 +19,7 @@ from eegle.analysis.classification import evaluate_classifier_session, replay_cl
 from eegle import cli as eegle_cli
 from eegle.config import load_config
 from eegle.hardware.system import CheckResult
+from eegle.models.bundles import load_model_bundle, write_model_bundle
 from eegle.pipelines import attention8 as attention8_pipeline
 from eegle.pipelines import classify8 as classify8_pipeline
 from eegle.pipelines.classify8 import _validate_online_model_bundles, build_parser, train as classify8_train
@@ -26,10 +27,8 @@ from eegle.realtime.classification import (
     assess_epoch_quality,
     baseline_correct,
     extract_erp_roi_features,
-    load_model_bundle,
     prepare_classifier_epoch,
     sanitize_model_metadata,
-    write_model_bundle,
 )
 from eegle.realtime.demo_classifier import DEMO_DISCLOSURE, demo_config_from, demo_prediction_from_marker
 from eegle.realtime.epoching import (

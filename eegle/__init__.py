@@ -1,34 +1,12 @@
-"""EEGle: reproducible realtime EEG/BCI experiment infrastructure."""
+"""EEGle: reproducible neurophysiological model systems.
 
-from eegle.core import Session, SessionPaths
-from eegle.models import (
-    CalibrationAdapter,
-    CalibrationState,
-    ModelBundle,
-    ModelContract,
-    ModelPrediction,
-    ModelSpec,
-)
-from eegle.realtime.epoching import EpochingConfig, ExtractedEpoch, MarkerEvent
-from eegle.realtime.policy import TaskAction
-from eegle.analysis.classification import ReplayResult
+The alpha top-level namespace is intentionally small while clean foundation
+packages are established. Import typed contracts from their owning package.
+"""
+
+from eegle._domain import ExecutionMode
 
 
-__all__ = [
-    "CalibrationAdapter",
-    "CalibrationState",
-    "EpochingConfig",
-    "ExtractedEpoch",
-    "MarkerEvent",
-    "ModelBundle",
-    "ModelContract",
-    "ModelPrediction",
-    "ModelSpec",
-    "ReplayResult",
-    "Session",
-    "SessionPaths",
-    "TaskAction",
-    "__version__",
-]
+__all__ = ["ExecutionMode", "__version__"]
 
 __version__ = "0.1.0"

@@ -8,7 +8,10 @@ from typing import Any
 
 from eegle.io.events import EventLogger
 from eegle.lsl import LslMarkerOutlet, NullMarkerOutlet
-from eegle.runtime import apply_pyglet_macos_notification_patch, ensure_runtime_environment
+from eegle.integrations.task_environment import (
+    apply_pyglet_macos_notification_patch,
+    ensure_runtime_environment,
+)
 from eegle.session import SessionPaths, create_session
 from eegle.tasks.base import TaskRunResult
 from eegle.telemetry import Telemetry

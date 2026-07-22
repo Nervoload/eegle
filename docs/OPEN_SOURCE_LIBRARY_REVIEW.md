@@ -1,5 +1,10 @@
 # EEGle Open-Source Library Review
 
+> **Legacy current-implementation document.** This review predates the accepted
+> clean-break architecture and remains only as implementation evidence.
+> [EEGLE.md](EEGLE.md) is the architecture authority;
+> [MIGRATION.md](MIGRATION.md) controls the migration.
+
 This document is a working review of EEGle's viability as a pip-installable
 open-source Python science library for reproducible realtime EEG/BCI
 experiments and model-learning systems. It is meant to seed later public docs,

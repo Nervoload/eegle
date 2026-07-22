@@ -1,5 +1,10 @@
 # Roadmap
 
+> **Legacy current-implementation document.** This roadmap predates the accepted
+> product vision and remains only as historical planning evidence.
+> [EEGLE.md](EEGLE.md) is the architecture authority;
+> [MIGRATION.md](MIGRATION.md) is the active roadmap.
+
 ## Immediate Foundation
 
 1. Validate `eegle check-setup --require-eeg` with NIC2 streaming Enobio EEG over LSL.

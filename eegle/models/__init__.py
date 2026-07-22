@@ -1,4 +1,4 @@
-"""Stable model APIs for EEGle bundles, contracts, registries, and calibration."""
+"""Framework-neutral model contracts, bundles, predictions, roles, and calibration."""
 
 from eegle.models.bundles import (
     ModelBundle,
@@ -19,45 +19,29 @@ from eegle.models.calibration import (
     write_calibration_state,
 )
 from eegle.models.contracts import ModelContract, PreprocessingContract, TargetContract
-from eegle.models.registry import (
-    get_model_spec,
-    list_model_kinds,
-    list_model_specs,
-    load_entry_point_model_specs,
-    register_model_spec,
-    resolve_model_kind,
-    unregister_model_spec,
-)
-from eegle.ml.registry_types import ModelSpec
-from eegle.realtime.models import ModelAdapter, ModelPrediction
+from eegle.models.predictions import Prediction
+from eegle.models.roles import ModelRole, ModelRoleKind
 
 
 __all__ = [
     "CalibrationAdapter",
     "CalibrationState",
-    "ModelAdapter",
     "ModelBundle",
     "ModelContract",
-    "ModelPrediction",
-    "ModelSpec",
+    "ModelRole",
+    "ModelRoleKind",
+    "Prediction",
     "PreprocessingContract",
     "TargetContract",
     "file_sha256",
     "calibration_state_hash",
-    "get_model_spec",
     "import_runtime_bundle",
-    "list_model_kinds",
-    "list_model_specs",
-    "load_entry_point_model_specs",
     "load_model_bundle",
     "load_model_bundle_object",
     "make_prototype_state",
     "make_threshold_state",
     "read_calibration_state",
-    "register_model_spec",
-    "resolve_model_kind",
     "snapshot_model_bundle",
-    "unregister_model_spec",
     "write_calibration_state",
     "write_model_bundle",
 ]

@@ -5,6 +5,12 @@ broader discovery when touching shared orchestration.
 
 ## Test Map
 
+- `test_phase0_inventory.py`: migration inventory, authority notices, baseline,
+  recipe decisions, and historical compatibility policy.
+- `test_phase1_migration_invariants.py`: selected domain-neutral scientific and
+  execution behavior frozen before the clean rebuild.
+- `test_phase2_foundations.py`: typed records, canonical locks, evidence
+  framing, plugins, processing causality, clean imports, and dependency policy.
 - `test_classification.py`: classify8 workflow contracts, label-blind metadata,
   model bundles, epoch quality, dashboard/demo behavior, replay, and scoring.
 - `test_ml_infrastructure.py`: model registry, channel contracts,
@@ -43,6 +49,11 @@ Compile check after structural edits:
 ```bash
 python3 -m compileall -q eegle tests
 ```
+
+Migration tests preserve named scientific claims, not old import paths, command
+names, recipe layouts, or worker boundaries. When a legacy test conflicts with
+an accepted clean-break phase, rewrite it around the selected invariant rather
+than adding a permanent compatibility facade.
 
 If the full suite fails because of environment-only dependencies, preserve the
 focused test result in your final notes and name the blocker explicitly.

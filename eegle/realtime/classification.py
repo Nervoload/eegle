@@ -2,24 +2,16 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
-import platform
-import shutil
-import sys
 from dataclasses import dataclass
-from importlib import metadata
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from eegle.ml.contracts import normalize_input_contract, select_contract_channels, validate_supported_resampling
-
-
-BUNDLE_SCHEMA = "eegle.model_bundle.v1"
+from eegle.realtime.epoch_arrays import epoch_to_channels_samples, relative_times
 PREDICTION_SCHEMA = "eegle.model_prediction.v1"
-LABEL_MAPPING = {"go": 0, "no_go": 1}
 SAFE_MODEL_METADATA = {
     "relative_times",
     "sample_rate_hz",
@@ -209,8 +201,6 @@ def prepare_classifier_epoch(
     contract: dict[str, Any],
 ) -> tuple[np.ndarray, list[str], np.ndarray]:
     """Validate, reorder, convert units, and baseline-correct one epoch."""
-    from eegle.realtime.models import epoch_to_channels_samples, relative_times
-
     normalized_contract = normalize_input_contract(contract, fallback_channel_names=channel_names)
     validate_supported_resampling(normalized_contract)
     values = epoch_to_channels_samples(epoch, channel_names, str(normalized_contract.get("input_layout", "auto")))
@@ -269,101 +259,6 @@ def extract_erp_roi_features(
 def feature_vector(features: dict[str, float], feature_names: list[str] | None = None) -> tuple[np.ndarray, list[str]]:
     names = list(feature_names or sorted(features))
     return np.asarray([features[name] for name in names], dtype=float), names
-
-
-def write_model_bundle(
-    bundle_dir: str | Path,
-    *,
-    kind: str,
-    artifact_path: str | Path,
-    artifact_format: str,
-    contract: dict[str, Any],
-    metrics: dict[str, Any],
-    training_source: dict[str, Any],
-    extra: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    target = Path(bundle_dir).expanduser().resolve()
-    target.mkdir(parents=True, exist_ok=True)
-    source = Path(artifact_path).expanduser().resolve()
-    artifact_name = source.name
-    copied = target / artifact_name
-    if source != copied:
-        shutil.copy2(source, copied)
-    manifest = {
-        "schema": BUNDLE_SCHEMA,
-        "kind": kind,
-        "artifact": artifact_name,
-        "artifact_format": artifact_format,
-        "artifact_sha256": file_sha256(copied),
-        "bundle_hash": "",
-        "label_mapping": dict(LABEL_MAPPING),
-        "contract": contract,
-        "metrics_file": "metrics.json",
-        "training_source": training_source,
-        "software": software_versions(),
-        **dict(extra or {}),
-    }
-    metrics_path = target / "metrics.json"
-    _write_json(metrics_path, metrics)
-    manifest["bundle_hash"] = hashlib.sha256(
-        json.dumps({**manifest, "bundle_hash": ""}, sort_keys=True).encode("utf-8")
-        + metrics_path.read_bytes()
-        + copied.read_bytes()
-    ).hexdigest()
-    _write_json(target / "manifest.json", manifest)
-    return manifest
-
-
-def load_model_bundle(path: str | Path) -> dict[str, Any]:
-    target = Path(path).expanduser().resolve()
-    manifest_path = target / "manifest.json" if target.is_dir() else target
-    manifest = _load_json(manifest_path)
-    if manifest.get("schema") != BUNDLE_SCHEMA:
-        raise ValueError(f"unsupported model bundle schema in {manifest_path}")
-    bundle_dir = manifest_path.parent
-    artifact = bundle_dir / str(manifest["artifact"])
-    if not artifact.exists():
-        raise ValueError(f"model bundle artifact missing: {artifact}")
-    actual_hash = file_sha256(artifact)
-    if actual_hash != manifest.get("artifact_sha256"):
-        raise ValueError(f"model bundle artifact hash mismatch: {artifact}")
-    metrics_path = bundle_dir / str(manifest.get("metrics_file", "metrics.json"))
-    if not metrics_path.exists():
-        raise ValueError(f"model bundle metrics missing: {metrics_path}")
-    expected_bundle_hash = hashlib.sha256(
-        json.dumps({**manifest, "bundle_hash": ""}, sort_keys=True).encode("utf-8")
-        + metrics_path.read_bytes()
-        + artifact.read_bytes()
-    ).hexdigest()
-    if expected_bundle_hash != manifest.get("bundle_hash"):
-        raise ValueError(f"model bundle hash mismatch: {bundle_dir}")
-    return {**manifest, "bundle_dir": str(bundle_dir), "artifact_path": str(artifact)}
-
-
-def snapshot_model_bundle(bundle_path: str | Path, snapshots_root: str | Path, role: str) -> dict[str, Any]:
-    loaded = load_model_bundle(bundle_path)
-    destination = Path(snapshots_root).expanduser().resolve() / f"{role}-{loaded['kind']}-{loaded['bundle_hash'][:12]}"
-    if not destination.exists():
-        shutil.copytree(loaded["bundle_dir"], destination)
-    return load_model_bundle(destination)
-
-
-def file_sha256(path: str | Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def software_versions() -> dict[str, str]:
-    versions = {"python": sys.version.split()[0], "platform": platform.platform()}
-    for package in ("numpy", "scipy", "scikit-learn", "joblib", "pyriemann", "torch"):
-        try:
-            versions[package] = metadata.version(package)
-        except metadata.PackageNotFoundError:
-            continue
-    return versions
 
 
 def _roi_wave(values: np.ndarray, channel_names: list[str], requested: list[str]) -> np.ndarray:

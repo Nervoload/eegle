@@ -1,4 +1,9 @@
-"""Runtime helpers for the EEG experiment environment."""
+"""Legacy task-environment setup kept outside the new runtime namespace.
+
+This module preserves current PsychoPy application behavior while Phase 2
+claims ``eegle.runtime`` for the modality-neutral execution foundation. It is
+not imported by the base package and will leave with the task integration.
+"""
 
 from __future__ import annotations
 
@@ -6,20 +11,13 @@ import os
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_CACHE_ROOT_ENV_VARS = ("EEGLE_RUNTIME_CACHE_ROOT", "CLOSEDLOOP_RUNTIME_CACHE_ROOT")
 SESSION_ROOT_ENV_VARS = ("EEGLE_SESSION_ROOT", "CLOSEDLOOP_SESSION_ROOT")
 
 
 def resolve_runtime_cache_root(cache_dir: str | Path = ".runtime") -> Path:
-    """Resolve caches without requiring shell-side JSON rewriting.
-
-    Absolute config paths remain authoritative. Relative paths may be moved by
-    a dedicated cache-root environment variable, then by the selected session
-    root. This keeps constrained Windows shells to simple environment-variable
-    assignments.
-    """
-
     candidate = Path(os.path.expandvars(str(cache_dir))).expanduser()
     if candidate.is_absolute():
         return candidate.resolve()
@@ -36,7 +34,8 @@ def resolve_runtime_cache_root(cache_dir: str | Path = ".runtime") -> Path:
 
 
 def ensure_runtime_environment(cache_dir: str | Path = ".runtime") -> Path:
-    """Create local writable runtime cache dirs and export useful env vars."""
+    """Create the legacy task caches and configure its third-party environment."""
+
     cache_root = resolve_runtime_cache_root(cache_dir)
     matplotlib_dir = cache_root / "matplotlib"
     psychopy_home = cache_root / "psychopy_home"
@@ -70,7 +69,9 @@ def ensure_runtime_environment(cache_dir: str | Path = ".runtime") -> Path:
     if sys.platform == "win32":
         os.environ.setdefault("CLOSEDLOOP_ORIGINAL_USERPROFILE", os.environ.get("USERPROFILE", ""))
         os.environ.setdefault("CLOSEDLOOP_ORIGINAL_APPDATA", os.environ.get("APPDATA", ""))
-        os.environ.setdefault("CLOSEDLOOP_ORIGINAL_LOCALAPPDATA", os.environ.get("LOCALAPPDATA", ""))
+        os.environ.setdefault(
+            "CLOSEDLOOP_ORIGINAL_LOCALAPPDATA", os.environ.get("LOCALAPPDATA", "")
+        )
         os.environ["USERPROFILE"] = str(psychopy_home)
         os.environ["APPDATA"] = str(appdata_dir)
         os.environ["LOCALAPPDATA"] = str(local_appdata_dir)
@@ -81,14 +82,6 @@ def ensure_runtime_environment(cache_dir: str | Path = ".runtime") -> Path:
 
 
 def _disable_psychopy_glfw() -> None:
-    """Prevent PsychoPy from importing GLFW in this runner by default.
-
-    PsychoPy's event module eagerly imports ``glfw`` and calls ``glfw.init()``
-    when the package is importable. In some macOS environments that native
-    init can abort the interpreter before our task code runs. The experiment
-    configs use pyglet, so hiding glfw keeps PsychoPy on the known backend.
-    Set CLOSEDLOOP_ALLOW_PSYCHOPY_GLFW=1 before launch to opt back in.
-    """
     if sys.platform != "darwin":
         return
     if os.environ.get("CLOSEDLOOP_ALLOW_PSYCHOPY_GLFW", "").lower() in {"1", "true", "yes"}:
@@ -98,18 +91,11 @@ def _disable_psychopy_glfw() -> None:
 
 
 def prepare_psychopy_runtime(cache_dir: str | Path = ".runtime") -> None:
-    """Prepare writable PsychoPy prefs and patch macOS pyglet event handling."""
     ensure_runtime_environment(cache_dir)
     apply_pyglet_macos_notification_patch()
 
 
 def apply_pyglet_macos_notification_patch() -> None:
-    """Skip macOS notifications which pyglet 1.5 may treat like NSEvents.
-
-    On some macOS/Python/PsychoPy combinations, Cocoa can return an
-    NSConcreteNotification from nextEventMatchingMask. Pyglet 1.5 assumes every
-    object has event.type(), which crashes before keyboard events can be read.
-    """
     if sys.platform != "darwin":
         return
     try:
@@ -150,7 +136,9 @@ def apply_pyglet_macos_notification_patch() -> None:
             elif event_type == cocoapy.NSKeyUp:
                 NSApp.sendAction_to_from_(cocoapy.get_selector("pygletKeyUp:"), None, event)
             elif event_type == cocoapy.NSFlagsChanged:
-                NSApp.sendAction_to_from_(cocoapy.get_selector("pygletFlagsChanged:"), None, event)
+                NSApp.sendAction_to_from_(
+                    cocoapy.get_selector("pygletFlagsChanged:"), None, event
+                )
             NSApp.updateWindows()
 
         pool.drain()

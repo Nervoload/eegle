@@ -1,0 +1,159 @@
+{
+  "schema": "eegle.migration_invariant_manifest.v1",
+  "phase": 1,
+  "producer": {
+    "branch": "sep",
+    "implementation": "current-pre-foundation-runtime",
+    "fixture_kind": "synthetic-and-structural"
+  },
+  "fixtures": [
+    {
+      "id": "model-contract-semantic-round-trip",
+      "task_id": "P1-001",
+      "invariant": "A typed model contract survives payload serialization without changing nested target, label, preprocessing, timing, or adaptation semantics.",
+      "provenance": "Synthetic contract authored for the migration.",
+      "sensitivity": "non_sensitive",
+      "equivalence": "semantic",
+      "tests": [
+        "tests.test_public_api.PublicApiTests.test_model_contract_v2_nested_payload_round_trips_without_semantic_loss"
+      ],
+      "current_sources": [
+        "eegle/models/contracts.py"
+      ],
+      "future_destination": "eegle.models.contracts",
+      "regeneration": "Recreate the synthetic contract in the named unit test and require exact dataclass equality after round-trip."
+    },
+    {
+      "id": "causal-inference-label-blindness",
+      "task_id": "P1-002",
+      "invariant": "Prediction-time model metadata excludes labels, stimulus identity, response correctness, behavior outcomes, and unrelated nested metadata.",
+      "provenance": "Synthetic metadata containing deliberate leakage fields.",
+      "sensitivity": "non_sensitive",
+      "equivalence": "semantic",
+      "tests": [
+        "tests.test_phase1_migration_invariants.Phase1MigrationInvariantTests.test_causal_model_metadata_is_label_blind",
+        "tests.test_classification.ClassificationTests.test_model_metadata_is_label_blind"
+      ],
+      "current_sources": [
+        "eegle/realtime/classification.py",
+        "eegle/workers/realtime_processor.py"
+      ],
+      "future_destination": "compiler causality validation and typed runtime context",
+      "regeneration": "Pass the declared safe timing and channel fields together with deliberate truth fields through the inference sanitizer."
+    },
+    {
+      "id": "primary-shadow-comparable-admission",
+      "task_id": "P1-003",
+      "invariant": "The primary executes before shadows, all executed roles receive the same prepared admitted input, and predictions or skips are explicitly counted.",
+      "provenance": "Synthetic two-channel epoch and deterministic fake model adapters.",
+      "sensitivity": "non_sensitive",
+      "equivalence": "trace",
+      "tests": [
+        "tests.test_phase1_migration_invariants.Phase1MigrationInvariantTests.test_primary_and_shadow_share_admitted_input_and_are_accounted",
+        "tests.test_realtime_synchrony.RealtimeSynchronyTests.test_inference_stage_emits_primary_before_skipping_shadow_under_budget_pressure"
+      ],
+      "current_sources": [
+        "eegle/workers/realtime_processor.py",
+        "eegle/realtime/models.py",
+        "eegle/realtime/performance.py"
+      ],
+      "future_destination": "eegle.runtime.engine and eegle.models.roles",
+      "regeneration": "Execute the inference helper with shadow-first input order and verify primary-first trace, shared prepared identity, role rows, and terminal accounting."
+    },
+    {
+      "id": "exact-input-capture-and-divergence",
+      "task_id": "P1-004",
+      "invariant": "Captured dense samples, timestamps, and events round-trip exactly, equal prediction traces compare cleanly, and changed outputs produce a localized reason.",
+      "provenance": "Synthetic float64 dense samples, explicit source-clock event, and normalized prediction rows.",
+      "sensitivity": "non_sensitive",
+      "equivalence": "bitwise capture and numeric prediction comparison",
+      "tolerances": {
+        "default_probability_absolute": 1e-09,
+        "torch_probability_absolute": 1e-06
+      },
+      "tests": [
+        "tests.test_phase1_migration_invariants.Phase1MigrationInvariantTests.test_exact_capture_and_prediction_divergence_are_explicit",
+        "tests.test_classification.ClassificationTests.test_classifier_capture_replay_matches_online_predictions"
+      ],
+      "current_sources": [
+        "eegle/realtime/event_features.py",
+        "eegle/analysis/classification.py"
+      ],
+      "future_destination": "eegle.recording.capture and eegle.replay.compare",
+      "regeneration": "Write the inline dense sample and event sequence, read it back, compare an identical prediction trace, then perturb one probability."
+    },
+    {
+      "id": "delayed-outcome-state-reconstruction",
+      "task_id": "P1-005",
+      "invariant": "A delayed eligible outcome creates an explicit state transition, and the resulting adaptation state can be snapshotted and restored with the same semantic hash.",
+      "provenance": "Synthetic delayed label and deterministic in-memory adaptive adapter.",
+      "sensitivity": "non_sensitive",
+      "equivalence": "semantic state",
+      "tests": [
+        "tests.test_phase1_migration_invariants.Phase1MigrationInvariantTests.test_delayed_outcome_state_transition_round_trips",
+        "tests.test_attention8_online_adaptation.Attention8OnlineAdaptationTests.test_replay_reproduces_adaptation_update_rows_and_state_hash"
+      ],
+      "current_sources": [
+        "eegle/realtime/online_adaptation.py",
+        "eegle/analysis/classification.py"
+      ],
+      "future_destination": "eegle.runtime.outcomes and generic adaptation state transitions",
+      "regeneration": "Apply one labeled outcome after prediction, assert before and after hashes differ, snapshot the resulting state, and restore it."
+    },
+    {
+      "id": "clock-and-observation-truth",
+      "task_id": "P1-006",
+      "invariant": "Source timestamps, local receive estimates, schedules, observations, and reconstructed timing remain distinguishable rather than being silently conflated.",
+      "provenance": "Synthetic chunk timing and DSART timing records.",
+      "sensitivity": "non_sensitive",
+      "equivalence": "semantic",
+      "tests": [
+        "tests.test_realtime_synchrony.RealtimeSynchronyTests.test_recorder_estimates_per_sample_local_received_times_within_chunk",
+        "tests.test_dynamic_sart_task.DynamicSartTaskTests.test_timing_fields_distinguish_schedules_observations_and_next_flip_measurements",
+        "tests.test_dynamic_sart_task.DynamicSartTaskTests.test_legacy_timing_is_reclassified_as_scheduled_without_fabricating_observations"
+      ],
+      "current_sources": [
+        "eegle/devices/lsl_eeg.py",
+        "eegle/tasks/dynamic_sart.py"
+      ],
+      "future_destination": "eegle.streams.clocks and evidence timing records",
+      "regeneration": "Run the named synthetic timing tests; never derive an observed timestamp solely from a schedule field."
+    },
+    {
+      "id": "truthful-phase-and-resume-ledger",
+      "task_id": "P1-006",
+      "invariant": "Completed rows and partial attempts remain recorded, and resume retries only incomplete work after identity validation.",
+      "provenance": "Synthetic dry-run phase failures and resume attempts.",
+      "sensitivity": "non_sensitive",
+      "equivalence": "trace",
+      "tests": [
+        "tests.test_dynamic_sart_task.DynamicSartTaskTests.test_abort_preserves_completed_rows_and_full_plan",
+        "tests.test_dsart_recording.DsartRecordingTests.test_partial_attempt_is_preserved_and_resume_retries_only_incomplete_phase",
+        "tests.test_dsart_recording.DsartRecordingTests.test_resume_refuses_changed_effective_recording_configuration"
+      ],
+      "current_sources": [
+        "eegle/pipelines/dsart_recording.py",
+        "eegle/tasks/dynamic_sart.py"
+      ],
+      "future_destination": "ExecutionPlan phase state and EvidenceBundle transition ledger",
+      "regeneration": "Run deterministic interrupted and resumed synthetic suites and compare phase attempts and locked identity."
+    },
+    {
+      "id": "content-addressed-model-bundle",
+      "task_id": "P1-007",
+      "invariant": "Model artifact and complete bundle hashes are verified before use, with eegle.models.bundles as the sole current bundle implementation authority.",
+      "provenance": "Synthetic model bytes, metrics, and manifest.",
+      "sensitivity": "non_sensitive",
+      "equivalence": "bitwise artifact integrity",
+      "tests": [
+        "tests.test_public_api.PublicApiTests.test_model_bundle_public_loader_validates_hashes",
+        "tests.test_classification.ClassificationTests.test_model_bundle_round_trip_and_integrity"
+      ],
+      "current_sources": [
+        "eegle/models/bundles.py"
+      ],
+      "future_destination": "eegle.models.bundles and canonical artifact hashing",
+      "regeneration": "Write a bundle from fixed synthetic bytes, validate it, alter the artifact, and require integrity failure."
+    }
+  ]
+}

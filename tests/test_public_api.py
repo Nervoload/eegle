@@ -7,29 +7,25 @@ import zipfile
 from pathlib import Path
 
 import eegle
-from eegle.models import (
-    CalibrationState,
-    ModelContract,
-    ModelSpec,
+from eegle.models.bundles import import_runtime_bundle, load_model_bundle_object, write_model_bundle
+from eegle.models.calibration import CalibrationState, read_calibration_state, write_calibration_state
+from eegle.models.contracts import ModelContract, PreprocessingContract, TargetContract
+from eegle.models.registry import (
     get_model_spec,
-    import_runtime_bundle,
-    load_model_bundle_object,
-    read_calibration_state,
     register_model_spec,
     resolve_model_kind,
     unregister_model_spec,
-    write_calibration_state,
-    write_model_bundle,
 )
+from eegle.ml.registry_types import ModelSpec
 from eegle.protocols import ProtocolTarget, ScientificProtocol, attention_lapse_protocol, load_protocol, write_protocol
 
 
 class PublicApiTests(unittest.TestCase):
     def test_top_level_public_imports_are_available(self) -> None:
-        self.assertIs(eegle.SessionPaths.__name__, "SessionPaths")
-        self.assertIs(eegle.EpochingConfig.__name__, "EpochingConfig")
-        self.assertIs(eegle.ModelPrediction.__name__, "ModelPrediction")
-        self.assertIs(eegle.TaskAction.__name__, "TaskAction")
+        self.assertEqual(eegle.ExecutionMode.CAUSAL.value, "causal")
+        self.assertEqual(eegle.__all__, ["ExecutionMode", "__version__"])
+        self.assertFalse(hasattr(eegle, "SessionPaths"))
+        self.assertFalse(hasattr(eegle, "TaskAction"))
 
     def test_model_contract_v2_accepts_legacy_bundle_payload(self) -> None:
         contract = ModelContract.from_payload(
@@ -52,6 +48,40 @@ class PublicApiTests(unittest.TestCase):
         self.assertEqual(payload["channel_names"], ["Cz", "Pz"])
         self.assertEqual(payload["target"]["name"], "attention_lapse_binary")
         self.assertEqual(payload["latency_budget_ms"], 50.0)
+
+    def test_model_contract_v2_nested_payload_round_trips_without_semantic_loss(self) -> None:
+        contract = ModelContract(
+            input_kind="sequence",
+            channel_names=("Fz", "Cz", "Pz"),
+            required_channels=("Fz", "Cz"),
+            optional_channels=("Pz",),
+            missing_channel_policy="drop",
+            sample_rate_hz=200.0,
+            sample_rate_tolerance_hz=0.5,
+            input_units="volts",
+            epoch_window_seconds=(-1.0, 0.5),
+            prediction_horizon_seconds=(0.5, 1.5),
+            preprocessing=PreprocessingContract(
+                reference="average",
+                filters=({"kind": "causal_bandpass", "low_hz": 1.0, "high_hz": 40.0},),
+                baseline_seconds=(-1.0, -0.8),
+                artifact_policy="reject_nonfinite",
+            ),
+            tensor_layout="batch_channels_samples",
+            target=TargetContract(
+                name="attention_lapse_score",
+                positive_label="lapse",
+                label_mapping={"attentive": 2, "lapse": 7},
+                learning_problem="ordinal_regression",
+            ),
+            causal=True,
+            latency_budget_ms=25.0,
+            adaptation_permissions=("threshold", "normalization"),
+        )
+
+        restored = ModelContract.from_payload(contract.payload())
+
+        self.assertEqual(restored, contract)
 
     def test_dynamic_model_registry_accepts_plugin_specs(self) -> None:
         spec = ModelSpec(

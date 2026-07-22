@@ -15,7 +15,10 @@ from eegle.io.events import EventLogger
 from eegle.lsl import LslMarkerOutlet, NullMarkerOutlet, lsl_local_clock, session_marker_source_id
 from eegle.realtime.policy import TaskAction, clamp
 from eegle.realtime.task_feedback import FeedbackAuditRecord, TaskFeedbackClient
-from eegle.runtime import apply_pyglet_macos_notification_patch, ensure_runtime_environment
+from eegle.integrations.task_environment import (
+    apply_pyglet_macos_notification_patch,
+    ensure_runtime_environment,
+)
 from eegle.session import SessionPaths, create_session
 from eegle.tasks.base import TaskRunResult
 from eegle.telemetry import Telemetry

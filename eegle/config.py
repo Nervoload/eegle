@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from eegle.runtime import PROJECT_ROOT
+from eegle.integrations.task_environment import PROJECT_ROOT
 
 DEFAULT_CONFIG = PROJECT_ROOT / "configs" / "default_experiment.json"
 SESSION_ROOT_ENV_VARS = ("EEGLE_SESSION_ROOT", "CLOSEDLOOP_SESSION_ROOT")

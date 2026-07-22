@@ -1,13 +1,34 @@
-"""Stream acquisition and marker helpers."""
+"""Modality-neutral stream records and source contracts.
 
-from eegle.streams.lsl import LslMarkerOutlet, LslStream, NullMarkerOutlet, resolve_streams
-from eegle.streams.markers import MarkerEvent
+LSL helpers remain available from their explicit legacy modules during the
+migration; importing :mod:`eegle.streams` does not import LSL.
+"""
+
+from eegle.streams.channels import (
+    ChannelSpec,
+    ContentKind,
+    MissingDataPolicy,
+    RateModel,
+    StreamSpec,
+)
+from eegle.streams.clocks import ClockIdentity, ClockKind, ClockMapping, TimePoint
+from eegle.streams.packets import DenseSampleBatch, MetadataEvent, SparseEvent, SparseEventBatch
+from eegle.streams.sources import Source
 
 
 __all__ = [
-    "LslMarkerOutlet",
-    "LslStream",
-    "MarkerEvent",
-    "NullMarkerOutlet",
-    "resolve_streams",
+    "ChannelSpec",
+    "ClockIdentity",
+    "ClockKind",
+    "ClockMapping",
+    "ContentKind",
+    "DenseSampleBatch",
+    "MetadataEvent",
+    "MissingDataPolicy",
+    "RateModel",
+    "Source",
+    "SparseEvent",
+    "SparseEventBatch",
+    "StreamSpec",
+    "TimePoint",
 ]

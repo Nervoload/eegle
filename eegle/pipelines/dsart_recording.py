@@ -31,7 +31,7 @@ from eegle.lsl import LslMarkerOutlet, NullMarkerOutlet, lsl_local_clock, sessio
 from eegle.preflight import run_preflight
 from eegle.psychopy_input import clear_psychopy_keys, poll_psychopy_keys
 from eegle.recording_health import RecorderHealthMonitor
-from eegle.runtime import prepare_psychopy_runtime
+from eegle.integrations.task_environment import prepare_psychopy_runtime
 from eegle.session import SessionPaths, create_session
 from eegle.telemetry import Telemetry
 

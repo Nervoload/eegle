@@ -1,5 +1,9 @@
 # EEGle Public API
 
+> **Legacy current-implementation document.** This describes the pre-migration
+> import surface and remains only as compatibility evidence. The future public
+> API is governed by [EEGLE.md](../EEGLE.md) and [MIGRATION.md](../MIGRATION.md).
+
 EEGle's pip-facing API is organized around stable scientific primitives rather
 than task-specific scripts.
 

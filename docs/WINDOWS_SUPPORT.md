@@ -1,5 +1,10 @@
 # Windows Support
 
+> **Legacy current-implementation document.** This records portability and
+> operator behavior for the pre-migration package. It remains useful evidence,
+> but does not define the target runtime. See [EEGLE.md](EEGLE.md) and
+> [MIGRATION.md](MIGRATION.md).
+
 EEGle is designed to run from the same Python package on macOS, Windows, and
 Linux. Windows support is centered on installed console scripts, PowerShell
 commands, module launches, and explicit hardware checks.

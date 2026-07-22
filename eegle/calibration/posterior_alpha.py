@@ -27,7 +27,10 @@ from eegle.realtime.alpha import (
     sliding_window_psd_alpha_power,
     spectral_peak_candidates,
 )
-from eegle.runtime import apply_pyglet_macos_notification_patch, ensure_runtime_environment
+from eegle.integrations.task_environment import (
+    apply_pyglet_macos_notification_patch,
+    ensure_runtime_environment,
+)
 from eegle.session import SessionPaths
 from eegle.tasks.go_nogo import _draw_shape, _random_go_stimulus, _resolve_no_go
 from eegle.telemetry import Telemetry

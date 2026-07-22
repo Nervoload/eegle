@@ -23,7 +23,7 @@ from eegle.preflight import run_preflight, write_preflight_report
 from eegle.realtime.controller import ClosedLoopController
 from eegle.realtime.epoching import extract_epochs_for_session
 from eegle.realtime.models import train_epoch_model
-from eegle.runtime import ensure_runtime_environment
+from eegle.integrations.task_environment import ensure_runtime_environment
 from eegle.session import create_session
 from eegle.tasks.registry import get_task_spec, list_task_specs
 from eegle.telemetry import apply_cli_telemetry_overrides

@@ -20,7 +20,10 @@ from eegle.psychopy_input import clear_psychopy_keys, poll_psychopy_keys
 from eegle.realtime.policy import TaskAction
 from eegle.realtime.task_feedback import TaskFeedbackClient
 from eegle.recording_health import RecorderHealthMonitor
-from eegle.runtime import apply_pyglet_macos_notification_patch, ensure_runtime_environment
+from eegle.integrations.task_environment import (
+    apply_pyglet_macos_notification_patch,
+    ensure_runtime_environment,
+)
 from eegle.session import SessionPaths, create_session
 from eegle.tasks.base import TaskRunResult
 from eegle.tasks.dynamic_sart_schema import (

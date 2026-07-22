@@ -1,9 +1,9 @@
 # EEGle
 
-EEGle is a Python toolkit for reproducible realtime EEG experiments. It combines
-PsychoPy tasks, Lab Streaming Layer (LSL) acquisition, Enobio/NIC2 and Neuracle
-setup checks, structured session output, realtime processing, and post-session
-analysis.
+EEGle is becoming an EEG-first, neurophysiology-general Python framework for
+reproducing, recording, replaying, and validating synchronized model systems.
+This migration branch contains the new typed foundations alongside legacy EEG,
+PsychoPy, LSL, recording, realtime, and analysis workflows.
 
 The source CLI is `eegle.cli:main`. Installing this project creates an
 `eegle` console script in that Python environment; `eegle` is not a global or
@@ -11,12 +11,12 @@ operating-system-provided command.
 
 ## Quick Start: Complete a Two-Trial Dry Run
 
-EEGle currently requires Python 3.10. Start from the repository root:
+EEGle now requires Python 3.11 or newer. Start from the repository root:
 
 macOS or Linux:
 
 ```bash
-python3.10 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[runtime]"
@@ -25,7 +25,7 @@ python -m pip install -e ".[runtime]"
 Windows PowerShell (Windows x64):
 
 ```powershell
-py -3.10 -m venv .venv
+py -3.11 -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -e ".[runtime]"
@@ -152,7 +152,7 @@ python -m pip install -e ".[dev]"
 
 `pyproject.toml` uses compatible package ranges for pip distribution.
 `constraints/macos-python310.txt` records the direct package versions from the
-current macOS/Python 3.10 development environment. Use that constraints file
+historical macOS/Python 3.10 development environment. Use that constraints file
 only when deliberately reproducing the captured macOS lab environment; do not
 treat it as a Windows or Linux lockfile.
 
@@ -161,7 +161,9 @@ treat it as a Windows or Linux lockfile.
 | Purpose | Package | Common import |
 | --- | --- | --- |
 | Core arrays | NumPy | `import numpy as np` |
-| Scientific signal processing, optional | SciPy | `from scipy import signal` |
+| Scientific signal processing | SciPy | `from scipy import signal` |
+| Portable schema validation | jsonschema | `from jsonschema import Draft202012Validator` |
+| Version resolution | packaging | `from packaging.version import Version` |
 | Tables and CSV output, optional | pandas | `import pandas as pd` |
 | Plotting, optional | Matplotlib | `import matplotlib.pyplot as plt` |
 | EEG analysis, optional | MNE | `import mne` |
@@ -234,7 +236,7 @@ POSIX-like shell. Use these equivalents instead:
 | POSIX-oriented form | Windows PowerShell form |
 | --- | --- |
 | `source .venv/bin/activate` | `.venv\Scripts\Activate.ps1` |
-| `python3.10 -m eegle.cli ...` | `py -3.10 -m eegle.cli ...` |
+| `python3.11 -m eegle.cli ...` | `py -3.11 -m eegle.cli ...` |
 | `./alpha8 full` | `alpha8 full` |
 | `./inhibition8 full` | `inhibition8 full` |
 | `./classify8 collect ...` | `classify8 collect ...` |
@@ -242,17 +244,19 @@ POSIX-like shell. Use these equivalents instead:
 
 If activation is unavailable, prefix the console executable with
 `.\.venv\Scripts\`, for example
-`.\.venv\Scripts\classify8.exe --help`. Use `py -3.10 -m ...` when invoking a
-package module directly; it guarantees that the requested Python 3.10 runtime
+`.\.venv\Scripts\classify8.exe --help`. Use `py -3.11 -m ...` when invoking a
+package module directly; it guarantees that the requested Python 3.11+ runtime
 is used. The activation-free generic CLI form is
 `.\.venv\Scripts\python.exe -m eegle.cli check-setup --allow-missing-eeg`.
 
 ## Documentation Guide
 
-- `docs/ARCHITECTURE.md` describes the runtime data path and component
-  boundaries.
-- `docs/MODEL_TRAINING_TESTING_GOALS.md` describes classifier training,
-  testing, evaluation, and current model goals.
+- `docs/EEGLE.md` is the target product and architecture authority.
+- `docs/MIGRATION.md` and `docs/MIGRATION_STATUS.md` define phase gates and live
+  progress.
+- `docs/PHASE0_INVENTORY.md` classifies the legacy code and cleanup boundaries.
+- `docs/ARCHITECTURE.md` and `docs/MODEL_TRAINING_TESTING_GOALS.md` describe the
+  legacy implementation and remain behavioral evidence.
 - `AGENTS.md` and scoped `AGENTS.md` files under implementation directories
   orient AI agents and future contributors before code changes.
 
@@ -597,13 +601,13 @@ to `logs/debug.jsonl`.
 This example runs the PVT task with an Enobio 8-channel device and NIC2 on
 macOS. NIC2 itself is external software and is not installed by EEGle.
 
-1. Install Python 3.10 and EEGle:
+1. Install Python 3.11 or newer and EEGle:
 
    ```bash
-   python3.10 -m venv .venv
+   python3.11 -m venv .venv
    source .venv/bin/activate
    python -m pip install --upgrade pip
-   python -m pip install -e ".[runtime]" -c constraints/macos-python310.txt
+   python -m pip install -e ".[runtime]"
    ```
 
 2. Connect the Enobio device, open NIC2, connect to the device, and begin
@@ -711,7 +715,7 @@ eegle run-forward \
 
 ## Windows PowerShell Setup and NIC2 Enobio 8 Run
 
-Use 64-bit CPython 3.10 and PowerShell for the supported Windows x64 operator
+Use 64-bit CPython 3.11+ and PowerShell for the Windows x64 operator
 path. The Python package and command layer are shared with macOS and Linux;
 NIC2, the Enobio driver connection, Windows Firewall permissions, and
 PsychoPy's display setup remain machine-specific checks. Windows on ARM is not
@@ -720,7 +724,7 @@ validated; confirm compatible LSL and device-driver binaries before using it.
 1. Create and install the runtime environment:
 
    ```powershell
-   py -3.10 -m venv .venv
+   py -3.11 -m venv .venv
    .venv\Scripts\Activate.ps1
    python -m pip install --upgrade pip
    python -m pip install -e ".[runtime,analysis]"

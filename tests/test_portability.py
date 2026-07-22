@@ -20,7 +20,11 @@ from eegle.hardware.os_support import check_os_support
 from eegle.hardware.system import CheckResult, check_platform, check_python
 from eegle.lsl import LslStream
 from eegle.preflight import run_preflight
-from eegle.runtime import _disable_psychopy_glfw, ensure_runtime_environment, resolve_runtime_cache_root
+from eegle.integrations.task_environment import (
+    _disable_psychopy_glfw,
+    ensure_runtime_environment,
+    resolve_runtime_cache_root,
+)
 from eegle.session import create_session
 
 
@@ -45,7 +49,9 @@ class PortabilityTests(unittest.TestCase):
     def test_macos_psychopy_workaround_does_not_modify_other_platforms(self) -> None:
         for platform_name in ("linux", "win32"):
             with self.subTest(platform=platform_name):
-                with patch("eegle.runtime.sys.platform", platform_name), patch.dict(sys.modules, {}, clear=False):
+                with patch(
+                    "eegle.integrations.task_environment.sys.platform", platform_name
+                ), patch.dict(sys.modules, {}, clear=False):
                     sys.modules.pop("glfw", None)
                     _disable_psychopy_glfw()
                     self.assertNotIn("glfw", sys.modules)
@@ -77,7 +83,7 @@ class PortabilityTests(unittest.TestCase):
     def test_windows_runtime_environment_redirects_user_cache_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cache = Path(tmp) / "runtime-cache"
-            with patch("eegle.runtime.sys.platform", "win32"), patch.dict(
+            with patch("eegle.integrations.task_environment.sys.platform", "win32"), patch.dict(
                 os.environ,
                 {
                     "HOME": "C:\\Users\\RealUser",

@@ -64,7 +64,12 @@ class ModelContract:
         """Build a v2 contract from a new or legacy bundle payload."""
         normalized = normalize_input_contract(payload, fallback_channel_names=payload.get("channel_names", ()))
         preprocessing = dict(payload.get("preprocessing") or {})
+        raw_target = payload.get("target")
         target = dict(payload.get("target_contract") or payload.get("target_spec") or {})
+        if isinstance(raw_target, dict):
+            target.update(raw_target)
+        target_name = raw_target if isinstance(raw_target, str) else target.get("name", target.get("target", "condition"))
+        label_mapping = payload.get("label_mapping") or target.get("label_mapping") or {"go": 0, "no_go": 1}
         epoch_window = _optional_pair(normalized.get("epoch_window_seconds"))
         horizon = _optional_pair(payload.get("prediction_horizon_seconds"))
         return cls(
@@ -87,9 +92,9 @@ class ModelContract:
             ),
             tensor_layout=str(normalized.get("tensor_layout", "batch_1_channels_samples")),
             target=TargetContract(
-                name=str(payload.get("target", target.get("target", target.get("name", "condition")))),
+                name=str(target_name),
                 positive_label=str(target.get("positive_label", "no_go")),
-                label_mapping={str(key): int(value) for key, value in dict(payload.get("label_mapping") or {}).items()} or {"go": 0, "no_go": 1},
+                label_mapping={str(key): int(value) for key, value in dict(label_mapping).items()},
                 learning_problem=str(target.get("learning_problem", "binary_classification")),
             ),
             causal=bool(payload.get("causal", True)),

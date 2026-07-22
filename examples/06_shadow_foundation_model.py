@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from eegle.models import ModelSpec, register_model_spec
+from eegle.ml.registry_types import ModelSpec
+from eegle.models.registry import register_model_spec
 
 
 def main() -> None:

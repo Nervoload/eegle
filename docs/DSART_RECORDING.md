@@ -1,5 +1,10 @@
 # DSART8 and DSART32 Recording Runbook
 
+> **Legacy current-implementation document.** This remains the operator runbook
+> for the pre-migration DSART recipes, not a future architecture specification.
+> [EEGLE.md](EEGLE.md) is the architecture authority;
+> [MIGRATION.md](MIGRATION.md) controls replacement work.
+
 These are recording-first visits. They deliberately disable online inference,
 model loading, task adaptation, stimulation, and dashboard dependencies. The
 canonical outputs are raw EEG, task events, full key-event logs, published LSL

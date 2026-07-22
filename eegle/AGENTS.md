@@ -1,7 +1,27 @@
 # EEGle Package Guidance
 
-`eegle/` contains the implementation behind the installed `eegle`, `alpha8`,
-`inhibition8`, and `classify8` commands.
+`eegle/` currently contains the legacy implementation behind the installed
+commands and the new foundations will be introduced here phase by phase. Read
+`docs/EEGLE.md`, `docs/MIGRATION.md`, `docs/MIGRATION_STATUS.md`, and
+`docs/PHASE0_INVENTORY.md` before changing package boundaries.
+
+The package map below describes current code, not target ownership. New code
+must follow the target package model; legacy code supplies algorithms and
+acceptance evidence only as classified by the Phase 0 inventory.
+
+## New Foundation Map
+
+- `actions/`: commands, authorization decisions, and observed receipts.
+- `compiler/`: canonical JSON/hashing and immutable execution-plan drafts.
+- `plugins/`: executable descriptors, entry-point discovery, and component
+  protocols.
+- `processing/`: bounded buffers, explicit causal/retrospective transforms,
+  generic windows, and quality.
+- `recording/`: evidence envelopes, framed logs, artifacts, and store protocols.
+- `runtime/`: outcome and state records; the engine is a Phase 3 responsibility.
+- `specs/`: JSON Schema validation; full suite specifications arrive later.
+- `streams/`: modality-neutral channels, clocks, packets, and sources.
+- `integrations/`: task/framework/site behavior excluded from base imports.
 
 ## Package Map
 
@@ -24,6 +44,9 @@
 
 ## Classifier Invariants
 
+These are frozen current scientific behaviors, not a requirement to preserve
+the listed module locations:
+
 - Keep shared epoch quality and model metadata sanitation in
   `realtime/classification.py`.
 - Keep training and inference adapter behavior in `realtime/models.py`.
@@ -33,6 +56,19 @@
 - Do not feed ground-truth labels, stimulus condition, or response correctness
   into online model metadata.
 - Do not let `classify8 demo` write real classifier prediction artifacts.
+
+## Migration Rules
+
+- Keep the base import independent of LSL, PsychoPy, MNE, sklearn, Torch,
+  plotting, vendor SDKs, and recipe applications.
+- New runtime records are typed and versioned; unvalidated config dictionaries
+  do not flow past compilation.
+- Live, simulated, and replay execution must converge on one semantic engine.
+- Preserve label blindness, explicit accounting, availability times, state
+  transitions, and content integrity as contracts.
+- Remove rather than facade a superseded authority after its phase gate passes.
+- Follow the cleanup preconditions in `docs/PHASE0_INVENTORY.md`; do not perform
+  destructive cleanup early.
 
 ## Realtime and Worker Rules
 

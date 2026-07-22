@@ -1,3 +1,7 @@
+> **Legacy integration reference.** This document supported the pre-migration
+> PsychoPy applications. PsychoPy is an optional external integration in the
+> target design; see [EEGLE.md](EEGLE.md) and [MIGRATION.md](MIGRATION.md).
+
 PsychoPy API Reference Summary
 This document summarises key modules in the PsychoPy API (v2026.1.3). It provides a high‑level overview of each package, including its purpose, common classes/functions and illustrative code fragments. The intent is to replicate the reference documentation locally for convenient use when designing tasks such as a psychomotor vigilance task (PVT) in a closed‑loop neurofeedback system. Each section cites the official documentation.
 1. psychopy.core – basic functions

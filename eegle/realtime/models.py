@@ -18,6 +18,11 @@ from eegle.ml.registry import get_model_spec, resolve_model_kind
 from eegle.ml.targets import build_training_target
 from eegle.models.bundles import file_sha256, load_model_bundle, write_model_bundle
 from eegle.models.calibration import calibration_state_hash, make_prototype_state
+from eegle.realtime.epoch_arrays import (
+    epoch_to_channels_samples,
+    epoch_to_samples_channels,
+    relative_times,
+)
 from eegle.realtime.online_adaptation import AdaptationUpdateResult, OnlineAdaptationState
 from eegle.realtime.classification import (
     DEFAULT_ROI_CONFIG,
@@ -2043,37 +2048,6 @@ def _cosine_distance(left: np.ndarray, right: np.ndarray) -> float:
 
 def _safe_feature_name(value: Any) -> str:
     return "_".join(part for part in "".join(ch if ch.isalnum() else "_" for ch in str(value).lower()).split("_") if part)
-
-
-def epoch_to_channels_samples(epoch: np.ndarray, channel_names: list[str], input_layout: str = "auto") -> np.ndarray:
-    data = np.asarray(epoch, dtype=float)
-    if data.ndim != 2:
-        raise ValueError("epoch must be a 2D array")
-    layout = input_layout.lower()
-    channel_count = len(channel_names)
-    if layout == "channels_x_samples":
-        return data
-    if layout == "samples_x_channels":
-        return data.T
-    if channel_count and data.shape[0] == channel_count:
-        return data
-    if channel_count and data.shape[1] == channel_count:
-        return data.T
-    return data.T if data.shape[0] > data.shape[1] else data
-
-
-def epoch_to_samples_channels(epoch: np.ndarray, channel_names: list[str], input_layout: str = "auto") -> np.ndarray:
-    return epoch_to_channels_samples(epoch, channel_names, input_layout).T
-
-
-def relative_times(metadata: dict[str, Any], sample_count: int, sample_rate_hz: float) -> np.ndarray:
-    if "relative_times" in metadata:
-        values = np.asarray(metadata["relative_times"], dtype=float)
-        if values.size == sample_count:
-            return values
-    window = metadata.get("epoch_window_seconds") or metadata.get("epoch_window") or [-0.2, 0.8]
-    tmin = float(window[0])
-    return np.arange(sample_count, dtype=float) / sample_rate_hz + tmin
 
 
 def resolve_roi_indices(channel_names: list[str], roi_channels: list[str], channel_count: int) -> list[int]:
