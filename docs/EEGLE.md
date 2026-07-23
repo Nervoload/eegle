@@ -1,7 +1,7 @@
 # EEGle Architecture and Product Vision
 
 **Status:** Normative source of truth for EEGle's intended product and architecture  
-**Last updated:** 2026-07-22  
+**Last updated:** 2026-07-23
 **Related documents:** [Migration plan](MIGRATION.md) · [Migration status](MIGRATION_STATUS.md)
 
 This document defines what EEGle is intended to become. It is the authority for
@@ -339,6 +339,16 @@ The suite may declare:
 
 Custom algorithms are normal Python plugins with configuration schemas. JSON is
 for declarative intent, not executable source code.
+
+#### Bounded suite composition
+
+The initial composition authority is one explicit base suite plus ordered,
+typed overlays. An overlay may override configuration of an existing component
+and recording or validation policy keys. It cannot add or remove graph nodes,
+change plugin identities, rewrite routes or phases, or inherit from another
+overlay. A topology or scientific-state-machine change requires a new explicit
+suite version. This keeps reuse inspectable without introducing an inheritance
+or general patch language.
 
 ### 4.3 Phase state machine
 
@@ -722,6 +732,13 @@ raw recording, state, and derived artifacts separately. This prevents a replay
 capture from being mistaken for source-native archival data and permits large
 raw stores to remain external without weakening the bundle's identity.
 
+An engine-produced bundle embeds the immutable `ExecutionPlan`, records the
+plan hash and replay-equivalence ceiling, and includes one exact admitted-input
+capture. Bundle replay verifies those objects, reconstructs the recorded
+execution reference, and passes the restored plan, streams, and packets to a
+fresh `ExecutionEngine`. Component/plugin construction remains a compiler and
+deployment responsibility; replay does not deserialize arbitrary Python.
+
 Semantic ledgers and the dependency-light reference sample store use canonical
 JSON frames with a length prefix and per-frame SHA-256 checksum. Integrity
 inspection distinguishes valid, recoverable, and unrecoverable results. A
@@ -730,9 +747,41 @@ checksum, header, interior, canonicalization, record-hash, or sequence failures
 are not silently repaired. Recovery copies the proven prefix and leaves the
 source untouched.
 
+An open writer keeps a hashed, versioned operational state beside its ledger.
+That state is not published scientific evidence: it records the current ledger,
+artifact references, component snapshots, last sequence, and finalization phase
+needed to recover after process interruption. Resume requires a recovery token
+whose one-way hash, but never the token itself, is stored in the session. A
+recoverable partial final frame is copied to a new ledger before append resumes;
+the interrupted bytes remain unchanged, are registered as a hashed bundle
+artifact, and become lineage inputs to the recovered semantic log. Publication
+is a restartable `open -> finalizing -> finalized` transaction. Once the bundle
+manifest is published, its semantic ledger is immutable and cannot be reopened
+for append.
+
 Historical `SessionPaths` names may be exposed only through an explicit artifact
 alias registry. They are a compatibility view for selected readers and recipes,
 not a target runtime API or a required directory layout.
+
+Historical conversion is a one-time import operation, not a compatibility
+runtime. An importer must recognize an explicitly supported source family,
+fingerprint the unchanged source tree, validate selected durable artifacts,
+copy them into namespaced content-addressed storage, and emit a new evidence
+bundle. Its report must classify every source file as imported, omitted, or
+invalid and list importer-created fields separately as derived. Missing producer
+checksums are reported as unavailable; hashes observed during import must not be
+misrepresented as original producer integrity. Unsupported or malformed records
+are never guessed, repaired, or silently promoted into valid evidence. Any
+historical study/recipe filename map is supplied by an integration profile and
+must not leak into the recording kernel.
+
+External artifacts have a separate verification result from structural bundle
+integrity. The required states are `reference_only`, `verified`, `unavailable`,
+and `mismatch`. An unavailable remote or source-native object does not make the
+embedded evidence ledger corrupt, but it prevents claims that require reading
+that object. A digest or size mismatch is an integrity failure. Local
+source-native files may be hashed and registered through `file:` references
+without being copied into the session.
 
 ### 11.3 Privacy and sensitivity
 
@@ -748,6 +797,23 @@ Recording policies must support:
 Secrets and credentials must never be embedded in a portable suite or evidence
 bundle. EEGle is not a substitute for institutional governance, consent, or
 secure storage.
+
+The v1 privacy/export boundary uses four sensitivity classes: `public`,
+`pseudonymized`, `internal`, and `restricted`. Portable export defaults allow
+only public and pseudonymized artifacts, omit the source session identifier and
+participant pseudonym, and exclude external references. The source bundle hash
+preserves exact provenance without adding a separately guessable session-ID
+hash. Excluded entries retain only safe artifact identity,
+digest, role, sensitivity, and reason fields; a restricted external URI must
+not leak through the export manifest.
+
+Deployment redaction is an explicit JSON-pointer policy bound to the source
+artifact digest. Redacted content receives a new digest while the export
+manifest preserves the source digest, bundle hash, and scientific plan hash.
+Secret-shaped JSON fields fail export unless an explicit rule removes them.
+Retention policies return reviewable decisions and never delete data as a side
+effect. Direct participant identifiers, credentials, and local deployment
+secrets are not portable evidence fields.
 
 ## 12. Replay and equivalence
 
@@ -912,8 +978,11 @@ eegle/
 │   ├── ledgers.py        # contiguous typed semantic ledgers
 │   ├── capture.py        # execution-capture authority
 │   ├── stores.py         # SampleStore protocol and reference store
+│   ├── external.py       # external verification status and local verifier
+│   ├── policies.py       # privacy, export, redaction, retention
 │   └── compat.py         # narrow legacy artifact-alias view
 ├── replay/
+│   ├── bundle.py         # plan-bearing EvidenceBundle replay bridge
 │   ├── source.py         # replay inputs and virtual timing
 │   ├── runner.py         # replay through ExecutionEngine
 │   └── compare.py        # equivalence and divergence comparison

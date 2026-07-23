@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
 from eegle.compiler.lock import canonical_hash
+from eegle.integrations.legacy_sessions import legacy_bcipy_recipe_importer
 from eegle.recording import (
     ArtifactLineage,
     EvidenceReader,
@@ -17,11 +20,16 @@ from eegle.recording import (
     EvidenceWriter,
     IntegrityIssueCode,
     IntegrityStatus,
+    LegacyImportReport,
+    LegacySessionImporter,
     SampleStore,
     Sensitivity,
     Session,
     SessionPaths,
     SessionStatus,
+    WriterPhase,
+    complete_interrupted_finalization,
+    discover_interrupted_runs,
     persist_engine_run,
     read_framed_sample_store,
     recover_framed_prefix,
@@ -150,6 +158,164 @@ class SessionAndArtifactStoreTests(unittest.TestCase):
 
 
 class EvidenceBundleTests(unittest.TestCase):
+    def test_interrupted_writer_is_discovered_authorized_resumed_and_published(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Session.create(Path(tmp) / "session", session_id="session.resume")
+            writer = EvidenceWriter(
+                session,
+                bundle_id="bundle.resume",
+                plan_hash=canonical_hash({"plan": "resume"}),
+                created_time=_time(0.0),
+                resume_token="recovery-token-for-resume-test",
+            )
+            writer.append(EvidenceRecord("evidence.0", "run_started", 0, _time(0.0), {}))
+            writer.close_unfinalized()
+            state_text = (
+                session.root / "bundles/bundle.resume/writer-state.json"
+            ).read_text(encoding="utf-8")
+
+            interrupted = discover_interrupted_runs(Session.open(session.root))
+
+            self.assertNotIn("recovery-token-for-resume-test", state_text)
+            self.assertEqual(len(interrupted), 1)
+            self.assertEqual(interrupted[0].phase, WriterPhase.OPEN)
+            self.assertEqual(interrupted[0].integrity, IntegrityStatus.VALID)
+            self.assertTrue(interrupted[0].resumable)
+            self.assertEqual(interrupted[0].last_complete_sequence, 0)
+            with self.assertRaises(PermissionError):
+                EvidenceWriter.resume(
+                    session,
+                    bundle_id="bundle.resume",
+                    resume_token="wrong-token",
+                )
+
+            resumed = EvidenceWriter.resume(
+                session,
+                bundle_id="bundle.resume",
+                resume_token="recovery-token-for-resume-test",
+            )
+            resumed.append(EvidenceRecord("evidence.1", "run_completed", 1, _time(1.0), {}))
+            bundle = resumed.finalize(
+                status=EvidenceStatus.COMPLETE,
+                completed_time=_time(1.0),
+            )
+
+            self.assertEqual(discover_interrupted_runs(session), ())
+            self.assertEqual(bundle.last_sequence, 1)
+            self.assertEqual(
+                [
+                    record.record_type
+                    for record in EvidenceReader.open(session, bundle.bundle_id).records()
+                ],
+                ["run_started", "run_completed"],
+            )
+
+    def test_resume_copies_a_truncated_ledger_prefix_without_mutating_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Session.create(Path(tmp) / "session", session_id="session.recover-ledger")
+            writer = EvidenceWriter(
+                session,
+                bundle_id="bundle.recover-ledger",
+                plan_hash=canonical_hash({"plan": "recover-ledger"}),
+                created_time=_time(0.0),
+                resume_token="recovery-token-for-prefix-test",
+            )
+            writer.append(EvidenceRecord("evidence.0", "run_started", 0, _time(0.0), {}))
+            writer.append(EvidenceRecord("evidence.1", "interrupted", 1, _time(0.5), {}))
+            writer.close_unfinalized()
+            original = session.root / "bundles/bundle.recover-ledger/semantic.eegle"
+            original.write_bytes(original.read_bytes()[:-9])
+            interrupted_bytes = original.read_bytes()
+
+            discovery = discover_interrupted_runs(session)[0]
+            self.assertEqual(discovery.integrity, IntegrityStatus.RECOVERABLE)
+            self.assertEqual(discovery.last_complete_sequence, 0)
+
+            resumed = EvidenceWriter.resume(
+                session,
+                bundle_id="bundle.recover-ledger",
+                resume_token="recovery-token-for-prefix-test",
+            )
+            resumed.append(EvidenceRecord("evidence.1b", "run_recovered", 1, _time(1.0), {}))
+            bundle = resumed.finalize(
+                status=EvidenceStatus.PARTIAL,
+                completed_time=_time(1.0),
+            )
+
+            self.assertEqual(original.read_bytes(), interrupted_bytes)
+            recovered = (
+                session.root
+                / "bundles/bundle.recover-ledger/semantic.recovered-1.eegle"
+            )
+            self.assertTrue(recovered.is_file())
+            interrupted_reference = next(
+                reference
+                for reference in bundle.artifacts
+                if reference.role == "interrupted_evidence_log"
+            )
+            semantic_entry = session.artifacts.get(
+                "bundles/bundle.recover-ledger",
+                "bundle.recover-ledger.semantic-log",
+            )
+            self.assertEqual(
+                semantic_entry.lineage.input_digests,
+                (interrupted_reference.digest,),
+            )
+            self.assertEqual(
+                [
+                    record.record_type
+                    for record in EvidenceReader.open(
+                        session, "bundle.recover-ledger"
+                    ).records()
+                ],
+                ["run_started", "run_recovered"],
+            )
+
+    def test_interrupted_finalization_can_be_completed_idempotently(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Session.create(
+                Path(tmp) / "session",
+                session_id="session.finalize-recovery",
+            )
+            writer = EvidenceWriter(
+                session,
+                bundle_id="bundle.finalize-recovery",
+                plan_hash=canonical_hash({"plan": "finalize-recovery"}),
+                created_time=_time(0.0),
+                resume_token="recovery-token-for-finalize-test",
+            )
+            writer.append(EvidenceRecord("evidence.0", "run_started", 0, _time(0.0), {}))
+            with mock.patch.object(
+                session.artifacts,
+                "register_file",
+                side_effect=RuntimeError("simulated publication interruption"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "simulated publication interruption"):
+                    writer.finalize(
+                        status=EvidenceStatus.PARTIAL,
+                        completed_time=_time(1.0),
+                    )
+
+            interrupted = discover_interrupted_runs(session)
+            self.assertEqual(len(interrupted), 1)
+            self.assertEqual(interrupted[0].phase, WriterPhase.FINALIZING)
+            self.assertTrue(interrupted[0].finalizable)
+
+            bundle = complete_interrupted_finalization(
+                session,
+                bundle_id="bundle.finalize-recovery",
+                resume_token="recovery-token-for-finalize-test",
+            )
+            repeated = complete_interrupted_finalization(
+                session,
+                bundle_id="bundle.finalize-recovery",
+                resume_token="recovery-token-for-finalize-test",
+            )
+
+            self.assertEqual(bundle.bundle_hash, repeated.bundle_hash)
+            self.assertEqual(discover_interrupted_runs(session), ())
+            self.assertTrue(EvidenceReader.open(session, bundle.bundle_id).verify().valid)
+
     def test_bundle_keeps_execution_capture_and_external_raw_reference_independent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             session = Session.create(Path(tmp) / "session", session_id="session.bundle")
@@ -277,12 +443,20 @@ class EvidenceBundleTests(unittest.TestCase):
                 evidence=evidence,
                 captured_packets=(_packet(),),
             )
+            plan = SimpleNamespace(
+                plan_hash=plan_hash,
+                to_payload=lambda: {"schema": "fixture.plan.v1", "plan_hash": plan_hash},
+            )
 
-            bundle = persist_engine_run(session, result, streams=(_stream(),))
+            bundle = persist_engine_run(session, result, plan=plan, streams=(_stream(),))
             report = EvidenceReader.open(session, bundle.bundle_id).verify()
 
             self.assertTrue(report.valid, report.issues)
             self.assertEqual(bundle.status, EvidenceStatus.COMPLETE)
+            self.assertEqual(
+                [reference.role for reference in bundle.artifacts].count("execution_plan"),
+                1,
+            )
             self.assertEqual(len(bundle.component_states), 1)
             self.assertEqual(bundle.component_states[0].component_version, "1.2.3")
             self.assertEqual(session.bundle_paths, (session.root / "bundles/bundle.execution.1/bundle.json",))
@@ -343,6 +517,137 @@ class EvidenceBundleTests(unittest.TestCase):
             self.assertEqual(reference.role, "execution_capture")
             self.assertEqual(restored.streams, (dense_stream, sparse_stream))
             self.assertEqual(restored.packets, (_packet(), sparse, metadata))
+
+
+class HistoricalImporterTests(unittest.TestCase):
+    def test_recipe_specific_import_rules_are_an_integration_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "legacy"
+            (source / "events").mkdir(parents=True)
+            (source / "manifest.json").write_text(
+                '{"created_at":"2025-01-01T00:00:00","layout":"bcipy_style"}\n',
+                encoding="utf-8",
+            )
+            (source / "events/dynamic_sart_results.json").write_text(
+                '{"status":"complete"}\n',
+                encoding="utf-8",
+            )
+
+            result = legacy_bcipy_recipe_importer().import_session(
+                source,
+                Path(tmp) / "imported",
+                session_id="session.recipe-import",
+            )
+
+            imported = {
+                item.source_uri: item.artifact.role
+                for item in result.report.imported
+            }
+            self.assertEqual(
+                imported["events/dynamic_sart_results.json"],
+                "behavior_result",
+            )
+
+    def test_importer_rejects_an_undeclared_family_before_creating_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "legacy"
+            source.mkdir()
+            (source / "manifest.json").write_text(
+                '{"created_at":"2025-01-01T00:00:00","layout":"unknown"}\n',
+                encoding="utf-8",
+            )
+            destination = Path(tmp) / "imported"
+
+            with self.assertRaisesRegex(ValueError, "supported bcipy_style family"):
+                LegacySessionImporter().import_session(
+                    source,
+                    destination,
+                    session_id="session.unsupported",
+                )
+
+            self.assertFalse(destination.exists())
+
+    def test_importer_classifies_every_file_and_preserves_the_source_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "legacy"
+            (source / "raw").mkdir(parents=True)
+            (source / "events").mkdir()
+            (source / "realtime").mkdir()
+            (source / "reports").mkdir()
+            (source / "manifest.json").write_text(
+                '{"created_at":"2025-01-01T00:00:00","layout":"bcipy_style"}\n',
+                encoding="utf-8",
+            )
+            (source / "raw/eeg.csv").write_text("time,Cz\n0,1\n", encoding="utf-8")
+            (source / "events/events.jsonl").write_text(
+                '{"event":"stimulus","time":0.0}\n',
+                encoding="utf-8",
+            )
+            (source / "realtime/model_predictions.jsonl").write_text(
+                '{"prediction":',
+                encoding="utf-8",
+            )
+            (source / "reports/summary.html").write_text(
+                "<p>derived</p>",
+                encoding="utf-8",
+            )
+            (source / "unknown.bin").write_bytes(b"unknown")
+            before = {
+                path.relative_to(source).as_posix(): _digest(path.read_bytes())
+                for path in source.rglob("*")
+                if path.is_file()
+            }
+
+            result = LegacySessionImporter().import_session(
+                source,
+                Path(tmp) / "imported",
+                session_id="session.imported",
+                participant_pseudonym="participant.imported",
+            )
+            after = {
+                path.relative_to(source).as_posix(): _digest(path.read_bytes())
+                for path in source.rglob("*")
+                if path.is_file()
+            }
+
+            self.assertEqual(before, after)
+            self.assertEqual(
+                result.report.counts,
+                {"imported": 3, "derived": 2, "omitted": 2, "invalid": 1},
+            )
+            classified_sources = {
+                item.source_uri
+                for collection in (
+                    result.report.imported,
+                    result.report.omitted,
+                    result.report.invalid,
+                )
+                for item in collection
+            }
+            self.assertEqual(classified_sources, set(before))
+            self.assertEqual(result.bundle.status, EvidenceStatus.PARTIAL)
+            self.assertEqual(result.session.status, SessionStatus.PARTIAL)
+            self.assertEqual(len(result.bundle.raw_recordings), 1)
+            self.assertTrue(
+                EvidenceReader.open(
+                    result.session,
+                    result.bundle.bundle_id,
+                ).verify().valid
+            )
+
+            report_entry = result.session.artifacts.get(
+                "legacy-import/report",
+                "legacy.import-report",
+            )
+            parsed_report = LegacyImportReport.from_payload(
+                json.loads(
+                    result.session.artifacts.resolve(report_entry.reference).read_text(
+                        encoding="utf-8"
+                    )
+                )
+            )
+            self.assertEqual(parsed_report.report_hash, result.report.report_hash)
+            self.assertEqual(result.report.invalid[0].reason, "source_validation_failed")
 
 
 if __name__ == "__main__":

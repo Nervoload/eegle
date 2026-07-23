@@ -1,5 +1,11 @@
 """Replay sources, runners, and graded equivalence comparison."""
 
+from eegle.replay.bundle import (
+    BundleEngineFactory,
+    BundleReplayRunner,
+    RecordedExecution,
+    load_recorded_execution,
+)
 from eegle.replay.compare import (
     Divergence,
     EquivalencePolicy,
@@ -11,6 +17,8 @@ from eegle.replay.source import ReplayMode, ReplaySource
 
 
 __all__ = [
+    "BundleEngineFactory",
+    "BundleReplayRunner",
     "Divergence",
     "EquivalencePolicy",
     "EquivalenceReport",
@@ -18,5 +26,7 @@ __all__ = [
     "ReplayMode",
     "ReplayRunner",
     "ReplaySource",
+    "RecordedExecution",
     "compare_runs",
+    "load_recorded_execution",
 ]

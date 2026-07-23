@@ -11,6 +11,7 @@ from eegle.models.predictions import Prediction
 from eegle.processing.quality import QualityDecision
 from eegle.processing.windows import Window
 from eegle.runtime.outcomes import Outcome
+from eegle.runtime.scheduling import ScheduledTrigger, TriggerResult
 from eegle.runtime.state import StateTransition
 from eegle.streams.clocks import TimePoint
 from eegle.streams.packets import Packet
@@ -84,6 +85,16 @@ class Policy(Protocol):
 @runtime_checkable
 class Actuator(Protocol):
     def submit(self, command: ActionCommand, context: ExecutionContext) -> ActionReceipt:
+        ...
+
+
+@runtime_checkable
+class TriggerHandler(Protocol):
+    def handle_trigger(
+        self,
+        trigger: ScheduledTrigger,
+        context: ExecutionContext,
+    ) -> TriggerResult:
         ...
 
 

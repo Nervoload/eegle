@@ -1,0 +1,29 @@
+{
+  "schema": "eegle.protocol_spec.v1",
+  "protocol_id": "protocol.simulated_continuous",
+  "execution_mode": "causal",
+  "claims": [
+    {
+      "claim_id": "claim.causal_observation",
+      "statement": "Predictions use only samples available at their decision time."
+    }
+  ],
+  "metrics": [
+    {
+      "metric_id": "metric.coverage",
+      "measure": "prediction_coverage",
+      "parameters": {}
+    }
+  ],
+  "acceptance": [
+    {
+      "criterion_id": "accept.coverage",
+      "metric_id": "metric.coverage",
+      "operator": "gte",
+      "value": 0.95
+    }
+  ],
+  "annotations": {
+    "reference_support": "simulation"
+  }
+}

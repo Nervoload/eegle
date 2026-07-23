@@ -1,7 +1,7 @@
 # EEGle Clean-Break Migration Plan
 
 **Status:** Normative migration sequence  
-**Last updated:** 2026-07-22  
+**Last updated:** 2026-07-23
 **Target architecture:** [EEGLE.md](EEGLE.md)  
 **Living task tracker:** [MIGRATION_STATUS.md](MIGRATION_STATUS.md)
 
@@ -364,6 +364,41 @@ synthetic source
 - Substitute hardware actions with observe-only/simulated adapters during
   replay and compare action intent and observed trace at the declared level.
 
+### Completion checkpoint — 2026-07-23
+
+The target engine now owns the remaining Phase 3 semantics:
+
+- delayed outcomes are ordered by `available_time`, matched through explicit
+  prediction IDs, bounded by deterministic expiry/overflow, independently
+  gated by `OutcomeUse`, and evidenced without entering model input;
+- packet, outcome, and trigger ties use one locked semantic queue; one-shot
+  virtual-time triggers wait for a causally safe watermark frontier, while
+  state-trigger rules reuse the same domain-neutral work contract;
+- trigger deadline, cancellation, failure, completion, and rescheduling are
+  terminal evidence-bearing dispositions;
+- `EngineCheckpoint` captures deterministic IDs, partial status,
+  scheduler/clock-mapping identity, time/frontiers, source state, queued
+  packets/outcomes/triggers, pending predictions, work, component state, and the
+  exact hashed evidence prefix at a safe semantic boundary;
+- restoration uses fresh engine, component, and source instances and rejects
+  integrity, plan, implementation/version/placement, scheduler/clock-mapping,
+  source/revision, state-capability/hash, policy/rule, and evidence-prefix
+  mismatches;
+- uninterrupted and checkpointed/restored runs are equivalent at the declared
+  semantic level while preserving stable work, prediction, transition, command,
+  and receipt identities;
+- a simulated actuator proves command intent plus observed receipt comparison
+  in replay and across checkpoint restoration without claiming authorization or
+  hardware safety.
+
+The focused engine module passes 27 tests. The complete repository passes 330
+tests with five skips in an isolated Python 3.12.13 base environment; compile,
+diff whitespace, wheel build/content, and installed API import checks pass. The
+first observed supported-version matrix is recorded precisely in
+`PHASE3_ENGINE.md`: four jobs pass, while Windows reaches the full suite and
+fails two identified legacy portability assertions unrelated to the target
+engine. No stronger Windows closure claim is made for the unpushed local tree.
+
 ### Current-code context
 
 Extract semantics from the ring buffer, performance scheduler, realtime worker,
@@ -384,6 +419,10 @@ LSL, recipe, model, feature, and process responsibilities must be separated.
   tests.
 - Every unit of work reaches an explicit terminal or pending state.
 - A causal component cannot consume a datum before its declared availability.
+
+All Phase 3 exit conditions are satisfied for the target engine. Legacy worker,
+recipe, and analysis migration remains later client/cleanup work; Phase 4
+writer recovery remains storage recovery rather than engine restoration.
 
 ## 9. Phase 4 — Adaptive sessions, evidence bundles, and stores
 
@@ -425,7 +464,7 @@ Current session and telemetry modules provide a useful inventory of artifact
 types, and the exact engine input capture demonstrates why execution evidence is
 needed. The names and directory tree are not the target schema.
 
-### Implementation checkpoint — 2026-07-22
+### Implementation checkpoints — 2026-07-22 to 2026-07-23
 
 The first Phase 4 slice now provides:
 
@@ -442,12 +481,36 @@ The first Phase 4 slice now provides:
 - non-destructive complete-prefix recovery;
 - read-only detection of the selected historical BciPy-style tree and CLRE1
   capture reader, with `SessionPaths` demoted to an alias view;
-- direct persistence of a Phase 3 engine result into a self-describing bundle.
+- direct persistence of a Phase 3 engine result, its immutable execution plan,
+  exact capture, replay ceiling, evidence, and component state into a
+  self-describing bundle;
+- versioned open-writer state, interruption discovery, recovery-token
+  authorization, non-destructive verified-prefix resume, and restartable bundle
+  finalization;
+- a one-time importer for the selected historical session family that preserves
+  the source, fingerprints it, validates selected durable artifacts, emits a new
+  bundle, and reports imported/derived/omitted/invalid items; study-specific
+  filename rules are supplied by an integration profile, not the recording
+  kernel.
 
-This checkpoint satisfies the requested initial gate. Full Phase 4 closure still
-requires retention/export policy, deployment redaction, explicit interrupted
-writer resume/finalization policy, source-native store integrations, and removal
-of target clients that still use legacy paths.
+- versioned safe-default portable export, digest-bound JSON redaction,
+  secret-shaped field rejection, participant-pseudonym exclusion, and
+  non-mutating retention decisions;
+- external artifact verification with explicit `reference_only`, `verified`,
+  `unavailable`, and `mismatch` outcomes, including a real large local
+  source-native file that remains outside the session;
+- a bundle-to-replay bridge that verifies and restores the immutable plan,
+  streams, exact admitted packets, semantic evidence, engine status, and replay
+  ceiling before constructing a fresh engine;
+- an acceptance boundary proving the target foundation packages do not import
+  `SessionPaths`; historical recipe clients remain explicitly outside the
+  target runtime.
+
+P4-009, P4-010, and P4-011 are implemented and verified. The dedicated closure
+set passes 19 tests, including direct plan-bearing bundle replay through a fresh
+engine. The complete suite passes 320 tests with five environment-appropriate
+skips; compile-all, diff whitespace validation, wheel construction, wheel
+contents, and installed-wheel API imports pass. Phase 4 is complete.
 
 ### Exit gate
 
@@ -513,6 +576,22 @@ Create new minimal suites that exercise the domain model:
 
 Use current recipes only to identify missing semantics. Do not contort the new
 specification to reproduce their exact JSON or fixed phase sequence.
+
+### Implementation progress — 2026-07-23
+
+The first Phase 5 vertical slice is implemented and documented in
+[PHASE5_COMPILER.md](PHASE5_COMPILER.md). It provides versioned protocol, suite,
+deployment, signal-contract, phase, and bounded-overlay types; exact descriptor
+resolution; structured diagnostics; typed port/resource/clock checks; v2 plans
+with v1 hash compatibility; deterministic lock manifests; atomic plan/lock I/O;
+and explain/diff projections. The simulated continuous reference suite compiles
+against both simulated and independently declared live-capability source
+bindings without changing portable intent.
+
+Phase 5 remains open. Artifact production/dependency semantics, the remaining
+five reference-suite families, fuller phase scheduling/acceptance semantics,
+outcome/adaptation permission checks, and the final compiler-to-runtime
+construction boundary are not yet complete.
 
 ### Exit gate
 
@@ -836,14 +915,14 @@ runtime switch between old and new engines.
 The authoritative live status is in `MIGRATION_STATUS.md`. This table summarizes
 the intended gates.
 
-| Phase | Name | Status at 2026-07-22 | Principal deliverable |
+| Phase | Name | Status at 2026-07-23 | Principal deliverable |
 |---|---|---|---|
 | 0 | Charter, inventory, cleanup boundaries | Complete | Authority, inventory, fixtures, deletion decisions |
 | 1 | Correctness and behavior evidence | Complete | Corrected current contracts and golden invariants |
 | 2 | New foundations | Complete | Typed records, plugin contracts, schemas, clean package boundaries |
-| 3 | Single execution engine | Ready; not started | One engine for simulation and replay with causal accounting |
-| 4 | Adaptive sessions and evidence | Not started | Versioned evidence bundles, stores, recovery, privacy |
-| 5 | Specifications and compiler | Not started | Protocol/Suite/Deployment to locked ExecutionPlan |
+| 3 | Single execution engine | Complete | One engine for simulation and replay with causal accounting |
+| 4 | Adaptive sessions and evidence | Complete | Versioned evidence bundles, stores, recovery, privacy |
+| 5 | Specifications and compiler | Ready; not started | Protocol/Suite/Deployment to locked ExecutionPlan |
 | 6 | General semantics | Not started | Modality-neutral models, outcomes, adaptation, actions |
 | 7 | CLI and integrations | Not started | New CLI, minimal wheel, LSL and optional adapters |
 | 8 | Validation and public alpha | Not started | Layered validation, hardening, truthful support release |

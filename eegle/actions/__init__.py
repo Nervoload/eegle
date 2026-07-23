@@ -4,6 +4,7 @@ from eegle.actions.authorization import AuthorizationDecision, AuthorizationStat
 from eegle.actions.commands import ActionCommand
 from eegle.actions.policies import ObserveOnlyPolicy
 from eegle.actions.receipts import ActionReceipt, ReceiptStatus
+from eegle.actions.simulated import SimulatedActuator
 
 
 __all__ = [
@@ -13,4 +14,5 @@ __all__ = [
     "AuthorizationStatus",
     "ObserveOnlyPolicy",
     "ReceiptStatus",
+    "SimulatedActuator",
 ]

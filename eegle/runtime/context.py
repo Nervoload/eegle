@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping
+from typing import Any, Mapping
 
 from eegle._domain import ExecutionMode
 from eegle._validation import require_identifier
@@ -21,6 +21,24 @@ class DeterministicIdSource:
         sequence = self._sequences.get(normalized, 0) + 1
         self._sequences[normalized] = sequence
         return f"{normalized}.{sequence:08d}"
+
+    def snapshot_state(self) -> dict[str, Any]:
+        return {
+            "schema": "eegle.deterministic_id_state.v1",
+            "sequences": dict(sorted(self._sequences.items())),
+        }
+
+    def restore_state(self, payload: Mapping[str, Any]) -> None:
+        if payload.get("schema") != "eegle.deterministic_id_state.v1":
+            raise ValueError("unsupported deterministic ID state schema")
+        sequences: dict[str, int] = {}
+        for namespace, value in dict(payload.get("sequences") or {}).items():
+            normalized = require_identifier(str(namespace), "id namespace")
+            sequence = int(value)
+            if sequence < 0:
+                raise ValueError("deterministic ID sequence cannot be negative")
+            sequences[normalized] = sequence
+        self._sequences = sequences
 
 
 @dataclass(slots=True)

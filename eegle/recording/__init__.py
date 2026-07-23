@@ -14,10 +14,17 @@ from eegle.recording.bundles import (
     EvidenceBundle,
     EvidenceReader,
     EvidenceWriter,
+    complete_interrupted_finalization,
     persist_engine_run,
 )
 from eegle.recording.compat import SessionPaths
 from eegle.recording.evidence import EvidenceBundleManifest, EvidenceRecord, EvidenceStatus
+from eegle.recording.external import (
+    ExternalArtifactVerification,
+    ExternalArtifactVerifier,
+    ExternalVerificationStatus,
+    LocalFileArtifactVerifier,
+)
 from eegle.recording.framing import (
     EvidenceIntegrityError,
     FramingInspection,
@@ -35,6 +42,30 @@ from eegle.recording.ledgers import (
     EvidenceLedgerWriter,
     read_evidence_ledger,
 )
+from eegle.recording.policies import (
+    ExportDisposition,
+    ExportPolicy,
+    ExternalReferencePolicy,
+    JsonFieldRule,
+    JsonRedactionAction,
+    JsonRedactionSpec,
+    PortableExportEntry,
+    PortableExportManifest,
+    RetentionAction,
+    RetentionDecision,
+    RetentionPolicy,
+    RetentionRule,
+    evaluate_retention,
+    export_evidence_bundle,
+    read_portable_export,
+)
+from eegle.recording.importers import (
+    LegacyImportItem,
+    LegacyImportRule,
+    LegacyImportReport,
+    LegacyImportResult,
+    LegacySessionImporter,
+)
 from eegle.recording.session import Session, SessionManifest, SessionStatus
 from eegle.recording.stores import (
     FramedSampleStore,
@@ -44,6 +75,13 @@ from eegle.recording.stores import (
     read_framed_sample_store,
 )
 from eegle.recording.sinks import InMemoryEvidenceSink
+from eegle.recording.writer_state import (
+    EvidenceWriterState,
+    InterruptedRun,
+    WriterPhase,
+    discover_interrupted_runs,
+    read_writer_state,
+)
 
 
 __all__ = [
@@ -63,6 +101,13 @@ __all__ = [
     "EvidenceRecord",
     "EvidenceStatus",
     "EvidenceWriter",
+    "EvidenceWriterState",
+    "ExportDisposition",
+    "ExportPolicy",
+    "ExternalArtifactVerification",
+    "ExternalArtifactVerifier",
+    "ExternalReferencePolicy",
+    "ExternalVerificationStatus",
     "FramedSampleStore",
     "FramingInspection",
     "FramedEvidenceWriter",
@@ -70,6 +115,22 @@ __all__ = [
     "IntegrityIssue",
     "IntegrityIssueCode",
     "IntegrityStatus",
+    "InterruptedRun",
+    "JsonFieldRule",
+    "JsonRedactionAction",
+    "JsonRedactionSpec",
+    "LegacyImportItem",
+    "LegacyImportRule",
+    "LegacyImportReport",
+    "LegacyImportResult",
+    "LegacySessionImporter",
+    "LocalFileArtifactVerifier",
+    "PortableExportEntry",
+    "PortableExportManifest",
+    "RetentionAction",
+    "RetentionDecision",
+    "RetentionPolicy",
+    "RetentionRule",
     "SampleStore",
     "SampleStorePurpose",
     "SampleStoreReadResult",
@@ -79,10 +140,17 @@ __all__ = [
     "SessionPaths",
     "SessionStatus",
     "TruncatedEvidenceError",
+    "WriterPhase",
+    "complete_interrupted_finalization",
+    "discover_interrupted_runs",
+    "evaluate_retention",
+    "export_evidence_bundle",
     "inspect_framed_payloads",
     "iter_framed_payloads",
     "read_evidence_ledger",
     "read_framed_sample_store",
+    "read_portable_export",
+    "read_writer_state",
     "recover_framed_prefix",
     "persist_engine_run",
 ]

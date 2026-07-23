@@ -18,6 +18,9 @@ from eegle.plugins.registry import (
 from eegle.processing.quality import FiniteQualityGate
 from eegle.processing.transforms import CausalSosFilter, IdentityTransform, RetrospectiveSosFilter
 from eegle.processing.windows import ContinuousWindowBuilder
+from eegle.streams.channels import ContentKind, StreamSpec
+from eegle.streams.packets import DenseSampleBatch
+from eegle.streams.synthetic import PacketSequenceSource
 
 
 _DENSE_PACKET = "eegle.dense_sample_batch.v1"
@@ -31,6 +34,32 @@ def builtin_plugin_descriptors() -> tuple[PluginDescriptor, ...]:
     """Return new immutable descriptors for the base processing set."""
 
     return (
+        PluginDescriptor(
+            plugin_id="eegle.sources.packet_sequence_dense",
+            version="0.1.0",
+            kind=ComponentKind.SOURCE,
+            config_schema={
+                "$schema": _SCHEMA_BASE,
+                "type": "object",
+                "properties": {
+                    "stream_spec": {"type": "object"},
+                    "packets": {"type": "array", "items": {"type": "object"}},
+                },
+                "required": ["stream_spec"],
+                "additionalProperties": False,
+            },
+            input_ports=(),
+            output_ports=(PortSpec("samples", _DENSE_PACKET, multiple=True),),
+            capabilities=PluginCapabilities(
+                supported_modes=frozenset(ExecutionMode),
+                determinism=Determinism.DETERMINISTIC,
+                equivalence=EquivalenceLevel.BITWISE,
+                state_behavior=StateBehavior.SNAPSHOT_RESTORE,
+            ),
+            factory=_packet_sequence_dense_factory,
+            implementation="eegle.streams.synthetic:PacketSequenceSource",
+            distribution="eegle",
+        ),
         PluginDescriptor(
             plugin_id="eegle.processing.identity",
             version="0.1.0",
@@ -266,3 +295,11 @@ def _retrospective_sos_factory(config: Mapping[str, Any]) -> RetrospectiveSosFil
         np.asarray(config["sos"], dtype=float),
         **_output_config(config),
     )
+
+
+def _packet_sequence_dense_factory(config: Mapping[str, Any]) -> PacketSequenceSource:
+    stream_spec = StreamSpec.from_payload(config["stream_spec"])
+    if stream_spec.content_kind != ContentKind.DENSE_SAMPLES:
+        raise ValueError("packet_sequence_dense requires a dense sample stream")
+    packets = tuple(DenseSampleBatch.from_payload(value) for value in config.get("packets", ()))
+    return PacketSequenceSource(stream_spec, packets)

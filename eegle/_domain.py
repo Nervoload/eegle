@@ -47,6 +47,7 @@ class ComponentKind(str, Enum):
 
 
 class WorkStatus(str, Enum):
+    COMPLETED = "completed"
     PREDICTED = "predicted"
     REJECTED = "rejected"
     SKIPPED = "skipped"

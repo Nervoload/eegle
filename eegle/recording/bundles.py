@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
@@ -17,11 +18,18 @@ from eegle.recording.artifacts import (
     Sensitivity,
 )
 from eegle.recording.evidence import EvidenceRecord, EvidenceStatus
+from eegle.recording.external import (
+    ExternalArtifactVerification,
+    ExternalArtifactVerifier,
+    ExternalVerificationStatus,
+    reference_only,
+)
 from eegle.recording.framing import (
     IntegrityIssue,
     IntegrityIssueCode,
     IntegrityStatus,
     inspect_framed_payloads,
+    recover_framed_prefix,
 )
 from eegle.recording.ledgers import EvidenceLedgerWriter, read_evidence_ledger
 from eegle.recording.stores import (
@@ -29,6 +37,13 @@ from eegle.recording.stores import (
     FramedSampleStore,
     SampleStorePurpose,
     read_framed_sample_store,
+)
+from eegle.recording.writer_state import (
+    EvidenceWriterState,
+    WriterPhase,
+    read_writer_state,
+    recovery_token_hash,
+    write_writer_state,
 )
 from eegle.streams.channels import StreamSpec
 from eegle.streams.clocks import TimePoint
@@ -41,6 +56,9 @@ if TYPE_CHECKING:
 EVIDENCE_BUNDLE_SCHEMA = "eegle.evidence_bundle.v1"
 COMPONENT_STATE_SNAPSHOT_SCHEMA = "eegle.component_state_snapshot.v1"
 EVIDENCE_LOG_MEDIA_TYPE = "application/vnd.eegle.evidence-framed+json"
+INTERRUPTED_EVIDENCE_LOG_MEDIA_TYPE = (
+    "application/vnd.eegle.interrupted-evidence-framed+json"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,6 +234,7 @@ class BundleIntegrityReport:
     valid_record_count: int
     last_complete_sequence: int | None
     issues: tuple[IntegrityIssue, ...] = ()
+    external_artifacts: tuple[ExternalArtifactVerification, ...] = ()
 
     @property
     def valid(self) -> bool:
@@ -238,6 +257,7 @@ class EvidenceWriter:
         created_time: TimePoint,
         durable: bool = False,
         metadata: Mapping[str, Any] | None = None,
+        resume_token: str | None = None,
     ) -> None:
         if session.read_only:
             raise PermissionError("cannot write evidence to a read-only session")
@@ -261,23 +281,170 @@ class EvidenceWriter:
         self._states: list[ComponentStateSnapshot] = []
         self._last_sequence: int | None = None
         self._closed = False
+        self._resume_token = resume_token or secrets.token_urlsafe(32)
+        self._state = EvidenceWriterState(
+            bundle_id=self.bundle_id,
+            session_id=session.session_id,
+            plan_hash=self.plan_hash,
+            phase=WriterPhase.OPEN,
+            created_time=self.created_time,
+            ledger_uri=self._ledger_path.relative_to(session.root).as_posix(),
+            resume_token_hash=recovery_token_hash(self._resume_token),
+            metadata=thaw_json(self.metadata),
+        )
+        write_writer_state(self.session, self._state)
+
+    @property
+    def resume_token(self) -> str:
+        """Return the secret needed to resume or finish this writer.
+
+        The token is never stored in the session. Operators that require
+        restart recovery must keep it in an appropriate deployment secret
+        store for the lifetime of the open run.
+        """
+
+        return self._resume_token
+
+    @classmethod
+    def resume(
+        cls,
+        session: "Session",
+        *,
+        bundle_id: str,
+        resume_token: str,
+        durable: bool = False,
+    ) -> "EvidenceWriter":
+        """Resume an unpublished writer from a proven ledger boundary.
+
+        A recoverable partial final frame is copied to a new ledger before
+        append resumes. The interrupted source is never truncated or changed.
+        """
+
+        if session.read_only or session.status.value != "open":
+            raise PermissionError("cannot resume evidence in a read-only or finalized session")
+        state = read_writer_state(session, bundle_id)
+        state.authorize(resume_token)
+        if state.phase != WriterPhase.OPEN:
+            raise RuntimeError(
+                f"evidence writer is {state.phase.value}; only open writers can resume"
+            )
+        ledger_path = session.root / state.ledger_uri
+        if not ledger_path.is_file():
+            raise FileNotFoundError(f"open evidence ledger is missing: {state.ledger_uri}")
+        result = read_evidence_ledger(ledger_path)
+        if result.integrity.status == IntegrityStatus.UNRECOVERABLE:
+            detail = result.integrity.issues[0].message if result.integrity.issues else "unknown"
+            raise ValueError(f"cannot resume an unrecoverable evidence ledger: {detail}")
+        if result.integrity.status == IntegrityStatus.RECOVERABLE:
+            recovery_index = 1 + sum(
+                reference.role == "interrupted_evidence_log"
+                for reference in state.artifacts
+            )
+            interrupted_reference = session.artifacts.register_file(
+                f"bundles/{state.bundle_id}",
+                f"{state.bundle_id}.interrupted-semantic-{recovery_index}",
+                "interrupted_evidence_log",
+                ledger_path,
+                INTERRUPTED_EVIDENCE_LOG_MEDIA_TYPE,
+                sensitivity=Sensitivity.PSEUDONYMIZED,
+                lineage=ArtifactLineage(
+                    component_id="eegle.evidence-recovery",
+                    component_version="1",
+                    metadata={
+                        "source_uri": state.ledger_uri,
+                        "integrity_status": result.integrity.status.value,
+                        "last_complete_offset": result.integrity.last_complete_offset,
+                        "issues": [issue.code.value for issue in result.integrity.issues],
+                    },
+                ),
+                copy=False,
+            )
+            if interrupted_reference not in state.artifacts:
+                state = state.replacing(
+                    artifacts=(*state.artifacts, interrupted_reference)
+                )
+            recovered_path = _recovery_path(ledger_path, recovery_index)
+            if recovered_path.exists():
+                existing = inspect_framed_payloads(recovered_path)
+                if (
+                    existing.status != IntegrityStatus.VALID
+                    or existing.file_size != result.integrity.last_complete_offset
+                ):
+                    raise ValueError(
+                        f"existing recovery ledger cannot be proven equivalent: "
+                        f"{recovered_path}"
+                    )
+            else:
+                recover_framed_prefix(ledger_path, recovered_path)
+            ledger_path = recovered_path
+            result = read_evidence_ledger(ledger_path)
+        authoritative_last = result.records[-1].sequence if result.records else None
+
+        self = cls.__new__(cls)
+        self.session = session
+        self.bundle_id = state.bundle_id
+        self.plan_hash = state.plan_hash
+        self.created_time = state.created_time
+        self.metadata = freeze_json(thaw_json(state.metadata))
+        self._namespace = f"bundles/{state.bundle_id}"
+        self._bundle_dir = session.root / "bundles" / state.bundle_id
+        self._ledger_path = ledger_path
+        self._ledger = EvidenceLedgerWriter(ledger_path, durable=durable)
+        self._execution = list(state.execution_captures)
+        self._raw = list(state.raw_recordings)
+        self._artifacts = list(state.artifacts)
+        self._states = [
+            ComponentStateSnapshot.from_payload(payload) for payload in state.component_states
+        ]
+        self._last_sequence = authoritative_last
+        self._closed = False
+        self._resume_token = resume_token
+        self._state = state.replacing(
+            ledger_uri=ledger_path.relative_to(session.root).as_posix(),
+            last_sequence=authoritative_last,
+        )
+        self._assert_registered_references()
+        write_writer_state(session, self._state)
+        return self
 
     def append(self, record: EvidenceRecord) -> None:
         self._require_open()
         self._ledger.append(record)
         self._last_sequence = record.sequence
+        self._sync_state()
 
     def add_execution_capture(self, reference: ArtifactReference) -> None:
         self._require_open()
         self._add_unique(self._execution, reference, expected_role="execution_capture")
+        self._sync_state()
 
     def add_raw_recording(self, reference: ArtifactReference) -> None:
         self._require_open()
         self._add_unique(self._raw, reference, expected_role="archival_raw")
+        self._sync_state()
 
     def add_artifact(self, reference: ArtifactReference) -> None:
         self._require_open()
         self._add_unique(self._artifacts, reference)
+        self._sync_state()
+
+    def add_execution_plan(self, plan: Any) -> ArtifactReference:
+        """Attach the immutable plan whose hash authorizes this execution."""
+
+        if getattr(plan, "plan_hash", None) != self.plan_hash:
+            raise ValueError("execution plan hash does not match evidence writer")
+        to_payload = getattr(plan, "to_payload", None)
+        if not callable(to_payload):
+            raise TypeError("execution plan must implement to_payload()")
+        reference = self.session.artifacts.register_json(
+            self._namespace,
+            f"{self.bundle_id}.execution-plan",
+            "execution_plan",
+            to_payload(),
+            sensitivity=Sensitivity.INTERNAL,
+        )
+        self.add_artifact(reference)
+        return reference
 
     def capture_packets(
         self,
@@ -336,7 +503,15 @@ class EvidenceWriter:
             artifact=reference,
         )
         self._states.append(snapshot)
+        self._sync_state()
         return snapshot
+
+    def close_unfinalized(self) -> None:
+        """Close local handles while leaving the run explicitly discoverable."""
+
+        self._require_open()
+        self._ledger.close()
+        self._closed = True
 
     def write_engine_result(
         self,
@@ -380,34 +555,20 @@ class EvidenceWriter:
         if normalized_status == EvidenceStatus.OPEN:
             raise ValueError("finalized evidence status cannot be open")
         self._ledger.close()
-        semantic_log = self.session.artifacts.register_file(
-            self._namespace,
-            f"{self.bundle_id}.semantic-log",
-            "evidence_log",
-            self._ledger_path,
-            EVIDENCE_LOG_MEDIA_TYPE,
-            sensitivity=Sensitivity.PSEUDONYMIZED,
-            copy=False,
-        )
-        bundle = EvidenceBundle(
-            bundle_id=self.bundle_id,
-            session_id=self.session.session_id,
-            plan_hash=self.plan_hash,
-            status=normalized_status,
-            created_time=self.created_time,
-            completed_time=completed_time,
-            last_sequence=self._last_sequence,
-            semantic_log=semantic_log,
+        self._closed = True
+        self._state = self._state.replacing(
+            phase=WriterPhase.FINALIZING,
+            ledger_uri=self._ledger_path.relative_to(self.session.root).as_posix(),
             execution_captures=tuple(self._execution),
             raw_recordings=tuple(self._raw),
             artifacts=tuple(self._artifacts),
-            component_states=tuple(self._states),
-            metadata=thaw_json(self.metadata),
+            component_states=tuple(state.to_payload() for state in self._states),
+            last_sequence=self._last_sequence,
+            final_status=normalized_status,
+            completed_time=completed_time,
         )
-        manifest_path = self._bundle_dir / "bundle.json"
-        _atomic_write(manifest_path, canonical_json_bytes(bundle.to_payload()))
-        self.session.register_bundle(manifest_path.relative_to(self.session.root).as_posix())
-        self._closed = True
+        write_writer_state(self.session, self._state)
+        bundle, self._state = _publish_finalizing_state(self.session, self._state)
         return bundle
 
     def _add_unique(
@@ -439,6 +600,31 @@ class EvidenceWriter:
     def _require_open(self) -> None:
         if self._closed:
             raise RuntimeError("evidence writer is closed")
+
+    def _sync_state(self) -> None:
+        self._state = self._state.replacing(
+            execution_captures=tuple(self._execution),
+            raw_recordings=tuple(self._raw),
+            artifacts=tuple(self._artifacts),
+            component_states=tuple(state.to_payload() for state in self._states),
+            last_sequence=self._last_sequence,
+        )
+        write_writer_state(self.session, self._state)
+
+    def _assert_registered_references(self) -> None:
+        registered = {entry.reference for entry in self.session.artifacts.entries}
+        references = {
+            *self._execution,
+            *self._raw,
+            *self._artifacts,
+            *(state.artifact for state in self._states),
+        }
+        missing = sorted(ref.artifact_id for ref in references if ref not in registered)
+        if missing:
+            raise ValueError(
+                "writer state references artifacts absent from the session registry: "
+                + ", ".join(missing)
+            )
 
 
 class EvidenceReader:
@@ -482,8 +668,12 @@ class EvidenceReader:
             )
         return result.records
 
-    def verify(self) -> BundleIntegrityReport:
+    def verify(
+        self,
+        external_verifier: ExternalArtifactVerifier | None = None,
+    ) -> BundleIntegrityReport:
         issues: list[IntegrityIssue] = []
+        external_artifacts: list[ExternalArtifactVerification] = []
         registered = {entry.reference for entry in self.session.artifacts.entries}
         for reference in self.bundle.references:
             if reference not in registered:
@@ -564,6 +754,50 @@ class EvidenceReader:
         ):
             _verify_reference(self.session.artifacts, reference, issues)
 
+        seen_external: set[tuple[str, str]] = set()
+        for reference in self.bundle.references:
+            if reference.embedded or (reference.artifact_id, reference.digest) in seen_external:
+                continue
+            seen_external.add((reference.artifact_id, reference.digest))
+            verification = (
+                reference_only(reference)
+                if external_verifier is None
+                else external_verifier.verify(reference)
+            )
+            if (
+                verification.artifact_id != reference.artifact_id
+                or verification.expected_digest != reference.digest
+                or verification.expected_size_bytes != reference.size_bytes
+            ):
+                raise ValueError(
+                    f"external verifier returned a result for the wrong reference: "
+                    f"{reference.artifact_id}"
+                )
+            external_artifacts.append(verification)
+            if verification.status == ExternalVerificationStatus.MISMATCH:
+                code = (
+                    IntegrityIssueCode.ARTIFACT_SIZE_MISMATCH
+                    if verification.observed_size_bytes != verification.expected_size_bytes
+                    else IntegrityIssueCode.ARTIFACT_DIGEST_MISMATCH
+                )
+                issues.append(
+                    IntegrityIssue(
+                        code=code,
+                        message=verification.message or "external artifact mismatch",
+                        artifact_id=verification.artifact_id,
+                        expected=(
+                            verification.expected_size_bytes
+                            if code == IntegrityIssueCode.ARTIFACT_SIZE_MISMATCH
+                            else verification.expected_digest
+                        ),
+                        observed=(
+                            verification.observed_size_bytes
+                            if code == IntegrityIssueCode.ARTIFACT_SIZE_MISMATCH
+                            else verification.observed_digest
+                        ),
+                    )
+                )
+
         if self.bundle.last_sequence is None:
             observed_last = None
         else:
@@ -593,6 +827,7 @@ class EvidenceReader:
             valid_record_count=len(records),
             last_complete_sequence=records[-1].sequence if records else None,
             issues=tuple(issues),
+            external_artifacts=tuple(external_artifacts),
         )
 
 
@@ -600,6 +835,7 @@ def persist_engine_run(
     session: "Session",
     result: Any,
     *,
+    plan: Any,
     streams: Iterable[StreamSpec],
     bundle_id: str | None = None,
 ) -> EvidenceBundle:
@@ -608,14 +844,25 @@ def persist_engine_run(
     records = tuple(result.evidence)
     if not records:
         raise ValueError("an engine result without evidence cannot form an evidence bundle")
+    if getattr(plan, "plan_hash", None) != result.plan_hash:
+        raise ValueError("execution plan hash does not match engine result")
+    if not callable(getattr(plan, "to_payload", None)):
+        raise TypeError("execution plan must implement to_payload()")
     identifier = bundle_id or f"bundle.{result.execution_id}"
+    equivalence = getattr(getattr(result, "equivalence_ceiling", None), "value", None)
     writer = EvidenceWriter(
         session,
         bundle_id=identifier,
         plan_hash=result.plan_hash,
         created_time=records[0].emitted_time,
-        metadata={"execution_id": result.execution_id, "engine_status": result.status.value},
+        metadata={
+            "execution_id": result.execution_id,
+            "engine_status": result.status.value,
+            "equivalence_ceiling": equivalence,
+            "failure": getattr(result, "failure", None),
+        },
     )
+    writer.add_execution_plan(plan)
     writer.write_engine_result(result, streams=streams)
     status_value = str(result.status.value)
     evidence_status = {
@@ -625,6 +872,117 @@ def persist_engine_run(
         "failed": EvidenceStatus.FAILED,
     }.get(status_value, EvidenceStatus.FAILED)
     return writer.finalize(status=evidence_status, completed_time=records[-1].emitted_time)
+
+
+def complete_interrupted_finalization(
+    session: "Session",
+    *,
+    bundle_id: str,
+    resume_token: str,
+) -> EvidenceBundle:
+    """Complete a publication transaction that stopped after intent was saved."""
+
+    state = read_writer_state(session, bundle_id)
+    state.authorize(resume_token)
+    if state.phase == WriterPhase.FINALIZED:
+        manifest_path = session.root / "bundles" / state.bundle_id / "bundle.json"
+        if not manifest_path.is_file():
+            raise ValueError("finalized writer state is missing bundle.json")
+        return EvidenceBundle.from_payload(_read_json(manifest_path))
+    if state.phase != WriterPhase.FINALIZING:
+        raise RuntimeError(
+            f"evidence writer is {state.phase.value}; no finalization intent is available"
+        )
+    bundle, _ = _publish_finalizing_state(session, state)
+    return bundle
+
+
+def _publish_finalizing_state(
+    session: "Session",
+    state: EvidenceWriterState,
+) -> tuple[EvidenceBundle, EvidenceWriterState]:
+    if session.read_only or session.status.value != "open":
+        raise PermissionError("cannot publish evidence in a read-only or finalized session")
+    if state.phase != WriterPhase.FINALIZING:
+        raise RuntimeError("writer state does not contain a finalization transaction")
+    ledger_path = session.root / state.ledger_uri
+    ledger = read_evidence_ledger(ledger_path)
+    if ledger.integrity.status != IntegrityStatus.VALID:
+        detail = ledger.integrity.issues[0].message if ledger.integrity.issues else "unknown"
+        raise ValueError(
+            f"cannot finalize an evidence ledger with {ledger.integrity.status.value} "
+            f"integrity: {detail}"
+        )
+    observed_last = ledger.records[-1].sequence if ledger.records else None
+    if observed_last != state.last_sequence:
+        raise ValueError(
+            f"writer finalization sequence mismatch: expected {state.last_sequence}, "
+            f"observed {observed_last}"
+        )
+    namespace = f"bundles/{state.bundle_id}"
+    interrupted = tuple(
+        reference
+        for reference in state.artifacts
+        if reference.role == "interrupted_evidence_log"
+    )
+    semantic_log = session.artifacts.register_file(
+        namespace,
+        f"{state.bundle_id}.semantic-log",
+        "evidence_log",
+        ledger_path,
+        EVIDENCE_LOG_MEDIA_TYPE,
+        sensitivity=Sensitivity.PSEUDONYMIZED,
+        lineage=(
+            None
+            if not interrupted
+            else ArtifactLineage(
+                component_id="eegle.evidence-recovery",
+                component_version="1",
+                input_artifact_ids=tuple(
+                    reference.artifact_id for reference in interrupted
+                ),
+                input_digests=tuple(reference.digest for reference in interrupted),
+                metadata={"recovery_source_count": len(interrupted)},
+            )
+        ),
+        copy=False,
+    )
+    publishing_state = state.replacing(semantic_log=semantic_log)
+    write_writer_state(session, publishing_state)
+    bundle = EvidenceBundle(
+        bundle_id=state.bundle_id,
+        session_id=session.session_id,
+        plan_hash=state.plan_hash,
+        status=state.final_status,  # type: ignore[arg-type]
+        created_time=state.created_time,
+        completed_time=state.completed_time,
+        last_sequence=state.last_sequence,
+        semantic_log=semantic_log,
+        execution_captures=state.execution_captures,
+        raw_recordings=state.raw_recordings,
+        artifacts=state.artifacts,
+        component_states=tuple(
+            ComponentStateSnapshot.from_payload(payload) for payload in state.component_states
+        ),
+        metadata=thaw_json(state.metadata),
+    )
+    manifest_path = session.root / "bundles" / state.bundle_id / "bundle.json"
+    if manifest_path.exists():
+        existing = EvidenceBundle.from_payload(_read_json(manifest_path))
+        if existing.bundle_hash != bundle.bundle_hash:
+            raise ValueError("existing bundle.json conflicts with writer finalization intent")
+    else:
+        _atomic_write(manifest_path, canonical_json_bytes(bundle.to_payload()))
+    session.register_bundle(manifest_path.relative_to(session.root).as_posix())
+    finalized_state = publishing_state.replacing(phase=WriterPhase.FINALIZED)
+    write_writer_state(session, finalized_state)
+    return bundle, finalized_state
+
+
+def _recovery_path(ledger_path: Path, index: int) -> Path:
+    if index < 1:
+        raise ValueError("recovery index must be positive")
+    return ledger_path.parent / f"semantic.recovered-{index}.eegle"
 
 
 def _with_artifact(issue: IntegrityIssue, artifact_id: str) -> IntegrityIssue:
@@ -654,6 +1012,8 @@ def _verify_reference(
     *,
     suppress_digest: bool = False,
 ) -> None:
+    if not reference.embedded:
+        return
     valid, message = store.verify(reference)
     if valid or message is None:
         return

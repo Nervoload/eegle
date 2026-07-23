@@ -1,7 +1,7 @@
 # EEGle Migration Status
 
 **Status:** Living project and decision tracker  
-**Snapshot date:** 2026-07-22  
+**Snapshot date:** 2026-07-23
 **Branch:** `sep`  
 **Architecture authority:** [EEGLE.md](EEGLE.md)  
 **Execution plan:** [MIGRATION.md](MIGRATION.md)
@@ -16,8 +16,8 @@ restate the full architecture or phase plan.
 
 | Field | Current value |
 |---|---|
-| Active phase | Phase 3 — single execution engine (in progress) |
-| Phase status | First deterministic vertical slice and same-engine replay are implemented; delayed outcomes and general scheduled triggers remain before closure |
+| Active phase | Phase 5 — specifications and compiler (in progress) |
+| Phase status | First compiler vertical slice verified; Phase 5 exit gates remain open |
 | Code migration started | Yes |
 | Product vision | Accepted and documented |
 | Migration model | Selective preservation and clean rebuild |
@@ -29,9 +29,17 @@ restate the full architecture or phase plan.
 Phases 0 and 1 established the authority, inventory, and accepted scientific
 behavior. Phase 2 now provides the typed modality-neutral records, canonical
 locks, executable plugins, evidence primitives, processing capabilities, clean
-package boundaries, and Python 3.11+ base. Phase 3 now has an executable
-dependency-light reference slice; it is not yet the final generalized routing
-surface.
+package boundaries, and Python 3.11+ base. Phase 3 now provides the completed
+dependency-light target engine, including delayed outcomes, scheduled and
+state-triggered work, simulated action receipts, and fresh-instance checkpoint
+restoration. Phase 4 provides the completed session, evidence, recovery,
+privacy/export, external-store, historical-import, and plan-bearing bundle
+replay boundary.
+
+Phase 5 now has a first complete vertical slice from separate portable and local
+JSON specifications through typed graph validation to a hashed v2 plan and lock.
+[PHASE5_COMPILER.md](PHASE5_COMPILER.md) records the implemented boundary and
+the work that remains before Phase 5 can close.
 
 ## 2. Verified baseline
 
@@ -120,6 +128,25 @@ After the first Phase 3 implementation slice:
   compile-all and `git diff --check` pass, and the built wheel contains and
   imports the new runtime/replay modules.
 
+After Phase 3 closure:
+
+- outcomes are consumed only at `available_time`, match explicit prediction
+  identities, remain bounded by deterministic expiry/overflow, and independently
+  evidence metrics/calibration/adaptation/policy eligibility without label
+  leakage;
+- packet, outcome, and trigger work share one locked semantic order; time
+  triggers wait for causally safe source frontiers and state transitions schedule
+  the same generic trigger contract;
+- safe-boundary checkpoints capture engine/source/component/evidence state,
+  partial status, and scheduler/clock-mapping identity, then restore only into
+  fresh, matching instances from one verified prefix;
+- uninterrupted and restored execution compare equivalent at the declared
+  semantic level with stable semantic IDs;
+- simulated command/receipt traces compare in replay and after restoration;
+- 27 focused Phase 3 tests and the 330-test Python 3.12.13 full suite pass with
+  five skips; compile-all, diff check, wheel build/content, and installed-wheel
+  runtime/replay/action/recording imports pass.
+
 This is a behavior baseline, not an obligation to preserve every API, file,
 command, or artifact layout.
 
@@ -196,10 +223,10 @@ These are target behaviors, not instructions to copy their present modules.
 | K-004 | Task-specific epoch, label, condition, and inhibition semantics are embedded in nominally general realtime modules. | Core reuse is constrained and label leakage is harder to reason about. | Phases 2–3 |
 | K-005 | **Partially resolved:** new model predictions/roles and plugin boundaries are clean, while the legacy combined realtime model/training module remains. | Target imports are independent; legacy backend and training decomposition remains Phase 6. | Phases 2 and 6 |
 | K-006 | **Resolved for target foundations:** bundle I/O has one authority and executable construction belongs to the new plugin registry. | Legacy model construction remains isolated until its clients migrate. | Phases 1–2 |
-| K-007 | **Partially resolved:** the target synthetic/captured path now uses one engine, while legacy workers/analysis and general outcome/scheduled routing remain outside it. | The new vertical slice cannot drift between live-like and replay execution; legacy removal and Phase 3 closure remain. | Phase 3 |
+| K-007 | **Resolved for the target engine 2026-07-23:** packets, delayed outcomes, scheduled/state-triggered work, action receipts, replay, and checkpoint restoration use one semantic engine. | Live-like, replay, and restored target execution cannot silently drift. Legacy worker/analysis client migration and removal remain Phase 6 cleanup, not a second target authority. | Phase 3 |
 | K-008 | **Resolved 2026-07-22:** task/PsychoPy environment setup moved to `eegle.integrations.task_environment`; the new `eegle.runtime` has no global environment mutation. | The target runtime namespace is clean; the legacy integration remains explicit and removable. | Phase 2 |
-| K-009 | Configuration resolves relative paths against the repository project root. | Installed-package and external-project behavior is not portable. | Phase 5 |
-| K-010 | **Partially resolved:** causal and retrospective transforms now declare incompatible machine-readable capabilities. | Direct validation prevents causal use; compiler-wide enforcement remains Phase 5. | Phases 2 and 5 |
+| K-009 | **Partially resolved for target specifications:** portable protocol/suite objects contain no filesystem authority; deployment storage requires an explicit URI scheme and compiler artifacts use caller-supplied paths. Legacy recipe configuration still resolves project-root paths. | New compiled suites are independent of repository layout; legacy removal remains Phase 7 cleanup. | Phases 5 and 7 |
+| K-010 | **Resolved for the target compiler 2026-07-23:** causal and retrospective transforms declare incompatible capabilities and exact descriptor resolution enforces the protocol execution mode before construction. | Future-dependent components cannot compile into a causal target plan. | Phases 2 and 5 |
 | K-011 | **Resolved 2026-07-22:** pure epoch-array helpers now break the direct realtime classification/models cycle. | Retained legacy modules are acyclic at this boundary. | Phase 2 |
 | K-012 | The CLI exposes study recipes and historical workflows as if they were the general library. | Public identity remains coupled to the current lab applications. | Phase 7 |
 | K-013 | **Resolved for the target branch 2026-07-22:** package metadata requires Python 3.11+ without an upper bound and declares the four base dependencies. | Initial supported-matrix enforcement remains release/CI work. | Phases 2 and 7 |
@@ -238,6 +265,14 @@ These are target behaviors, not instructions to copy their present modules.
 |---|---|---|
 | D-015 | Session and bundle separation | A generic session owns lifecycle and a namespaced artifact registry. Each execution produces a versioned bundle with separate semantic ledger, execution-capture, archival-raw, component-state, and other artifact references. `SessionPaths` is only an explicit compatibility alias view. |
 | D-016 | Integrity and recovery | Per-frame checksums and artifact digests yield structured valid/recoverable/unrecoverable results. Only an incomplete final frame can be recovered automatically, by copying the proven prefix without modifying the source. |
+| D-011 | Privacy classification | Artifacts are public, pseudonymized, internal, or restricted. Safe portable export allows only public/pseudonymized content, omits source session IDs, participant pseudonyms, and external URIs by default, retains source bundle/plan hashes, rejects undeclared secret-shaped JSON, records digest-bound redaction lineage, and never performs retention deletion implicitly. |
+| D-017 | External artifact verification | Structural evidence integrity and external-content availability are separate. External results are reference-only, verified, unavailable, or mismatch; only a mismatch makes bundle integrity fail. Local source-native files can be hashed and referenced without copying. |
+
+### Resolved in Phase 5
+
+| ID | Decision | Resolution |
+|---|---|---|
+| D-004 | Suite composition | Use one explicit `SuiteSpec` base plus ordered typed `SuiteOverlay` values. V1 overlays may override only existing component config and recording/validation policy keys; they cannot alter topology, identities, plugins, routes, or phases. Structural changes require a new explicit suite. |
 
 ### Remaining open decisions
 
@@ -247,9 +282,7 @@ document.
 
 | ID | Decision | Options or questions | Decision point |
 |---|---|---|---|
-| D-004 | Suite composition | Prefer one explicit base plus constrained overlays/JSON Merge Patch, or a small typed composition model. Avoid an inheritance language. | Phase 5 |
 | D-008 | Authorization provider | Define a minimal local authorization/interlock protocol and which actions require operator confirmation. | Phase 6 |
-| D-011 | Privacy classification | Define evidence field sensitivity, deployment redaction, participant identity policy, and export defaults. | Phase 4 |
 | D-014 | Public stability boundary | Decide which modules are public at alpha and how experimental interfaces are marked. | Phase 7 |
 
 ## 7. Immediate action board
@@ -290,8 +323,8 @@ Status values: `todo`, `in_progress`, `blocked`, `done`, or `dropped`.
 | P3-004 | done | Implement bounded work, deadlines, cancellation, and backpressure accounting. | Terminal/pending work, deadline, cancellation, queue, and shadow-shedding tests |
 | P3-005 | done | Run primary/shadow models over shared admitted inputs with observe-only policy. | Generic synthetic vertical slice with comparable admitted inputs |
 | P3-006 | done | Feed captured inputs through the identical engine and compare equivalence. | Original/accelerated replay parity and localized counterfactual shadow divergence |
-| P3-007 | todo | Generalize delayed outcome delivery, bounded pending predictions, expiry, and observe-only adaptation eligibility through the engine. | Outcome lifecycle tests and evidence without label leakage |
-| P3-008 | todo | Add general scheduled/state-triggered work and engine-level checkpoint/resume across a partial run. | Virtual-time trigger and restored-run equivalence tests |
+| P3-007 | done | Generalize delayed outcome delivery, bounded pending predictions, expiry, and observe-only adaptation eligibility through the engine. | Availability-only outcome lifecycle, matching/duplicate/rejection/use, bounded overflow/expiry/pending, label-blindness, and replay tests pass |
+| P3-008 | done | Add general scheduled/state-triggered work and engine-level checkpoint/resume across a partial run. | Causally safe trigger/deadline/cancel/failure/reschedule tests plus integrity-checked fresh-engine restored-run equivalence pass |
 | P4-001 | done | Implement generic session identity/lifecycle and namespaced artifact registry. | Hashed session/artifact manifests, namespace isolation, external references, sensitivity, aliases, and lineage tests |
 | P4-002 | done | Implement versioned evidence bundle writer/reader and direct engine-result persistence. | Self-describing complete bundle round-trip and Phase 3 result assembly tests |
 | P4-003 | done | Move target ledgers and capture framing into `recording`. | Typed evidence ledger, framed packet store, and isolated historical CLRE1 reader |
@@ -299,9 +332,17 @@ Status values: `todo`, `in_progress`, `blocked`, `done`, or `dropped`.
 | P4-005 | done | Add checksums, truncation classification, and non-destructive prefix recovery. | Deliberately truncated capture reports artifact/frame/proven boundary/expected/observed fields and recovers only complete frames |
 | P4-006 | done | Add artifact lineage and component-state snapshots. | Producing component/version/input digests persist; canonical state hash equals its artifact digest |
 | P4-007 | done | Keep selected existing sessions readable without restoring path authority. | Mutation-free read-only legacy discovery and frozen CLRE1 tests |
-| P4-008 | todo | Define interrupted-writer restart/finalization policy and one-time historical bundle importer. | Explicit open-run discovery/resume tests and imported/derived/omitted/invalid report |
-| P4-009 | todo | Resolve privacy, redaction, retention, and export policy (D-011). | Policy schemas and secret/redaction/export acceptance tests |
-| P4-010 | todo | Add source-native/large-data store evidence and migrate selected target clients off compatibility aliases. | External/local large-store verification plus no target runtime `SessionPaths` imports |
+| P4-008 | done | Define interrupted-writer restart/finalization policy and one-time historical bundle importer. | Authorized open-run discovery/resume, non-mutating prefix recovery, restartable finalization, and mutation-free imported/derived/omitted/invalid report tests |
+| P4-009 | done | Resolve privacy, redaction, retention, and export policy (D-011). | Versioned/hash-verified policies and export manifest, safe defaults, digest-bound redaction, portable-object verification, secret rejection, and non-mutating retention tests pass |
+| P4-010 | done | Add source-native/large-data store evidence and migrate selected target clients off compatibility aliases. | A real 8 MiB local NWB-like source remains external and reports reference-only/verified/mismatch/unavailable precisely; target-foundation scan finds no `SessionPaths` usage |
+| P4-011 | done | Make engine-produced evidence plan-bearing and replayable directly from an `EvidenceBundle`. | Engine persistence requires and embeds the immutable plan; the bundle loader restores plan, streams, exact capture, evidence, status, and replay ceiling; fresh-engine equivalence test passes |
+| P5-001 | done | Implement versioned portable `ProtocolSpec`, `SuiteSpec`, and site-local `DeploymentSpec`. | Typed round trips, stable independent hashes, explicit storage URIs, secret references, and literal-secret rejection pass. |
+| P5-002 | done | Resolve bounded suite composition (D-004). | Ordered typed overlays change only existing component config and recording/validation policy; topology and identity mutation are impossible in v1. |
+| P5-003 | done | Implement the first compiler validation core. | Exact plugin/mode/config/resource resolution plus typed port, signal, stream, clock, phase, role, and actuator-permission diagnostics pass before construction. |
+| P5-004 | done | Produce durable explainable v2 plans and independent lock manifests. | V1 hash compatibility, v2 phases/placements, component/schema/graph hashes, atomic I/O, tamper rejection, explain, and material diff pass. |
+| P5-005 | done | Add the simulated continuous observation reference suite. | Separate protocol/suite/deployment JSON compiles deterministically against simulated and live-capability source deployments. |
+| P5-006 | in_progress | Complete phase/artifact/default/policy compilation semantics. | Declare artifact producers/dependencies; compile fuller phase entry/timeout/retry/resume/acceptance, outcome/adaptation permissions, and scheduling/resource defaults. |
+| P5-007 | todo | Add the remaining five reference-suite families and close the compiler-to-runtime construction boundary. | Event primary/shadow, calibration/evaluation, delayed outcome, multi-rate dense/sparse, and authorized simulated action compile and execute from locked plans. |
 
 Only the next two phases should normally be expanded into fine-grained tasks.
 Later phase detail belongs in `MIGRATION.md` until it becomes actionable.
@@ -314,16 +355,18 @@ Later phase detail belongs in `MIGRATION.md` until it becomes actionable.
 | R-002 | open | Freezing behavior could be misread as preserving old APIs and recipes. | Freeze only named scientific invariants and evidence; allow clean public interfaces. |
 | R-003 | open | A new specification system could grow into an opaque workflow language. | Keep the domain vocabulary bounded; compile to typed ports; custom logic remains Python plugins. |
 | R-004 | open | Modality neutrality could produce abstract types that are inefficient for real EEG or high-density data. | Benchmark dense EEG first, then add sparse and high-channel-count fixtures before claiming support. |
-| R-005 | monitoring | One engine could become one monolithic process. | Process placement is now explicit proxy metadata; Phase 3 closure must prove health/backpressure transport without duplicating semantic execution. |
-| R-006 | monitoring | Replay “equivalence” may be overstated for nondeterministic frameworks or hardware. | The comparator now caps claims at the weakest declaration; hardware substitution still needs an actuator integration test. |
+| R-005 | monitoring | One engine could become one monolithic process. | Process placement remains explicit proxy metadata and the coordinator owns semantics. Cross-process transport/health must preserve the proven boundary without duplicating the engine. |
+| R-006 | monitoring | Replay “equivalence” may be overstated for nondeterministic frameworks or hardware. | The comparator caps claims at the weakest declaration; simulated command/receipt substitution now passes, while real hardware remains an observe-only or trace claim. |
 | R-007 | open | Action support may be mistaken for hardware safety. | Keep authorization independent, default to observe-only, and document adapter/safety boundaries. |
-| R-008 | monitoring | Evidence capture could duplicate very large raw streams. | Bundle v1 now separates execution capture from archival stores and supports content-addressed external references; a large source-native integration test remains. |
+| R-008 | monitoring | Evidence capture could duplicate very large raw streams. | Bundle v1 separates capture from archival stores; a real external source-native fixture proves no copy and local digest verification. Broader sparse/high-channel throughput evidence remains before modality support claims. |
 | R-009 | open | Maintaining old and new architectures too long could recreate compatibility debt. | Use short extraction windows, phase gates, and delete superseded paths rather than adding permanent adapters. |
 | R-010 | monitoring | Optional dependency imports could leak back into the base package. | A subprocess test now blocks fourteen optional families while importing every foundation package; retain it as a release gate. |
-| R-011 | monitoring | Locally configured supported-version workflows may expose platform-specific failures on their first remote run. | Keep the five-job 3.11–3.13/Linux plus 3.12/macOS/Windows matrix as a Phase 3 gate and record any observed platform issue without weakening the core contract. |
+| R-011 | monitoring | GitHub Actions run 29967855396 passes Linux 3.11–3.13 and macOS 3.12; Windows 3.12 reaches unit tests and fails two legacy path/session-name assertions. The local Phase 3 closure tree has not yet run remotely. | Preserve the exact run/job evidence, fix legacy portability separately, and do not claim a green Windows suite or weaken target engine contracts. |
+| R-012 | resolved | An in-progress Phase 3 outcome/checkpoint edit temporarily called a missing `_finalize_pending_predictions()` method and blocked integrated verification. | The method and full outcome lifecycle now pass the 27-test Phase 3 module and integrated 330-test full suite. |
 
-No migration blocker is currently recorded. Unresolved design choices are not
-blockers until their decision point prevents the next phase gate.
+No migration blocker is currently recorded. Phase 5 continues from the verified
+first compiler slice over the completed Phase 2 foundations, Phase 3 engine, and
+Phase 4 evidence boundary.
 
 ## 9. Completion log
 
@@ -351,6 +394,11 @@ blockers until their decision point prevents the next phase gate.
 | 2026-07-22 | Phase 3 decisions locked | Deterministic hybrid scheduling, typed process proxies, and graded replay tolerances resolve D-006, D-007, and D-012. |
 | 2026-07-22 | First Phase 3 engine slice implemented | Synthetic execution, bounded windows, primary/shadow roles, observe-only policy, explicit work evidence, same-engine replay, and divergence localization pass sixteen focused tests; the 301-test full suite, compile-all, diff check, wheel build, and installed import smoke pass. Phase 3 remains open for P3-007/P3-008. |
 | 2026-07-22 | First Phase 4 evidence slice implemented | Generic sessions, namespaced artifacts, EvidenceBundle v1, framed semantic/sample stores, component snapshots, external raw references, legacy read-only discovery, and precise truncation recovery pass seven focused tests. The 308-test Python 3.12 suite, compile-all, diff check, wheel build, and installed API import pass with five skips. Phase 4 remains open for P4-008 through P4-010. |
+| 2026-07-22 | Phase 4 interruption and import boundary implemented | Versioned writer state, authorized resume, immutable-prefix recovery, restartable finalization, and the scoped historical importer pass thirteen focused tests. Recipe filename knowledge remains in an integration profile. The 314-test Python 3.12 suite passes with five skips; compile-all, wheel, and installed imports are verified separately. P4-008 is closed; privacy/export and source-native/client migration remain. |
+| 2026-07-23 | Phase 4 privacy and external-storage gates implemented | Safe portable export/redaction/retention and a real non-copied source-native file with explicit external verification pass eighteen focused Phase 4 tests. P4-009 and P4-010 close. Plan-bearing bundle replay is implemented, but current integrated verification is blocked by R-012. |
+| 2026-07-23 | Phase 4 closed | Plan-bearing bundle replay clears P4-011 and all six exit gates. Nineteen dedicated closure tests and the 320-test full suite pass with five skips; compile-all, diff check, wheel build/contents, and installed-wheel API imports pass. |
+| 2026-07-23 | Phase 3 closed | P3-007/P3-008 add bounded availability-time outcomes, independent use eligibility, causally safe scheduled/state triggers, integrity-checked fresh-engine restoration, and simulated command/receipt replay. Twenty-seven focused tests and the integrated 330-test Python 3.12.13 suite pass with five skips; compile-all, diff check, wheel build/contents, and installed imports pass. K-007 is resolved for the target engine; the observed Windows matrix failures are recorded precisely rather than hidden. |
+| 2026-07-23 | Phase 5 first vertical slice implemented | P5-001 through P5-005 add separate versioned specs, bounded overlays, structured compilation, typed graph/capability/clock/phase checks, v2 plans with v1 compatibility, locks, explain/diff, atomic files, and the simulated continuous reference. Thirteen focused tests and the 343-test Python 3.14.4 suite pass with five skips; compile-all, diff check, wheel contents, and installed public imports pass. Phase 5 remains open for P5-006/P5-007. |
 
 ## 10. Instructions for future Codex work
 

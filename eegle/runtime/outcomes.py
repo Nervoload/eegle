@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Mapping
 
-from eegle._validation import freeze_json, require_identifier, thaw_json
+from eegle._validation import freeze_json, require_finite, require_identifier, thaw_json
 from eegle.streams.clocks import TimePoint
 
 
@@ -18,6 +18,39 @@ class OutcomeUse(str, Enum):
     CALIBRATION = "calibration"
     ADAPTATION = "adaptation"
     POLICY = "policy"
+
+
+class PendingPredictionOverflow(str, Enum):
+    EXPIRE_OLDEST = "expire_oldest"
+    REJECT_NEWEST = "reject_newest"
+
+
+@dataclass(frozen=True, slots=True)
+class OutcomeRoutingPolicy:
+    """Bounded, deterministic delayed-outcome routing owned by the engine."""
+
+    max_pending_predictions: int = 128
+    prediction_ttl_seconds: float = 300.0
+    overflow: PendingPredictionOverflow = PendingPredictionOverflow.EXPIRE_OLDEST
+    allowed_uses: frozenset[OutcomeUse] = frozenset(OutcomeUse)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "max_pending_predictions", int(self.max_pending_predictions))
+        if self.max_pending_predictions <= 0:
+            raise ValueError("max_pending_predictions must be positive")
+        object.__setattr__(
+            self,
+            "prediction_ttl_seconds",
+            require_finite(self.prediction_ttl_seconds, "prediction_ttl_seconds"),
+        )
+        if self.prediction_ttl_seconds < 0:
+            raise ValueError("prediction_ttl_seconds cannot be negative")
+        object.__setattr__(self, "overflow", PendingPredictionOverflow(self.overflow))
+        object.__setattr__(
+            self,
+            "allowed_uses",
+            frozenset(OutcomeUse(value) for value in self.allowed_uses),
+        )
 
 
 @dataclass(frozen=True, slots=True)

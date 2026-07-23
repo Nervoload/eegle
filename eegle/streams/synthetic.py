@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Any, Iterable, Mapping
+
+from eegle.compiler.lock import canonical_hash
 
 from eegle.streams.channels import StreamSpec
 from eegle.streams.clocks import TimePoint
@@ -68,3 +70,42 @@ class PacketSequenceSource:
 
     def close(self) -> None:
         self._closed = True
+
+    def snapshot_state(self) -> dict[str, Any]:
+        payload = {
+            "schema": "eegle.packet_sequence_source_state.v1",
+            "stream_spec_hash": canonical_hash(self._stream_spec.to_payload()),
+            "packets_hash": canonical_hash(
+                [packet.to_payload() for packet in self._packets]
+            ),
+            "index": self._index,
+            "watermark": None
+            if self._watermark is None
+            else self._watermark.to_payload(),
+            "exhausted": self.exhausted,
+        }
+        payload["state_hash"] = canonical_hash(payload)
+        return payload
+
+    def restore_state(self, payload: Mapping[str, Any]) -> None:
+        if payload.get("schema") != "eegle.packet_sequence_source_state.v1":
+            raise ValueError("unsupported packet sequence source state schema")
+        content = dict(payload)
+        state_hash = content.pop("state_hash", None)
+        if state_hash != canonical_hash(content):
+            raise ValueError("packet sequence source state hash mismatch")
+        if payload.get("stream_spec_hash") != canonical_hash(self._stream_spec.to_payload()):
+            raise ValueError("source stream specification differs from checkpoint")
+        if payload.get("packets_hash") != canonical_hash(
+            [packet.to_payload() for packet in self._packets]
+        ):
+            raise ValueError("source packet sequence differs from checkpoint")
+        index = int(payload["index"])
+        if not 0 <= index <= len(self._packets):
+            raise ValueError("source checkpoint index is out of range")
+        watermark = payload.get("watermark")
+        self._index = index
+        self._watermark = None if watermark is None else TimePoint.from_payload(watermark)
+        self._closed = False
+        if bool(payload.get("exhausted")) != self.exhausted:
+            raise ValueError("source exhaustion state differs from checkpoint")

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
+import tempfile
 import unittest
 
 import numpy as np
 
 from eegle._domain import ComponentKind, EquivalenceLevel, ExecutionMode, WorkStatus
-from eegle.actions import ObserveOnlyPolicy
+from eegle.actions import ActionCommand, ObserveOnlyPolicy, SimulatedActuator
 from eegle.compiler import ExecutionPlan, LockedPlugin, PlannedComponent, canonical_hash
 from eegle.models import MeanThresholdModel, ModelRole, ModelRoleKind
 from eegle.processing import (
@@ -15,18 +17,39 @@ from eegle.processing import (
     FiniteQualityGate,
     IdentityTransform,
 )
-from eegle.replay import EquivalencePolicy, ReplayMode, ReplayRunner, ReplaySource
+from eegle.recording import EvidenceReader, Session, persist_engine_run
+from eegle.replay import (
+    BundleReplayRunner,
+    EquivalencePolicy,
+    ReplayMode,
+    ReplayRunner,
+    ReplaySource,
+    compare_runs,
+)
 from eegle.runtime import (
     BackpressurePolicy,
     ComponentBinding,
     ComponentPlacement,
+    EngineCheckpoint,
+    EngineCheckpointError,
     EngineComponents,
     EngineStatus,
     ExecutionEngine,
     ModelBinding,
+    Outcome,
+    OutcomeRoutingPolicy,
+    OutcomeUse,
+    PendingPredictionOverflow,
     ProcessBoundary,
+    ScheduledTrigger,
     SchedulingPolicy,
     SourceBinding,
+    StateTransition,
+    StateTriggerRule,
+    TransitionStatus,
+    TriggerBinding,
+    TriggerDisposition,
+    TriggerResult,
 )
 from eegle.streams import (
     ChannelSpec,
@@ -92,6 +115,26 @@ def _packets() -> tuple[DenseSampleBatch, ...]:
     )
 
 
+def _outcome(
+    outcome_id: str,
+    available: float,
+    prediction_ids: tuple[str, ...],
+    *,
+    uses: frozenset[OutcomeUse] = frozenset({OutcomeUse.METRICS}),
+    clock: str = EXECUTION_CLOCK,
+) -> Outcome:
+    return Outcome(
+        outcome_id=outcome_id,
+        subject_id="subject.synthetic",
+        source_id="source.outcomes",
+        value={"target": "positive"},
+        event_time=_time(0.5, clock),
+        available_time=_time(available, clock),
+        permitted_uses=uses,
+        prediction_ids=prediction_ids,
+    )
+
+
 def _binding(
     component_id: str,
     component: object,
@@ -113,10 +156,14 @@ _COMPONENT_KINDS = {
 }
 
 
-def _plan(extra_sources: tuple[str, ...] = ()) -> ExecutionPlan:
+def _plan(
+    extra_sources: tuple[str, ...] = (),
+    extra_components: dict[str, ComponentKind] | None = None,
+) -> ExecutionPlan:
     kinds = dict(_COMPONENT_KINDS)
     for source_id in extra_sources:
         kinds[source_id] = ComponentKind.SOURCE
+    kinds.update(extra_components or {})
     locked = []
     planned = []
     for component_id, kind in kinds.items():
@@ -160,12 +207,16 @@ def _components(
     primary_latency: float = 0.0,
     shadow_latency: float = 0.0,
     shadow_boundary: ProcessBoundary = ProcessBoundary(),
+    primary_may_request_actions: bool = False,
+    policy: object | None = None,
+    trigger_handlers: tuple[tuple[str, object], ...] = (),
+    actuator: object | None = None,
 ) -> EngineComponents:
     primary_role = ModelRole(
         "primary",
         ModelRoleKind.PRIMARY,
         scheduling_priority=100,
-        may_request_actions=False,
+        may_request_actions=primary_may_request_actions,
         must_share_admitted_inputs_with=("shadow",),
     )
     shadow_role = ModelRole(
@@ -218,8 +269,15 @@ def _components(
             ),
         ),
         policy=_binding(
-            "policy.observe", ObserveOnlyPolicy(), EquivalenceLevel.SEMANTIC
+            "policy.observe", policy or ObserveOnlyPolicy(), EquivalenceLevel.SEMANTIC
         ),
+        trigger_handlers=tuple(
+            TriggerBinding(_binding(component_id, handler, EquivalenceLevel.SEMANTIC))
+            for component_id, handler in trigger_handlers
+        ),
+        actuator=None
+        if actuator is None
+        else _binding("actuator.simulated", actuator, EquivalenceLevel.SEMANTIC),
     )
 
 
@@ -230,19 +288,37 @@ def _engine(
     scheduling: SchedulingPolicy | None = None,
     execution_id: str = "execution.live",
     source: object | None = None,
+    plan: ExecutionPlan | None = None,
+    outcomes: tuple[Outcome, ...] = (),
+    outcome_policy: OutcomeRoutingPolicy | None = None,
+    scheduled_triggers: tuple[ScheduledTrigger, ...] = (),
+    state_triggers: tuple[StateTriggerRule, ...] = (),
+    clock_mapping_revisions: dict[str, int] | None = None,
 ) -> ExecutionEngine:
     stream = _stream()
     actual_source = source or PacketSequenceSource(stream, packets or _packets())
+    actual_components = components or _components()
+    extra_components = {
+        value.component.component_id: ComponentKind.ADAPTER
+        for value in actual_components.trigger_handlers
+    }
+    if actual_components.actuator is not None:
+        extra_components[actual_components.actuator.component_id] = ComponentKind.ACTUATOR
     return ExecutionEngine(
-        plan=_plan(),
+        plan=plan or _plan(extra_components=extra_components),
         sources=(
             SourceBinding(
                 _binding("source.synthetic", actual_source, EquivalenceLevel.BITWISE)
             ),
         ),
-        components=components or _components(),
+        components=actual_components,
         scheduling=scheduling or SchedulingPolicy(EXECUTION_CLOCK),
         execution_id=execution_id,
+        outcomes=outcomes,
+        outcome_policy=outcome_policy,
+        scheduled_triggers=scheduled_triggers,
+        state_triggers=state_triggers,
+        clock_mapping_revisions=clock_mapping_revisions,
     )
 
 
@@ -410,6 +486,41 @@ class ExecutionEngineVerticalSliceTests(unittest.TestCase):
             self.assertEqual(replayed.equivalence.evaluated_level, EquivalenceLevel.SEMANTIC)
             self.assertTrue(replayed.equivalence.downgraded)
 
+    def test_plan_bearing_evidence_bundle_replays_without_in_memory_run_result(self) -> None:
+        reference = _engine().run()
+        plan = _plan()
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Session.create(Path(tmp) / "session", session_id="session.bundle-replay")
+            bundle = persist_engine_run(
+                session,
+                reference,
+                plan=plan,
+                streams=(_stream(),),
+            )
+            reader = EvidenceReader.open(Session.open(session.root), bundle.bundle_id)
+
+            def factory(
+                restored_plan: ExecutionPlan,
+                packets: tuple[DenseSampleBatch, ...],
+                streams: tuple[StreamSpec, ...],
+                mode: ReplayMode,
+            ) -> ExecutionEngine:
+                self.assertEqual(restored_plan, plan)
+                self.assertEqual(streams, (_stream(),))
+                return _engine(
+                    packets,
+                    source=ReplaySource(streams[0], packets, mode=mode),
+                    execution_id="execution.bundle-replay",
+                )
+
+            replayed = BundleReplayRunner(factory).run(
+                reader,
+                policy=EquivalencePolicy(requested_level=EquivalenceLevel.SEMANTIC),
+            )
+
+            self.assertTrue(replayed.equivalence.equivalent, replayed.equivalence.divergences)
+            self.assertEqual(replayed.result.status, EngineStatus.COMPLETE)
+
     def test_changed_shadow_model_localizes_semantic_divergence(self) -> None:
         reference = _engine().run()
 
@@ -572,6 +683,509 @@ class ExecutionEngineVerticalSliceTests(unittest.TestCase):
         self.assertEqual(result.status, EngineStatus.COMPLETE)
         self.assertTrue(transform.started)
         self.assertTrue(transform.stopped)
+
+
+class DelayedOutcomeTests(unittest.TestCase):
+    def test_outcome_waits_for_availability_matches_identity_and_stays_label_blind(self) -> None:
+        outcome = _outcome(
+            "outcome.match",
+            2.0,
+            ("prediction.00000001",),
+            uses=frozenset({OutcomeUse.METRICS, OutcomeUse.ADAPTATION}),
+        )
+        result = _engine(outcomes=(outcome,)).run()
+
+        matched = next(
+            record for record in result.evidence if record.record_type == "outcome_matched"
+        )
+        prediction = next(
+            record for record in result.evidence if record.record_type == "prediction"
+        )
+        eligibility = next(
+            record
+            for record in result.evidence
+            if record.record_type == "adaptation_eligibility"
+        )
+        self.assertEqual(matched.emitted_time, _time(2.0))
+        self.assertEqual(
+            matched.payload["prediction_ids"], ("prediction.00000001",)
+        )
+        self.assertNotIn("outcome", prediction.payload["prediction"])
+        self.assertNotIn("correctness", prediction.payload["prediction"])
+        self.assertNotIn("condition", prediction.payload["prediction"])
+        self.assertTrue(eligibility.payload["eligible"])
+        self.assertFalse(eligibility.payload["adaptation_applied"])
+
+    def test_duplicate_unmatched_malformed_and_disallowed_outcomes_are_accounted(self) -> None:
+        uses = frozenset({OutcomeUse.METRICS, OutcomeUse.ADAPTATION})
+        result = _engine(
+            outcomes=(
+                _outcome("outcome.duplicate", 2.0, ("prediction.00000001",), uses=uses),
+                _outcome("outcome.duplicate", 2.1, ("prediction.00000001",), uses=uses),
+                _outcome("outcome.unmatched", 2.2, ("prediction.missing",)),
+                _outcome("outcome.no_identity", 2.3, ()),
+                _outcome(
+                    "outcome.bad_clock",
+                    2.4,
+                    ("prediction.00000002",),
+                    clock="clock.other",
+                ),
+            ),
+            outcome_policy=OutcomeRoutingPolicy(
+                allowed_uses=frozenset({OutcomeUse.METRICS})
+            ),
+        ).run()
+
+        record_types = [record.record_type for record in result.evidence]
+        self.assertIn("outcome_duplicate", record_types)
+        self.assertIn("outcome_unmatched", record_types)
+        rejected_ids = {
+            record.payload["outcome_id"]
+            for record in result.evidence
+            if record.record_type == "outcome_rejected"
+        }
+        self.assertEqual(
+            rejected_ids, {"outcome.no_identity", "outcome.bad_clock"}
+        )
+        disallowed = [
+            work
+            for work in result.work
+            if work.reason_code == "disallowed_outcome_use"
+        ]
+        self.assertEqual(len(disallowed), 1)
+        self.assertEqual(disallowed[0].details["use"], "adaptation")
+        self.assertTrue(
+            all(
+                work.status != WorkStatus.PENDING
+                for work in result.work
+                if work.stage == "outcome"
+            )
+        )
+
+    def test_pending_prediction_overflow_and_expiry_are_bounded_and_deterministic(self) -> None:
+        result = _engine(
+            outcome_policy=OutcomeRoutingPolicy(
+                max_pending_predictions=1,
+                prediction_ttl_seconds=0.25,
+                overflow=PendingPredictionOverflow.EXPIRE_OLDEST,
+            )
+        ).run()
+
+        pending_counts = [
+            int(record.payload["pending_count"])
+            for record in result.evidence
+            if record.record_type == "prediction_pending"
+        ]
+        overflowed = [
+            record.payload["prediction_id"]
+            for record in result.evidence
+            if record.record_type == "prediction_overflowed"
+        ]
+        expired = [
+            record.payload["prediction_id"]
+            for record in result.evidence
+            if record.record_type == "prediction_expired"
+        ]
+        self.assertTrue(pending_counts)
+        self.assertLessEqual(max(pending_counts), 1)
+        self.assertEqual(
+            overflowed,
+            ["prediction.00000001", "prediction.00000003"],
+        )
+        self.assertEqual(expired, ["prediction.00000002"])
+        self.assertEqual(
+            sum(
+                record.record_type == "prediction_pending_at_end"
+                for record in result.evidence
+            ),
+            1,
+        )
+
+    def test_outcome_lifecycle_replays_through_the_same_engine(self) -> None:
+        outcomes = (
+            _outcome("outcome.replay", 2.5, ("prediction.00000001",)),
+        )
+        reference = _engine(outcomes=outcomes).run()
+
+        def factory(
+            packets: tuple[DenseSampleBatch, ...], mode: ReplayMode
+        ) -> ExecutionEngine:
+            return _engine(
+                packets,
+                source=ReplaySource(_stream(), packets, mode=mode),
+                execution_id="execution.outcome.replay",
+                outcomes=outcomes,
+            )
+
+        replayed = ReplayRunner(factory).run(
+            reference,
+            policy=EquivalencePolicy(requested_level=EquivalenceLevel.SEMANTIC),
+        )
+        self.assertTrue(replayed.equivalence.equivalent, replayed.equivalence.divergences)
+
+
+class TriggerAndCheckpointTests(unittest.TestCase):
+    def test_packet_outcome_and_trigger_ties_have_one_locked_order(self) -> None:
+        class Handler:
+            def handle_trigger(self, trigger, context):
+                return TriggerResult()
+
+        components = _components(
+            trigger_handlers=(("adapter.trigger", Handler()),)
+        )
+        result = _engine(
+            components=components,
+            outcomes=(
+                _outcome("outcome.tie", 2.0, ("prediction.00000001",)),
+            ),
+            scheduled_triggers=(
+                ScheduledTrigger("trigger.tie", "adapter.trigger", _time(2.0)),
+            ),
+        ).run()
+
+        ordered = [
+            record.record_type
+            for record in result.evidence
+            if record.emitted_time == _time(2.0)
+            and record.record_type
+            in {"packet_produced", "outcome_matched", "trigger_fired"}
+        ]
+        self.assertEqual(
+            ordered, ["packet_produced", "outcome_matched", "trigger_fired"]
+        )
+
+    def test_time_trigger_waits_for_a_causally_safe_source_frontier(self) -> None:
+        class Handler:
+            def handle_trigger(self, trigger, context):
+                raise AssertionError("unsafe trigger fired")
+
+        class BlockingSource:
+            stream_spec = _stream()
+            exhausted = False
+            watermark = _time(0.0)
+
+            def read(self):
+                return None
+
+            def close(self):
+                return None
+
+        components = _components(
+            trigger_handlers=(("adapter.trigger", Handler()),)
+        )
+        result = _engine(
+            components=components,
+            source=BlockingSource(),
+            scheduled_triggers=(
+                ScheduledTrigger("trigger.blocked", "adapter.trigger", _time(1.0)),
+            ),
+        ).run()
+
+        self.assertEqual(result.status, EngineStatus.PARTIAL)
+        self.assertFalse(
+            any(record.record_type == "trigger_fired" for record in result.evidence)
+        )
+        self.assertTrue(
+            any(
+                work.stage == "trigger"
+                and work.status == WorkStatus.PENDING
+                and work.reason_code == "awaiting_watermark"
+                for work in result.work
+            )
+        )
+
+    def test_state_trigger_reschedule_cancellation_and_failure_are_explicit(self) -> None:
+        class Handler:
+            def handle_trigger(self, trigger, context):
+                mode = trigger.payload.get("mode")
+                if mode == "fail":
+                    raise RuntimeError("scheduled failure")
+                if mode == "reschedule":
+                    return TriggerResult(
+                        TriggerDisposition.RESCHEDULED,
+                        next_trigger=ScheduledTrigger(
+                            "trigger.rescheduled",
+                            "adapter.trigger",
+                            _time(context.current_time.seconds + 0.05),
+                            payload={"mode": "complete"},
+                            parent_trigger_id=trigger.trigger_id,
+                        ),
+                    )
+                if mode == "transition":
+                    transition = StateTransition(
+                        transition_id=context.next_id("transition"),
+                        component_id="adapter.trigger",
+                        status=TransitionStatus.APPLIED,
+                        transition_kind="fixture_advanced",
+                        transition_time=context.current_time,
+                        prior_state_hash=canonical_hash({"step": 0}),
+                        resulting_state_hash=canonical_hash({"step": 1}),
+                        trigger_ids=(trigger.trigger_id,),
+                    )
+                    return TriggerResult(transition=transition)
+                return TriggerResult()
+
+        components = _components(
+            trigger_handlers=(("adapter.trigger", Handler()),)
+        )
+        engine = _engine(
+            components=components,
+            scheduling=SchedulingPolicy(EXECUTION_CLOCK, fail_fast=False),
+            scheduled_triggers=(
+                ScheduledTrigger(
+                    "trigger.transition",
+                    "adapter.trigger",
+                    _time(1.1),
+                    payload={"mode": "transition"},
+                ),
+                ScheduledTrigger(
+                    "trigger.timeout",
+                    "adapter.trigger",
+                    _time(1.15),
+                    deadline_time=_time(1.16),
+                ),
+                ScheduledTrigger(
+                    "trigger.reschedule",
+                    "adapter.trigger",
+                    _time(1.2),
+                    payload={"mode": "reschedule"},
+                ),
+                ScheduledTrigger(
+                    "trigger.cancel",
+                    "adapter.trigger",
+                    _time(1.3),
+                    deadline_time=_time(1.4),
+                ),
+                ScheduledTrigger(
+                    "trigger.fail",
+                    "adapter.trigger",
+                    _time(1.4),
+                    payload={"mode": "fail"},
+                ),
+            ),
+            state_triggers=(
+                StateTriggerRule(
+                    "rule.after_transition",
+                    "adapter.trigger",
+                    transition_kind="fixture_advanced",
+                    payload={"mode": "complete"},
+                ),
+            ),
+        )
+        engine.cancel_trigger("trigger.cancel")
+        result = engine.run()
+
+        record_types = [record.record_type for record in result.evidence]
+        self.assertIn("state_transition", record_types)
+        self.assertIn("state_trigger_scheduled", record_types)
+        self.assertIn("trigger_rescheduled", record_types)
+        self.assertIn("trigger_timed_out", record_types)
+        self.assertIn("trigger_cancelled", record_types)
+        self.assertIn("trigger_failed", record_types)
+        self.assertEqual(result.status, EngineStatus.COMPLETE)
+        self.assertTrue(
+            any(
+                work.stage == "trigger" and work.status == WorkStatus.FAILED
+                for work in result.work
+            )
+        )
+
+    def test_fresh_engine_checkpoint_restore_matches_uninterrupted_semantics(self) -> None:
+        class TransitionHandler:
+            def handle_trigger(self, trigger, context):
+                return TriggerResult(
+                    transition=StateTransition(
+                        transition_id=context.next_id("transition"),
+                        component_id="adapter.checkpoint",
+                        status=TransitionStatus.APPLIED,
+                        transition_kind="checkpoint_fixture_advanced",
+                        transition_time=context.current_time,
+                        prior_state_hash=canonical_hash({"step": 0}),
+                        resulting_state_hash=canonical_hash({"step": 1}),
+                        trigger_ids=(trigger.trigger_id,),
+                    )
+                )
+
+        def components() -> EngineComponents:
+            return _components(
+                trigger_handlers=(("adapter.checkpoint", TransitionHandler()),)
+            )
+
+        outcomes = (
+            _outcome("outcome.after_checkpoint", 2.5, ("prediction.00000001",)),
+        )
+        triggers = (
+            ScheduledTrigger(
+                "trigger.after_checkpoint", "adapter.checkpoint", _time(2.6)
+            ),
+        )
+        uninterrupted = _engine(
+            components=components(),
+            outcomes=outcomes,
+            scheduled_triggers=triggers,
+        ).run()
+        partial = _engine(
+            components=components(),
+            outcomes=outcomes,
+            scheduled_triggers=triggers,
+        ).run(checkpoint_after_semantic_items=2)
+
+        self.assertEqual(partial.status, EngineStatus.PARTIAL)
+        self.assertIsNotNone(partial.checkpoint)
+        checkpoint = partial.checkpoint
+        assert checkpoint is not None
+        self.assertEqual(
+            EngineCheckpoint.from_payload(checkpoint.to_payload()), checkpoint
+        )
+        self.assertEqual(checkpoint.state["run_status"], EngineStatus.PARTIAL.value)
+        resumed_engine = _engine(
+            components=components(),
+            outcomes=outcomes,
+            scheduled_triggers=triggers,
+        )
+        resumed_engine.restore_checkpoint(checkpoint)
+        resumed = resumed_engine.run()
+        comparison = compare_runs(
+            uninterrupted,
+            resumed,
+            EquivalencePolicy(requested_level=EquivalenceLevel.SEMANTIC),
+        )
+
+        self.assertEqual(resumed.status, EngineStatus.COMPLETE)
+        self.assertTrue(comparison.equivalent, comparison.divergences)
+        self.assertEqual(
+            [value.prediction_id for value in resumed.predictions],
+            [value.prediction_id for value in uninterrupted.predictions],
+        )
+        self.assertEqual(
+            [value.work_id for value in resumed.work],
+            [value.work_id for value in uninterrupted.work],
+        )
+        self.assertEqual(
+            [
+                record.payload["transition"]["transition_id"]
+                for record in resumed.evidence
+                if record.record_type == "state_transition"
+            ],
+            [
+                record.payload["transition"]["transition_id"]
+                for record in uninterrupted.evidence
+                if record.record_type == "state_transition"
+            ],
+        )
+        self.assertEqual(
+            [record.record_hash for record in resumed.evidence[: len(checkpoint.state["evidence_prefix"])]],
+            [record["record_hash"] for record in checkpoint.state["evidence_prefix"]],
+        )
+
+    def test_checkpoint_rejects_integrity_plan_and_source_mismatches(self) -> None:
+        partial = _engine().run(checkpoint_after_semantic_items=1)
+        checkpoint = partial.checkpoint
+        assert checkpoint is not None
+
+        tampered = checkpoint.to_payload()
+        tampered["state"]["semantic_items"] = 99
+        with self.assertRaisesRegex(ValueError, "checkpoint hash mismatch"):
+            EngineCheckpoint.from_payload(tampered)
+
+        different_plan = replace(
+            _plan(), spec_hashes={"suite": canonical_hash({"suite": "different"})}
+        )
+        with self.assertRaisesRegex(EngineCheckpointError, "plan mismatch"):
+            _engine(plan=different_plan).restore_checkpoint(checkpoint)
+
+        with self.assertRaisesRegex(EngineCheckpointError, "scheduling policy mismatch"):
+            _engine(
+                scheduling=SchedulingPolicy(EXECUTION_CLOCK, max_idle_cycles=2)
+            ).restore_checkpoint(checkpoint)
+
+        with self.assertRaisesRegex(EngineCheckpointError, "clock-mapping revisions mismatch"):
+            _engine(clock_mapping_revisions={"mapping.host": 2}).restore_checkpoint(
+                checkpoint
+            )
+
+        changed_packets = (
+            _batch("input.1", 0, 1.0, (-9.0, -9.0)),
+            *_packets()[1:],
+        )
+        with self.assertRaisesRegex(EngineCheckpointError, "source.synthetic restore failed"):
+            _engine(changed_packets).restore_checkpoint(checkpoint)
+
+
+class SimulatedActuatorTests(unittest.TestCase):
+    def test_simulated_action_receipts_replay_and_survive_checkpoint_restore(self) -> None:
+        class ActionPolicy:
+            def decide(self, prediction, state, context):
+                return ActionCommand(
+                    command_id=context.next_id("command"),
+                    capability="fixture.pulse",
+                    requested_by="policy.action",
+                    parameters={"decision": prediction.outputs["label"]},
+                    requested_time=context.current_time,
+                    available_time=context.current_time,
+                    prediction_id=prediction.prediction_id,
+                )
+
+        def components() -> EngineComponents:
+            return _components(
+                primary_may_request_actions=True,
+                policy=ActionPolicy(),
+                actuator=SimulatedActuator(),
+            )
+
+        reference = _engine(components=components()).run()
+        partial = _engine(components=components()).run(
+            checkpoint_after_semantic_items=2
+        )
+        checkpoint = partial.checkpoint
+        assert checkpoint is not None
+        restored_engine = _engine(components=components())
+        restored_engine.restore_checkpoint(checkpoint)
+        restored = restored_engine.run()
+        restored_comparison = compare_runs(
+            reference,
+            restored,
+            EquivalencePolicy(requested_level=EquivalenceLevel.SEMANTIC),
+        )
+
+        def replay_factory(
+            packets: tuple[DenseSampleBatch, ...], mode: ReplayMode
+        ) -> ExecutionEngine:
+            return _engine(
+                packets,
+                source=ReplaySource(_stream(), packets, mode=mode),
+                components=components(),
+                execution_id="execution.action.replay",
+            )
+
+        replayed = ReplayRunner(replay_factory).run(
+            reference,
+            policy=EquivalencePolicy(requested_level=EquivalenceLevel.SEMANTIC),
+        )
+        commands = [
+            record.payload["command"]["command_id"]
+            for record in reference.evidence
+            if record.record_type == "action_command"
+        ]
+        receipts = [
+            record.payload["receipt"]
+            for record in reference.evidence
+            if record.record_type == "action_receipt"
+        ]
+        restored_commands = [
+            record.payload["command"]["command_id"]
+            for record in restored.evidence
+            if record.record_type == "action_command"
+        ]
+
+        self.assertTrue(commands)
+        self.assertEqual(commands, restored_commands)
+        self.assertEqual(
+            [receipt["command_id"] for receipt in receipts], commands
+        )
+        self.assertTrue(all(receipt["details"]["simulated"] for receipt in receipts))
+        self.assertTrue(restored_comparison.equivalent, restored_comparison.divergences)
+        self.assertTrue(replayed.equivalence.equivalent, replayed.equivalence.divergences)
 
 
 class SchedulingFailureTests(unittest.TestCase):

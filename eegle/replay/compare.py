@@ -29,9 +29,30 @@ _COMPARABLE_RECORDS = frozenset(
         "window_produced",
         "quality_decision",
         "prediction",
+        "prediction_pending",
+        "prediction_matched",
+        "prediction_expired",
+        "prediction_overflowed",
+        "prediction_pending_at_end",
+        "prediction_cancelled",
+        "outcome_received",
+        "outcome_matched",
+        "outcome_unmatched",
+        "outcome_duplicate",
+        "outcome_rejected",
+        "outcome_use",
+        "adaptation_eligibility",
+        "trigger_fired",
+        "trigger_cancelled",
+        "trigger_timed_out",
+        "trigger_failed",
+        "trigger_rescheduled",
+        "state_trigger_scheduled",
+        "state_transition",
         "work",
         "component_state",
         "action_command",
+        "action_receipt",
     }
 )
 
@@ -232,6 +253,57 @@ def _trace_projection(record: EvidenceRecord) -> Mapping[str, Any]:
                 "input_ids": window["input_ids"],
             }
         )
+    elif record.record_type.startswith("outcome_"):
+        outcome = payload.get("outcome", payload)
+        projected.update(
+            {
+                "outcome_id": outcome.get("outcome_id"),
+                "prediction_ids": outcome.get("prediction_ids", ()),
+            }
+        )
+    elif record.record_type.startswith("prediction_"):
+        projected.update(
+            {
+                "prediction_id": payload.get("prediction_id"),
+                "reason_code": payload.get("reason_code"),
+            }
+        )
+    elif record.record_type.startswith("trigger_"):
+        trigger = payload.get("trigger", payload.get("next_trigger", payload))
+        projected.update(
+            {
+                "trigger_id": trigger.get("trigger_id"),
+                "target_component_id": trigger.get("target_component_id"),
+                "disposition": payload.get("disposition"),
+            }
+        )
+    elif record.record_type == "state_transition":
+        transition = payload["transition"]
+        projected.update(
+            {
+                "component_id": transition["component_id"],
+                "status": transition["status"],
+                "transition_kind": transition["transition_kind"],
+                "trigger_ids": transition["trigger_ids"],
+            }
+        )
+    elif record.record_type == "state_trigger_scheduled":
+        projected.update(
+            {
+                "rule_id": payload["rule_id"],
+                "transition_id": payload["transition_id"],
+                "trigger_id": payload["trigger"]["trigger_id"],
+            }
+        )
+    elif record.record_type == "action_receipt":
+        receipt = payload["receipt"]
+        projected.update(
+            {
+                "command_id": receipt["command_id"],
+                "actuator_id": receipt["actuator_id"],
+                "status": receipt["status"],
+            }
+        )
     else:
         projected["payload_keys"] = sorted(payload)
     return projected
@@ -271,6 +343,36 @@ def _semantic_projection(record: EvidenceRecord) -> Any:
                 "parameters": command["parameters"],
             }
         )
+    elif record.record_type == "outcome_received":
+        outcome = payload["outcome"]
+        trace.update(
+            {
+                "value": outcome["value"],
+                "permitted_uses": outcome["permitted_uses"],
+            }
+        )
+    elif record.record_type in {"outcome_use", "adaptation_eligibility"}:
+        trace.update(
+            {
+                "eligible": payload.get("eligible"),
+                "applied": payload.get(
+                    "applied", payload.get("adaptation_applied")
+                ),
+                "use": payload.get("use"),
+                "reason_code": payload.get("reason_code"),
+            }
+        )
+    elif record.record_type == "state_transition":
+        transition = payload["transition"]
+        trace.update(
+            {
+                "prior_state_hash": transition["prior_state_hash"],
+                "resulting_state_hash": transition["resulting_state_hash"],
+            }
+        )
+    elif record.record_type == "action_receipt":
+        receipt = payload["receipt"]
+        trace["details"] = receipt.get("details", {})
     return trace
 
 

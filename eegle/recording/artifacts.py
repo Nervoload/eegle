@@ -488,6 +488,35 @@ class ArtifactStore:
         self._register(namespace, reference, lineage)
         return reference
 
+    def register_external_file(
+        self,
+        namespace: str,
+        artifact_id: str,
+        role: str,
+        source: str | Path,
+        media_type: str,
+        *,
+        sensitivity: Sensitivity = Sensitivity.RESTRICTED,
+        lineage: ArtifactLineage | None = None,
+    ) -> ArtifactReference:
+        """Hash and reference a local source-native file without copying it."""
+
+        path = Path(source).expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        digest, size = _hash_file(path)
+        return self.register_external(
+            namespace,
+            artifact_id,
+            role,
+            path.as_uri(),
+            digest,
+            media_type,
+            size,
+            sensitivity=sensitivity,
+            lineage=lineage,
+        )
+
     def get(self, namespace: str, artifact_id: str) -> ArtifactEntry:
         key = f"{_namespace(namespace)}:{require_identifier(artifact_id, 'artifact_id')}"
         for entry in self._manifest.entries:
@@ -503,7 +532,10 @@ class ArtifactStore:
 
     def verify(self, reference: ArtifactReference) -> tuple[bool, str | None]:
         if not reference.embedded:
-            return True, None
+            return False, (
+                f"external artifact content was not verified: {reference.artifact_id}; "
+                "use an ExternalArtifactVerifier"
+            )
         path = self.resolve(reference)
         if not path.is_file():
             return False, f"artifact missing: {reference.artifact_id} at {reference.uri}"

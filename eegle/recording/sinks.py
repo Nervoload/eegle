@@ -22,6 +22,18 @@ class InMemoryEvidenceSink:
             raise ValueError("the first evidence sequence must be zero")
         self._records.append(record)
 
+    def restore_prefix(self, records: tuple[EvidenceRecord, ...]) -> None:
+        """Seed a verified immutable prefix before resumed appends."""
+
+        if self._records:
+            raise ValueError("cannot restore an evidence prefix into a non-empty sink")
+        for expected, record in enumerate(records):
+            if not isinstance(record, EvidenceRecord):
+                raise TypeError("evidence prefix requires EvidenceRecord values")
+            if record.sequence != expected:
+                raise ValueError("evidence prefix sequences must be contiguous from zero")
+        self._records.extend(records)
+
     @property
     def records(self) -> tuple[EvidenceRecord, ...]:
         return tuple(self._records)

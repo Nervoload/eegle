@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import heapq
 from typing import Any, Mapping
@@ -16,20 +16,32 @@ from eegle._domain import (
 from eegle._validation import require_finite, require_identifier, thaw_json
 from eegle.compiler.lock import canonical_hash
 from eegle.compiler.plan import ExecutionPlan
+from eegle.actions.receipts import ActionReceipt
 from eegle.models.predictions import Prediction
 from eegle.models.roles import ModelRole, ModelRoleKind
 from eegle.processing.quality import QualityStatus
 from eegle.processing.windows import DenseWindow
 from eegle.recording.evidence import EvidenceRecord
 from eegle.recording.sinks import InMemoryEvidenceSink
+from eegle.runtime.checkpoints import EngineCheckpoint
 from eegle.runtime.context import DeterministicIdSource, RuntimeExecutionContext
+from eegle.runtime.outcomes import (
+    Outcome,
+    OutcomeRoutingPolicy,
+    OutcomeUse,
+    PendingPredictionOverflow,
+)
 from eegle.runtime.scheduling import (
     BackpressurePolicy,
     LatenessPolicy,
     ProcessBoundary,
+    ScheduledTrigger,
     SchedulingPolicy,
+    StateTriggerRule,
+    TriggerDisposition,
+    TriggerResult,
 )
-from eegle.runtime.state import WorkRecord
+from eegle.runtime.state import StateTransition, WorkRecord
 from eegle.streams.clocks import TimePoint
 from eegle.streams.packets import DenseSampleBatch, MetadataEvent, Packet, SparseEventBatch
 from eegle.streams.synthetic import packet_available_time
@@ -43,6 +55,10 @@ class EngineStatus(str, Enum):
 
 
 class EngineExecutionError(RuntimeError):
+    pass
+
+
+class EngineCheckpointError(EngineExecutionError):
     pass
 
 
@@ -96,12 +112,23 @@ class ModelBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class TriggerBinding:
+    component: ComponentBinding
+
+    def __post_init__(self) -> None:
+        if not callable(getattr(self.component.component, "handle_trigger", None)):
+            raise TypeError("trigger binding component must implement handle_trigger")
+
+
+@dataclass(frozen=True, slots=True)
 class EngineComponents:
     transform: ComponentBinding
     window: ComponentBinding
     quality: ComponentBinding
     models: tuple[ModelBinding, ...]
     policy: ComponentBinding
+    trigger_handlers: tuple[TriggerBinding, ...] = ()
+    actuator: ComponentBinding | None = None
 
     def __post_init__(self) -> None:
         required = (
@@ -121,6 +148,15 @@ class EngineComponents:
         role_ids = tuple(value.role.role_id for value in self.models)
         if len(role_ids) != len(set(role_ids)):
             raise ValueError("engine model role identities must be unique")
+        trigger_ids = tuple(
+            value.component.component_id for value in self.trigger_handlers
+        )
+        if len(trigger_ids) != len(set(trigger_ids)):
+            raise ValueError("engine trigger handler identities must be unique")
+        if self.actuator is not None and not callable(
+            getattr(self.actuator.component, "submit", None)
+        ):
+            raise TypeError("actuator binding component must implement submit")
 
     @property
     def scheduled_models(self) -> tuple[ModelBinding, ...]:
@@ -153,13 +189,33 @@ class EngineRunResult:
     predictions: tuple[Prediction, ...]
     equivalence_ceiling: EquivalenceLevel
     failure: str | None = None
+    checkpoint: EngineCheckpoint | None = None
 
 
 @dataclass(order=True, slots=True)
 class _QueuedPacket:
     sort_key: tuple[Any, ...]
-    source_id: str
-    packet: Packet
+    source_id: str = field(compare=False)
+    packet: Packet = field(compare=False)
+
+
+@dataclass(order=True, slots=True)
+class _QueuedOutcome:
+    sort_key: tuple[Any, ...]
+    outcome: Outcome = field(compare=False)
+
+
+@dataclass(order=True, slots=True)
+class _QueuedTrigger:
+    sort_key: tuple[Any, ...]
+    trigger: ScheduledTrigger = field(compare=False)
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingPrediction:
+    prediction: Prediction
+    registered_time: TimePoint
+    expires_time: TimePoint
 
 
 class ExecutionEngine:
@@ -180,6 +236,10 @@ class ExecutionEngine:
         execution_id: str = "execution.1",
         evidence_sink: Any | None = None,
         clock_mapping_revisions: Mapping[str, int] | None = None,
+        outcomes: tuple[Outcome, ...] = (),
+        outcome_policy: OutcomeRoutingPolicy | None = None,
+        scheduled_triggers: tuple[ScheduledTrigger, ...] = (),
+        state_triggers: tuple[StateTriggerRule, ...] = (),
     ) -> None:
         self.plan = plan
         self.sources = sources
@@ -205,30 +265,291 @@ class ExecutionEngine:
         self._evidence_sequence = 0
         self._evidence_records: list[EvidenceRecord] = []
         self._queue: list[_QueuedPacket] = []
+        self._outcome_queue: list[_QueuedOutcome] = []
+        self._trigger_queue: list[_QueuedTrigger] = []
         self._captured: list[Packet] = []
         self._work: list[WorkRecord] = []
         self._predictions: list[Prediction] = []
+        self._pending_predictions: dict[str, _PendingPrediction] = {}
+        self._processed_outcome_ids: set[str] = set()
+        self._invalid_outcomes: list[tuple[str, str]] = []
+        self.outcome_policy = outcome_policy or OutcomeRoutingPolicy()
+        self.state_triggers = tuple(sorted(state_triggers, key=lambda value: value.rule_id))
+        self._fired_state_trigger_rules: set[str] = set()
+        self._cancelled_trigger_ids: set[str] = set()
+        self._known_trigger_ids: set[str] = set()
         self._cancel_requested = False
         self._last_dispatched_seconds: float | None = None
         self._current_time = TimePoint(0.0, scheduling.execution_clock_id)
+        self._semantic_items = 0
+        self._checkpoint: EngineCheckpoint | None = None
+        self._restored_from: str | None = None
+        self._pending_predictions_finalized = False
         self._has_run = False
+        for outcome in outcomes:
+            self._enqueue_outcome(outcome)
+        for trigger in scheduled_triggers:
+            self._enqueue_trigger(trigger)
+        self._validate_trigger_configuration()
 
     def cancel(self) -> None:
         self._cancel_requested = True
 
-    def run(self) -> EngineRunResult:
+    def cancel_trigger(self, trigger_id: str) -> None:
+        self._cancelled_trigger_ids.add(require_identifier(trigger_id, "trigger_id"))
+
+    def restore_checkpoint(self, checkpoint: EngineCheckpoint) -> None:
+        """Restore a verified checkpoint into this fresh engine and its components."""
+
+        if self._has_run or self._evidence_records:
+            raise EngineCheckpointError("checkpoint restoration requires a fresh engine")
+        if not isinstance(checkpoint, EngineCheckpoint):
+            raise TypeError("checkpoint must be an EngineCheckpoint")
+        try:
+            verified = EngineCheckpoint.from_payload(checkpoint.to_payload())
+        except Exception as exc:
+            raise EngineCheckpointError(f"checkpoint integrity validation failed: {exc}") from exc
+        if verified.execution_id != self.execution_id:
+            raise EngineCheckpointError("checkpoint execution_id mismatch")
+        if verified.plan_hash != self.plan.plan_hash:
+            raise EngineCheckpointError("checkpoint plan mismatch")
+        state = thaw_json(verified.state)
+        if state.get("run_status") != EngineStatus.PARTIAL.value:
+            raise EngineCheckpointError("checkpoint does not represent a partial run")
+        if state.get("scheduling") != self._scheduling_payload():
+            raise EngineCheckpointError("checkpoint scheduling policy mismatch")
+        if state.get("clock_mapping_revisions") != self.clock_mapping_revisions:
+            raise EngineCheckpointError("checkpoint clock-mapping revisions mismatch")
+        expected_bindings = self._binding_signatures()
+        if state.get("bindings") != expected_bindings:
+            raise EngineCheckpointError("checkpoint component identity or version mismatch")
+        if state.get("outcome_policy") != self._outcome_policy_payload():
+            raise EngineCheckpointError("checkpoint outcome routing policy mismatch")
+        if state.get("state_triggers") != self._state_trigger_payloads():
+            raise EngineCheckpointError("checkpoint state-trigger configuration mismatch")
+        prefix = tuple(
+            EvidenceRecord.from_payload(value)
+            for value in state.get("evidence_prefix", ())
+        )
+        if canonical_hash([value.to_payload() for value in prefix]) != (
+            verified.evidence_prefix_digest
+        ):
+            raise EngineCheckpointError("checkpoint evidence prefix digest mismatch")
+        evidence_sequence = int(state["evidence_sequence"])
+        if evidence_sequence != len(prefix):
+            raise EngineCheckpointError("checkpoint evidence frontier mismatch")
+        component_states = {
+            str(value["component_id"]): value
+            for value in state.get("component_states", ())
+        }
+        for binding in self._all_bindings():
+            snapshot = getattr(binding.component, "snapshot_state", None)
+            restore = getattr(binding.component, "restore_state", None)
+            stateful = callable(snapshot) or callable(restore)
+            stored = component_states.get(binding.component_id)
+            if not stateful:
+                if stored is not None:
+                    raise EngineCheckpointError(
+                        f"stateless component {binding.component_id} has checkpoint state"
+                    )
+                continue
+            if not callable(snapshot) or not callable(restore) or stored is None:
+                raise EngineCheckpointError(
+                    f"component {binding.component_id} cannot restore checkpoint state"
+                )
+            component_state = dict(stored["state"])
+            if canonical_hash(component_state) != stored.get("state_hash"):
+                raise EngineCheckpointError(
+                    f"component {binding.component_id} checkpoint state hash mismatch"
+                )
+            try:
+                restore(component_state)
+            except Exception as exc:
+                raise EngineCheckpointError(
+                    f"component {binding.component_id} restore failed: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
+        if set(component_states) != {
+            binding.component_id
+            for binding in self._all_bindings()
+            if callable(getattr(binding.component, "snapshot_state", None))
+            or callable(getattr(binding.component, "restore_state", None))
+        }:
+            raise EngineCheckpointError("checkpoint component-state set mismatch")
+        self._ids.restore_state(dict(state["id_state"]))
+        self._current_time = TimePoint.from_payload(state["current_time"])
+        last_dispatched = state.get("last_dispatched_seconds")
+        self._last_dispatched_seconds = (
+            None if last_dispatched is None else float(last_dispatched)
+        )
+        self._evidence_sequence = evidence_sequence
+        self._evidence_records = list(prefix)
+        restore_prefix = getattr(self.evidence_sink, "restore_prefix", None)
+        if prefix and not callable(restore_prefix):
+            raise EngineCheckpointError(
+                "evidence sink cannot restore a verified checkpoint prefix"
+            )
+        if callable(restore_prefix):
+            try:
+                restore_prefix(prefix)
+            except Exception as exc:
+                raise EngineCheckpointError(
+                    f"evidence sink prefix restore failed: {type(exc).__name__}: {exc}"
+                ) from exc
+        self._captured = [
+            _packet_from_payload(value) for value in state.get("captured_packets", ())
+        ]
+        self._work = [WorkRecord.from_payload(value) for value in state.get("work", ())]
+        self._predictions = [
+            Prediction.from_payload(value) for value in state.get("predictions", ())
+        ]
+        self._queue = []
+        for value in state.get("packet_queue", ()):
+            packet = _packet_from_payload(value["packet"])
+            source_id = str(value["source_id"])
+            source_binding = next(
+                (
+                    candidate
+                    for candidate in self.sources
+                    if candidate.component.component_id == source_id
+                ),
+                None,
+            )
+            if source_binding is None:
+                raise EngineCheckpointError(
+                    f"checkpoint source {source_id} is absent from the engine"
+                )
+            self._validate_packet_source(
+                source_binding, packet, packet_available_time(packet)
+            )
+            queued = _QueuedPacket(tuple(value["sort_key"]), source_id, packet)
+            self._queue.append(queued)
+        heapq.heapify(self._queue)
+        self._outcome_queue = [
+            _QueuedOutcome(tuple(value["sort_key"]), Outcome.from_payload(value["outcome"]))
+            for value in state.get("outcome_queue", ())
+        ]
+        heapq.heapify(self._outcome_queue)
+        self._trigger_queue = [
+            _QueuedTrigger(
+                tuple(value["sort_key"]),
+                ScheduledTrigger.from_payload(value["trigger"]),
+            )
+            for value in state.get("trigger_queue", ())
+        ]
+        heapq.heapify(self._trigger_queue)
+        self._pending_predictions = {}
+        for value in state.get("pending_predictions", ()):
+            pending = _PendingPrediction(
+                prediction=Prediction.from_payload(value["prediction"]),
+                registered_time=TimePoint.from_payload(value["registered_time"]),
+                expires_time=TimePoint.from_payload(value["expires_time"]),
+            )
+            self._pending_predictions[pending.prediction.prediction_id] = pending
+        if len(self._pending_predictions) > self.outcome_policy.max_pending_predictions:
+            raise EngineCheckpointError("checkpoint pending-prediction bound exceeded")
+        self._invalid_outcomes = [
+            (str(value[0]), str(value[1]))
+            for value in state.get("invalid_outcomes", ())
+        ]
+        self._processed_outcome_ids = set(
+            str(value) for value in state.get("processed_outcome_ids", ())
+        )
+        self._cancelled_trigger_ids = set(
+            str(value) for value in state.get("cancelled_trigger_ids", ())
+        )
+        self._known_trigger_ids = set(
+            str(value) for value in state.get("known_trigger_ids", ())
+        )
+        self._fired_state_trigger_rules = set(
+            str(value) for value in state.get("fired_state_trigger_rules", ())
+        )
+        self._semantic_items = int(state["semantic_items"])
+        self._cancel_requested = bool(state.get("cancel_requested", False))
+        self._pending_predictions_finalized = False
+        self._checkpoint = None
+        self._restored_from = verified.checkpoint_id
+        self._validate_trigger_configuration()
+
+    def _binding_signatures(self) -> list[dict[str, Any]]:
+        planned = {value.component_id: value for value in self.plan.components}
+        signatures: list[dict[str, Any]] = []
+        for binding in self._all_bindings():
+            component = planned[binding.component_id]
+            signatures.append(
+                {
+                    "component_id": binding.component_id,
+                    "component_version": binding.component_version,
+                    "plugin_id": component.plugin_id,
+                    "placement": binding.boundary.placement.value,
+                    "endpoint_id": binding.boundary.endpoint_id,
+                    "stateful": bool(
+                        callable(getattr(binding.component, "snapshot_state", None))
+                        or callable(getattr(binding.component, "restore_state", None))
+                    ),
+                }
+            )
+        return signatures
+
+    def _outcome_policy_payload(self) -> dict[str, Any]:
+        return {
+            "max_pending_predictions": self.outcome_policy.max_pending_predictions,
+            "prediction_ttl_seconds": self.outcome_policy.prediction_ttl_seconds,
+            "overflow": self.outcome_policy.overflow.value,
+            "allowed_uses": sorted(
+                value.value for value in self.outcome_policy.allowed_uses
+            ),
+        }
+
+    def _scheduling_payload(self) -> dict[str, Any]:
+        return {
+            "execution_clock_id": self.scheduling.execution_clock_id,
+            "max_pending_packets": self.scheduling.max_pending_packets,
+            "allowed_lateness_seconds": self.scheduling.allowed_lateness_seconds,
+            "backpressure": self.scheduling.backpressure.value,
+            "lateness": self.scheduling.lateness.value,
+            "max_idle_cycles": self.scheduling.max_idle_cycles,
+            "shadow_queue_limit": self.scheduling.shadow_queue_limit,
+            "fail_fast": self.scheduling.fail_fast,
+        }
+
+    def _state_trigger_payloads(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "rule_id": rule.rule_id,
+                "target_component_id": rule.target_component_id,
+                "transition_kind": rule.transition_kind,
+                "source_component_id": rule.source_component_id,
+                "statuses": sorted(value.value for value in rule.statuses),
+                "delay_seconds": rule.delay_seconds,
+                "payload": thaw_json(rule.payload),
+                "once": rule.once,
+            }
+            for rule in self.state_triggers
+        ]
+
+    def run(
+        self, *, checkpoint_after_semantic_items: int | None = None
+    ) -> EngineRunResult:
         if self._has_run:
             raise RuntimeError("ExecutionEngine instances are single-use")
+        checkpoint_target: int | None = None
+        if checkpoint_after_semantic_items is not None:
+            requested = int(checkpoint_after_semantic_items)
+            if requested <= 0:
+                raise ValueError("checkpoint_after_semantic_items must be positive")
+            checkpoint_target = self._semantic_items + requested
         self._has_run = True
         status = EngineStatus.COMPLETE
         failure: str | None = None
         idle_cycles = 0
         self._emit(
-            "run_started",
+            "run_resumed" if self._restored_from is not None else "run_started",
             {
                 "execution_id": self.execution_id,
                 "plan_hash": self.plan.plan_hash,
                 "execution_mode": self.plan.execution_mode.value,
+                "checkpoint_id": self._restored_from,
             },
         )
         try:
@@ -238,11 +559,36 @@ class ExecutionEngine:
                     status = EngineStatus.CANCELLED
                     self._cancel_pending()
                     break
-                polled = self._poll_sources()
-                dispatched = self._dispatch_eligible()
-                if self._all_sources_exhausted() and not self._queue:
+                if (
+                    checkpoint_target is not None
+                    and self._semantic_items >= checkpoint_target
+                ):
+                    self._checkpoint = self._create_checkpoint()
+                    self._emit(
+                        "engine_checkpoint_created",
+                        {
+                            "checkpoint_id": self._checkpoint.checkpoint_id,
+                            "checkpoint_hash": self._checkpoint.checkpoint_hash,
+                            "evidence_prefix_digest": (
+                                self._checkpoint.evidence_prefix_digest
+                            ),
+                            "semantic_items": self._semantic_items,
+                        },
+                    )
+                    status = EngineStatus.PARTIAL
                     break
-                if polled or dispatched:
+                invalid_outcome = self._dispatch_invalid_outcome()
+                polled = self._poll_sources()
+                dispatched = self._dispatch_eligible(checkpoint_target)
+                if (
+                    self._all_sources_exhausted()
+                    and not self._queue
+                    and not self._outcome_queue
+                    and not self._trigger_queue
+                    and not self._invalid_outcomes
+                ):
+                    break
+                if invalid_outcome or polled or dispatched:
                     idle_cycles = 0
                     continue
                 idle_cycles += 1
@@ -257,6 +603,8 @@ class ExecutionEngine:
             self._cancel_pending(reason_code="run_failed")
         finally:
             finalization_failures: list[str] = []
+            if self._checkpoint is None:
+                self._finalize_pending_predictions(status)
             finalization_failures.extend(self._emit_state_snapshots())
             finalization_failures.extend(self._stop_components())
             for source in self.sources:
@@ -281,6 +629,9 @@ class ExecutionEngine:
                     "captured_packet_count": len(self._captured),
                     "prediction_count": len(self._predictions),
                     "work_count": len(self._work),
+                    "checkpoint_id": None
+                    if self._checkpoint is None
+                    else self._checkpoint.checkpoint_id,
                 },
             )
         return EngineRunResult(
@@ -293,6 +644,7 @@ class ExecutionEngine:
             predictions=tuple(self._predictions),
             equivalence_ceiling=_weakest_equivalence(self._all_bindings()),
             failure=failure,
+            checkpoint=self._checkpoint,
         )
 
     def _validate_plan_bindings(self) -> None:
@@ -307,6 +659,15 @@ class ExecutionEngine:
             (self.components.quality, ComponentKind.QUALITY),
             *((model.component, ComponentKind.MODEL) for model in self.components.models),
             (self.components.policy, ComponentKind.POLICY),
+            *(
+                (handler.component, ComponentKind.ADAPTER)
+                for handler in self.components.trigger_handlers
+            ),
+            *(
+                ()
+                if self.components.actuator is None
+                else ((self.components.actuator, ComponentKind.ACTUATOR),)
+            ),
         ]
         bound_ids = tuple(binding.component_id for binding, _ in expected)
         if len(bound_ids) != len(set(bound_ids)):
@@ -320,6 +681,21 @@ class ExecutionEngine:
             if locked[(component.plugin_id, component.plugin_version)] != kind:
                 raise ValueError(
                     f"runtime component {binding.component_id} kind differs from locked plan"
+                )
+
+    def _validate_trigger_configuration(self) -> None:
+        handler_ids = {
+            value.component.component_id for value in self.components.trigger_handlers
+        }
+        for queued in self._trigger_queue:
+            if queued.trigger.target_component_id not in handler_ids:
+                raise ValueError(
+                    f"trigger target {queued.trigger.target_component_id} has no handler"
+                )
+        for rule in self.state_triggers:
+            if rule.target_component_id not in handler_ids:
+                raise ValueError(
+                    f"state trigger target {rule.target_component_id} has no handler"
                 )
 
     def _poll_sources(self) -> bool:
@@ -349,6 +725,75 @@ class ExecutionEngine:
             progressed = True
             self._admit(source_binding, packet)
         return progressed
+
+    def _enqueue_outcome(self, outcome: Outcome) -> None:
+        if not isinstance(outcome, Outcome):
+            self._invalid_outcomes.append(
+                (f"malformed_outcome.{len(self._invalid_outcomes) + 1}", "malformed_outcome")
+            )
+            return
+        if outcome.available_time.clock_id != self.scheduling.execution_clock_id:
+            self._invalid_outcomes.append(
+                (outcome.outcome_id, "availability_clock_mismatch")
+            )
+            return
+        heapq.heappush(
+            self._outcome_queue,
+            _QueuedOutcome(
+                (
+                    outcome.available_time.seconds,
+                    outcome.source_id,
+                    outcome.outcome_id,
+                ),
+                outcome,
+            ),
+        )
+
+    def _enqueue_trigger(self, trigger: ScheduledTrigger) -> None:
+        if not isinstance(trigger, ScheduledTrigger):
+            raise TypeError("scheduled trigger inputs must be ScheduledTrigger records")
+        if trigger.scheduled_time.clock_id != self.scheduling.execution_clock_id:
+            raise ValueError("trigger scheduled_time must use the execution clock")
+        if (
+            self._has_run
+            and trigger.scheduled_time.seconds < self._current_time.seconds
+        ):
+            raise ValueError("trigger cannot be scheduled before the current frontier")
+        if trigger.trigger_id in self._known_trigger_ids:
+            raise ValueError(f"duplicate trigger identity: {trigger.trigger_id}")
+        self._known_trigger_ids.add(trigger.trigger_id)
+        heapq.heappush(
+            self._trigger_queue,
+            _QueuedTrigger(
+                (
+                    trigger.scheduled_time.seconds,
+                    trigger.target_component_id,
+                    trigger.trigger_id,
+                ),
+                trigger,
+            ),
+        )
+
+    def _dispatch_invalid_outcome(self) -> bool:
+        if not self._invalid_outcomes:
+            return False
+        outcome_id, reason = self._invalid_outcomes.pop(0)
+        self._processed_outcome_ids.add(outcome_id)
+        self._emit(
+            "outcome_rejected",
+            {"outcome_id": outcome_id, "reason_code": reason},
+        )
+        self._record_work(
+            component_id="engine.outcomes",
+            stage="outcome",
+            status=WorkStatus.REJECTED,
+            started=self._current_time,
+            completed=self._current_time,
+            input_ids=(outcome_id,),
+            reason_code=reason,
+        )
+        self._semantic_items += 1
+        return True
 
     def _admit(self, source_binding: SourceBinding, packet: Packet) -> None:
         available = packet_available_time(packet)
@@ -392,7 +837,6 @@ class ExecutionEngine:
         )
         heapq.heappush(self._queue, queued)
         self._captured.append(packet)
-        self._current_time = available
         self._emit(
             "input_admitted",
             {
@@ -403,19 +847,452 @@ class ExecutionEngine:
             emitted_time=available,
         )
 
-    def _dispatch_eligible(self) -> bool:
+    def _dispatch_eligible(self, checkpoint_target: int | None = None) -> bool:
         dispatched = False
-        while self._queue:
+        while self._queue or self._outcome_queue or self._trigger_queue:
             watermark = self._global_watermark()
-            if self._queue[0].sort_key[0] > watermark:
+            candidates: list[tuple[tuple[Any, ...], str]] = []
+            if self._queue and self._queue[0].sort_key[0] <= watermark:
+                packet = self._queue[0]
+                candidates.append(
+                    ((packet.sort_key[0], 0, *packet.sort_key[1:]), "packet")
+                )
+            if self._outcome_queue and self._outcome_queue[0].sort_key[0] <= watermark:
+                outcome = self._outcome_queue[0]
+                candidates.append(
+                    ((outcome.sort_key[0], 1, *outcome.sort_key[1:]), "outcome")
+                )
+            if self._trigger_queue and self._trigger_queue[0].sort_key[0] <= watermark:
+                trigger = self._trigger_queue[0]
+                candidates.append(
+                    ((trigger.sort_key[0], 2, *trigger.sort_key[1:]), "trigger")
+                )
+            if not candidates:
                 break
-            queued = heapq.heappop(self._queue)
-            available = packet_available_time(queued.packet)
-            self._last_dispatched_seconds = available.seconds
-            self._current_time = available
-            self._process_packet(queued.packet, queue_depth=len(self._queue))
+            sort_key, kind = min(candidates, key=lambda value: value[0])
+            available = TimePoint(float(sort_key[0]), self.scheduling.execution_clock_id)
+            dispatch_time = available
+            if kind == "trigger" and watermark != float("inf"):
+                dispatch_time = TimePoint(
+                    max(available.seconds, watermark), available.clock_id
+                )
+            self._expire_predictions_before(dispatch_time)
+            self._last_dispatched_seconds = dispatch_time.seconds
+            self._current_time = dispatch_time
+            if kind == "packet":
+                queued_packet = heapq.heappop(self._queue)
+                self._process_packet(
+                    queued_packet.packet, queue_depth=len(self._queue)
+                )
+            elif kind == "outcome":
+                queued_outcome = heapq.heappop(self._outcome_queue)
+                self._process_outcome(queued_outcome.outcome)
+            else:
+                queued_trigger = heapq.heappop(self._trigger_queue)
+                self._process_trigger(queued_trigger.trigger)
+            self._semantic_items += 1
             dispatched = True
+            if (
+                checkpoint_target is not None
+                and self._semantic_items >= checkpoint_target
+            ):
+                break
         return dispatched
+
+    def _register_prediction(self, prediction: Prediction) -> None:
+        self._expire_predictions_before(prediction.available_time)
+        pending = _PendingPrediction(
+            prediction=prediction,
+            registered_time=prediction.available_time,
+            expires_time=TimePoint(
+                prediction.available_time.seconds
+                + self.outcome_policy.prediction_ttl_seconds,
+                prediction.available_time.clock_id,
+            ),
+        )
+        if len(self._pending_predictions) >= self.outcome_policy.max_pending_predictions:
+            if self.outcome_policy.overflow == PendingPredictionOverflow.REJECT_NEWEST:
+                self._record_prediction_disposition(
+                    pending,
+                    status=WorkStatus.REJECTED,
+                    reason_code="pending_prediction_overflow",
+                    record_type="prediction_overflowed",
+                )
+                return
+            oldest = min(
+                self._pending_predictions.values(),
+                key=lambda value: (
+                    value.registered_time.seconds,
+                    value.prediction.prediction_id,
+                ),
+            )
+            self._pending_predictions.pop(oldest.prediction.prediction_id)
+            self._record_prediction_disposition(
+                oldest,
+                status=WorkStatus.REJECTED,
+                reason_code="pending_prediction_overflow",
+                record_type="prediction_overflowed",
+            )
+        self._pending_predictions[prediction.prediction_id] = pending
+        self._emit(
+            "prediction_pending",
+            {
+                "prediction_id": prediction.prediction_id,
+                "registered_time": pending.registered_time.to_payload(),
+                "expires_time": pending.expires_time.to_payload(),
+                "pending_count": len(self._pending_predictions),
+            },
+            emitted_time=prediction.available_time,
+        )
+
+    def _expire_predictions_before(self, current_time: TimePoint) -> None:
+        expired = sorted(
+            (
+                value
+                for value in self._pending_predictions.values()
+                if value.expires_time.seconds < current_time.seconds
+            ),
+            key=lambda value: (
+                value.expires_time.seconds,
+                value.prediction.prediction_id,
+            ),
+        )
+        for pending in expired:
+            self._pending_predictions.pop(pending.prediction.prediction_id, None)
+            self._record_prediction_disposition(
+                pending,
+                status=WorkStatus.REJECTED,
+                reason_code="outcome_expired",
+                record_type="prediction_expired",
+                completed_time=current_time,
+            )
+
+    def _record_prediction_disposition(
+        self,
+        pending: _PendingPrediction,
+        *,
+        status: WorkStatus,
+        reason_code: str,
+        record_type: str,
+        completed_time: TimePoint | None = None,
+        outcome_id: str | None = None,
+    ) -> None:
+        completed = completed_time or self._current_time
+        payload = {
+            "prediction_id": pending.prediction.prediction_id,
+            "registered_time": pending.registered_time.to_payload(),
+            "expires_time": pending.expires_time.to_payload(),
+            "reason_code": reason_code,
+            "outcome_id": outcome_id,
+            "pending_count": len(self._pending_predictions),
+        }
+        self._emit(record_type, payload, emitted_time=completed)
+        self._record_work(
+            component_id="engine.outcomes",
+            stage="pending_prediction",
+            status=status,
+            started=pending.registered_time,
+            completed=completed,
+            input_ids=(pending.prediction.prediction_id,),
+            role=pending.prediction.role,
+            reason_code=reason_code,
+            details={
+                "outcome_id": outcome_id,
+                "expires_time": pending.expires_time.to_payload(),
+            },
+        )
+
+    def _process_outcome(self, outcome: Outcome) -> None:
+        available = outcome.available_time
+        self._emit(
+            "outcome_received",
+            {"outcome": outcome.to_payload()},
+            emitted_time=available,
+        )
+        if outcome.outcome_id in self._processed_outcome_ids:
+            self._emit(
+                "outcome_duplicate",
+                {"outcome_id": outcome.outcome_id, "reason_code": "duplicate_outcome"},
+                emitted_time=available,
+            )
+            self._record_work(
+                component_id="engine.outcomes",
+                stage="outcome",
+                status=WorkStatus.REJECTED,
+                started=available,
+                completed=available,
+                input_ids=(outcome.outcome_id,),
+                reason_code="duplicate_outcome",
+            )
+            return
+        self._processed_outcome_ids.add(outcome.outcome_id)
+        if not outcome.prediction_ids:
+            self._emit(
+                "outcome_rejected",
+                {
+                    "outcome_id": outcome.outcome_id,
+                    "reason_code": "missing_prediction_identity",
+                },
+                emitted_time=available,
+            )
+            self._record_work(
+                component_id="engine.outcomes",
+                stage="outcome",
+                status=WorkStatus.REJECTED,
+                started=available,
+                completed=available,
+                input_ids=(outcome.outcome_id,),
+                reason_code="missing_prediction_identity",
+            )
+            return
+        matched: list[_PendingPrediction] = []
+        unmatched: list[str] = []
+        for prediction_id in outcome.prediction_ids:
+            pending = self._pending_predictions.pop(prediction_id, None)
+            if pending is None:
+                unmatched.append(prediction_id)
+            else:
+                matched.append(pending)
+        if matched:
+            matched_ids = tuple(value.prediction.prediction_id for value in matched)
+            self._emit(
+                "outcome_matched",
+                {
+                    "outcome_id": outcome.outcome_id,
+                    "prediction_ids": list(matched_ids),
+                    "unmatched_prediction_ids": unmatched,
+                    "available_time": available.to_payload(),
+                },
+                emitted_time=available,
+            )
+            for pending in matched:
+                self._record_prediction_disposition(
+                    pending,
+                    status=WorkStatus.COMPLETED,
+                    reason_code="outcome_matched",
+                    record_type="prediction_matched",
+                    completed_time=available,
+                    outcome_id=outcome.outcome_id,
+                )
+            for use in sorted(outcome.permitted_uses, key=lambda value: value.value):
+                allowed = use in self.outcome_policy.allowed_uses
+                self._emit(
+                    "outcome_use",
+                    {
+                        "outcome_id": outcome.outcome_id,
+                        "prediction_ids": list(matched_ids),
+                        "use": use.value,
+                        "eligible": allowed,
+                        "applied": False,
+                        "reason_code": "eligible"
+                        if allowed
+                        else "disallowed_outcome_use",
+                    },
+                    emitted_time=available,
+                )
+                if not allowed:
+                    self._record_work(
+                        component_id="engine.outcomes",
+                        stage="outcome_use",
+                        status=WorkStatus.SKIPPED,
+                        started=available,
+                        completed=available,
+                        input_ids=(outcome.outcome_id, *matched_ids),
+                        reason_code="disallowed_outcome_use",
+                        details={"use": use.value},
+                    )
+            adaptation_eligible = bool(
+                OutcomeUse.ADAPTATION in outcome.permitted_uses
+                and OutcomeUse.ADAPTATION in self.outcome_policy.allowed_uses
+            )
+            self._emit(
+                "adaptation_eligibility",
+                {
+                    "outcome_id": outcome.outcome_id,
+                    "prediction_ids": list(matched_ids),
+                    "eligible": adaptation_eligible,
+                    "adaptation_applied": False,
+                    "reason_code": "observe_only"
+                    if adaptation_eligible
+                    else "not_permitted",
+                },
+                emitted_time=available,
+            )
+        if unmatched:
+            self._emit(
+                "outcome_unmatched",
+                {
+                    "outcome_id": outcome.outcome_id,
+                    "prediction_ids": unmatched,
+                    "reason_code": "prediction_not_pending",
+                },
+                emitted_time=available,
+            )
+        self._record_work(
+            component_id="engine.outcomes",
+            stage="outcome",
+            status=WorkStatus.COMPLETED if matched else WorkStatus.REJECTED,
+            started=available,
+            completed=available,
+            input_ids=(outcome.outcome_id, *outcome.prediction_ids),
+            reason_code=None
+            if matched and not unmatched
+            else "partial_outcome_match"
+            if matched
+            else "unmatched_outcome",
+            details={
+                "matched_prediction_ids": [
+                    value.prediction.prediction_id for value in matched
+                ],
+                "unmatched_prediction_ids": unmatched,
+            },
+        )
+
+    def _process_trigger(self, trigger: ScheduledTrigger) -> None:
+        binding = next(
+            value.component
+            for value in self.components.trigger_handlers
+            if value.component.component_id == trigger.target_component_id
+        )
+        if trigger.trigger_id in self._cancelled_trigger_ids:
+            self._emit(
+                "trigger_cancelled",
+                {"trigger": trigger.to_payload(), "reason_code": "cancelled"},
+                emitted_time=self._current_time,
+            )
+            self._record_work(
+                component=binding,
+                stage="trigger",
+                status=WorkStatus.CANCELLED,
+                started=trigger.scheduled_time,
+                completed=self._current_time,
+                input_ids=(trigger.trigger_id,),
+                reason_code="cancelled",
+            )
+            return
+        if (
+            trigger.deadline_time is not None
+            and self._current_time.seconds > trigger.deadline_time.seconds
+        ):
+            self._emit(
+                "trigger_timed_out",
+                {"trigger": trigger.to_payload(), "reason_code": "deadline_exceeded"},
+            )
+            self._record_work(
+                component=binding,
+                stage="trigger",
+                status=WorkStatus.TIMED_OUT,
+                started=trigger.scheduled_time,
+                completed=self._current_time,
+                deadline=trigger.deadline_time,
+                input_ids=(trigger.trigger_id,),
+                reason_code="deadline_exceeded",
+            )
+            return
+        context = self._context(binding, self._current_time)
+        try:
+            result = binding.component.handle_trigger(trigger, context)
+            if not isinstance(result, TriggerResult):
+                raise TypeError("trigger handler must return TriggerResult")
+        except Exception as exc:
+            self._emit(
+                "trigger_failed",
+                {
+                    "trigger": trigger.to_payload(),
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+                emitted_time=self._current_time,
+            )
+            self._record_work(
+                component=binding,
+                stage="trigger",
+                status=WorkStatus.FAILED,
+                started=trigger.scheduled_time,
+                completed=self._current_time,
+                deadline=trigger.deadline_time,
+                input_ids=(trigger.trigger_id,),
+                reason_code="component_error",
+                details={"error": f"{type(exc).__name__}: {exc}"},
+            )
+            if self.scheduling.fail_fast:
+                raise
+            return
+        status = (
+            WorkStatus.CANCELLED
+            if result.disposition == TriggerDisposition.CANCELLED
+            else WorkStatus.COMPLETED
+        )
+        self._emit(
+            "trigger_fired",
+            {
+                "trigger": trigger.to_payload(),
+                "disposition": result.disposition.value,
+                "details": thaw_json(result.details),
+            },
+            emitted_time=self._current_time,
+        )
+        self._record_work(
+            component=binding,
+            stage="trigger",
+            status=status,
+            started=trigger.scheduled_time,
+            completed=self._current_time,
+            deadline=trigger.deadline_time,
+            input_ids=(trigger.trigger_id,),
+            reason_code="handler_cancelled"
+            if result.disposition == TriggerDisposition.CANCELLED
+            else None,
+        )
+        if result.transition is not None:
+            self._emit_state_transition(result.transition)
+        if result.next_trigger is not None:
+            if result.next_trigger.parent_trigger_id != trigger.trigger_id:
+                raise ValueError("rescheduled trigger must identify its parent trigger")
+            self._enqueue_trigger(result.next_trigger)
+            self._emit(
+                "trigger_rescheduled",
+                {
+                    "trigger_id": trigger.trigger_id,
+                    "next_trigger": result.next_trigger.to_payload(),
+                },
+                emitted_time=self._current_time,
+            )
+
+    def _emit_state_transition(self, transition: StateTransition) -> None:
+        self._emit(
+            "state_transition",
+            {"transition": transition.to_payload()},
+            emitted_time=transition.transition_time,
+        )
+        for rule in self.state_triggers:
+            if rule.once and rule.rule_id in self._fired_state_trigger_rules:
+                continue
+            if not rule.matches(transition):
+                continue
+            scheduled_time = TimePoint(
+                transition.transition_time.seconds + rule.delay_seconds,
+                transition.transition_time.clock_id,
+            )
+            payload = dict(thaw_json(rule.payload))
+            payload["state_transition_id"] = transition.transition_id
+            trigger = ScheduledTrigger(
+                trigger_id=self._ids.next("trigger"),
+                target_component_id=rule.target_component_id,
+                scheduled_time=scheduled_time,
+                payload=payload,
+            )
+            self._enqueue_trigger(trigger)
+            if rule.once:
+                self._fired_state_trigger_rules.add(rule.rule_id)
+            self._emit(
+                "state_trigger_scheduled",
+                {
+                    "rule_id": rule.rule_id,
+                    "transition_id": transition.transition_id,
+                    "trigger": trigger.to_payload(),
+                },
+                emitted_time=transition.transition_time,
+            )
 
     def _process_packet(self, packet: Packet, *, queue_depth: int) -> None:
         transform_context = self._context(self.components.transform, packet_available_time(packet))
@@ -568,6 +1445,7 @@ class ExecutionEngine:
                     },
                     emitted_time=prediction.available_time,
                 )
+                self._register_prediction(prediction)
                 timed_out = prediction.available_time.seconds > deadline.seconds
                 self._record_work(
                     component=model.component,
@@ -649,6 +1527,47 @@ class ExecutionEngine:
             role=primary_role.role_id,
             details={"command_id": command.command_id},
         )
+        if self.components.actuator is None:
+            return
+        actuator = self.components.actuator
+        actuator_context = self._context(actuator, command.available_time)
+        try:
+            receipt = actuator.component.submit(command, actuator_context)
+            if not isinstance(receipt, ActionReceipt):
+                raise TypeError("actuator must return ActionReceipt")
+            if receipt.command_id != command.command_id:
+                raise ValueError("actuator receipt command_id differs from command")
+            if receipt.observed_time.clock_id != self.scheduling.execution_clock_id:
+                raise ValueError("actuator receipt must use the execution clock")
+            if receipt.observed_time.seconds < command.available_time.seconds:
+                raise ValueError("actuator receipt cannot precede command availability")
+            self._emit(
+                "action_receipt",
+                {"receipt": receipt.to_payload()},
+                emitted_time=receipt.observed_time,
+            )
+            self._record_work(
+                component=actuator,
+                stage="actuator",
+                status=WorkStatus.COMPLETED,
+                started=command.available_time,
+                completed=receipt.observed_time,
+                input_ids=(command.command_id,),
+                reason_code=receipt.status.value,
+                details={"receipt_id": receipt.receipt_id},
+            )
+        except Exception as exc:
+            self._record_work(
+                component=actuator,
+                stage="actuator",
+                status=WorkStatus.FAILED,
+                started=command.available_time,
+                completed=command.available_time,
+                input_ids=(command.command_id,),
+                reason_code="component_error",
+                details={"error": f"{type(exc).__name__}: {exc}"},
+            )
+            raise
 
     def _context(
         self, binding: ComponentBinding, current_time: TimePoint
@@ -666,7 +1585,8 @@ class ExecutionEngine:
     def _record_work(
         self,
         *,
-        component: ComponentBinding,
+        component: ComponentBinding | None = None,
+        component_id: str | None = None,
         stage: str,
         status: WorkStatus,
         started: TimePoint,
@@ -677,9 +1597,14 @@ class ExecutionEngine:
         reason_code: str | None = None,
         details: Mapping[str, Any] | None = None,
     ) -> WorkRecord:
+        if (component is None) == (component_id is None):
+            raise ValueError("work requires exactly one component binding or component_id")
+        resolved_component_id = (
+            component.component_id if component is not None else str(component_id)
+        )
         record = WorkRecord(
             work_id=self._ids.next("work"),
-            component_id=component.component_id,
+            component_id=resolved_component_id,
             stage=stage,
             status=status,
             started_time=started,
@@ -761,6 +1686,27 @@ class ExecutionEngine:
                 input_ids=(_packet_id(queued.packet),),
                 reason_code="awaiting_watermark",
             )
+        for queued in sorted(self._outcome_queue):
+            self._record_work(
+                component_id="engine.outcomes",
+                stage="outcome",
+                status=WorkStatus.PENDING,
+                started=queued.outcome.available_time,
+                completed=None,
+                input_ids=(queued.outcome.outcome_id,),
+                reason_code="awaiting_watermark",
+            )
+        for queued in sorted(self._trigger_queue):
+            self._record_work(
+                component_id=queued.trigger.target_component_id,
+                stage="trigger",
+                status=WorkStatus.PENDING,
+                started=queued.trigger.scheduled_time,
+                completed=None,
+                input_ids=(queued.trigger.trigger_id,),
+                deadline=queued.trigger.deadline_time,
+                reason_code="awaiting_watermark",
+            )
 
     def _cancel_pending(self, reason_code: str = "cancelled") -> None:
         while self._queue:
@@ -781,6 +1727,178 @@ class ExecutionEngine:
                 input_ids=(_packet_id(queued.packet),),
                 reason_code=reason_code,
             )
+        while self._outcome_queue:
+            queued_outcome = heapq.heappop(self._outcome_queue)
+            available = queued_outcome.outcome.available_time
+            self._record_work(
+                component_id="engine.outcomes",
+                stage="outcome",
+                status=WorkStatus.CANCELLED,
+                started=available,
+                completed=TimePoint(
+                    max(self._current_time.seconds, available.seconds),
+                    available.clock_id,
+                ),
+                input_ids=(queued_outcome.outcome.outcome_id,),
+                reason_code=reason_code,
+            )
+        while self._trigger_queue:
+            queued_trigger = heapq.heappop(self._trigger_queue)
+            scheduled = queued_trigger.trigger.scheduled_time
+            self._record_work(
+                component_id=queued_trigger.trigger.target_component_id,
+                stage="trigger",
+                status=WorkStatus.CANCELLED,
+                started=scheduled,
+                completed=TimePoint(
+                    max(self._current_time.seconds, scheduled.seconds),
+                    scheduled.clock_id,
+                ),
+                input_ids=(queued_trigger.trigger.trigger_id,),
+                deadline=queued_trigger.trigger.deadline_time,
+                reason_code=reason_code,
+            )
+
+    def _finalize_pending_predictions(self, status: EngineStatus) -> None:
+        if self._pending_predictions_finalized:
+            return
+        self._pending_predictions_finalized = True
+        terminal = status in {EngineStatus.FAILED, EngineStatus.CANCELLED}
+        for pending in sorted(
+            self._pending_predictions.values(),
+            key=lambda value: (
+                value.registered_time.seconds,
+                value.prediction.prediction_id,
+            ),
+        ):
+            if terminal:
+                self._record_prediction_disposition(
+                    pending,
+                    status=WorkStatus.CANCELLED,
+                    reason_code="run_failed"
+                    if status == EngineStatus.FAILED
+                    else "cancelled",
+                    record_type="prediction_cancelled",
+                    completed_time=self._current_time,
+                )
+                continue
+            self._emit(
+                "prediction_pending_at_end",
+                {
+                    "prediction_id": pending.prediction.prediction_id,
+                    "registered_time": pending.registered_time.to_payload(),
+                    "expires_time": pending.expires_time.to_payload(),
+                    "reason_code": "awaiting_outcome",
+                },
+            )
+            self._record_work(
+                component_id="engine.outcomes",
+                stage="pending_prediction",
+                status=WorkStatus.PENDING,
+                started=pending.registered_time,
+                completed=None,
+                input_ids=(pending.prediction.prediction_id,),
+                role=pending.prediction.role,
+                reason_code="awaiting_outcome",
+                details={"expires_time": pending.expires_time.to_payload()},
+            )
+        if terminal:
+            self._pending_predictions.clear()
+
+    def _create_checkpoint(self) -> EngineCheckpoint:
+        component_states: list[dict[str, Any]] = []
+        for binding in self._all_bindings():
+            snapshot = getattr(binding.component, "snapshot_state", None)
+            restore = getattr(binding.component, "restore_state", None)
+            if callable(snapshot) != callable(restore):
+                raise EngineCheckpointError(
+                    f"component {binding.component_id} does not support symmetric "
+                    "snapshot/restore"
+                )
+            if not callable(snapshot):
+                continue
+            state = snapshot()
+            if not isinstance(state, Mapping):
+                raise EngineCheckpointError(
+                    f"component {binding.component_id} snapshot must be a mapping"
+                )
+            state_payload = thaw_json(state)
+            component_states.append(
+                {
+                    "component_id": binding.component_id,
+                    "component_version": binding.component_version,
+                    "state_hash": canonical_hash(state_payload),
+                    "state": state_payload,
+                }
+            )
+        prefix = tuple(self._evidence_records)
+        prefix_digest = canonical_hash([value.to_payload() for value in prefix])
+        checkpoint_id = self._ids.next("checkpoint")
+        state = {
+            "bindings": self._binding_signatures(),
+            "run_status": EngineStatus.PARTIAL.value,
+            "scheduling": self._scheduling_payload(),
+            "clock_mapping_revisions": dict(sorted(self.clock_mapping_revisions.items())),
+            "outcome_policy": self._outcome_policy_payload(),
+            "state_triggers": self._state_trigger_payloads(),
+            "current_time": self._current_time.to_payload(),
+            "last_dispatched_seconds": self._last_dispatched_seconds,
+            "semantic_items": self._semantic_items,
+            "cancel_requested": self._cancel_requested,
+            "id_state": self._ids.snapshot_state(),
+            "evidence_sequence": self._evidence_sequence,
+            "evidence_prefix": [value.to_payload() for value in prefix],
+            "captured_packets": [value.to_payload() for value in self._captured],
+            "work": [value.to_payload() for value in self._work],
+            "predictions": [value.to_payload() for value in self._predictions],
+            "packet_queue": [
+                {
+                    "sort_key": list(value.sort_key),
+                    "source_id": value.source_id,
+                    "packet": value.packet.to_payload(),
+                }
+                for value in sorted(self._queue)
+            ],
+            "outcome_queue": [
+                {
+                    "sort_key": list(value.sort_key),
+                    "outcome": value.outcome.to_payload(),
+                }
+                for value in sorted(self._outcome_queue)
+            ],
+            "trigger_queue": [
+                {
+                    "sort_key": list(value.sort_key),
+                    "trigger": value.trigger.to_payload(),
+                }
+                for value in sorted(self._trigger_queue)
+            ],
+            "pending_predictions": [
+                {
+                    "prediction": value.prediction.to_payload(),
+                    "registered_time": value.registered_time.to_payload(),
+                    "expires_time": value.expires_time.to_payload(),
+                }
+                for value in sorted(
+                    self._pending_predictions.values(),
+                    key=lambda pending: pending.prediction.prediction_id,
+                )
+            ],
+            "invalid_outcomes": [list(value) for value in self._invalid_outcomes],
+            "processed_outcome_ids": sorted(self._processed_outcome_ids),
+            "cancelled_trigger_ids": sorted(self._cancelled_trigger_ids),
+            "known_trigger_ids": sorted(self._known_trigger_ids),
+            "fired_state_trigger_rules": sorted(self._fired_state_trigger_rules),
+            "component_states": component_states,
+        }
+        return EngineCheckpoint(
+            checkpoint_id=checkpoint_id,
+            execution_id=self.execution_id,
+            plan_hash=self.plan.plan_hash,
+            created_time=self._current_time,
+            evidence_prefix_digest=prefix_digest,
+            state=state,
+        )
 
     def _start_components(self) -> None:
         for binding in self._all_bindings():
@@ -864,6 +1982,8 @@ class ExecutionEngine:
             self.components.quality,
             *(model.component for model in self.components.scheduled_models),
             self.components.policy,
+            *(handler.component for handler in self.components.trigger_handlers),
+            *(() if self.components.actuator is None else (self.components.actuator,)),
         )
 
     def _emit(
@@ -892,6 +2012,17 @@ def _packet_id(packet: Packet) -> str:
     if isinstance(packet, MetadataEvent):
         return packet.event_id
     raise TypeError(f"unsupported packet type: {type(packet).__name__}")
+
+
+def _packet_from_payload(payload: Mapping[str, Any]) -> Packet:
+    schema = payload.get("schema")
+    if schema == "eegle.dense_sample_batch.v1":
+        return DenseSampleBatch.from_payload(payload)
+    if schema == "eegle.sparse_event_batch.v1":
+        return SparseEventBatch.from_payload(payload)
+    if schema == "eegle.metadata_event.v1":
+        return MetadataEvent.from_payload(payload)
+    raise ValueError(f"unsupported checkpoint packet schema: {schema}")
 
 
 def _packet_sequence(packet: Packet) -> int:

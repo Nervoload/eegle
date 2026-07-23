@@ -1,0 +1,142 @@
+{
+  "schema": "eegle.suite_spec.v1",
+  "suite_id": "suite.simulated_continuous",
+  "protocol_id": "protocol.simulated_continuous",
+  "streams": [
+    {
+      "stream_id": "stream.neural",
+      "modality": "eeg",
+      "clock_id": "device.clock",
+      "contract": {
+        "type_id": "eegle.dense_sample_batch.v1",
+        "unit": "uV",
+        "channel_count": 2,
+        "nominal_rate_hz": 100.0
+      }
+    }
+  ],
+  "components": [
+    {
+      "component_id": "source.neural",
+      "kind": "source",
+      "plugin_id": null,
+      "stream_id": "stream.neural",
+      "config": {},
+      "required_capabilities": ["mode:causal"]
+    },
+    {
+      "component_id": "transform.identity",
+      "kind": "transform",
+      "plugin_id": "eegle.processing.identity",
+      "version_spec": "~=0.1.0",
+      "config": {},
+      "output_contracts": {
+        "samples": {
+          "type_id": "eegle.dense_sample_batch.v1",
+          "unit": "uV",
+          "channel_count": 2,
+          "nominal_rate_hz": 100.0
+        }
+      }
+    },
+    {
+      "component_id": "window.continuous",
+      "kind": "window",
+      "plugin_id": "eegle.processing.continuous_window",
+      "version_spec": "~=0.1.0",
+      "config": {
+        "window_samples": 4,
+        "step_samples": 2
+      },
+      "output_contracts": {
+        "windows": {
+          "type_id": "eegle.dense_window.v1",
+          "unit": "uV",
+          "channel_count": 2,
+          "nominal_rate_hz": 100.0,
+          "window_samples": 4
+        }
+      }
+    },
+    {
+      "component_id": "model.primary",
+      "kind": "model",
+      "plugin_id": "eegle.models.mean_threshold",
+      "version_spec": "~=0.1.0",
+      "role": "primary",
+      "config": {
+        "model_id": "model.mean.primary",
+        "role": "primary",
+        "threshold": 0.0
+      },
+      "input_contracts": {
+        "window": {
+          "type_id": "eegle.dense_window.v1",
+          "unit": "uV",
+          "minimum_channels": 2,
+          "minimum_rate_hz": 100.0,
+          "window_samples": 4
+        }
+      }
+    },
+    {
+      "component_id": "policy.observe",
+      "kind": "policy",
+      "plugin_id": "eegle.actions.observe_only",
+      "version_spec": "~=0.1.0",
+      "config": {}
+    }
+  ],
+  "routes": [
+    {
+      "route_id": "route.source_transform",
+      "source": {"component": "source.neural", "port": "samples"},
+      "target": {"component": "transform.identity", "port": "samples"}
+    },
+    {
+      "route_id": "route.transform_window",
+      "source": {"component": "transform.identity", "port": "samples"},
+      "target": {"component": "window.continuous", "port": "samples"}
+    },
+    {
+      "route_id": "route.window_model",
+      "source": {"component": "window.continuous", "port": "windows"},
+      "target": {"component": "model.primary", "port": "window"}
+    },
+    {
+      "route_id": "route.model_policy",
+      "source": {"component": "model.primary", "port": "prediction"},
+      "target": {"component": "policy.observe", "port": "prediction"}
+    }
+  ],
+  "phases": [
+    {
+      "phase_id": "phase.observe",
+      "components": [
+        "source.neural",
+        "transform.identity",
+        "window.continuous",
+        "model.primary",
+        "policy.observe"
+      ],
+      "transitions": [],
+      "retry_limit": 0,
+      "resume_policy": "checkpoint",
+      "operator_confirmation": false
+    }
+  ],
+  "initial_phase": "phase.observe",
+  "clock_policy": {
+    "execution_clock_id": "boundary.clock",
+    "ordering": "availability_watermark"
+  },
+  "recording": {
+    "execution_capture": true,
+    "semantic_evidence": true,
+    "raw_recording": "reference"
+  },
+  "validation": {
+    "require_replay_equivalence": true,
+    "minimum_coverage": 0.95
+  }
+}

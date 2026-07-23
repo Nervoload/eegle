@@ -1,6 +1,7 @@
 # Phase 3 Single Execution Engine
 
-**Status:** First vertical slice implemented; Phase 3 remains in progress  
+**Status:** Complete
+**Completed:** 2026-07-23
 **Architecture authority:** [EEGLE.md](EEGLE.md)  
 **Migration authority:** [MIGRATION.md](MIGRATION.md)  
 **Task tracker:** [MIGRATION_STATUS.md](MIGRATION_STATUS.md)
@@ -8,9 +9,9 @@
 ## 1. Purpose
 
 Phase 3 establishes the one semantic engine used by live-like simulation and
-replay. The current slice is intentionally dependency-light and scientifically
-generic. It does not preserve `classify8`, PsychoPy, Go/No-Go semantics, LSL
-workers, legacy session paths, or old replay code.
+replay. The completed reference implementation is dependency-light and
+scientifically generic. It does not preserve `classify8`, PsychoPy, Go/No-Go
+semantics, LSL workers, legacy session paths, or old replay code.
 
 The implemented reference path is:
 
@@ -22,8 +23,12 @@ finite typed source
 → finite/validity quality decision
 → primary model, then optional shadow model
 → observe-only policy
+→ bounded delayed-outcome matching and eligibility evidence
+→ causally safe virtual-time and state-triggered work
+→ simulated action command and observed receipt
 → append-only typed evidence
 → captured source replay through a fresh instance of the same engine
+→ safe-boundary checkpoint and fresh-engine restoration
 → graded equivalence or localized divergence
 ```
 
@@ -76,7 +81,8 @@ The comparison level is never stronger than the weakest relevant component:
 When a caller requests bitwise comparison from a graph whose weakest component
 declares semantic equivalence, the report explicitly downgrades to semantic.
 Hardware replay is defined as observe-only or simulated substitution plus
-command/receipt trace comparison; an actuator integration test is still due.
+command/receipt trace comparison. The dependency-light `SimulatedActuator`
+test now proves this boundary without making a hardware-safety claim.
 
 ## 3. Implemented runtime contracts
 
@@ -105,11 +111,12 @@ contract-changing input, and snapshots/restores pending samples exactly.
 
 ### Work and lifecycle evidence
 
-`WorkRecord` accounts for predicted, rejected, skipped, pending, timed-out,
-failed, and cancelled work with component, stage, role, inputs, start,
-completion, deadline, reason, and details. Evidence also records run/component
-lifecycle, admitted inputs, derived packets, windows, quality decisions,
-predictions, component state, action requests, partial failure, and completion.
+`WorkRecord` accounts for completed, predicted, rejected, skipped, pending,
+timed-out, failed, and cancelled work with component, stage, role, inputs,
+start, completion, deadline, reason, and details. Evidence also records
+run/component lifecycle, admitted inputs, derived packets, windows, quality
+decisions, predictions, outcomes, triggers, state transitions, action commands
+and receipts, component state, partial failure, and completion.
 
 The engine writes through an abstract append sink while retaining the local
 typed result needed for immediate validation. Dense packet/window evidence is a
@@ -126,6 +133,69 @@ Shadow/candidate work may be skipped at a declared queue threshold; this never
 changes primary inputs. A timed-out primary cannot reach policy. The reference
 policy is observe-only.
 
+### Delayed outcomes
+
+Outcomes remain separate from predictions and enter the semantic queue only at
+`available_time`; `event_time` never authorizes causal consumption. Packet,
+outcome, and trigger ties are locked as packet first, then outcome, then
+trigger, with identity-based ordering inside each class.
+
+Every prediction enters a bounded pending registry with an explicit expiry.
+Overflow deterministically expires the oldest pending prediction or rejects the
+newest, according to `OutcomeRoutingPolicy`. Outcome identity and explicit
+prediction IDs drive matching. Evidence distinguishes matched, partially
+matched, unmatched, duplicate, malformed/rejected, expired, overflowed, and
+still-pending lifecycles. `OutcomeUse` eligibility is evaluated independently
+for metrics, calibration, adaptation, and policy. Adaptation eligibility is
+recorded with `adaptation_applied: false`; Phase 3 remains observe-only and
+never passes outcomes, correctness, conditions, or labels into model input.
+
+### Scheduled and state-triggered work
+
+`ScheduledTrigger` is one-shot virtual-time work targeted at a typed handler.
+It carries stable identity, payload, scheduled time, optional deadline, and
+parent identity for rescheduling. A time trigger is not dispatched until active
+source watermarks make its scheduled time causally safe. Cancellation, missed
+deadlines, handler failure, completion, and rescheduling all produce terminal
+work and evidence.
+
+`StateTriggerRule` matches typed `StateTransition` records by source, kind, and
+status, then schedules the same generic trigger contract. Rules contain no task,
+recipe, trial, or domain vocabulary.
+
+### Engine checkpoint and fresh-instance restoration
+
+`EngineCheckpoint` is an integrity-checked safe-boundary snapshot between
+semantic items. It captures:
+
+- the execution and plan hashes plus binding/version/placement identities;
+- deterministic ID counters, partial-run status, semantic-item count, virtual
+  time, last dispatched frontier, scheduler settings, and clock-mapping
+  revisions;
+- source positions, stream identities/revisions, watermarks, exhaustion, and
+  source-content identity;
+- ordered packet, outcome, and trigger queues;
+- captured inputs, predictions, pending-prediction expiries, outcome and trigger
+  disposition sets, work, cancellation, and fired state-trigger rules;
+- hash-verified restorable component snapshots;
+- the exact immutable evidence prefix, its next sequence, and its canonical
+  digest.
+
+Restoration is accepted only into a fresh `ExecutionEngine` with fresh component
+and source instances. Plan, execution, partial-run status, scheduler,
+clock-mapping, component/version/placement, state-capability, outcome-policy,
+state-trigger, source-content/revision, component-state-hash, evidence-frontier,
+prefix-digest, and checkpoint-integrity mismatches are rejected. A stateful
+component that cannot both snapshot and restore causes checkpoint creation or
+restoration to fail explicitly.
+
+The resumed result contains the verified prefix exactly once; a resumable sink
+is seeded with that prefix before new appends. Lifecycle records for checkpoint
+creation and process restart are intentionally additional evidence. At the
+declared `semantic` equivalence level, uninterrupted and checkpointed/restored
+runs produce the same packet/window/model/outcome/trigger/action/state/work
+trace and preserve work, prediction, transition, command, and receipt IDs.
+
 ## 4. Replay architecture
 
 `ReplaySource` exposes captured packets through the same finite source contract
@@ -135,7 +205,8 @@ outer adapter concern. `ReplayRunner` requires a factory that creates fresh
 components and a fresh `ExecutionEngine`, preventing state leakage from the
 reference run.
 
-The comparator filters to semantic evidence, applies the declared equivalence
+The comparator filters to semantic evidence, including outcome lifecycles,
+triggers, transitions, commands, and receipts, applies the declared equivalence
 ceiling, and reports the first differing path for every divergent record. The
 counterfactual test changes only the shadow threshold and localizes the result
 to the shadow prediction label while primary results remain unchanged.
@@ -144,14 +215,17 @@ to the shadow prediction label while primary results remain unchanged.
 
 ```text
 eegle.runtime.context       deterministic IDs and concrete execution context
-eegle.runtime.scheduling    watermarks, lateness, queue, placement policies
+eegle.runtime.checkpoints   integrity-checked engine checkpoint record
+eegle.runtime.outcomes      outcomes, uses, and bounded routing policy
+eegle.runtime.scheduling    watermarks, queues, triggers, and placement policies
 eegle.runtime.engine        bindings, lifecycle, scheduling, routing, result
 eegle.runtime.state         WorkRecord terminal/pending accounting
 eegle.processing.windows    DenseWindow and snapshot-capable builder
 eegle.models.builtins       dependency-light mean-threshold reference model
 eegle.actions.policies      observe-only policy
-eegle.recording.sinks       append-only in-memory evidence sink
-eegle.streams.synthetic     finite packet source and availability helper
+eegle.actions.simulated     dependency-light replay actuator substitution
+eegle.recording.sinks       append-only and verified-prefix in-memory sink
+eegle.streams.synthetic     finite snapshot/restorable packet source
 eegle.replay.source         captured source and replay modes
 eegle.replay.runner         fresh same-engine replay
 eegle.replay.compare        graded comparison and divergence localization
@@ -178,23 +252,46 @@ mean-threshold classification is a useful scientific model.
 - multi-source availability ordering;
 - late-packet rejection;
 - bounded-queue backpressure and pending watermarks;
-- explicit cancellation.
+- explicit cancellation;
+- availability-time-only delayed outcomes with label-blind predictions;
+- deterministic matching, duplicate/rejection, independent-use, bounded
+  overflow, expiry, pending, and adaptation-eligibility evidence;
+- packet/outcome/trigger tie-breaking and causally safe time triggers;
+- state-trigger scheduling, deadline, cancellation, failure, and rescheduling;
+- integrity, plan, component, evidence-prefix, and source mismatch rejection;
+- fresh-source/component/engine restoration with uninterrupted semantic
+  equivalence and stable semantic IDs;
+- simulated action command/receipt equivalence in replay and after restoration.
 
-## 7. Remaining Phase 3 closure work
+The focused module passes 27 tests. In an isolated Python 3.12.13 base
+environment, the complete repository passes 330 tests with five
+environment-appropriate skips. Compile-all over `eegle`, `tests`, and
+`examples`, `git diff --check`, wheel construction, wheel content inspection,
+and installed-wheel imports of runtime, replay, actions, and recording
+boundaries pass.
 
-The first slice satisfies the central live-like/replay and deterministic
-scheduling gate, but Phase 3 is not closed yet:
+## 7. Supported-version evidence and closure boundary
 
-1. Route delayed outcomes through the engine, bound pending predictions, record
-   match/expiry/duplicate/rejection, and emit observe-only adaptation
-   eligibility without label leakage.
-2. Add general scheduled and state-triggered component work beyond packet-driven
-   execution.
-3. Resume an engine from a partial-run checkpoint, not only restore an
-   individual window builder.
-4. Prove action substitution/receipt comparison with a simulated actuator.
-5. Observe the first remote Linux/macOS/Windows supported-version matrix and
-   record platform-specific failures without weakening the semantic contract.
+The first observed remote five-job matrix is GitHub Actions run
+[`29967855396`](https://github.com/Nervoload/eegle/actions/runs/29967855396) at
+commit `511e8f64580d8d425db2b72e89cf0982c7b8716c`. Linux Python 3.11, 3.12, and
+3.13 and macOS Python 3.12 passed installation, compile, public imports, and the
+full suite. Windows Python 3.12 passed installation, compile, and public imports,
+then failed two legacy tests:
 
-Until these close, the engine is the correct new foundation but not yet a
-complete Phase 3 runtime release.
+- `test_attention8_cli_defaults_to_attention_config_and_protocol` expected a
+  POSIX slash but received the valid Windows path
+  `configs\\forward_attention_lapse_go_nogo8.json`;
+- `test_session_creation_does_not_reuse_same_second_directory` expected a
+  `-01` suffix that the Windows run did not produce.
+
+Those failures are recorded as legacy portability debt, not an engine semantic
+failure, and Phase 3 does not weaken platform-neutral contracts to hide them.
+The closure implementation above is locally verified on Python 3.12; it has not
+yet been pushed through a new remote matrix, so no stronger current Windows
+claim is made.
+
+Phase 4 `EvidenceWriter` recovery remains a separate storage guarantee. It can
+resume append/finalization from a verified immutable ledger prefix; it does not
+restore engine virtual time, queues, source positions, pending outcomes or
+triggers, component execution state, or deterministic ID allocation.
