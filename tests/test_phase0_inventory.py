@@ -54,11 +54,11 @@ class Phase0InventoryTests(unittest.TestCase):
                 self.assertIn("Legacy", prefix)
                 self.assertIn("EEGLE.md", prefix)
 
-    def test_console_script_baseline_matches_pyproject(self) -> None:
+    def test_baseline_console_scripts_are_not_v1_packaging_authority(self) -> None:
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
         for name, target in self.baseline["console_scripts"].items():
             with self.subTest(command=name):
-                self.assertIn(f'{name} = "{target}"', pyproject)
+                self.assertNotIn(f'{name} = "{target}"', pyproject)
 
     def test_user_notes_are_normalized_into_normative_migration_text(self) -> None:
         migration = MIGRATION_PATH.read_text(encoding="utf-8")

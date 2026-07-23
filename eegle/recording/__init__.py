@@ -17,7 +17,6 @@ from eegle.recording.bundles import (
     complete_interrupted_finalization,
     persist_engine_run,
 )
-from eegle.recording.compat import SessionPaths
 from eegle.recording.evidence import EvidenceBundleManifest, EvidenceRecord, EvidenceStatus
 from eegle.recording.external import (
     ExternalArtifactVerification,
@@ -59,13 +58,6 @@ from eegle.recording.policies import (
     export_evidence_bundle,
     read_portable_export,
 )
-from eegle.recording.importers import (
-    LegacyImportItem,
-    LegacyImportRule,
-    LegacyImportReport,
-    LegacyImportResult,
-    LegacySessionImporter,
-)
 from eegle.recording.session import Session, SessionManifest, SessionStatus
 from eegle.recording.stores import (
     FramedSampleStore,
@@ -74,7 +66,9 @@ from eegle.recording.stores import (
     SampleStoreReadResult,
     read_framed_sample_store,
 )
-from eegle.recording.sinks import InMemoryEvidenceSink
+from eegle.recording.sinks import InMemoryEvidenceSink, InMemoryRecordSink
+from eegle.recording.producers import PredictionArtifactProducer
+from eegle.recording.publications import ArtifactPublication
 from eegle.recording.writer_state import (
     EvidenceWriterState,
     InterruptedRun,
@@ -89,6 +83,7 @@ __all__ = [
     "ArtifactLineage",
     "ArtifactManifest",
     "ArtifactReference",
+    "ArtifactPublication",
     "ArtifactStore",
     "BundleIntegrityReport",
     "ComponentStateSnapshot",
@@ -112,6 +107,7 @@ __all__ = [
     "FramingInspection",
     "FramedEvidenceWriter",
     "InMemoryEvidenceSink",
+    "InMemoryRecordSink",
     "IntegrityIssue",
     "IntegrityIssueCode",
     "IntegrityStatus",
@@ -119,14 +115,10 @@ __all__ = [
     "JsonFieldRule",
     "JsonRedactionAction",
     "JsonRedactionSpec",
-    "LegacyImportItem",
-    "LegacyImportRule",
-    "LegacyImportReport",
-    "LegacyImportResult",
-    "LegacySessionImporter",
     "LocalFileArtifactVerifier",
     "PortableExportEntry",
     "PortableExportManifest",
+    "PredictionArtifactProducer",
     "RetentionAction",
     "RetentionDecision",
     "RetentionPolicy",
@@ -137,7 +129,6 @@ __all__ = [
     "Sensitivity",
     "Session",
     "SessionManifest",
-    "SessionPaths",
     "SessionStatus",
     "TruncatedEvidenceError",
     "WriterPhase",

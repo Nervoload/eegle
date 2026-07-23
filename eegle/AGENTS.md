@@ -20,17 +20,21 @@ acceptance evidence only as classified by the Phase 0 inventory.
 - `recording/`: generic sessions, evidence bundles, framed ledgers/capture,
   namespaced artifacts, component snapshots, integrity, and store protocols.
 - `runtime/`: the new deterministic semantic engine, typed execution context,
-  scheduling/watermark policies, work records, outcomes, and state transitions.
+  locked construction, phase orchestration, admission/watermarks, bounded
+  queueing, typed routing, work records, outcomes, and state transitions.
 - `replay/`: captured sources, fresh same-engine reruns, equivalence ceilings,
   and localized divergence reports.
-- `specs/`: JSON Schema validation; full suite specifications arrive later.
+- `specs/`: portable protocol/suite intent, site-local deployment, scheduling,
+  trigger, phase, artifact, outcome-use, and action-capability declarations.
 - `streams/`: revision-bound modality-neutral channels, causally available
   clock mappings, packets, and sources.
 - `integrations/`: task/framework/site behavior excluded from base imports.
 
 ## Package Map
 
-- `cli.py`: generic command parser and command handlers.
+- `__main__.py`: dependency-free notice until the Phase 7 CLI exists.
+- `cli.py`: historical command parser retained only as source-checkout evidence;
+  it is excluded from wheels and is not a target authority.
 - `pipelines/`: top-level operator workflows that configure and call shared
   orchestration, including the abort-safe `dsart8`/`dsart32` recording suite.
 - `experiment.py`: forward task plus recording orchestration.
@@ -72,6 +76,8 @@ the listed module locations:
 - Preserve label blindness, explicit accounting, availability times, state
   transitions, and content integrity as contracts.
 - Remove rather than facade a superseded authority after its phase gate passes.
+- Keep migration-only root orchestration modules out of built wheels; update the
+  isolated Phase 5 packaging test whenever the approved root surface changes.
 - Follow the cleanup preconditions in `docs/PHASE0_INVENTORY.md`; do not perform
   destructive cleanup early.
 

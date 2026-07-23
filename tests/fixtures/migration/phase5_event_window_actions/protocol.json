@@ -1,0 +1,30 @@
+{
+  "schema": "eegle.protocol_spec.v1",
+  "protocol_id": "protocol.event_window_actions",
+  "execution_mode": "causal",
+  "claims": [
+    {
+      "claim_id": "claim.event_window_actions",
+      "statement": "Primary and shadow models consume identical event windows while only the authorized primary route may request a simulated action."
+    }
+  ],
+  "metrics": [
+    {
+      "metric_id": "metric.primary_coverage",
+      "measure": "prediction_coverage",
+      "parameters": {
+        "prediction_component": "model.primary",
+        "window_component": "window.event"
+      }
+    }
+  ],
+  "acceptance": [
+    {
+      "criterion_id": "criterion.primary_coverage",
+      "metric_id": "metric.primary_coverage",
+      "operator": "gte",
+      "value": 1.0
+    }
+  ],
+  "annotations": {"reference_support": "simulation"}
+}

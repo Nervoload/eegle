@@ -18,6 +18,7 @@ from eegle.recording.artifacts import (
     Sensitivity,
 )
 from eegle.recording.evidence import EvidenceRecord, EvidenceStatus
+from eegle.recording.publications import ArtifactPublication
 from eegle.recording.external import (
     ExternalArtifactVerification,
     ExternalArtifactVerifier,
@@ -519,7 +520,7 @@ class EvidenceWriter:
         *,
         streams: Iterable[StreamSpec],
     ) -> None:
-        """Persist a Phase 3 ``EngineRunResult`` without coupling to runtime imports."""
+        """Persist any semantic engine result exposing the typed evidence contract."""
 
         if result.plan_hash != self.plan_hash:
             raise ValueError("engine result plan hash does not match evidence writer")
@@ -863,12 +864,86 @@ def persist_engine_run(
         },
     )
     writer.add_execution_plan(plan)
+    namespace = f"bundles/{identifier}"
+    for value in getattr(result, "artifacts", ()):
+        if isinstance(value, ArtifactPublication):
+            lineage = ArtifactLineage(
+                component_id=value.producer_component_id,
+                component_version=value.producer_component_version,
+                metadata={
+                    "publication_id": value.publication_id,
+                    "input_ids": list(value.input_ids),
+                    **thaw_json(value.metadata),
+                },
+            )
+            if value.materialized_payload is not None:
+                reference = session.artifacts.register_json(
+                    namespace,
+                    value.artifact_id,
+                    value.reference.role,
+                    thaw_json(value.materialized_payload),
+                    sensitivity=value.reference.sensitivity,
+                    lineage=lineage,
+                )
+                if reference.digest != value.reference.digest:
+                    raise ValueError(
+                        f"materialized artifact {value.artifact_id} changed digest during persistence"
+                    )
+            elif value.reference.embedded:
+                if not any(
+                    entry.reference == value.reference
+                    for entry in session.artifacts.entries
+                ):
+                    raise ValueError(
+                        f"embedded artifact {value.artifact_id} is not registered in the session"
+                    )
+                reference = value.reference
+            else:
+                reference = session.artifacts.register_external(
+                    namespace,
+                    value.artifact_id,
+                    value.reference.role,
+                    value.reference.uri,
+                    value.reference.digest,
+                    value.reference.media_type,
+                    value.reference.size_bytes,
+                    sensitivity=value.reference.sensitivity,
+                    lineage=lineage,
+                )
+        elif isinstance(value, ArtifactReference) and value.embedded:
+            if not any(entry.reference == value for entry in session.artifacts.entries):
+                raise ValueError(
+                    f"embedded artifact {value.artifact_id} is not registered in the session"
+                )
+            reference = value
+        elif isinstance(value, ArtifactReference):
+            reference = session.artifacts.register_external(
+                namespace,
+                value.artifact_id,
+                value.role,
+                value.uri,
+                value.digest,
+                value.media_type,
+                value.size_bytes,
+                sensitivity=value.sensitivity,
+                lineage=ArtifactLineage(
+                    component_id="eegle.external-artifact",
+                    component_version="1",
+                    metadata={"source_embedded": value.embedded},
+                ),
+            )
+        else:
+            raise TypeError(
+                "engine result artifacts must be ArtifactReference or ArtifactPublication"
+            )
+        writer.add_artifact(reference)
     writer.write_engine_result(result, streams=streams)
     status_value = str(result.status.value)
     evidence_status = {
         "complete": EvidenceStatus.COMPLETE,
         "partial": EvidenceStatus.PARTIAL,
         "cancelled": EvidenceStatus.PARTIAL,
+        "blocked": EvidenceStatus.PARTIAL,
         "failed": EvidenceStatus.FAILED,
     }.get(status_value, EvidenceStatus.FAILED)
     return writer.finalize(status=evidence_status, completed_time=records[-1].emitted_time)

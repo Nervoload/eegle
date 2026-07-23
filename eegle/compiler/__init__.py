@@ -15,9 +15,12 @@ from eegle.compiler.lock import (
 from eegle.compiler.plan import (
     ExecutionPlan,
     LockedPlugin,
+    PlannedArtifact,
     PlannedComponent,
     PlannedPhase,
     PlannedPlacement,
+    PlannedScheduledTrigger,
+    PlannedStateTrigger,
     PlannedTransition,
 )
 
@@ -84,8 +87,11 @@ __all__ = [
     "PlanDiff",
     "PlanExplanation",
     "PlannedComponent",
+    "PlannedArtifact",
     "PlannedPhase",
     "PlannedPlacement",
+    "PlannedScheduledTrigger",
+    "PlannedStateTrigger",
     "PlannedTransition",
     "PortDirection",
     "canonical_hash",

@@ -1,70 +1,72 @@
-"""Modality-neutral records and the shared semantic execution engine."""
+"""Integrated records and the sole plan-owned semantic execution engine."""
 
 from eegle._domain import WorkStatus
 from eegle.runtime.context import DeterministicIdSource, RuntimeExecutionContext
-from eegle.runtime.checkpoints import EngineCheckpoint
-from eegle.runtime.engine import (
-    ComponentBinding,
-    EngineComponents,
-    EngineCheckpointError,
-    EngineExecutionError,
+from eegle.runtime.checkpoints import EngineCheckpoint, read_checkpoint, write_checkpoint
+from eegle.runtime.graph import (
+    GraphEmission,
+    GraphInput,
+    GraphPhaseResult,
+    GraphRunStatus,
+    PlanGraphExecutor,
+)
+from eegle.runtime.phases import (
+    ConfirmSingleOperatorTransition,
+    AcceptanceResult,
     EngineRunResult,
     EngineStatus,
     ExecutionEngine,
-    ModelBinding,
-    SourceBinding,
-    TriggerBinding,
+    OperatorController,
+    PhaseAttempt,
+    PhaseTransitionRecord,
 )
-from eegle.runtime.outcomes import (
-    Outcome,
-    OutcomeRoutingPolicy,
-    OutcomeUse,
-    PendingPredictionOverflow,
-)
-from eegle.runtime.scheduling import (
-    BackpressurePolicy,
-    ComponentPlacement,
-    LatenessPolicy,
-    ProcessBoundary,
-    ScheduledTrigger,
-    SchedulingPolicy,
-    StateTriggerRule,
-    TriggerDisposition,
-    TriggerResult,
+from eegle.runtime.plan_runtime import (
+    ComponentProxyFactory,
+    PlanConstructionError,
+    PlanRuntime,
+    PlanRuntimeSnapshot,
+    RuntimeNode,
+    construct_plan_runtime,
 )
 from eegle.runtime.state import Rejection, StateTransition, TransitionStatus, WorkRecord
+from eegle.runtime.outcomes import Outcome, OutcomeRoutingPolicy, OutcomeUse
+from eegle.runtime.scheduling import ScheduledTrigger, StateTriggerRule, TriggerResult
 
 
 __all__ = [
-    "BackpressurePolicy",
-    "ComponentBinding",
-    "ComponentPlacement",
     "DeterministicIdSource",
-    "EngineComponents",
+    "AcceptanceResult",
     "EngineCheckpoint",
-    "EngineCheckpointError",
-    "EngineExecutionError",
     "EngineRunResult",
     "EngineStatus",
     "ExecutionEngine",
-    "LatenessPolicy",
-    "ModelBinding",
+    "GraphEmission",
+    "GraphInput",
+    "GraphPhaseResult",
+    "GraphRunStatus",
+    "OperatorController",
     "Outcome",
     "OutcomeRoutingPolicy",
     "OutcomeUse",
-    "PendingPredictionOverflow",
-    "ProcessBoundary",
+    "PhaseAttempt",
+    "PhaseTransitionRecord",
+    "PlanConstructionError",
+    "PlanGraphExecutor",
+    "PlanRuntime",
+    "PlanRuntimeSnapshot",
     "Rejection",
     "RuntimeExecutionContext",
-    "ScheduledTrigger",
-    "SchedulingPolicy",
-    "SourceBinding",
-    "StateTriggerRule",
+    "RuntimeNode",
     "StateTransition",
+    "StateTriggerRule",
+    "ScheduledTrigger",
     "TransitionStatus",
-    "TriggerBinding",
-    "TriggerDisposition",
     "TriggerResult",
     "WorkRecord",
     "WorkStatus",
+    "ComponentProxyFactory",
+    "ConfirmSingleOperatorTransition",
+    "construct_plan_runtime",
+    "read_checkpoint",
+    "write_checkpoint",
 ]

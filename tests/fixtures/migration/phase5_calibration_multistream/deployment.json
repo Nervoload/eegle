@@ -1,0 +1,91 @@
+{
+  "schema": "eegle.deployment_spec.v1",
+  "deployment_id": "deployment.calibration_multistream",
+  "suite_id": "suite.calibration_multistream",
+  "component_bindings": [
+    {
+      "component_id": "source.neural",
+      "plugin_id": "eegle.sources.packet_sequence_dense",
+      "version_spec": "~=0.1.0",
+      "placement": "in_process",
+      "resource_ids": ["resource.neural"],
+      "config": {
+        "stream_spec": {
+          "schema": "eegle.stream_spec.v1",
+          "stream_id": "stream.neural",
+          "revision": 1,
+          "modality": "eeg",
+          "content_kind": "dense_samples",
+          "rate_model": "regular",
+          "clock_id": "device.clock",
+          "channels": [
+            {"schema": "eegle.channel_spec.v1", "channel_id": "channel.c3", "kind": "eeg", "unit": "uV", "name": "C3", "sensor_reference": null, "anatomical_reference": null, "geometry": {}},
+            {"schema": "eegle.channel_spec.v1", "channel_id": "channel.c4", "kind": "eeg", "unit": "uV", "name": "C4", "sensor_reference": null, "anatomical_reference": null, "geometry": {}}
+          ],
+          "sample_rate_hz": 100.0,
+          "sample_dtype": "float64",
+          "missing_data_policy": "forbid",
+          "coordinate_frame": null,
+          "geometry_reference": null,
+          "geometry_revision": null,
+          "metadata": {}
+        },
+        "packets": []
+      }
+    },
+    {
+      "component_id": "source.markers",
+      "plugin_id": "eegle.sources.packet_sequence_sparse",
+      "version_spec": "~=0.1.0",
+      "placement": "in_process",
+      "resource_ids": ["resource.markers"],
+      "config": {
+        "stream_spec": {
+          "schema": "eegle.stream_spec.v1",
+          "stream_id": "stream.markers",
+          "revision": 1,
+          "modality": "markers",
+          "content_kind": "sparse_events",
+          "rate_model": "event",
+          "clock_id": "marker.clock",
+          "channels": [],
+          "sample_rate_hz": null,
+          "sample_dtype": null,
+          "missing_data_policy": "forbid",
+          "coordinate_frame": null,
+          "geometry_reference": null,
+          "geometry_revision": null,
+          "metadata": {}
+        },
+        "packets": []
+      }
+    }
+  ],
+  "resources": [
+    {
+      "resource_id": "resource.neural",
+      "kind": "simulator",
+      "selector": {"generator": "packet_sequence"},
+      "capabilities": ["deterministic"],
+      "contract": {"type_id": "eegle.dense_sample_batch.v1", "unit": "uV", "channel_count": 2, "nominal_rate_hz": 100.0}
+    },
+    {
+      "resource_id": "resource.markers",
+      "kind": "simulator",
+      "selector": {"generator": "event_sequence"},
+      "capabilities": ["deterministic"],
+      "contract": {"type_id": "eegle.sparse_event_batch.v1"}
+    }
+  ],
+  "stream_bindings": [
+    {"stream_id": "stream.neural", "resource_id": "resource.neural", "selector": {}},
+    {"stream_id": "stream.markers", "resource_id": "resource.markers", "selector": {}}
+  ],
+  "storage": [{"storage_id": "storage.evidence", "kind": "evidence", "uri": "memory://phase5/calibration"}],
+  "permissions": [],
+  "secrets": [],
+  "clock_mappings": [
+    {"source_clock": "device.clock", "target_clock": "boundary.clock", "strategy": "declared_affine", "maximum_uncertainty_seconds": 0.001},
+    {"source_clock": "marker.clock", "target_clock": "boundary.clock", "strategy": "declared_affine", "maximum_uncertainty_seconds": 0.001}
+  ]
+}

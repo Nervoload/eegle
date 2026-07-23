@@ -7,7 +7,8 @@ from typing import Any, Mapping
 import numpy as np
 
 from eegle._domain import ComponentKind, Determinism, EquivalenceLevel, ExecutionMode
-from eegle.actions.policies import ObserveOnlyPolicy
+from eegle.actions.policies import LabelActionPolicy, ObserveOnlyPolicy
+from eegle.actions.simulated import SimulatedActuator
 from eegle.models.builtins import MeanThresholdModel
 from eegle.plugins.registry import (
     PluginCapabilities,
@@ -17,16 +18,29 @@ from eegle.plugins.registry import (
 )
 from eegle.processing.quality import FiniteQualityGate
 from eegle.processing.transforms import CausalSosFilter, IdentityTransform, RetrospectiveSosFilter
-from eegle.processing.windows import ContinuousWindowBuilder
+from eegle.processing.windows import ContinuousWindowBuilder, EventWindowBuilder
+from eegle.recording.sinks import InMemoryRecordSink
+from eegle.recording.producers import PredictionArtifactProducer
+from eegle.runtime.builtins import (
+    AdaptiveCounter,
+    SparseEventOutcomeResolver,
+    TriggerRecordSink,
+)
 from eegle.streams.channels import ContentKind, StreamSpec
-from eegle.streams.packets import DenseSampleBatch
+from eegle.streams.packets import DenseSampleBatch, SparseEventBatch
 from eegle.streams.synthetic import PacketSequenceSource
 
 
 _DENSE_PACKET = "eegle.dense_sample_batch.v1"
+_SPARSE_PACKET = "eegle.sparse_event_batch.v1"
 _QUALITY_DECISION = "eegle.quality_decision.v1"
 _DENSE_WINDOW = "eegle.dense_window.v1"
 _PREDICTION = "eegle.prediction.v1"
+_OUTCOME = "eegle.outcome.v1"
+_STATE_TRANSITION = "eegle.state_transition.v1"
+_ACTION_COMMAND = "eegle.action_command.v1"
+_ACTION_RECEIPT = "eegle.action_receipt.v1"
+_ARTIFACT_PUBLICATION = "eegle.artifact_publication.v1"
 _SCHEMA_BASE = "https://json-schema.org/draft/2020-12/schema"
 
 
@@ -57,6 +71,23 @@ def builtin_plugin_descriptors() -> tuple[PluginDescriptor, ...]:
                 state_behavior=StateBehavior.SNAPSHOT_RESTORE,
             ),
             factory=_packet_sequence_dense_factory,
+            implementation="eegle.streams.synthetic:PacketSequenceSource",
+            distribution="eegle",
+        ),
+        PluginDescriptor(
+            plugin_id="eegle.sources.packet_sequence_sparse",
+            version="0.1.0",
+            kind=ComponentKind.SOURCE,
+            config_schema=_packet_sequence_schema(),
+            input_ports=(),
+            output_ports=(PortSpec("events", _SPARSE_PACKET, multiple=True),),
+            capabilities=PluginCapabilities(
+                supported_modes=frozenset(ExecutionMode),
+                determinism=Determinism.DETERMINISTIC,
+                equivalence=EquivalenceLevel.BITWISE,
+                state_behavior=StateBehavior.SNAPSHOT_RESTORE,
+            ),
+            factory=_packet_sequence_sparse_factory,
             implementation="eegle.streams.synthetic:PacketSequenceSource",
             distribution="eegle",
         ),
@@ -178,6 +209,46 @@ def builtin_plugin_descriptors() -> tuple[PluginDescriptor, ...]:
             distribution="eegle",
         ),
         PluginDescriptor(
+            plugin_id="eegle.processing.event_window",
+            version="0.1.0",
+            kind=ComponentKind.WINDOW,
+            config_schema={
+                "$schema": _SCHEMA_BASE,
+                "type": "object",
+                "properties": {
+                    "start_offset_seconds": {"type": "number"},
+                    "end_offset_seconds": {"type": "number"},
+                    "event_kinds": {
+                        "type": "array",
+                        "uniqueItems": True,
+                        "items": {"type": "string", "minLength": 1},
+                    },
+                    "max_buffer_samples": {"type": "integer", "minimum": 1},
+                },
+                "required": ["start_offset_seconds", "end_offset_seconds"],
+                "additionalProperties": False,
+            },
+            input_ports=(
+                PortSpec("samples", _DENSE_PACKET),
+                PortSpec("events", _SPARSE_PACKET),
+            ),
+            output_ports=(PortSpec("windows", _DENSE_WINDOW, multiple=True),),
+            capabilities=PluginCapabilities(
+                supported_modes=frozenset(ExecutionMode),
+                determinism=Determinism.DETERMINISTIC,
+                equivalence=EquivalenceLevel.BITWISE,
+                state_behavior=StateBehavior.SNAPSHOT_RESTORE,
+            ),
+            factory=lambda config: EventWindowBuilder(
+                start_offset_seconds=float(config["start_offset_seconds"]),
+                end_offset_seconds=float(config["end_offset_seconds"]),
+                event_kinds=tuple(str(value) for value in config.get("event_kinds", ())),
+                max_buffer_samples=int(config.get("max_buffer_samples", 100_000)),
+            ),
+            implementation="eegle.processing.windows:EventWindowBuilder",
+            distribution="eegle",
+        ),
+        PluginDescriptor(
             plugin_id="eegle.models.mean_threshold",
             version="0.1.0",
             kind=ComponentKind.MODEL,
@@ -229,6 +300,198 @@ def builtin_plugin_descriptors() -> tuple[PluginDescriptor, ...]:
             implementation="eegle.actions.policies:ObserveOnlyPolicy",
             distribution="eegle",
         ),
+        PluginDescriptor(
+            plugin_id="eegle.outcomes.sparse_event",
+            version="0.1.0",
+            kind=ComponentKind.OUTCOME,
+            config_schema={
+                "$schema": _SCHEMA_BASE,
+                "type": "object",
+                "properties": {
+                    "event_kind": {"type": "string", "minLength": 1},
+                    "permitted_uses": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": True,
+                        "items": {
+                            "enum": ["metrics", "calibration", "adaptation", "policy"]
+                        },
+                    },
+                    "default_subject_id": {"type": "string", "minLength": 1},
+                },
+                "required": ["event_kind", "permitted_uses"],
+                "additionalProperties": False,
+            },
+            input_ports=(PortSpec("events", _SPARSE_PACKET),),
+            output_ports=(PortSpec("outcomes", _OUTCOME, multiple=True),),
+            capabilities=PluginCapabilities(
+                supported_modes=frozenset(ExecutionMode),
+                determinism=Determinism.DETERMINISTIC,
+                equivalence=EquivalenceLevel.BITWISE,
+                state_behavior=StateBehavior.STATELESS,
+            ),
+            factory=lambda config: SparseEventOutcomeResolver(
+                event_kind=str(config["event_kind"]),
+                permitted_uses=tuple(str(value) for value in config["permitted_uses"]),
+                default_subject_id=str(config.get("default_subject_id", "subject.unknown")),
+            ),
+            implementation="eegle.runtime.builtins:SparseEventOutcomeResolver",
+            distribution="eegle",
+        ),
+        PluginDescriptor(
+            plugin_id="eegle.adapters.adaptive_counter",
+            version="0.1.0",
+            kind=ComponentKind.ADAPTER,
+            config_schema={
+                "$schema": _SCHEMA_BASE,
+                "type": "object",
+                "properties": {
+                    "required_use": {
+                        "enum": ["metrics", "calibration", "adaptation", "policy"]
+                    }
+                },
+                "additionalProperties": False,
+            },
+            input_ports=(PortSpec("outcome", _OUTCOME),),
+            output_ports=(PortSpec("transition", _STATE_TRANSITION),),
+            capabilities=PluginCapabilities(
+                supported_modes=frozenset(ExecutionMode),
+                determinism=Determinism.DETERMINISTIC,
+                equivalence=EquivalenceLevel.BITWISE,
+                state_behavior=StateBehavior.STATELESS,
+            ),
+            factory=lambda config: AdaptiveCounter(
+                required_use=str(config.get("required_use", "adaptation"))
+            ),
+            implementation="eegle.runtime.builtins:AdaptiveCounter",
+            distribution="eegle",
+        ),
+        PluginDescriptor(
+            plugin_id="eegle.actions.label_action",
+            version="0.1.0",
+            kind=ComponentKind.POLICY,
+            config_schema={
+                "$schema": _SCHEMA_BASE,
+                "type": "object",
+                "properties": {
+                    "capability": {"type": "string", "minLength": 1},
+                    "matching_label": {"type": "string", "minLength": 1},
+                    "output_key": {"type": "string", "minLength": 1},
+                    "parameters": {"type": "object"},
+                },
+                "required": ["capability", "matching_label"],
+                "additionalProperties": False,
+            },
+            input_ports=(PortSpec("prediction", _PREDICTION),),
+            output_ports=(PortSpec("command", _ACTION_COMMAND),),
+            capabilities=PluginCapabilities(
+                supported_modes=frozenset(ExecutionMode),
+                determinism=Determinism.DETERMINISTIC,
+                equivalence=EquivalenceLevel.BITWISE,
+                state_behavior=StateBehavior.STATELESS,
+            ),
+            factory=lambda config: LabelActionPolicy(**dict(config)),
+            implementation="eegle.actions.policies:LabelActionPolicy",
+            distribution="eegle",
+        ),
+        PluginDescriptor(
+            plugin_id="eegle.actions.simulated_actuator",
+            version="0.1.0",
+            kind=ComponentKind.ACTUATOR,
+            config_schema=_empty_schema(),
+            input_ports=(PortSpec("command", _ACTION_COMMAND),),
+            output_ports=(PortSpec("receipt", _ACTION_RECEIPT),),
+            capabilities=PluginCapabilities(
+                supported_modes=frozenset(ExecutionMode),
+                determinism=Determinism.DETERMINISTIC,
+                equivalence=EquivalenceLevel.BITWISE,
+                state_behavior=StateBehavior.STATELESS,
+            ),
+            factory=lambda config: SimulatedActuator(),
+            implementation="eegle.actions.simulated:SimulatedActuator",
+            distribution="eegle",
+        ),
+        PluginDescriptor(
+            plugin_id="eegle.runtime.trigger_record_sink",
+            version="0.1.0",
+            kind=ComponentKind.SINK,
+            config_schema=_empty_schema(),
+            input_ports=(),
+            output_ports=(),
+            capabilities=PluginCapabilities(
+                supported_modes=frozenset(ExecutionMode),
+                determinism=Determinism.DETERMINISTIC,
+                equivalence=EquivalenceLevel.BITWISE,
+                state_behavior=StateBehavior.SNAPSHOT_RESTORE,
+                supports_triggers=True,
+            ),
+            factory=lambda config: TriggerRecordSink(),
+            implementation="eegle.runtime.builtins:TriggerRecordSink",
+            distribution="eegle",
+        ),
+        PluginDescriptor(
+            plugin_id="eegle.artifacts.prediction_summary",
+            version="0.1.0",
+            kind=ComponentKind.ARTIFACT,
+            config_schema={
+                "$schema": _SCHEMA_BASE,
+                "type": "object",
+                "properties": {
+                    "artifact_id": {"type": "string", "minLength": 1},
+                    "role": {"type": "string", "minLength": 1},
+                    "sensitivity": {
+                        "enum": ["public", "internal", "pseudonymized", "restricted"]
+                    },
+                },
+                "required": ["artifact_id", "role"],
+                "additionalProperties": False,
+            },
+            input_ports=(PortSpec("prediction", _PREDICTION),),
+            output_ports=(PortSpec("artifact", _ARTIFACT_PUBLICATION),),
+            capabilities=PluginCapabilities(
+                supported_modes=frozenset(ExecutionMode),
+                determinism=Determinism.DETERMINISTIC,
+                equivalence=EquivalenceLevel.BITWISE,
+                state_behavior=StateBehavior.STATELESS,
+            ),
+            factory=lambda config: PredictionArtifactProducer(**dict(config)),
+            implementation="eegle.recording.producers:PredictionArtifactProducer",
+            distribution="eegle",
+        ),
+        PluginDescriptor(
+            plugin_id="eegle.recording.dense_sink",
+            version="0.1.0",
+            kind=ComponentKind.SINK,
+            config_schema=_empty_schema(),
+            input_ports=(PortSpec("records", _DENSE_PACKET, multiple=True),),
+            output_ports=(),
+            capabilities=PluginCapabilities(
+                supported_modes=frozenset(ExecutionMode),
+                determinism=Determinism.DETERMINISTIC,
+                equivalence=EquivalenceLevel.BITWISE,
+                state_behavior=StateBehavior.RECORD_ONLY,
+            ),
+            factory=lambda config: InMemoryRecordSink(),
+            implementation="eegle.recording.sinks:InMemoryRecordSink",
+            distribution="eegle",
+        ),
+        PluginDescriptor(
+            plugin_id="eegle.recording.sparse_sink",
+            version="0.1.0",
+            kind=ComponentKind.SINK,
+            config_schema=_empty_schema(),
+            input_ports=(PortSpec("records", _SPARSE_PACKET, multiple=True),),
+            output_ports=(),
+            capabilities=PluginCapabilities(
+                supported_modes=frozenset(ExecutionMode),
+                determinism=Determinism.DETERMINISTIC,
+                equivalence=EquivalenceLevel.BITWISE,
+                state_behavior=StateBehavior.RECORD_ONLY,
+            ),
+            factory=lambda config: InMemoryRecordSink(),
+            implementation="eegle.recording.sinks:InMemoryRecordSink",
+            distribution="eegle",
+        ),
     )
 
 
@@ -245,6 +508,28 @@ def _output_schema() -> dict[str, Any]:
         "type": "object",
         "properties": _output_properties(),
         "dependentRequired": {"output_stream_id": ["output_stream_revision"]},
+        "additionalProperties": False,
+    }
+
+
+def _empty_schema() -> dict[str, Any]:
+    return {
+        "$schema": _SCHEMA_BASE,
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+    }
+
+
+def _packet_sequence_schema() -> dict[str, Any]:
+    return {
+        "$schema": _SCHEMA_BASE,
+        "type": "object",
+        "properties": {
+            "stream_spec": {"type": "object"},
+            "packets": {"type": "array", "items": {"type": "object"}},
+        },
+        "required": ["stream_spec"],
         "additionalProperties": False,
     }
 
@@ -302,4 +587,12 @@ def _packet_sequence_dense_factory(config: Mapping[str, Any]) -> PacketSequenceS
     if stream_spec.content_kind != ContentKind.DENSE_SAMPLES:
         raise ValueError("packet_sequence_dense requires a dense sample stream")
     packets = tuple(DenseSampleBatch.from_payload(value) for value in config.get("packets", ()))
+    return PacketSequenceSource(stream_spec, packets)
+
+
+def _packet_sequence_sparse_factory(config: Mapping[str, Any]) -> PacketSequenceSource:
+    stream_spec = StreamSpec.from_payload(config["stream_spec"])
+    if stream_spec.content_kind != ContentKind.SPARSE_EVENTS:
+        raise ValueError("packet_sequence_sparse requires a sparse event stream")
+    packets = tuple(SparseEventBatch.from_payload(value) for value in config.get("packets", ()))
     return PacketSequenceSource(stream_spec, packets)

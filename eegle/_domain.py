@@ -43,6 +43,7 @@ class ComponentKind(str, Enum):
     ADAPTER = "adapter"
     POLICY = "policy"
     ACTUATOR = "actuator"
+    ARTIFACT = "artifact"
     SINK = "sink"
 
 

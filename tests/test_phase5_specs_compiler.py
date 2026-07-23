@@ -19,7 +19,6 @@ from eegle.compiler import (
     write_lock,
     write_plan,
 )
-from eegle.compiler.plan import LEGACY_EXECUTION_PLAN_SCHEMA
 from eegle.plugins import (
     PluginCapabilities,
     PluginDescriptor,
@@ -133,7 +132,7 @@ class Phase5CompilerTests(unittest.TestCase):
                 "policy.observe",
             ),
         )
-        self.assertEqual(first.plan.schema, "eegle.execution_plan.v2")
+        self.assertEqual(first.plan.schema, "eegle.execution_plan.v1")
         self.assertEqual(first.plan.initial_phase, "phase.observe")
         self.assertEqual(first.plan.components[0].plugin_id, "eegle.sources.packet_sequence_dense")
         self.assertEqual(ExecutionPlan.from_payload(first.plan.to_payload()).plan_hash, first.plan.plan_hash)
@@ -272,6 +271,175 @@ class Phase5CompilerTests(unittest.TestCase):
             "$.suite.phases[0].transitions[0].target_phase",
         )
 
+    def test_runtime_limits_and_deadlines_fail_during_compilation(self) -> None:
+        protocol, _, deployment = _specs()
+        payload = _payload("suite.json")
+        payload["validation"].update(
+            {
+                "max_pending_events": 0,
+                "component_deadlines_seconds": {
+                    "model.primary": -0.1,
+                    "model.missing": 0.1,
+                },
+            }
+        )
+
+        with self.assertRaises(CompilationError) as raised:
+            compile_suite(
+                protocol,
+                SuiteSpec.from_payload(payload),
+                deployment,
+                _registry(),
+            )
+
+        by_code = {value.code: value for value in raised.exception.diagnostics}
+        self.assertEqual(
+            by_code["runtime.limit"].path,
+            "$.suite.validation.max_pending_events",
+        )
+        self.assertEqual(
+            by_code["runtime.deadline_value"].path,
+            "$.suite.validation.component_deadlines_seconds.model.primary",
+        )
+        self.assertEqual(
+            by_code["runtime.deadline_component"].path,
+            "$.suite.validation.component_deadlines_seconds.model.missing",
+        )
+
+    def test_runtime_limits_reject_integer_like_values(self) -> None:
+        protocol, _, deployment = _specs()
+        payload = _payload("suite.json")
+        payload["validation"]["max_pending_events"] = 1.0
+
+        with self.assertRaises(CompilationError) as raised:
+            compile_suite(
+                protocol,
+                SuiteSpec.from_payload(payload),
+                deployment,
+                _registry(),
+            )
+
+        self.assertTrue(
+            any(
+                value.code == "runtime.limit"
+                and value.path == "$.suite.validation.max_pending_events"
+                for value in raised.exception.diagnostics
+            )
+        )
+
+    def test_artifact_declarations_ports_dominance_and_lock_hashes_are_checked(self) -> None:
+        protocol, _, deployment = _specs()
+        undeclared = _payload("suite.json")
+        undeclared["phases"][0]["required_artifacts"] = ["artifact.missing"]
+        with self.assertRaises(CompilationError) as missing:
+            compile_suite(
+                protocol, SuiteSpec.from_payload(undeclared), deployment, _registry()
+            )
+        self.assertTrue(
+            any(value.code == "artifact.undeclared" for value in missing.exception.diagnostics)
+        )
+
+        unlocked = _payload("suite.json")
+        unlocked["phases"][0]["required_artifacts"] = ["model.external"]
+        unlocked["artifacts"] = [
+            {
+                "artifact_id": "model.external",
+                "role": "model_bundle",
+                "media_type": "application/json",
+            }
+        ]
+        with self.assertRaises(CompilationError) as unlocked_error:
+            compile_suite(
+                protocol, SuiteSpec.from_payload(unlocked), deployment, _registry()
+            )
+        self.assertTrue(
+            any(
+                value.code == "artifact.digest_required"
+                for value in unlocked_error.exception.diagnostics
+            )
+        )
+
+        payload = _payload("suite.json")
+        payload["components"].append(
+            {
+                "component_id": "artifact.calibration",
+                "kind": "artifact",
+                "plugin_id": "eegle.artifacts.prediction_summary",
+                "version_spec": "~=0.1.0",
+                "config": {
+                    "artifact_id": "calibration.model",
+                    "role": "calibration_model",
+                },
+            }
+        )
+        payload["routes"].append(
+            {
+                "route_id": "route.model_artifact",
+                "source": {"component": "model.primary", "port": "prediction"},
+                "target": {"component": "artifact.calibration", "port": "prediction"},
+            }
+        )
+        all_components = [value["component_id"] for value in payload["components"]]
+        payload["phases"] = [
+            {
+                "phase_id": "phase.choose",
+                "components": all_components,
+                "transitions": [
+                    {"target_phase": "phase.produce", "condition": "operator"},
+                    {"target_phase": "phase.consume", "condition": "operator"},
+                ],
+            },
+            {
+                "phase_id": "phase.produce",
+                "components": all_components,
+                "transitions": [],
+            },
+            {
+                "phase_id": "phase.consume",
+                "components": all_components,
+                "transitions": [],
+                "required_artifacts": ["calibration.model"],
+            },
+        ]
+        payload["initial_phase"] = "phase.choose"
+        payload["artifacts"] = [
+            {
+                "artifact_id": "calibration.model",
+                "role": "calibration_model",
+                "media_type": "application/json",
+                "producer_phase": "phase.produce",
+                "producer_component": "artifact.calibration",
+                "producer_port": "artifact",
+            }
+        ]
+        with self.assertRaises(CompilationError) as dominance:
+            compile_suite(
+                protocol, SuiteSpec.from_payload(payload), deployment, _registry()
+            )
+        self.assertTrue(
+            any(
+                value.code == "artifact.not_guaranteed"
+                for value in dominance.exception.diagnostics
+            )
+        )
+
+        external = _payload("suite.json")
+        digest = "sha256:" + "1" * 64
+        external["artifacts"] = [
+            {
+                "artifact_id": "model.frozen",
+                "role": "model_bundle",
+                "media_type": "application/json",
+                "expected_digest": digest,
+            }
+        ]
+        compiled = compile_suite(
+            protocol, SuiteSpec.from_payload(external), deployment, _registry()
+        )
+        self.assertEqual(compiled.lock.artifact_hashes, {"model.frozen": digest})
+        restored = ExecutionLock.from_payload(compiled.lock.to_payload())
+        restored.verify_plan(ExecutionPlan.from_payload(compiled.plan.to_payload()))
+
     def test_clock_mapping_is_explicit_and_mode_compatible(self) -> None:
         protocol, suite, _ = _specs()
         missing_payload = _payload("deployment.json")
@@ -350,21 +518,9 @@ class Phase5CompilerTests(unittest.TestCase):
         self.assertTrue(any(value.path == "$.components.model.primary" for value in difference.changes))
         self.assertTrue(any(value.path == "$.spec_hashes.deployment" for value in difference.changes))
 
-    def test_v1_plan_hashing_remains_readable_and_lock_tampering_is_detected(self) -> None:
+    def test_lock_tampering_is_detected(self) -> None:
         protocol, suite, deployment = _specs()
         compiled = compile_suite(protocol, suite, deployment, _registry())
-        v1 = ExecutionPlan(
-            schema=LEGACY_EXECUTION_PLAN_SCHEMA,
-            plan_id="plan.legacy.readable",
-            execution_mode=compiled.plan.execution_mode,
-            plugins=compiled.plan.plugins,
-            components=compiled.plan.components,
-            spec_hashes=compiled.plan.spec_hashes,
-            clock_policy=compiled.plan.clock_policy,
-            recording_policy=compiled.plan.recording_policy,
-            validation_rules=compiled.plan.validation_rules,
-        )
-        self.assertEqual(ExecutionPlan.from_payload(v1.to_payload()).plan_hash, v1.plan_hash)
 
         tampered = deepcopy(compiled.lock.to_payload())
         tampered["component_hashes"]["model.primary"] = "sha256:" + "0" * 64

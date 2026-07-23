@@ -361,6 +361,13 @@ class DeploymentSpec:
         _require_unique((value.storage_id for value in self.storage), "storage")
         _require_unique((value.permission_id for value in self.permissions), "permission")
         _require_unique((value.secret_id for value in self.secrets), "secret reference")
+        _require_unique(
+            (
+                (value.source_clock, value.target_clock)
+                for value in self.clock_mappings
+            ),
+            "clock mapping",
+        )
         payload = self.to_payload()
         _reject_secret_literals(payload, path="$")
 

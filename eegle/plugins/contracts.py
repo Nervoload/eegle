@@ -8,6 +8,7 @@ from eegle._domain import ExecutionMode
 from eegle.actions.commands import ActionCommand
 from eegle.actions.receipts import ActionReceipt
 from eegle.models.predictions import Prediction
+from eegle.recording.publications import ArtifactPublication
 from eegle.processing.quality import QualityDecision
 from eegle.processing.windows import Window
 from eegle.runtime.outcomes import Outcome
@@ -27,6 +28,24 @@ class ExecutionContext(Protocol):
     clock_mapping_revisions: Mapping[str, int]
 
     def next_id(self, namespace: str) -> str:
+        ...
+
+
+@runtime_checkable
+class GraphNode(Protocol):
+    """Explicit multi-port escape hatch for domain components.
+
+    Specialized one-input protocols remain the simplest component API. Nodes
+    with joins or multiple outputs return a mapping from declared output port
+    names to one value or an iterable of values.
+    """
+
+    def process(
+        self,
+        input_port: str,
+        value: Any,
+        context: ExecutionContext,
+    ) -> Mapping[str, Any]:
         ...
 
 
@@ -85,6 +104,14 @@ class Policy(Protocol):
 @runtime_checkable
 class Actuator(Protocol):
     def submit(self, command: ActionCommand, context: ExecutionContext) -> ActionReceipt:
+        ...
+
+
+@runtime_checkable
+class ArtifactProducer(Protocol):
+    """Turn a graph value into a versioned, content-addressed artifact."""
+
+    def produce(self, value: Any, context: ExecutionContext) -> ArtifactPublication:
         ...
 
 

@@ -50,7 +50,8 @@ from eegle.recording import (
     TruncatedEvidenceError,
     iter_framed_payloads,
 )
-from eegle.runtime import Outcome, OutcomeUse, Rejection, StateTransition, TransitionStatus
+from eegle.runtime import Rejection, StateTransition, TransitionStatus
+from eegle.runtime.outcomes import Outcome, OutcomeUse
 from eegle.streams import (
     ChannelSpec,
     ClockIdentity,

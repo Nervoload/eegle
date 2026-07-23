@@ -21,6 +21,8 @@ from eegle.specs.protocol import (
 )
 from eegle.specs.schemas import SchemaValidationError, validate_schema, validate_payload
 from eegle.specs.suite import (
+    ArtifactSpec,
+    BackpressureDisposition,
     ComponentSpec,
     LogicalStreamSpec,
     PhaseSpec,
@@ -28,6 +30,10 @@ from eegle.specs.suite import (
     ResumePolicy,
     RouteSpec,
     SignalContract,
+    ScheduledTriggerSpec,
+    SchedulingSpec,
+    ShadowFailurePolicy,
+    StateTriggerSpec,
     SuiteOverlay,
     SuiteSpec,
     TransitionCondition,
@@ -37,6 +43,8 @@ from eegle.specs.suite import (
 
 __all__ = [
     "AcceptanceCriterion",
+    "ArtifactSpec",
+    "BackpressureDisposition",
     "ClaimSpec",
     "ClockMappingBinding",
     "ClockMappingStrategy",
@@ -57,6 +65,10 @@ __all__ = [
     "SchemaValidationError",
     "SecretReference",
     "SignalContract",
+    "ScheduledTriggerSpec",
+    "SchedulingSpec",
+    "ShadowFailurePolicy",
+    "StateTriggerSpec",
     "StorageBinding",
     "StreamBinding",
     "SuiteOverlay",

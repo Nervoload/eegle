@@ -4,31 +4,42 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Callable
 
 from eegle._domain import EquivalenceLevel
 from eegle.compiler.plan import ExecutionPlan
+from eegle.plugins.registry import PluginRegistry
+from eegle.recording.artifacts import ArtifactReference
 from eegle.recording.bundles import EvidenceReader
+from eegle.recording.evidence import EvidenceRecord
 from eegle.recording.stores import FRAMED_SAMPLE_MEDIA_TYPE, read_framed_sample_store
 from eegle.replay.compare import EquivalencePolicy, compare_runs
 from eegle.replay.runner import ReplayExecution
-from eegle.replay.source import ReplayMode
-from eegle.runtime.engine import EngineRunResult, EngineStatus, ExecutionEngine
+from eegle.replay.source import ReplayMode, build_replay_source_overrides
+from eegle.runtime.phases import EngineRunResult, EngineStatus, ExecutionEngine, OperatorController
+from eegle.runtime.plan_runtime import ComponentProxyFactory
 from eegle.streams.channels import StreamSpec
 from eegle.streams.packets import Packet
+
+
+@dataclass(frozen=True, slots=True)
+class RecordedRun:
+    """The comparison and input surface restored from immutable evidence."""
+
+    execution_id: str
+    plan_hash: str
+    status: EngineStatus
+    evidence: tuple[EvidenceRecord, ...]
+    captured_packets: tuple[Packet, ...]
+    equivalence_ceiling: EquivalenceLevel
+    artifacts: tuple[ArtifactReference, ...] = ()
+    failure: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class RecordedExecution:
     plan: ExecutionPlan
     streams: tuple[StreamSpec, ...]
-    reference: EngineRunResult
-
-
-BundleEngineFactory = Callable[
-    [ExecutionPlan, tuple[Packet, ...], tuple[StreamSpec, ...], ReplayMode],
-    ExecutionEngine,
-]
+    reference: RecordedRun
 
 
 def load_recorded_execution(reader: EvidenceReader) -> RecordedExecution:
@@ -66,7 +77,7 @@ def load_recorded_execution(reader: EvidenceReader) -> RecordedExecution:
         )
     capture = captures[0]
     if not capture.embedded or capture.media_type != FRAMED_SAMPLE_MEDIA_TYPE:
-        raise ValueError("bundle replay currently requires one embedded framed execution capture")
+        raise ValueError("bundle replay requires one embedded framed execution capture")
     restored = read_framed_sample_store(reader.session.artifacts.resolve(capture))
     metadata = reader.bundle.metadata
     try:
@@ -76,25 +87,34 @@ def load_recorded_execution(reader: EvidenceReader) -> RecordedExecution:
     equivalence_value = metadata.get("equivalence_ceiling")
     if equivalence_value is None:
         raise ValueError("bundle is missing its equivalence_ceiling")
-    reference = EngineRunResult(
+    reference = RecordedRun(
         execution_id=str(metadata.get("execution_id") or reader.bundle.bundle_id),
         plan_hash=reader.bundle.plan_hash,
         status=status,
         evidence=reader.records(),
         captured_packets=restored.packets,
-        work=(),
-        predictions=(),
         equivalence_ceiling=EquivalenceLevel(str(equivalence_value)),
+        artifacts=tuple(
+            value
+            for value in reader.bundle.artifacts
+            if value.role != "execution_plan"
+        ),
         failure=None if metadata.get("failure") is None else str(metadata["failure"]),
     )
     return RecordedExecution(plan, restored.streams, reference)
 
 
 class BundleReplayRunner:
-    """Replay directly from an EvidenceBundle through a fresh execution engine."""
+    """Replay a self-describing bundle through its exact locked execution plan."""
 
-    def __init__(self, engine_factory: BundleEngineFactory) -> None:
-        self.engine_factory = engine_factory
+    def __init__(
+        self,
+        registry: PluginRegistry,
+        *,
+        proxy_factory: ComponentProxyFactory | None = None,
+    ) -> None:
+        self.registry = registry
+        self.proxy_factory = proxy_factory
 
     def run(
         self,
@@ -102,18 +122,34 @@ class BundleReplayRunner:
         *,
         mode: ReplayMode = ReplayMode.ACCELERATED_CAUSAL,
         policy: EquivalencePolicy | None = None,
+        operator: OperatorController | None = None,
     ) -> ReplayExecution:
         recorded = load_recorded_execution(reader)
         normalized_mode = ReplayMode(mode)
-        engine = self.engine_factory(
+        overrides = build_replay_source_overrides(
             recorded.plan,
-            recorded.reference.captured_packets,
             recorded.streams,
-            normalized_mode,
+            recorded.reference.captured_packets,
+            mode=normalized_mode,
         )
-        if not isinstance(engine, ExecutionEngine):
-            raise TypeError("bundle replay engine_factory must return ExecutionEngine")
-        result = engine.run()
+        engine = ExecutionEngine.from_plan(
+            recorded.plan,
+            self.registry,
+            proxy_factory=self.proxy_factory,
+            component_overrides=overrides,
+        )
+        external_ids = {
+            value.artifact_id for value in recorded.plan.artifacts if value.external
+        }
+        initial_artifacts = {
+            value.artifact_id: value
+            for value in recorded.reference.artifacts
+            if value.artifact_id in external_ids
+        }
+        result: EngineRunResult = engine.run(
+            artifacts=initial_artifacts,
+            operator=operator,
+        )
         comparison = compare_runs(
             recorded.reference,
             result,

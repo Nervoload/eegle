@@ -29,10 +29,20 @@ from eegle.compiler.lockfile import ExecutionLock
 from eegle.compiler.plan import (
     ExecutionPlan,
     LockedPlugin,
+    PlannedArtifact,
     PlannedComponent,
     PlannedPhase,
     PlannedPlacement,
+    PlannedScheduledTrigger,
+    PlannedStateTrigger,
     PlannedTransition,
+)
+from eegle.compiler.semantic_passes import (
+    validate_artifacts,
+    validate_phases,
+    validate_roles_and_actions,
+    validate_runtime_policy,
+    validate_triggers_and_permissions,
 )
 from eegle.plugins.registry import PluginDescriptor, PluginRegistry, PortSpec
 from eegle.specs.deployment import (
@@ -209,8 +219,13 @@ def compile_suite(
         )
 
     graph = _compile_graph(suite, resolved, streams_by_id, diagnostics)
-    _validate_phases(suite, components_by_id, diagnostics)
-    _validate_roles_and_actions(suite, deployment, diagnostics)
+    validate_phases(suite, components_by_id, resolved, diagnostics)
+    validate_artifacts(suite, resolved, diagnostics)
+    validate_roles_and_actions(suite, deployment, diagnostics)
+    validate_runtime_policy(suite, diagnostics)
+    validate_triggers_and_permissions(
+        protocol, suite, deployment, resolved, diagnostics
+    )
 
     errors = [
         value for value in diagnostics if value.severity == DiagnosticSeverity.ERROR
@@ -231,6 +246,9 @@ def compile_suite(
             role=component.role,
             stream_id=component.stream_id,
             required_capabilities=component.required_capabilities,
+            outcome_uses=component.outcome_uses,
+            required_outcome_use=component.required_outcome_use,
+            action_capabilities=component.action_capabilities,
         )
         for component in suite.components
     )
@@ -249,8 +267,22 @@ def compile_suite(
             retry_limit=phase.retry_limit,
             resume_policy=phase.resume_policy.value,
             operator_confirmation=phase.operator_confirmation,
+            timeout_seconds=phase.timeout_seconds,
+            acceptance_criteria=phase.acceptance_criteria,
         )
         for phase in suite.phases
+    )
+    artifacts = tuple(
+        PlannedArtifact(
+            artifact_id=value.artifact_id,
+            role=value.role,
+            media_type=value.media_type,
+            producer_phase=value.producer_phase,
+            producer_component=value.producer_component,
+            producer_port=value.producer_port,
+            expected_digest=value.expected_digest,
+        )
+        for value in suite.artifacts
     )
     placements = tuple(
         _planned_placement(component.component_id, bindings_by_id.get(component.component_id))
@@ -261,6 +293,16 @@ def compile_suite(
         "suite": suite.spec_hash,
         "deployment": deployment.spec_hash,
     }
+    validation_policy = thaw_json(suite.validation)
+    validation_policy.setdefault("max_graph_events", 100_000)
+    validation_policy.setdefault("max_pending_events", 1_024)
+    validation_policy.setdefault("max_idle_cycles", 1)
+    validation_policy.setdefault("component_deadlines_seconds", {})
+    validation_policy.setdefault("max_phase_transitions", max(32, len(phases) * 4))
+    mapping_revisions = {
+        _clock_mapping_id(value.source_clock, value.target_clock): 1
+        for value in deployment.clock_mappings
+    }
     plan = ExecutionPlan(
         plan_id=_derived_id("plan", suite.suite_id, deployment.deployment_id),
         execution_mode=protocol.execution_mode,
@@ -270,18 +312,31 @@ def compile_suite(
         clock_policy={
             "suite": thaw_json(suite.clock_policy),
             "mappings": [value.to_payload() for value in deployment.clock_mappings],
+            "mapping_revisions": mapping_revisions,
         },
         recording_policy=thaw_json(suite.recording),
         validation_rules={
-            "suite": thaw_json(suite.validation),
+            "suite": validation_policy,
             "claims": [value.to_payload() for value in protocol.claims],
             "metrics": [value.to_payload() for value in protocol.metrics],
             "acceptance": [value.to_payload() for value in protocol.acceptance],
+            "permissions": [value.to_payload() for value in deployment.permissions],
             "graph_hash": graph.graph_hash,
         },
+        graph=graph,
         phases=phases,
         initial_phase=suite.initial_phase,
         placements=placements,
+        artifacts=artifacts,
+        scheduling_policy=suite.scheduling.to_payload(),
+        scheduled_triggers=tuple(
+            PlannedScheduledTrigger(**value.to_payload())
+            for value in suite.scheduled_triggers
+        ),
+        state_triggers=tuple(
+            PlannedStateTrigger(**value.to_payload())
+            for value in suite.state_triggers
+        ),
     )
     lock = ExecutionLock(
         lock_id=_derived_id("lock", suite.suite_id, deployment.deployment_id),
@@ -298,6 +353,11 @@ def compile_suite(
             "deployment.v1": canonical_hash(DEPLOYMENT_JSON_SCHEMA),
         },
         graph_hash=graph.graph_hash,
+        artifact_hashes={
+            value.artifact_id: value.expected_digest
+            for value in artifacts
+            if value.expected_digest is not None
+        },
     )
     lock.verify_plan(plan)
     return CompilationResult(
@@ -689,136 +749,6 @@ def _compile_graph(
     return CompiledGraph(ports=tuple(ports), routes=tuple(routes), component_order=order)
 
 
-def _validate_phases(
-    suite: SuiteSpec,
-    components: Mapping[str, ComponentSpec],
-    diagnostics: list[CompilationDiagnostic],
-) -> None:
-    phases = {value.phase_id: value for value in suite.phases}
-    for index, phase in enumerate(suite.phases):
-        path = f"$.suite.phases[{index}]"
-        for component_id in phase.components:
-            if component_id not in components:
-                diagnostics.append(
-                    _error(
-                        "phase.component_reference",
-                        f"{path}.components",
-                        f"unknown component {component_id}",
-                    )
-                )
-        transition_keys: set[tuple[str, str]] = set()
-        for transition_index, transition in enumerate(phase.transitions):
-            key = (transition.condition.value, transition.target_phase)
-            if key in transition_keys:
-                diagnostics.append(
-                    _error(
-                        "phase.duplicate_transition",
-                        f"{path}.transitions[{transition_index}]",
-                        "duplicate phase transition",
-                    )
-                )
-            transition_keys.add(key)
-            if transition.target_phase not in phases:
-                diagnostics.append(
-                    _error(
-                        "phase.transition_reference",
-                        f"{path}.transitions[{transition_index}].target_phase",
-                        f"unknown phase {transition.target_phase}",
-                    )
-                )
-    reachable: set[str] = set()
-    pending = [suite.initial_phase]
-    while pending:
-        phase_id = pending.pop(0)
-        if phase_id in reachable or phase_id not in phases:
-            continue
-        reachable.add(phase_id)
-        pending.extend(value.target_phase for value in phases[phase_id].transitions)
-    for phase_id in sorted(set(phases) - reachable):
-        diagnostics.append(
-            _error(
-                "phase.unreachable",
-                "$.suite.phases",
-                f"phase {phase_id} is unreachable from {suite.initial_phase}",
-            )
-        )
-    if reachable and not any(not phases[value].transitions for value in reachable):
-        diagnostics.append(
-            _error(
-                "phase.no_terminal",
-                "$.suite.phases",
-                "no terminal phase is reachable from initial_phase",
-            )
-        )
-
-
-def _validate_roles_and_actions(
-    suite: SuiteSpec,
-    deployment: DeploymentSpec,
-    diagnostics: list[CompilationDiagnostic],
-) -> None:
-    models = [value for value in suite.components if value.kind == ComponentKind.MODEL]
-    if models:
-        missing = [value.component_id for value in models if value.role is None]
-        if missing:
-            diagnostics.append(
-                _error(
-                    "role.missing",
-                    "$.suite.components",
-                    f"model roles are required: {', '.join(missing)}",
-                )
-            )
-        primary = [value for value in models if value.role == "primary"]
-        if len(primary) != 1:
-            diagnostics.append(
-                _error(
-                    "role.primary",
-                    "$.suite.components",
-                    f"model system requires exactly one primary role; observed {len(primary)}",
-                )
-            )
-        roles = [value.role for value in models if value.role is not None]
-        if len(roles) != len(set(roles)):
-            diagnostics.append(
-                _error("role.duplicate", "$.suite.components", "model role identities must be unique")
-            )
-    for index, component in enumerate(suite.components):
-        if component.kind != ComponentKind.MODEL and component.role is not None:
-            diagnostics.append(
-                _error(
-                    "role.kind",
-                    f"$.suite.components[{index}].role",
-                    "only model components may declare model roles",
-                )
-            )
-    granted = {
-        component_id
-        for permission in deployment.permissions
-        for component_id in permission.component_ids
-    }
-    for index, component in enumerate(suite.components):
-        if component.kind == ComponentKind.ACTUATOR and component.component_id not in granted:
-            diagnostics.append(
-                _error(
-                    "action.authorization",
-                    f"$.suite.components[{index}]",
-                    "actuator requires an independent deployment permission grant",
-                    component_id=component.component_id,
-                )
-            )
-    component_ids = {value.component_id for value in suite.components}
-    for index, permission in enumerate(deployment.permissions):
-        for component_id in permission.component_ids:
-            if component_id not in component_ids:
-                diagnostics.append(
-                    _error(
-                        "action.permission_reference",
-                        f"$.deployment.permissions[{index}].component_ids",
-                        f"permission references unknown component {component_id}",
-                    )
-                )
-
-
 def _locked_plugins(resolved: Mapping[str, PluginDescriptor]) -> tuple[LockedPlugin, ...]:
     unique = {
         (value.plugin_id, value.version): value for value in resolved.values()
@@ -899,6 +829,8 @@ def _capability_tokens(descriptor: PluginDescriptor) -> set[str]:
     }
     if capabilities.requires_future:
         values.add("requires_future")
+    if capabilities.supports_triggers:
+        values.add("supports_triggers")
     return values
 
 
@@ -929,3 +861,13 @@ def _derived_id(prefix: str, *parts: str) -> str:
         return candidate
     digest = canonical_hash(list(parts)).removeprefix("sha256:")
     return f"{prefix}.{digest}"
+
+
+def _clock_mapping_id(source_clock: str, target_clock: str) -> str:
+    """Name a compiled mapping independently of machine clock objects."""
+
+    candidate = f"mapping.{source_clock}.to.{target_clock}"
+    if len(candidate) <= 255:
+        return candidate
+    digest = canonical_hash([source_clock, target_clock]).removeprefix("sha256:")
+    return f"mapping.{digest}"

@@ -1,0 +1,148 @@
+{
+  "schema": "eegle.suite_spec.v1",
+  "suite_id": "suite.event_window_actions",
+  "protocol_id": "protocol.event_window_actions",
+  "streams": [
+    {
+      "stream_id": "stream.neural",
+      "modality": "eeg",
+      "clock_id": "device.clock",
+      "contract": {
+        "type_id": "eegle.dense_sample_batch.v1",
+        "unit": "uV",
+        "channel_count": 2,
+        "nominal_rate_hz": 100.0
+      }
+    },
+    {
+      "stream_id": "stream.aux",
+      "modality": "respiration",
+      "clock_id": "aux.clock",
+      "contract": {
+        "type_id": "eegle.dense_sample_batch.v1",
+        "unit": "a.u.",
+        "channel_count": 1,
+        "nominal_rate_hz": 10.0
+      }
+    },
+    {
+      "stream_id": "stream.markers",
+      "modality": "markers",
+      "clock_id": "device.clock",
+      "contract": {"type_id": "eegle.sparse_event_batch.v1"}
+    }
+  ],
+  "components": [
+    {"component_id": "source.neural", "kind": "source", "plugin_id": null, "stream_id": "stream.neural", "config": {}},
+    {"component_id": "source.aux", "kind": "source", "plugin_id": null, "stream_id": "stream.aux", "config": {}},
+    {"component_id": "source.markers", "kind": "source", "plugin_id": null, "stream_id": "stream.markers", "config": {}},
+    {
+      "component_id": "window.event",
+      "kind": "window",
+      "plugin_id": "eegle.processing.event_window",
+      "version_spec": "~=0.1.0",
+      "config": {
+        "start_offset_seconds": -0.02,
+        "end_offset_seconds": 0.04,
+        "event_kinds": ["stimulus.target"],
+        "max_buffer_samples": 1000
+      }
+    },
+    {
+      "component_id": "model.primary",
+      "kind": "model",
+      "plugin_id": "eegle.models.mean_threshold",
+      "version_spec": "~=0.1.0",
+      "role": "primary",
+      "config": {
+        "model_id": "model.primary",
+        "role": "primary",
+        "threshold": 0.0,
+        "positive_label": "act",
+        "negative_label": "ignore"
+      }
+    },
+    {
+      "component_id": "model.shadow",
+      "kind": "model",
+      "plugin_id": "eegle.models.mean_threshold",
+      "version_spec": "~=0.1.0",
+      "role": "shadow",
+      "config": {
+        "model_id": "model.shadow",
+        "role": "shadow",
+        "threshold": 0.5,
+        "positive_label": "act",
+        "negative_label": "ignore"
+      }
+    },
+    {
+      "component_id": "policy.action",
+      "kind": "policy",
+      "plugin_id": "eegle.actions.label_action",
+      "version_spec": "~=0.1.0",
+      "config": {
+        "capability": "simulated.feedback",
+        "matching_label": "act",
+        "parameters": {"intensity": 0.25}
+      }
+    },
+    {
+      "component_id": "actuator.simulated",
+      "kind": "actuator",
+      "plugin_id": "eegle.actions.simulated_actuator",
+      "version_spec": "~=0.1.0",
+      "config": {},
+      "action_capabilities": ["simulated.feedback"]
+    },
+    {
+      "component_id": "sink.aux",
+      "kind": "sink",
+      "plugin_id": "eegle.recording.dense_sink",
+      "version_spec": "~=0.1.0",
+      "config": {}
+    }
+  ],
+  "routes": [
+    {"route_id": "route.neural_window", "source": {"component": "source.neural", "port": "samples"}, "target": {"component": "window.event", "port": "samples"}},
+    {"route_id": "route.markers_window", "source": {"component": "source.markers", "port": "events"}, "target": {"component": "window.event", "port": "events"}},
+    {"route_id": "route.window_primary", "source": {"component": "window.event", "port": "windows"}, "target": {"component": "model.primary", "port": "window"}},
+    {"route_id": "route.window_shadow", "source": {"component": "window.event", "port": "windows"}, "target": {"component": "model.shadow", "port": "window"}},
+    {"route_id": "route.primary_policy", "source": {"component": "model.primary", "port": "prediction"}, "target": {"component": "policy.action", "port": "prediction"}},
+    {"route_id": "route.policy_actuator", "source": {"component": "policy.action", "port": "command"}, "target": {"component": "actuator.simulated", "port": "command"}},
+    {"route_id": "route.aux_sink", "source": {"component": "source.aux", "port": "samples"}, "target": {"component": "sink.aux", "port": "records"}}
+  ],
+  "phases": [
+    {
+      "phase_id": "phase.run",
+      "components": [
+        "source.neural",
+        "source.aux",
+        "source.markers",
+        "window.event",
+        "model.primary",
+        "model.shadow",
+        "policy.action",
+        "actuator.simulated",
+        "sink.aux"
+      ],
+      "transitions": [],
+      "timeout_seconds": 2.0,
+      "acceptance_criteria": ["criterion.primary_coverage"],
+      "resume_policy": "checkpoint"
+    }
+  ],
+  "initial_phase": "phase.run",
+  "scheduling": {
+    "backpressure": "reject_newest",
+    "primary_first": true,
+    "shadow_queue_limit": 8,
+    "shadow_failure": "continue"
+  },
+  "scheduled_triggers": [],
+  "state_triggers": [],
+  "artifacts": [],
+  "clock_policy": {"execution_clock_id": "boundary.clock", "ordering": "availability_watermark"},
+  "recording": {"execution_capture": true, "semantic_evidence": true},
+  "validation": {"require_replay_equivalence": true}
+}

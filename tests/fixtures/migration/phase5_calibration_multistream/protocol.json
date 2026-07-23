@@ -1,0 +1,14 @@
+{
+  "schema": "eegle.protocol_spec.v1",
+  "protocol_id": "protocol.calibration_multistream",
+  "execution_mode": "causal",
+  "claims": [
+    {
+      "claim_id": "claim.calibration_available",
+      "statement": "Evaluation begins only after its declared calibration artifact is available."
+    }
+  ],
+  "metrics": [],
+  "acceptance": [],
+  "annotations": {"reference_support": "simulation"}
+}

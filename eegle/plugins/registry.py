@@ -56,6 +56,7 @@ class PluginCapabilities:
     state_behavior: StateBehavior
     requires_future: bool = False
     resources: tuple[str, ...] = ()
+    supports_triggers: bool = False
 
     def __post_init__(self) -> None:
         modes = frozenset(ExecutionMode(value) for value in self.supported_modes)
@@ -81,6 +82,7 @@ class PluginCapabilities:
             "state_behavior": self.state_behavior.value,
             "requires_future": self.requires_future,
             "resources": list(self.resources),
+            "supports_triggers": self.supports_triggers,
         }
 
 
@@ -263,6 +265,7 @@ _REQUIRED_COMPONENT_MEMBERS: Mapping[ComponentKind, tuple[str, ...]] = {
     ComponentKind.ADAPTER: ("update",),
     ComponentKind.POLICY: ("decide",),
     ComponentKind.ACTUATOR: ("submit",),
+    ComponentKind.ARTIFACT: ("produce",),
     ComponentKind.SINK: ("append",),
 }
 
@@ -275,7 +278,13 @@ def validate_component_instance(descriptor: PluginDescriptor, component: Any) ->
     return types because Python runtime protocols do not validate signatures.
     """
 
-    for member in _REQUIRED_COMPONENT_MEMBERS[descriptor.kind]:
+    graph_process = getattr(component, "process", None)
+    required_members = (
+        ()
+        if descriptor.kind != ComponentKind.SOURCE and callable(graph_process)
+        else _REQUIRED_COMPONENT_MEMBERS[descriptor.kind]
+    )
+    for member in required_members:
         value = getattr(component, member, None)
         if member != "stream_spec" and not callable(value):
             raise TypeError(
@@ -292,3 +301,9 @@ def validate_component_instance(descriptor: PluginDescriptor, component: Any) ->
                 raise TypeError(
                     f"plugin {descriptor.plugin_id} declares snapshot_restore but lacks {member}"
                 )
+    if descriptor.capabilities.supports_triggers and not callable(
+        getattr(component, "handle_trigger", None)
+    ):
+        raise TypeError(
+            f"plugin {descriptor.plugin_id} declares trigger support but lacks handle_trigger"
+        )

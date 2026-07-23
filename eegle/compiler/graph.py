@@ -51,6 +51,18 @@ class CompiledPort:
             "contract": self.contract.to_payload(),
         }
 
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "CompiledPort":
+        return cls(
+            component_id=str(payload["component_id"]),
+            name=str(payload["name"]),
+            direction=PortDirection(str(payload["direction"])),
+            type_id=str(payload["type_id"]),
+            required=bool(payload["required"]),
+            multiple=bool(payload["multiple"]),
+            contract=SignalContract.from_payload(payload["contract"]),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class CompiledRoute:
@@ -72,6 +84,15 @@ class CompiledRoute:
             "target": self.target,
             "type_id": self.type_id,
         }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "CompiledRoute":
+        return cls(
+            route_id=str(payload["route_id"]),
+            source=str(payload["source"]),
+            target=str(payload["target"]),
+            type_id=str(payload["type_id"]),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +124,16 @@ class CompiledGraph:
             "routes": [value.to_payload() for value in self.routes],
             "component_order": list(self.component_order),
         }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "CompiledGraph":
+        if payload.get("schema") != "eegle.compiled_graph.v1":
+            raise ValueError(f"unsupported compiled graph schema: {payload.get('schema')}")
+        return cls(
+            ports=tuple(CompiledPort.from_payload(value) for value in payload["ports"]),
+            routes=tuple(CompiledRoute.from_payload(value) for value in payload["routes"]),
+            component_order=tuple(str(value) for value in payload["component_order"]),
+        )
 
 
 def contract_issues(source: SignalContract, target: SignalContract) -> tuple[str, ...]:

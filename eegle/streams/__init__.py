@@ -1,7 +1,7 @@
 """Modality-neutral stream records and source contracts.
 
-LSL helpers remain available from their explicit legacy modules during the
-migration; importing :mod:`eegle.streams` does not import LSL.
+Transport integrations such as LSL are optional plugins rather than stream
+kernel facades.
 """
 
 from eegle._domain import Lineage

@@ -67,6 +67,7 @@ class PlanExplanation:
     components: tuple[Mapping[str, Any], ...]
     phases: tuple[Mapping[str, Any], ...]
     placements: tuple[Mapping[str, Any], ...]
+    artifacts: tuple[Mapping[str, Any], ...]
     claims: tuple[Mapping[str, Any], ...]
 
     def __post_init__(self) -> None:
@@ -74,6 +75,7 @@ class PlanExplanation:
         object.__setattr__(self, "components", tuple(freeze_json(value) for value in self.components))
         object.__setattr__(self, "phases", tuple(freeze_json(value) for value in self.phases))
         object.__setattr__(self, "placements", tuple(freeze_json(value) for value in self.placements))
+        object.__setattr__(self, "artifacts", tuple(freeze_json(value) for value in self.artifacts))
         object.__setattr__(self, "claims", tuple(freeze_json(value) for value in self.claims))
 
     def to_payload(self) -> dict[str, Any]:
@@ -86,6 +88,7 @@ class PlanExplanation:
             "components": [thaw_json(value) for value in self.components],
             "phases": [thaw_json(value) for value in self.phases],
             "placements": [thaw_json(value) for value in self.placements],
+            "artifacts": [thaw_json(value) for value in self.artifacts],
             "claims": [thaw_json(value) for value in self.claims],
         }
 
@@ -133,6 +136,7 @@ def explain_plan(plan: ExecutionPlan) -> PlanExplanation:
         ),
         phases=tuple(value.to_payload() for value in plan.phases),
         placements=tuple(value.to_payload() for value in plan.placements),
+        artifacts=tuple(value.to_payload() for value in plan.artifacts),
         claims=claims,
     )
 
@@ -186,6 +190,13 @@ def diff_plans(before: ExecutionPlan, after: ExecutionPlan) -> PlanDiff:
         {value.component_id: value.to_payload() for value in before.placements},
         {value.component_id: value.to_payload() for value in after.placements},
         ChangeMateriality.OPERATIONAL,
+        changes,
+    )
+    _diff_identity_records(
+        "artifacts",
+        {value.artifact_id: value.to_payload() for value in before.artifacts},
+        {value.artifact_id: value.to_payload() for value in after.artifacts},
+        ChangeMateriality.SCIENTIFIC,
         changes,
     )
     for field, materiality in (

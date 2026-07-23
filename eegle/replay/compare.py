@@ -4,13 +4,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Protocol, Sequence
 
 from eegle._domain import EquivalenceLevel
 from eegle._validation import require_finite
 from eegle.compiler.lock import canonical_json_bytes
 from eegle.recording.evidence import EvidenceRecord
-from eegle.runtime.engine import EngineRunResult
+
+
+class ComparableRun(Protocol):
+    """Small replay-comparison boundary shared by live and recorded runs."""
+
+    evidence: tuple[EvidenceRecord, ...]
+    equivalence_ceiling: EquivalenceLevel
 
 
 _RANK = {
@@ -53,6 +59,12 @@ _COMPARABLE_RECORDS = frozenset(
         "component_state",
         "action_command",
         "action_receipt",
+        "graph_emission",
+        "phase_started",
+        "phase_finished",
+        "phase_retry",
+        "phase_transition",
+        "artifact_registered",
     }
 )
 
@@ -104,8 +116,8 @@ class EquivalenceReport:
 
 
 def compare_runs(
-    reference: EngineRunResult,
-    candidate: EngineRunResult,
+    reference: ComparableRun,
+    candidate: ComparableRun,
     policy: EquivalencePolicy,
 ) -> EquivalenceReport:
     level = max(
@@ -189,7 +201,7 @@ def compare_runs(
 
 
 def _records(
-    result: EngineRunResult, policy: EquivalencePolicy
+    result: ComparableRun, policy: EquivalencePolicy
 ) -> tuple[EvidenceRecord, ...]:
     records = tuple(
         record for record in result.evidence if record.record_type in _COMPARABLE_RECORDS
@@ -212,8 +224,18 @@ def _project(record: EvidenceRecord, level: EquivalenceLevel) -> Any:
 def _trace_projection(record: EvidenceRecord) -> Mapping[str, Any]:
     payload = record.payload
     projected: dict[str, Any] = {"record_type": record.record_type}
-    if record.record_type == "work":
-        work = payload["work"]
+    if record.record_type == "graph_emission":
+        projected.update(
+            {
+                "component_id": payload["component_id"],
+                "output_port": payload["output_port"],
+                "value_id": payload["value_id"],
+                "value_type": payload["value_type"],
+                "input_ids": payload.get("input_ids", ()),
+            }
+        )
+    elif record.record_type == "work":
+        work = payload.get("work", payload)
         projected.update(
             {
                 "component_id": work["component_id"],
@@ -312,7 +334,14 @@ def _trace_projection(record: EvidenceRecord) -> Mapping[str, Any]:
 def _semantic_projection(record: EvidenceRecord) -> Any:
     trace = dict(_trace_projection(record))
     payload = record.payload
-    if record.record_type == "prediction":
+    if record.record_type == "graph_emission":
+        trace.update(
+            {
+                "value_hash": payload["value_hash"],
+                "value": _nonnumeric_structure(payload.get("value")),
+            }
+        )
+    elif record.record_type == "prediction":
         prediction = payload["prediction"]
         trace.update(
             {
@@ -324,7 +353,7 @@ def _semantic_projection(record: EvidenceRecord) -> Any:
         decision = payload["decision"]
         trace["reasons"] = decision.get("reasons", ())
     elif record.record_type == "work":
-        work = payload["work"]
+        work = payload.get("work", payload)
         trace["reason_code"] = work.get("reason_code")
     elif record.record_type == "component_state":
         state = payload.get("state", {})

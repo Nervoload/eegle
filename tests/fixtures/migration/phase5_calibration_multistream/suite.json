@@ -1,0 +1,161 @@
+{
+  "schema": "eegle.suite_spec.v1",
+  "suite_id": "suite.calibration_multistream",
+  "protocol_id": "protocol.calibration_multistream",
+  "streams": [
+    {
+      "stream_id": "stream.neural",
+      "modality": "eeg",
+      "clock_id": "device.clock",
+      "contract": {
+        "type_id": "eegle.dense_sample_batch.v1",
+        "unit": "uV",
+        "channel_count": 2,
+        "nominal_rate_hz": 100.0
+      }
+    },
+    {
+      "stream_id": "stream.markers",
+      "modality": "markers",
+      "clock_id": "marker.clock",
+      "contract": {"type_id": "eegle.sparse_event_batch.v1"}
+    }
+  ],
+  "components": [
+    {
+      "component_id": "source.neural",
+      "kind": "source",
+      "plugin_id": null,
+      "stream_id": "stream.neural",
+      "config": {}
+    },
+    {
+      "component_id": "source.markers",
+      "kind": "source",
+      "plugin_id": null,
+      "stream_id": "stream.markers",
+      "config": {}
+    },
+    {
+      "component_id": "transform.identity",
+      "kind": "transform",
+      "plugin_id": "eegle.processing.identity",
+      "version_spec": "~=0.1.0",
+      "config": {}
+    },
+    {
+      "component_id": "window.calibration",
+      "kind": "window",
+      "plugin_id": "eegle.processing.continuous_window",
+      "version_spec": "~=0.1.0",
+      "config": {"window_samples": 4, "step_samples": 4}
+    },
+    {
+      "component_id": "model.candidate",
+      "kind": "model",
+      "plugin_id": "eegle.models.mean_threshold",
+      "version_spec": "~=0.1.0",
+      "role": "candidate",
+      "config": {
+        "model_id": "model.calibrated.candidate",
+        "role": "candidate",
+        "threshold": 0.0
+      }
+    },
+    {
+      "component_id": "artifact.calibration",
+      "kind": "artifact",
+      "plugin_id": "eegle.artifacts.prediction_summary",
+      "version_spec": "~=0.1.0",
+      "config": {
+        "artifact_id": "calibration.result",
+        "role": "calibration_result"
+      }
+    },
+    {
+      "component_id": "sink.neural",
+      "kind": "sink",
+      "plugin_id": "eegle.recording.dense_sink",
+      "version_spec": "~=0.1.0",
+      "config": {}
+    },
+    {
+      "component_id": "sink.markers",
+      "kind": "sink",
+      "plugin_id": "eegle.recording.sparse_sink",
+      "version_spec": "~=0.1.0",
+      "config": {}
+    }
+  ],
+  "routes": [
+    {
+      "route_id": "route.neural_transform",
+      "source": {"component": "source.neural", "port": "samples"},
+      "target": {"component": "transform.identity", "port": "samples"}
+    },
+    {
+      "route_id": "route.neural_sink",
+      "source": {"component": "source.neural", "port": "samples"},
+      "target": {"component": "sink.neural", "port": "records"}
+    },
+    {
+      "route_id": "route.transform_window",
+      "source": {"component": "transform.identity", "port": "samples"},
+      "target": {"component": "window.calibration", "port": "samples"}
+    },
+    {
+      "route_id": "route.window_model",
+      "source": {"component": "window.calibration", "port": "windows"},
+      "target": {"component": "model.candidate", "port": "window"}
+    },
+    {
+      "route_id": "route.model_artifact",
+      "source": {"component": "model.candidate", "port": "prediction"},
+      "target": {"component": "artifact.calibration", "port": "prediction"}
+    },
+    {
+      "route_id": "route.markers_sink",
+      "source": {"component": "source.markers", "port": "events"},
+      "target": {"component": "sink.markers", "port": "records"}
+    }
+  ],
+  "phases": [
+    {
+      "phase_id": "phase.calibrate",
+      "components": [
+        "source.neural",
+        "source.markers",
+        "transform.identity",
+        "window.calibration",
+        "model.candidate",
+        "artifact.calibration",
+        "sink.neural",
+        "sink.markers"
+      ],
+      "transitions": [{"target_phase": "phase.evaluate", "condition": "complete"}]
+    },
+    {
+      "phase_id": "phase.evaluate",
+      "components": ["source.neural", "source.markers", "sink.neural", "sink.markers"],
+      "transitions": [],
+      "required_artifacts": ["calibration.result"]
+    }
+  ],
+  "initial_phase": "phase.calibrate",
+  "artifacts": [
+    {
+      "artifact_id": "calibration.result",
+      "role": "calibration_result",
+      "media_type": "application/json",
+      "producer_phase": "phase.calibrate",
+      "producer_component": "artifact.calibration",
+      "producer_port": "artifact"
+    }
+  ],
+  "clock_policy": {
+    "execution_clock_id": "boundary.clock",
+    "ordering": "availability_watermark"
+  },
+  "recording": {"execution_capture": true, "semantic_evidence": true},
+  "validation": {"require_replay_equivalence": true}
+}

@@ -364,9 +364,16 @@ synthetic source
 - Substitute hardware actions with observe-only/simulated adapters during
   replay and compare action intent and observed trace at the declared level.
 
-### Completion checkpoint — 2026-07-23
+### Semantic checkpoint — 2026-07-23
 
-The target engine now owns the remaining Phase 3 semantics:
+The classifier-shaped implementation described in this historical checkpoint
+proved the requirements below but was not retained as an API. During Phase 5,
+its `EngineComponents` assembly was deleted and the graph-bearing
+`ExecutionEngine` became the sole implementation authority.
+
+The retired slice established the following semantic requirements. This list is
+historical acceptance evidence, not a claim that every item has already been
+reimplemented in the sole plan-owned engine:
 
 - delayed outcomes are ordered by `available_time`, matched through explicit
   prediction IDs, bounded by deterministic expiry/overflow, independently
@@ -420,9 +427,16 @@ LSL, recipe, model, feature, and process responsibilities must be separated.
 - Every unit of work reaches an explicit terminal or pending state.
 - A causal component cannot consume a datum before its declared availability.
 
-All Phase 3 exit conditions are satisfied for the target engine. Legacy worker,
-recipe, and analysis migration remains later client/cleanup work; Phase 4
-writer recovery remains storage recovery rather than engine restoration.
+Phase 3's requirements are accepted and their permanent engine-level semantics
+converged under P5-008. The plan-owned engine now owns graph routing,
+watermarks, bounded queues, deadlines, replay, scheduled/state triggers,
+primary-first shadow disposition, and integrity-checked fresh-runtime mid-phase
+restoration. No second engine or compatibility assembly is retained.
+
+Target-shaped acceptance tests preserve this boundary through
+`ExecutionEngine.from_plan()`. Phase 6 extends the typed domain meaning of
+models, outcomes, adaptation, and independently authorized actions; it must do
+so through this sole graph engine, never by recovering the retired Phase 3 API.
 
 ## 9. Phase 4 — Adaptive sessions, evidence bundles, and stores
 
@@ -525,7 +539,7 @@ contents, and installed-wheel API imports pass. Phase 4 is complete.
   scientific plan identity.
 - No target runtime code depends on old recipe session paths.
 
-## 10. Phase 5 — Reproduce: specifications and compiler
+## 10. Phase 5 — Reproduce: specifications and compiler (complete)
 
 ### Objective
 
@@ -579,19 +593,48 @@ specification to reproduce their exact JSON or fixed phase sequence.
 
 ### Implementation progress — 2026-07-23
 
-The first Phase 5 vertical slice is implemented and documented in
+The first Phase 5 vertical slice and the compiler/runtime join are implemented
+and documented in
 [PHASE5_COMPILER.md](PHASE5_COMPILER.md). It provides versioned protocol, suite,
 deployment, signal-contract, phase, and bounded-overlay types; exact descriptor
-resolution; structured diagnostics; typed port/resource/clock checks; v2 plans
-with v1 hash compatibility; deterministic lock manifests; atomic plan/lock I/O;
-and explain/diff projections. The simulated continuous reference suite compiles
-against both simulated and independently declared live-capability source
-bindings without changing portable intent.
+resolution; structured diagnostics; typed port/resource/clock checks; one
+graph-bearing `ExecutionPlan` v1; deterministic lock
+manifests; atomic plan/lock I/O; and explain/diff projections. Exact locked
+plugins now construct from the plan, and a generic typed-graph executor plus
+phase runner handles recording-only, preprocessing-only, calibration/model,
+classifier, mixed dense/sparse, artifact/operator-gated, and retrying phases
+without manually assembled classifier components. Generic plan runs also persist
+through the Phase 4 plan-bearing evidence-bundle boundary. The simulated
+continuous reference suite compiles against both simulated and independently
+declared live-capability source bindings without changing portable intent.
 
-Phase 5 remains open. Artifact production/dependency semantics, the remaining
-five reference-suite families, fuller phase scheduling/acceptance semantics,
-outcome/adaptation permission checks, and the final compiler-to-runtime
-construction boundary are not yet complete.
+Typed artifact production is also implemented. Portable suites declare
+external or graph-produced artifacts; plans lock producer endpoints and
+optional digests; the compiler proves phase-entry dominance; successful graph
+publications unlock later phases; and evidence persistence materializes bounded
+JSON results or retains external references with producer lineage. A durable
+calibration/mixed dense+sparse fixture exercises that complete path.
+
+Phase 5 is complete. The final closure adds compiled scheduled and state
+triggers; persisted, tamper-detecting fresh-runtime checkpoints; semantic phase
+timeouts and protocol acceptance decisions; primary-first model-role
+scheduling; explicit shadow shedding and nonfatal reject-newest backpressure;
+and pre-construction outcome, adaptation, and exact action-capability permission
+checks.
+
+Two additional durable families close the reference strategy. The delayed
+adaptation suite drives sparse outcomes, scheduled/state triggers, and a
+permission-gated adaptive component. The event-window/action suite joins dense
+neural data and sparse markers, independently admits a slower auxiliary stream,
+runs primary and shadow models on the same causal window, and delivers only the
+authorized primary action through a simulated actuator. That suite also
+persists and replays from an evidence bundle with equivalent receipts.
+
+All 41 focused Phase 5 tests and the 344-test local suite pass; the latter has
+five environment-dependent skips. Compile-all passes. Hardware safety,
+full outcome matching/dispute/expiry semantics, framework model adapters, and
+modality generality remain Phase 6 rather than being overstated by these
+dependency-light fixtures.
 
 ### Exit gate
 
@@ -692,6 +735,12 @@ eegle export
 
 Commands operate on specs, lock manifests, sessions, evidence bundles, models,
 and structured results. Do not port old recipe commands into the base CLI.
+
+The legacy command boundary was neutralized early during Phase 5: console
+scripts are absent, `python -m eegle` emits only a dependency-free Phase 7
+notice, and built wheels exclude migration-only root orchestration modules.
+Phase 7 still owns implementation of the new command set and deletion of the
+remaining source-checkout evidence.
 
 #### Packaging
 
@@ -922,7 +971,7 @@ the intended gates.
 | 2 | New foundations | Complete | Typed records, plugin contracts, schemas, clean package boundaries |
 | 3 | Single execution engine | Complete | One engine for simulation and replay with causal accounting |
 | 4 | Adaptive sessions and evidence | Complete | Versioned evidence bundles, stores, recovery, privacy |
-| 5 | Specifications and compiler | Ready; not started | Protocol/Suite/Deployment to locked ExecutionPlan |
+| 5 | Specifications and compiler | In progress | Protocol/Suite/Deployment to locked ExecutionPlan and sole graph engine |
 | 6 | General semantics | Not started | Modality-neutral models, outcomes, adaptation, actions |
 | 7 | CLI and integrations | Not started | New CLI, minimal wheel, LSL and optional adapters |
 | 8 | Validation and public alpha | Not started | Layered validation, hardening, truthful support release |

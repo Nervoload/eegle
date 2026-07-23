@@ -1,0 +1,71 @@
+{
+  "schema": "eegle.deployment_spec.v1",
+  "deployment_id": "deployment.delayed_adaptation",
+  "suite_id": "suite.delayed_adaptation",
+  "component_bindings": [
+    {
+      "component_id": "source.outcomes",
+      "plugin_id": "eegle.sources.packet_sequence_sparse",
+      "version_spec": "~=0.1.0",
+      "placement": "in_process",
+      "resource_ids": ["resource.outcomes"],
+      "config": {
+        "stream_spec": {
+          "schema": "eegle.stream_spec.v1",
+          "stream_id": "stream.outcomes",
+          "revision": 1,
+          "modality": "markers",
+          "content_kind": "sparse_events",
+          "rate_model": "event",
+          "clock_id": "device.clock",
+          "channels": [],
+          "sample_rate_hz": null,
+          "sample_dtype": null,
+          "missing_data_policy": "forbid",
+          "coordinate_frame": null,
+          "geometry_reference": null,
+          "geometry_revision": null,
+          "metadata": {}
+        },
+        "packets": []
+      }
+    }
+  ],
+  "resources": [
+    {
+      "resource_id": "resource.outcomes",
+      "kind": "simulator",
+      "selector": {"generator": "packet_sequence"},
+      "capabilities": ["deterministic"],
+      "contract": {"type_id": "eegle.sparse_event_batch.v1"}
+    }
+  ],
+  "stream_bindings": [
+    {
+      "stream_id": "stream.outcomes",
+      "resource_id": "resource.outcomes",
+      "selector": {}
+    }
+  ],
+  "storage": [
+    {"storage_id": "storage.evidence", "kind": "evidence", "uri": "memory://phase5/delayed-adaptation"}
+  ],
+  "permissions": [
+    {
+      "permission_id": "permission.adaptation",
+      "capability": "adaptation",
+      "component_ids": ["adapter.counter"],
+      "authorization_ref": "authorization.simulation",
+      "operator_confirmation": false
+    }
+  ],
+  "secrets": [],
+  "clock_mappings": [
+    {
+      "source_clock": "device.clock",
+      "target_clock": "boundary.clock",
+      "strategy": "declared_affine",
+      "maximum_uncertainty_seconds": 0.001
+    }
+  ]
+}

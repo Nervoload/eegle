@@ -1,0 +1,14 @@
+{
+  "schema": "eegle.protocol_spec.v1",
+  "protocol_id": "protocol.delayed_adaptation",
+  "execution_mode": "causal",
+  "claims": [
+    {
+      "claim_id": "claim.delayed_adaptation",
+      "statement": "Adaptation consumes only outcomes available to the runtime and explicitly permissioned for adaptation."
+    }
+  ],
+  "metrics": [],
+  "acceptance": [],
+  "annotations": {"reference_support": "simulation"}
+}

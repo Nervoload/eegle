@@ -16,8 +16,8 @@ restate the full architecture or phase plan.
 
 | Field | Current value |
 |---|---|
-| Active phase | Phase 5 — specifications and compiler (in progress) |
-| Phase status | First compiler vertical slice verified; Phase 5 exit gates remain open |
+| Active phase | Phase 6 — model, outcome, adaptation, and action semantics (ready to begin) |
+| Phase status | Phase 5 complete; all compiler, reference-suite, and semantic-convergence gates verified |
 | Code migration started | Yes |
 | Product vision | Accepted and documented |
 | Migration model | Selective preservation and clean rebuild |
@@ -27,19 +27,26 @@ restate the full architecture or phase plan.
 | Target kernel runtime | Python 3.11+ with no artificial upper bound |
 
 Phases 0 and 1 established the authority, inventory, and accepted scientific
-behavior. Phase 2 now provides the typed modality-neutral records, canonical
+behavior. Phase 2 provides the typed modality-neutral records, canonical
 locks, executable plugins, evidence primitives, processing capabilities, clean
-package boundaries, and Python 3.11+ base. Phase 3 now provides the completed
-dependency-light target engine, including delayed outcomes, scheduled and
-state-triggered work, simulated action receipts, and fresh-instance checkpoint
-restoration. Phase 4 provides the completed session, evidence, recovery,
+package boundaries, and Python 3.11+ base. Phase 3 established engine semantic
+requirements through a temporary classifier proof; that implementation is now
+deleted. Phase 5's graph-bearing `ExecutionEngine` is the sole runtime
+authority. Phase 4 provides the completed session, evidence, recovery,
 privacy/export, external-store, historical-import, and plan-bearing bundle
 replay boundary.
 
-Phase 5 now has a first complete vertical slice from separate portable and local
-JSON specifications through typed graph validation to a hashed v2 plan and lock.
-[PHASE5_COMPILER.md](PHASE5_COMPILER.md) records the implemented boundary and
-the work that remains before Phase 5 can close.
+Phase 5 runs from separate portable and local JSON specifications through a
+typed, hashed graph to exact plugin construction and a generic phase state
+machine. Recording-only, preprocessing-only, calibration/model,
+classifier-shaped, mixed dense/sparse, artifact/operator-gated, and retrying
+graphs execute from the immutable plan and persist through the Phase 4 evidence
+boundary. Graph-produced artifacts now compile as typed phase outputs, unlock
+later phases only after successful publication, and persist with content hashes
+and producer lineage. Compiled triggers, checkpoint restoration, timeout and
+acceptance semantics, role-aware scheduling/backpressure, and outcome/action
+permission checks execute in that same engine. [PHASE5_COMPILER.md](PHASE5_COMPILER.md)
+records the completed boundary and the narrower Phase 6 work that follows.
 
 ## 2. Verified baseline
 
@@ -147,6 +154,26 @@ After Phase 3 closure:
   five skips; compile-all, diff check, wheel build/content, and installed-wheel
   runtime/replay/action/recording imports pass.
 
+After Phase 5 closure:
+
+- portable protocol/suite intent and local deployment compile into the sole
+  graph-bearing `eegle.execution_plan.v1` plus an independent lock manifest;
+- exact descriptor-locked plugins construct and execute arbitrary active phase
+  subgraphs without classifier-shaped assembly;
+- scheduled/state triggers, semantic timeout and acceptance decisions,
+  primary-first/shadow disposition, and fail-run/reject-newest backpressure are
+  plan-owned runtime semantics;
+- integrity-checked checkpoints restore a fresh runtime at a safe mid-phase
+  boundary without resetting phase time, identity, admitted artifacts, trigger,
+  clock, or evidence state;
+- compiler and runtime boundaries require declared outcome/adaptation uses and
+  exact action-capability deployment permissions;
+- four durable suite families cover simulated observation, calibration and
+  mixed streams, delayed adaptation, causal event windows, broader multi-rate
+  admission, and authorized simulated action with bundle replay;
+- all 41 focused Phase 5 tests and the 344-test Python 3.14.4 suite pass with
+  five environment-dependent skips; compile-all passes.
+
 This is a behavior baseline, not an obligation to preserve every API, file,
 command, or artifact layout.
 
@@ -221,14 +248,14 @@ These are target behaviors, not instructions to copy their present modules.
 | K-002 | **Resolved for the target foundation 2026-07-22:** executable descriptors now combine schemas, ports, capabilities, versions, provenance, and factories. The old model registry remains legacy recipe code. | Independent plugin wheels can participate without editing EEGle; legacy registry removal remains Phase 6 cleanup. | Phase 2 |
 | K-003 | **Resolved for the target storage model 2026-07-22:** generic sessions and namespaced artifact identities no longer derive from recipe paths. `SessionPaths` remains only an alias-registry view for selected legacy clients. | New suites can use arbitrary artifact namespaces; migration of old recipe clients remains Phase 4 cleanup. | Phase 4 |
 | K-004 | Task-specific epoch, label, condition, and inhibition semantics are embedded in nominally general realtime modules. | Core reuse is constrained and label leakage is harder to reason about. | Phases 2–3 |
-| K-005 | **Partially resolved:** new model predictions/roles and plugin boundaries are clean, while the legacy combined realtime model/training module remains. | Target imports are independent; legacy backend and training decomposition remains Phase 6. | Phases 2 and 6 |
+| K-005 | **Partially resolved:** new model predictions/roles and plugin boundaries are clean, while `eegle.models` still delegates selected contracts, calibration, registry, and target helpers to `eegle.ml`. | The realtime adapter facades are gone, but durable model semantics must move into `eegle.models` and framework/model-family registries must externalize before `eegle.ml` leaves the wheel. | Phases 2 and 6 |
 | K-006 | **Resolved for target foundations:** bundle I/O has one authority and executable construction belongs to the new plugin registry. | Legacy model construction remains isolated until its clients migrate. | Phases 1–2 |
-| K-007 | **Resolved for the target engine 2026-07-23:** packets, delayed outcomes, scheduled/state-triggered work, action receipts, replay, and checkpoint restoration use one semantic engine. | Live-like, replay, and restored target execution cannot silently drift. Legacy worker/analysis client migration and removal remain Phase 6 cleanup, not a second target authority. | Phase 3 |
+| K-007 | **Resolved 2026-07-23:** one graph-bearing engine owns live-like, recorded, and replay execution, including watermarks, bounded queues, deadlines, phase retries, bundle replay, compiled triggers, role-aware scheduling, and persisted mid-phase restoration. | No parallel classifier engine or compatibility assembly remains available to drift. | Phases 3 and 5 |
 | K-008 | **Resolved 2026-07-22:** task/PsychoPy environment setup moved to `eegle.integrations.task_environment`; the new `eegle.runtime` has no global environment mutation. | The target runtime namespace is clean; the legacy integration remains explicit and removable. | Phase 2 |
 | K-009 | **Partially resolved for target specifications:** portable protocol/suite objects contain no filesystem authority; deployment storage requires an explicit URI scheme and compiler artifacts use caller-supplied paths. Legacy recipe configuration still resolves project-root paths. | New compiled suites are independent of repository layout; legacy removal remains Phase 7 cleanup. | Phases 5 and 7 |
 | K-010 | **Resolved for the target compiler 2026-07-23:** causal and retrospective transforms declare incompatible capabilities and exact descriptor resolution enforces the protocol execution mode before construction. | Future-dependent components cannot compile into a causal target plan. | Phases 2 and 5 |
 | K-011 | **Resolved 2026-07-22:** pure epoch-array helpers now break the direct realtime classification/models cycle. | Retained legacy modules are acyclic at this boundary. | Phase 2 |
-| K-012 | The CLI exposes study recipes and historical workflows as if they were the general library. | Public identity remains coupled to the current lab applications. | Phase 7 |
+| K-012 | **Partially resolved:** recipe console scripts are gone, `python -m eegle` is an inert dependency-free notice, and legacy root orchestration modules are rejected by a real wheel-content test. | The historical CLI remains only as source-checkout migration evidence; Phase 7 still must implement the new artifact-oriented CLI and then delete that evidence. | Phases 5 and 7 |
 | K-013 | **Resolved for the target branch 2026-07-22:** package metadata requires Python 3.11+ without an upper bound and declares the four base dependencies. | Initial supported-matrix enforcement remains release/CI work. | Phases 2 and 7 |
 | K-014 | **Partially resolved for the target runtime:** semantic execution now carries explicit in-process/subprocess/external proxy placement independent of task or device code. | Cross-process health transport and legacy supervisor removal remain before the separation is complete. | Phases 2–3 |
 
@@ -273,6 +300,10 @@ These are target behaviors, not instructions to copy their present modules.
 | ID | Decision | Resolution |
 |---|---|---|
 | D-004 | Suite composition | Use one explicit `SuiteSpec` base plus ordered typed `SuiteOverlay` values. V1 overlays may override only existing component config and recording/validation policy keys; they cannot alter topology, identities, plugins, routes, or phases. Structural changes require a new explicit suite. |
+| D-018 | Compiler/runtime join | Embed the complete typed graph in `ExecutionPlan`, construct exact descriptor-locked plugins into `PlanRuntime`, and let the sole `ExecutionEngine` execute phase-local subgraphs. Classifier requirements apply only to phases with routed model/policy components. The Phase 3 assembly and compatibility aliases are deleted. |
+| D-019 | Artifact production and phase availability | Declare external and produced artifacts in `SuiteSpec`; lock producer phase/component/port, role, media type, and optional digest in the plan. Components emit typed `ArtifactPublication` graph values. Only publications from successful phases satisfy later entry gates. Semantic evidence records the reference, digest, and provenance but not materialized content; persistence stores bounded JSON under artifact sensitivity policy or preserves a verifiable external reference with producer lineage. |
+| D-020 | Scheduling and checkpoint policy | Compile scheduled/state triggers and primary/shadow/backpressure disposition into the immutable plan. Execute them in the same semantic queue as packets and component work. Checkpoint only at a queue-empty source boundary; persist plan/execution identity, runtime/component state, admitted artifacts, clocks, identifiers, trigger state, original phase start, and evidence-prefix digest for integrity-checked fresh-runtime restoration. |
+| D-021 | Phase 5 permission boundary | Components declare outcome uses, required adaptation use, and actuator action capabilities. The compiler requires exact independent deployment grants before construction, and runtime routing rechecks the locked use/capability. This is an execution permission boundary, not the Phase 6 hardware-safety/interlock provider. |
 
 ### Remaining open decisions
 
@@ -325,6 +356,12 @@ Status values: `todo`, `in_progress`, `blocked`, `done`, or `dropped`.
 | P3-006 | done | Feed captured inputs through the identical engine and compare equivalence. | Original/accelerated replay parity and localized counterfactual shadow divergence |
 | P3-007 | done | Generalize delayed outcome delivery, bounded pending predictions, expiry, and observe-only adaptation eligibility through the engine. | Availability-only outcome lifecycle, matching/duplicate/rejection/use, bounded overflow/expiry/pending, label-blindness, and replay tests pass |
 | P3-008 | done | Add general scheduled/state-triggered work and engine-level checkpoint/resume across a partial run. | Causally safe trigger/deadline/cancel/failure/reschedule tests plus integrity-checked fresh-engine restored-run equivalence pass |
+
+Phase 3 `done` entries record semantic requirements proven by the now-retired
+classifier-shaped slice. Current implementation ownership is tracked by
+P5-008: every retained engine-level requirement is now present in the sole v1
+engine rather than recovered through compatibility code.
+
 | P4-001 | done | Implement generic session identity/lifecycle and namespaced artifact registry. | Hashed session/artifact manifests, namespace isolation, external references, sensitivity, aliases, and lineage tests |
 | P4-002 | done | Implement versioned evidence bundle writer/reader and direct engine-result persistence. | Self-describing complete bundle round-trip and Phase 3 result assembly tests |
 | P4-003 | done | Move target ledgers and capture framing into `recording`. | Typed evidence ledger, framed packet store, and isolated historical CLRE1 reader |
@@ -339,10 +376,12 @@ Status values: `todo`, `in_progress`, `blocked`, `done`, or `dropped`.
 | P5-001 | done | Implement versioned portable `ProtocolSpec`, `SuiteSpec`, and site-local `DeploymentSpec`. | Typed round trips, stable independent hashes, explicit storage URIs, secret references, and literal-secret rejection pass. |
 | P5-002 | done | Resolve bounded suite composition (D-004). | Ordered typed overlays change only existing component config and recording/validation policy; topology and identity mutation are impossible in v1. |
 | P5-003 | done | Implement the first compiler validation core. | Exact plugin/mode/config/resource resolution plus typed port, signal, stream, clock, phase, role, and actuator-permission diagnostics pass before construction. |
-| P5-004 | done | Produce durable explainable v2 plans and independent lock manifests. | V1 hash compatibility, v2 phases/placements, component/schema/graph hashes, atomic I/O, tamper rejection, explain, and material diff pass. |
+| P5-004 | done | Produce one durable explainable graph-bearing plan and independent lock manifest. | `eegle.execution_plan.v1` includes phases, placements, typed graph, component/schema/graph hashes, atomic I/O, tamper rejection, explain, and material diff; no partial legacy schema remains. |
 | P5-005 | done | Add the simulated continuous observation reference suite. | Separate protocol/suite/deployment JSON compiles deterministically against simulated and live-capability source deployments. |
-| P5-006 | in_progress | Complete phase/artifact/default/policy compilation semantics. | Declare artifact producers/dependencies; compile fuller phase entry/timeout/retry/resume/acceptance, outcome/adaptation permissions, and scheduling/resource defaults. |
-| P5-007 | todo | Add the remaining five reference-suite families and close the compiler-to-runtime construction boundary. | Event primary/shadow, calibration/evaluation, delayed outcome, multi-rate dense/sparse, and authorized simulated action compile and execute from locked plans. |
+| P5-006 | done | Complete phase/artifact/default/policy compilation semantics. | Phase-local requirements, roles, gates, bounded transitions/retries, explicit scheduling/resource defaults, semantic timeouts, protocol acceptance, typed artifact production, checkpoint resume, and outcome/adaptation/action permissions compile into and execute from the locked plan. |
+| P5-007 | done | Add the remaining reference-suite families and close the compiler-to-runtime construction boundary. | Four durable families cover simulated continuous observation, calibration/mixed streams, delayed outcome/adaptation, primary/shadow event windows, broader multi-rate admission, and authorized simulated action. The action family persists and bundle-replays with equivalent receipts. |
+| P5-008 | done | Complete Phase 3 semantic convergence in the sole plan-owned graph coordinator. | The sole engine owns watermark scheduling, bounded fail-run/reject-newest queues, primary-first shadow disposition, deadlines, quality/cancellation, compiled scheduled/state triggers, integrity-checked fresh-runtime checkpoint restoration, source-substitution bundle replay, and typed outcome/action routing. No retired runtime API or semantic skips remain. |
+| P5-009 | done | Close the pre-Phase-7 legacy command and root-wheel boundary. | No console scripts; dependency-free inert `python -m eegle`; custom build boundary and isolated wheel test admit only four approved root modules and reject legacy orchestration. |
 
 Only the next two phases should normally be expanded into fine-grained tasks.
 Later phase detail belongs in `MIGRATION.md` until it becomes actionable.
@@ -363,10 +402,11 @@ Later phase detail belongs in `MIGRATION.md` until it becomes actionable.
 | R-010 | monitoring | Optional dependency imports could leak back into the base package. | A subprocess test now blocks fourteen optional families while importing every foundation package; retain it as a release gate. |
 | R-011 | monitoring | GitHub Actions run 29967855396 passes Linux 3.11–3.13 and macOS 3.12; Windows 3.12 reaches unit tests and fails two legacy path/session-name assertions. The local Phase 3 closure tree has not yet run remotely. | Preserve the exact run/job evidence, fix legacy portability separately, and do not claim a green Windows suite or weaken target engine contracts. |
 | R-012 | resolved | An in-progress Phase 3 outcome/checkpoint edit temporarily called a missing `_finalize_pending_predictions()` method and blocked integrated verification. | The method and full outcome lifecycle now pass the 27-test Phase 3 module and integrated 330-test full suite. |
+| R-013 | resolved | Two engine authorities could have diverged. The temporary Phase 3 implementation, `EngineComponents`, aliases, and API-shaped tests are deleted; replay now reconstructs the locked graph. | Keep Phase 6 extensions inside `PlanGraphExecutor`/`ExecutionEngine`; never restore a parallel classifier engine. |
 
-No migration blocker is currently recorded. Phase 5 continues from the verified
-first compiler slice over the completed Phase 2 foundations, Phase 3 engine, and
-Phase 4 evidence boundary.
+No migration blocker is currently recorded. Phase 5 is complete over the Phase
+2 foundations, converged Phase 3 engine semantics, and Phase 4 evidence
+boundary. Phase 6 is ready to begin from the verified plan-owned runtime.
 
 ## 9. Completion log
 
@@ -399,6 +439,11 @@ Phase 4 evidence boundary.
 | 2026-07-23 | Phase 4 closed | Plan-bearing bundle replay clears P4-011 and all six exit gates. Nineteen dedicated closure tests and the 320-test full suite pass with five skips; compile-all, diff check, wheel build/contents, and installed-wheel API imports pass. |
 | 2026-07-23 | Phase 3 closed | P3-007/P3-008 add bounded availability-time outcomes, independent use eligibility, causally safe scheduled/state triggers, integrity-checked fresh-engine restoration, and simulated command/receipt replay. Twenty-seven focused tests and the integrated 330-test Python 3.12.13 suite pass with five skips; compile-all, diff check, wheel build/contents, and installed imports pass. K-007 is resolved for the target engine; the observed Windows matrix failures are recorded precisely rather than hidden. |
 | 2026-07-23 | Phase 5 first vertical slice implemented | P5-001 through P5-005 add separate versioned specs, bounded overlays, structured compilation, typed graph/capability/clock/phase checks, v2 plans with v1 compatibility, locks, explain/diff, atomic files, and the simulated continuous reference. Thirteen focused tests and the 343-test Python 3.14.4 suite pass with five skips; compile-all, diff check, wheel contents, and installed public imports pass. Phase 5 remains open for P5-006/P5-007. |
+| 2026-07-23 | Phase 5 compiler/runtime join implemented | `ExecutionPlan` now embeds its typed graph; exact locked plugins construct into `PlanRuntime`; `PlanExecutionEngine` routes arbitrary active phase subgraphs and owns transitions, gates, retries, and evidence. Nine runtime tests cover classifier, recording-only, preprocessing-only, calibration/model, dense+sparse, multi-phase, retry, drift rejection, and bundle persistence. All 22 focused Phase 5 tests and the 352-test Python 3.14.4 suite pass with five skips; compile-all, wheel contents, and installed-wheel imports pass. Phase 5 remains open for artifact production, durable reference families, and P5-008 scheduler/replay unification. |
+| 2026-07-23 | Phase 5 artifact production slice implemented | `ArtifactSpec`, `PlannedArtifact`, digest locks, compiler producer/dominance checks, the `ArtifactProducer`/`ArtifactPublication` graph contract, successful-phase registration, and evidence-store materialization with lineage are implemented. A durable calibration/mixed dense+sparse reference family now compiles and executes. All 25 focused Phase 5 tests and the 355-test Python 3.14.4 suite pass with five skips. Phase 5 remains open for timeouts/checkpoints/acceptance, outcome/action permissions, the remaining reference families, and P5-008 scheduler/replay unification. |
+| 2026-07-23 | Phase 3/5 engine authority consolidated | The 2,077-line classifier engine, `EngineComponents`, compatibility aliases, four stream facades, five model-to-realtime adapter/metric facades, and 27 API-shaped tests are deleted. `ExecutionEngine` now means the locked graph/phase runtime. Bundle replay reconstructs that plan without a factory; watermarks, bounded queues, and component deadlines run generically, including rejection of sources that regress behind a declared watermark. Compiler phase/artifact/role checks moved to named semantic passes, and the sole complete plan schema is `eegle.execution_plan.v1`. Study console scripts and recipe configs are no longer distribution metadata. A clean 221 KB wheel contains 112 files, excludes legacy study/task/worker/analysis packages, target-to-realtime model facades, and entry points, and passes installed target-surface imports. Thirty-two focused Phase 5 tests and the 335-test full suite pass with five skips; compile-all passes. P5-008 remains open only for triggers, persisted mid-phase restoration, and Phase 6 outcome/action suites. |
+| 2026-07-23 | Phase 5 semantic and packaging hardening | The graph coordinator delegates admission, bounded queueing, typed routing, and deadline/work construction to focused modules and is reduced from about 1,100 to 827 lines. Target-shaped tests prove quality suppression, terminal pre-run cancellation, and honest runtime exports; six skipped contracts name the remaining P5-008/Phase 6 behavior. Console scripts remain absent, `python -m eegle` is an inert dependency-free notice, and an isolated real-wheel test rejects every migration-only root module. Forty-two focused Phase 5 tests run with six skips; the complete 345-test suite passes with eleven skips, and compile-all passes. The clean 196 KB wheel contains 103 files, exactly four root modules, and passes installed target-package imports. |
+| 2026-07-23 | Phase 5 closed | P5-006 through P5-008 add compiled scheduled/state triggers, semantic timeout and acceptance decisions, primary-first/shadow scheduling, nonfatal reject-newest backpressure, exact outcome/adaptation/action permission checks, and tamper-detecting fresh-runtime mid-phase restoration. Durable delayed-adaptation and event-window/multi-rate/simulated-action suites compile and execute; the latter persists and bundle-replays with equivalent receipts. All 41 focused tests and the 344-test full suite pass with five environment-dependent skips; compile-all passes. Phase 6 is ready. |
 
 ## 10. Instructions for future Codex work
 

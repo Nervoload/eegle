@@ -12,13 +12,22 @@ broader discovery when touching shared orchestration.
 - `test_phase2_foundations.py`: typed records, canonical locks, evidence
   framing, packet/context plugin contracts, processing causality, real external
   wheel discovery, clean imports, and dependency policy.
-- `test_phase3_execution_engine.py`: deterministic scheduling, typed bounded
-  windows, primary/shadow execution, work terminal states, evidence capture,
-  same-engine replay, divergence localization, deadlines, watermarks, and
-  backpressure.
 - `test_phase4_evidence_bundles.py`: generic sessions, namespaced artifacts,
   evidence-bundle lifecycle, component snapshots, independent execution/raw
   references, precise truncation recovery, and legacy read-only discovery.
+- `test_phase5_specs_compiler.py`: portable/site specifications, bounded
+  composition, typed compiler diagnostics, exact locks, and explain/diff.
+- `test_phase5_plan_execution.py`: the sole target-engine acceptance surface:
+  exact locked construction, generic graph routing, phase orchestration,
+  non-classifier topologies, mixed dense/sparse streams, watermarks, bounded
+  queues, deadlines, retry restoration, artifacts, and bundle replay.
+- `test_phase5_execution_semantics.py`: durable target-shaped quality,
+  cancellation, watermark, deadline, and runtime-surface acceptance.
+- `test_phase5_remaining_semantics.py`: compiled triggers, mid-phase checkpoint
+  restoration, timeout/acceptance decisions, role-aware backpressure,
+  outcome/action permissions, and the final durable Phase 5 suites.
+- `test_phase5_packaging.py`: clean-wheel root-module exclusions and the inert
+  dependency-free `python -m eegle` boundary before the Phase 7 CLI exists.
 - `eegle.plugins.testing`: reusable behavioral assertions for independently
   packaged components; tests must keep these focused on public typed contracts.
 - `test_classification.py`: classify8 workflow contracts, label-blind metadata,

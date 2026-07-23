@@ -16,7 +16,12 @@ from eegle._domain import Lineage
 from eegle._validation import require_finite, require_identifier
 from eegle.compiler.lock import canonical_hash
 from eegle.streams.clocks import TimePoint
-from eegle.streams.packets import DenseSampleBatch, Packet
+from eegle.streams.packets import (
+    DenseSampleBatch,
+    Packet,
+    SparseEvent,
+    SparseEventBatch,
+)
 
 if TYPE_CHECKING:
     from eegle.plugins.contracts import ExecutionContext
@@ -432,6 +437,7 @@ class ContinuousWindowBuilder:
             for key, value in dict(payload.get("stream_revisions") or {}).items()
         }
 
+
     def _validate_packet(self, packet: DenseSampleBatch, context: "ExecutionContext") -> None:
         if context.current_time.clock_id != packet.available_time.clock_id:
             raise ValueError("window context and packet availability must share a clock")
@@ -581,3 +587,165 @@ class ContinuousWindowBuilder:
             if key in target and target[key] != value:
                 raise ValueError(f"{field} revision conflict for {key}")
             target[str(key)] = value
+
+
+class EventWindowBuilder:
+    """Causally join dense samples with delayed sparse-event windows."""
+
+    def __init__(
+        self,
+        *,
+        start_offset_seconds: float,
+        end_offset_seconds: float,
+        event_kinds: tuple[str, ...] = (),
+        max_buffer_samples: int = 100_000,
+    ) -> None:
+        self.spec = EventWindowSpec(start_offset_seconds, end_offset_seconds)
+        self.event_kinds = tuple(str(value) for value in event_kinds)
+        self.max_buffer_samples = int(max_buffer_samples)
+        if self.max_buffer_samples <= 0:
+            raise ValueError("max_buffer_samples must be positive")
+        self._packets: list[DenseSampleBatch] = []
+        self._events: list[SparseEvent] = []
+
+    def process(
+        self, input_port: str, value: Any, context: "ExecutionContext"
+    ) -> Mapping[str, tuple[DenseWindow, ...]]:
+        if input_port == "samples":
+            if not isinstance(value, DenseSampleBatch):
+                raise TypeError("event windows samples port requires DenseSampleBatch")
+            self._packets.append(value)
+            if sum(packet.sample_count for packet in self._packets) > self.max_buffer_samples:
+                raise RuntimeError("event window sample buffer exceeded max_buffer_samples")
+        elif input_port == "events":
+            if not isinstance(value, SparseEventBatch):
+                raise TypeError("event windows events port requires SparseEventBatch")
+            self._events.extend(
+                event
+                for event in value.events
+                if not self.event_kinds or event.kind in self.event_kinds
+            )
+        else:
+            raise ValueError(f"unknown event window input port {input_port}")
+        ready: list[DenseWindow] = []
+        pending: list[SparseEvent] = []
+        for event in self._events:
+            window = self._event_window(event, context)
+            if window is None:
+                pending.append(event)
+            else:
+                ready.append(window)
+        self._events = pending
+        return {"windows": tuple(ready)}
+
+    def _event_window(
+        self, event: SparseEvent, context: "ExecutionContext"
+    ) -> DenseWindow | None:
+        if not self._packets:
+            return None
+        first = self._packets[0]
+        if first.first_sample_time is None or first.sample_period_seconds is None:
+            raise ValueError("event windows require regular dense sample timing")
+        sample_clock = first.first_sample_time.clock_id
+        if event.event_time.clock_id != sample_clock:
+            raise ValueError("event and dense sample times must share a mapped clock")
+        start = event.event_time.seconds + self.spec.start_offset_seconds
+        end = event.event_time.seconds + self.spec.end_offset_seconds
+        selected: list[tuple[DenseSampleBatch, int]] = []
+        latest_sample: float | None = None
+        for packet in self._packets:
+            self._validate_dense_contract(first, packet, sample_clock)
+            assert packet.first_sample_time is not None
+            assert packet.sample_period_seconds is not None
+            for index in range(packet.sample_count):
+                seconds = packet.first_sample_time.seconds + index * packet.sample_period_seconds
+                latest_sample = seconds if latest_sample is None else max(latest_sample, seconds)
+                if start <= seconds < end:
+                    selected.append((packet, index))
+        if latest_sample is None or latest_sample < end - first.sample_period_seconds:
+            return None
+        if not selected:
+            raise ValueError(f"event {event.event_id} window contains no samples")
+        packets = tuple(dict.fromkeys(packet.batch_id for packet, _ in selected))
+        packet_by_id = {packet.batch_id: packet for packet, _ in selected}
+        contributors = tuple(packet_by_id[value] for value in packets)
+        availability = [event.available_time, *(packet.available_time for packet in contributors)]
+        if len({value.clock_id for value in availability}) != 1:
+            raise ValueError("event window input availability must share the execution clock")
+        latest_available = max(availability, key=lambda value: value.seconds)
+        any_mask = any(packet.validity_mask is not None for packet, _ in selected)
+        validity = None
+        if any_mask:
+            validity = np.stack(
+                [
+                    np.ones(len(packet.channel_ids), dtype=bool)
+                    if packet.validity_mask is None
+                    else packet.validity_mask[index]
+                    for packet, index in selected
+                ]
+            )
+        input_ids = (event.event_id, *packets)
+        return DenseWindow(
+            window_id=context.next_id("window"),
+            stream_id=first.stream_id,
+            stream_revision=first.stream_revision,
+            sequence_start=selected[0][0].sequence_start + selected[0][1],
+            channel_ids=first.channel_ids,
+            values=np.stack([packet.values[index] for packet, index in selected]),
+            validity_mask=validity,
+            start_time=TimePoint(start, sample_clock),
+            end_time=TimePoint(end, sample_clock),
+            available_time=latest_available,
+            input_ids=input_ids,
+            lineage=Lineage(
+                component_id=context.component_id,
+                component_version=context.component_version,
+                input_ids=input_ids,
+                latest_input_available_time=latest_available,
+                clock_mapping_revisions=context.clock_mapping_revisions,
+                stream_revisions={first.stream_id: first.stream_revision},
+            ),
+        )
+
+    @staticmethod
+    def _validate_dense_contract(
+        first: DenseSampleBatch, packet: DenseSampleBatch, sample_clock: str
+    ) -> None:
+        if (
+            packet.first_sample_time is None
+            or packet.sample_period_seconds is None
+            or packet.stream_id != first.stream_id
+            or packet.stream_revision != first.stream_revision
+            or packet.channel_ids != first.channel_ids
+            or packet.first_sample_time.clock_id != sample_clock
+            or packet.sample_period_seconds != first.sample_period_seconds
+        ):
+            raise ValueError("event window dense stream contract changed")
+
+    def snapshot_state(self) -> Mapping[str, Any]:
+        payload = {
+            "schema": "eegle.event_window_state.v1",
+            "spec": [self.spec.start_offset_seconds, self.spec.end_offset_seconds],
+            "event_kinds": list(self.event_kinds),
+            "max_buffer_samples": self.max_buffer_samples,
+            "packets": [value.to_payload() for value in self._packets],
+            "events": [value.to_payload() for value in self._events],
+        }
+        payload["state_hash"] = canonical_hash(payload)
+        return payload
+
+    def restore_state(self, payload: Mapping[str, Any]) -> None:
+        content = {key: value for key, value in payload.items() if key != "state_hash"}
+        if payload.get("schema") != "eegle.event_window_state.v1":
+            raise ValueError("unsupported event window state")
+        if payload.get("state_hash") != canonical_hash(content):
+            raise ValueError("event window state hash mismatch")
+        if (
+            tuple(float(value) for value in payload["spec"])
+            != (self.spec.start_offset_seconds, self.spec.end_offset_seconds)
+            or tuple(str(value) for value in payload.get("event_kinds", ())) != self.event_kinds
+            or int(payload["max_buffer_samples"]) != self.max_buffer_samples
+        ):
+            raise ValueError("event window state belongs to different parameters")
+        self._packets = [DenseSampleBatch.from_payload(value) for value in payload["packets"]]
+        self._events = [SparseEvent.from_payload(value) for value in payload["events"]]

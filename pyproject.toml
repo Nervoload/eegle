@@ -54,10 +54,6 @@ torch = [
   "onnxruntime>=1.23,<2",
   "torch>=2.9,<3",
 ]
-deep-learning = [
-  "onnxruntime>=1.23,<2",
-  "torch>=2.9,<3",
-]
 foundation = [
   "torch>=2.9,<3",
 ]
@@ -93,17 +89,18 @@ Documentation = "https://github.com/johnsurette/closedloop/tree/main/docs"
 Issues = "https://github.com/johnsurette/closedloop/issues"
 Source = "https://github.com/johnsurette/closedloop"
 
-[project.scripts]
-eegle = "eegle.cli:main"
-alpha8 = "eegle.pipelines.alpha8:main"
-inhibition8 = "eegle.pipelines.inhibition8:main"
-classify8 = "eegle.pipelines.classify8:main"
-attention8 = "eegle.pipelines.attention8:main"
-dsart8 = "eegle.pipelines.dsart_recording:main_dsart8"
-dsart32 = "eegle.pipelines.dsart_recording:main_dsart32"
-
 [tool.setuptools.packages.find]
-include = ["configs*", "eegle*"]
-
-[tool.setuptools.package-data]
-configs = ["*.json"]
+include = [
+  "eegle",
+  "eegle.actions*",
+  "eegle.compiler*",
+  "eegle.ml*",
+  "eegle.models*",
+  "eegle.plugins*",
+  "eegle.processing*",
+  "eegle.recording*",
+  "eegle.replay*",
+  "eegle.runtime*",
+  "eegle.specs*",
+  "eegle.streams*",
+]

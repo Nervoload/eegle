@@ -15,7 +15,13 @@ from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 
 from eegle._domain import ComponentKind
-from eegle._validation import freeze_json, require_finite, require_identifier, thaw_json
+from eegle._validation import (
+    freeze_json,
+    require_digest,
+    require_finite,
+    require_identifier,
+    thaw_json,
+)
 from eegle.compiler.lock import canonical_hash
 from eegle.specs.schemas import validate_payload
 
@@ -159,6 +165,9 @@ class ComponentSpec:
     required_capabilities: tuple[str, ...] = ()
     input_contracts: Mapping[str, SignalContract] = None  # type: ignore[assignment]
     output_contracts: Mapping[str, SignalContract] = None  # type: ignore[assignment]
+    outcome_uses: tuple[str, ...] = ()
+    required_outcome_use: str | None = None
+    action_capabilities: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -195,6 +204,23 @@ class ComponentSpec:
             "output_contracts",
             _freeze_contracts(self.output_contracts or {}, "output contract"),
         )
+        uses = tuple(require_identifier(value, "outcome use") for value in self.outcome_uses)
+        if len(uses) != len(set(uses)):
+            raise ValueError("outcome uses must be unique")
+        object.__setattr__(self, "outcome_uses", uses)
+        if self.required_outcome_use is not None:
+            object.__setattr__(
+                self,
+                "required_outcome_use",
+                require_identifier(self.required_outcome_use, "required outcome use"),
+            )
+        capabilities = tuple(
+            require_identifier(value, "action capability")
+            for value in self.action_capabilities
+        )
+        if len(capabilities) != len(set(capabilities)):
+            raise ValueError("action capabilities must be unique")
+        object.__setattr__(self, "action_capabilities", capabilities)
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -212,6 +238,9 @@ class ComponentSpec:
             "output_contracts": {
                 key: value.to_payload() for key, value in self.output_contracts.items()
             },
+            "outcome_uses": list(self.outcome_uses),
+            "required_outcome_use": self.required_outcome_use,
+            "action_capabilities": list(self.action_capabilities),
         }
 
     @classmethod
@@ -239,6 +268,13 @@ class ComponentSpec:
                 str(key): SignalContract.from_payload(value)
                 for key, value in dict(payload.get("output_contracts") or {}).items()
             },
+            outcome_uses=tuple(str(value) for value in payload.get("outcome_uses", ())),
+            required_outcome_use=None
+            if payload.get("required_outcome_use") is None
+            else str(payload["required_outcome_use"]),
+            action_capabilities=tuple(
+                str(value) for value in payload.get("action_capabilities", ())
+            ),
         )
 
 
@@ -285,6 +321,8 @@ class RouteSpec:
 class TransitionCondition(str, Enum):
     COMPLETE = "complete"
     FAILED = "failed"
+    TIMEOUT = "timeout"
+    ACCEPTANCE_FAILED = "acceptance_failed"
     OPERATOR = "operator"
 
 
@@ -292,6 +330,167 @@ class ResumePolicy(str, Enum):
     RESTART = "restart"
     CHECKPOINT = "checkpoint"
     FORBIDDEN = "forbidden"
+
+
+class BackpressureDisposition(str, Enum):
+    FAIL_RUN = "fail_run"
+    REJECT_NEWEST = "reject_newest"
+
+
+class ShadowFailurePolicy(str, Enum):
+    FAIL_RUN = "fail_run"
+    CONTINUE = "continue"
+
+
+@dataclass(frozen=True, slots=True)
+class SchedulingSpec:
+    backpressure: BackpressureDisposition = BackpressureDisposition.FAIL_RUN
+    primary_first: bool = True
+    shadow_queue_limit: int | None = None
+    shadow_failure: ShadowFailurePolicy = ShadowFailurePolicy.FAIL_RUN
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "backpressure", BackpressureDisposition(self.backpressure))
+        object.__setattr__(self, "shadow_failure", ShadowFailurePolicy(self.shadow_failure))
+        if self.shadow_queue_limit is not None:
+            object.__setattr__(self, "shadow_queue_limit", int(self.shadow_queue_limit))
+            if self.shadow_queue_limit < 0:
+                raise ValueError("shadow_queue_limit cannot be negative")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "backpressure": self.backpressure.value,
+            "primary_first": self.primary_first,
+            "shadow_queue_limit": self.shadow_queue_limit,
+            "shadow_failure": self.shadow_failure.value,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "SchedulingSpec":
+        return cls(
+            backpressure=BackpressureDisposition(
+                str(payload.get("backpressure", BackpressureDisposition.FAIL_RUN.value))
+            ),
+            primary_first=bool(payload.get("primary_first", True)),
+            shadow_queue_limit=None
+            if payload.get("shadow_queue_limit") is None
+            else int(payload["shadow_queue_limit"]),
+            shadow_failure=ShadowFailurePolicy(
+                str(payload.get("shadow_failure", ShadowFailurePolicy.FAIL_RUN.value))
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduledTriggerSpec:
+    trigger_id: str
+    phase_id: str
+    target_component: str
+    scheduled_offset_seconds: float
+    payload: Mapping[str, Any] = None  # type: ignore[assignment]
+    deadline_offset_seconds: float | None = None
+
+    def __post_init__(self) -> None:
+        for field in ("trigger_id", "phase_id", "target_component"):
+            object.__setattr__(self, field, require_identifier(getattr(self, field), field))
+        scheduled = require_finite(
+            self.scheduled_offset_seconds, "scheduled_offset_seconds"
+        )
+        if scheduled < 0:
+            raise ValueError("scheduled_offset_seconds cannot be negative")
+        object.__setattr__(self, "scheduled_offset_seconds", scheduled)
+        if self.deadline_offset_seconds is not None:
+            deadline = require_finite(
+                self.deadline_offset_seconds, "deadline_offset_seconds"
+            )
+            if deadline < scheduled:
+                raise ValueError("trigger deadline cannot precede scheduled offset")
+            object.__setattr__(self, "deadline_offset_seconds", deadline)
+        object.__setattr__(self, "payload", freeze_json(self.payload or {}))
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "trigger_id": self.trigger_id,
+            "phase_id": self.phase_id,
+            "target_component": self.target_component,
+            "scheduled_offset_seconds": self.scheduled_offset_seconds,
+            "deadline_offset_seconds": self.deadline_offset_seconds,
+            "payload": thaw_json(self.payload),
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "ScheduledTriggerSpec":
+        return cls(
+            trigger_id=str(payload["trigger_id"]),
+            phase_id=str(payload["phase_id"]),
+            target_component=str(payload["target_component"]),
+            scheduled_offset_seconds=float(payload["scheduled_offset_seconds"]),
+            deadline_offset_seconds=None
+            if payload.get("deadline_offset_seconds") is None
+            else float(payload["deadline_offset_seconds"]),
+            payload=dict(payload.get("payload") or {}),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class StateTriggerSpec:
+    rule_id: str
+    phase_id: str
+    source_component: str
+    target_component: str
+    transition_kind: str | None = None
+    statuses: tuple[str, ...] = ("applied",)
+    delay_seconds: float = 0.0
+    payload: Mapping[str, Any] = None  # type: ignore[assignment]
+    once: bool = True
+
+    def __post_init__(self) -> None:
+        for field in ("rule_id", "phase_id", "source_component", "target_component"):
+            object.__setattr__(self, field, require_identifier(getattr(self, field), field))
+        if self.transition_kind is not None:
+            object.__setattr__(
+                self,
+                "transition_kind",
+                require_identifier(self.transition_kind, "transition_kind"),
+            )
+        statuses = tuple(require_identifier(value, "transition status") for value in self.statuses)
+        if not statuses or len(statuses) != len(set(statuses)):
+            raise ValueError("state trigger statuses must be non-empty and unique")
+        object.__setattr__(self, "statuses", statuses)
+        delay = require_finite(self.delay_seconds, "delay_seconds")
+        if delay < 0:
+            raise ValueError("state trigger delay cannot be negative")
+        object.__setattr__(self, "delay_seconds", delay)
+        object.__setattr__(self, "payload", freeze_json(self.payload or {}))
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "rule_id": self.rule_id,
+            "phase_id": self.phase_id,
+            "source_component": self.source_component,
+            "target_component": self.target_component,
+            "transition_kind": self.transition_kind,
+            "statuses": list(self.statuses),
+            "delay_seconds": self.delay_seconds,
+            "payload": thaw_json(self.payload),
+            "once": self.once,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "StateTriggerSpec":
+        return cls(
+            rule_id=str(payload["rule_id"]),
+            phase_id=str(payload["phase_id"]),
+            source_component=str(payload["source_component"]),
+            target_component=str(payload["target_component"]),
+            transition_kind=None
+            if payload.get("transition_kind") is None
+            else str(payload["transition_kind"]),
+            statuses=tuple(str(value) for value in payload.get("statuses", ("applied",))),
+            delay_seconds=float(payload.get("delay_seconds", 0.0)),
+            payload=dict(payload.get("payload") or {}),
+            once=bool(payload.get("once", True)),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,6 +524,8 @@ class PhaseSpec:
     retry_limit: int = 0
     resume_policy: ResumePolicy = ResumePolicy.RESTART
     operator_confirmation: bool = False
+    timeout_seconds: float | None = None
+    acceptance_criteria: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "phase_id", require_identifier(self.phase_id, "phase_id"))
@@ -344,6 +545,18 @@ class PhaseSpec:
         if self.retry_limit < 0:
             raise ValueError("retry_limit cannot be negative")
         object.__setattr__(self, "resume_policy", ResumePolicy(self.resume_policy))
+        if self.timeout_seconds is not None:
+            timeout = require_finite(self.timeout_seconds, "timeout_seconds")
+            if timeout <= 0:
+                raise ValueError("timeout_seconds must be positive")
+            object.__setattr__(self, "timeout_seconds", timeout)
+        criteria = tuple(
+            require_identifier(value, "acceptance criterion")
+            for value in self.acceptance_criteria
+        )
+        if len(criteria) != len(set(criteria)):
+            raise ValueError("phase acceptance criteria must be unique")
+        object.__setattr__(self, "acceptance_criteria", criteria)
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -354,6 +567,8 @@ class PhaseSpec:
             "retry_limit": self.retry_limit,
             "resume_policy": self.resume_policy.value,
             "operator_confirmation": self.operator_confirmation,
+            "timeout_seconds": self.timeout_seconds,
+            "acceptance_criteria": list(self.acceptance_criteria),
         }
 
     @classmethod
@@ -371,6 +586,88 @@ class PhaseSpec:
             retry_limit=int(payload.get("retry_limit", 0)),
             resume_policy=ResumePolicy(str(payload.get("resume_policy", "restart"))),
             operator_confirmation=bool(payload.get("operator_confirmation", False)),
+            timeout_seconds=None
+            if payload.get("timeout_seconds") is None
+            else float(payload["timeout_seconds"]),
+            acceptance_criteria=tuple(
+                str(value) for value in payload.get("acceptance_criteria", ())
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactSpec:
+    """Portable declaration of an external or graph-produced artifact."""
+
+    artifact_id: str
+    role: str
+    media_type: str
+    producer_phase: str | None = None
+    producer_component: str | None = None
+    producer_port: str | None = None
+    expected_digest: str | None = None
+
+    def __post_init__(self) -> None:
+        for field in ("artifact_id", "role"):
+            object.__setattr__(self, field, require_identifier(getattr(self, field), field))
+        if not self.media_type.strip():
+            raise ValueError("artifact media_type cannot be empty")
+        producer = (
+            self.producer_phase,
+            self.producer_component,
+            self.producer_port,
+        )
+        if any(value is not None for value in producer) and not all(
+            value is not None for value in producer
+        ):
+            raise ValueError(
+                "artifact producer_phase, producer_component, and producer_port "
+                "must be declared together"
+            )
+        for field in ("producer_phase", "producer_component", "producer_port"):
+            value = getattr(self, field)
+            if value is not None:
+                object.__setattr__(self, field, require_identifier(value, field))
+        if self.expected_digest is not None:
+            object.__setattr__(
+                self,
+                "expected_digest",
+                require_digest(self.expected_digest, "expected_digest"),
+            )
+
+    @property
+    def external(self) -> bool:
+        return self.producer_component is None
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "artifact_id": self.artifact_id,
+            "role": self.role,
+            "media_type": self.media_type,
+            "producer_phase": self.producer_phase,
+            "producer_component": self.producer_component,
+            "producer_port": self.producer_port,
+            "expected_digest": self.expected_digest,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "ArtifactSpec":
+        return cls(
+            artifact_id=str(payload["artifact_id"]),
+            role=str(payload["role"]),
+            media_type=str(payload["media_type"]),
+            producer_phase=None
+            if payload.get("producer_phase") is None
+            else str(payload["producer_phase"]),
+            producer_component=None
+            if payload.get("producer_component") is None
+            else str(payload["producer_component"]),
+            producer_port=None
+            if payload.get("producer_port") is None
+            else str(payload["producer_port"]),
+            expected_digest=None
+            if payload.get("expected_digest") is None
+            else str(payload["expected_digest"]),
         )
 
 
@@ -386,6 +683,10 @@ class SuiteSpec:
     clock_policy: Mapping[str, Any]
     recording: Mapping[str, Any]
     validation: Mapping[str, Any]
+    artifacts: tuple[ArtifactSpec, ...] = ()
+    scheduling: SchedulingSpec = SchedulingSpec()
+    scheduled_triggers: tuple[ScheduledTriggerSpec, ...] = ()
+    state_triggers: tuple[StateTriggerSpec, ...] = ()
     schema: str = SUITE_SPEC_SCHEMA
 
     def __post_init__(self) -> None:
@@ -399,6 +700,12 @@ class SuiteSpec:
         _require_unique((value.component_id for value in self.components), "component")
         _require_unique((value.route_id for value in self.routes), "route")
         _require_unique((value.phase_id for value in self.phases), "phase")
+        _require_unique((value.artifact_id for value in self.artifacts), "artifact")
+        _require_unique(
+            (value.trigger_id for value in self.scheduled_triggers),
+            "scheduled trigger",
+        )
+        _require_unique((value.rule_id for value in self.state_triggers), "state trigger")
         object.__setattr__(
             self, "initial_phase", require_identifier(self.initial_phase, "initial_phase")
         )
@@ -422,6 +729,12 @@ class SuiteSpec:
             "routes": [value.to_payload() for value in self.routes],
             "phases": [value.to_payload() for value in self.phases],
             "initial_phase": self.initial_phase,
+            "artifacts": [value.to_payload() for value in self.artifacts],
+            "scheduling": self.scheduling.to_payload(),
+            "scheduled_triggers": [
+                value.to_payload() for value in self.scheduled_triggers
+            ],
+            "state_triggers": [value.to_payload() for value in self.state_triggers],
             "clock_policy": thaw_json(self.clock_policy),
             "recording": thaw_json(self.recording),
             "validation": thaw_json(self.validation),
@@ -441,6 +754,18 @@ class SuiteSpec:
             routes=tuple(RouteSpec.from_payload(value) for value in payload["routes"]),
             phases=tuple(PhaseSpec.from_payload(value) for value in payload["phases"]),
             initial_phase=str(payload["initial_phase"]),
+            artifacts=tuple(
+                ArtifactSpec.from_payload(value) for value in payload.get("artifacts", ())
+            ),
+            scheduling=SchedulingSpec.from_payload(payload.get("scheduling") or {}),
+            scheduled_triggers=tuple(
+                ScheduledTriggerSpec.from_payload(value)
+                for value in payload.get("scheduled_triggers", ())
+            ),
+            state_triggers=tuple(
+                StateTriggerSpec.from_payload(value)
+                for value in payload.get("state_triggers", ())
+            ),
             clock_policy=dict(payload["clock_policy"]),
             recording=dict(payload["recording"]),
             validation=dict(payload["validation"]),
@@ -600,6 +925,9 @@ _COMPONENT_SCHEMA: Mapping[str, Any] = {
             "type": "object",
             "additionalProperties": _SIGNAL_CONTRACT_SCHEMA,
         },
+        "outcome_uses": {"type": "array", "items": {"type": "string"}},
+        "required_outcome_use": {"type": ["string", "null"], "minLength": 1},
+        "action_capabilities": {"type": "array", "items": {"type": "string"}},
     },
     "additionalProperties": False,
 }
@@ -691,11 +1019,98 @@ SUITE_JSON_SCHEMA: Mapping[str, Any] = {
                     "retry_limit": {"type": "integer", "minimum": 0},
                     "resume_policy": {"enum": [value.value for value in ResumePolicy]},
                     "operator_confirmation": {"type": "boolean"},
+                    "timeout_seconds": {"type": ["number", "null"], "exclusiveMinimum": 0},
+                    "acceptance_criteria": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                    },
                 },
                 "additionalProperties": False,
             },
         },
         "initial_phase": {"type": "string", "minLength": 1},
+        "artifacts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["artifact_id", "role", "media_type"],
+                "properties": {
+                    "artifact_id": {"type": "string", "minLength": 1},
+                    "role": {"type": "string", "minLength": 1},
+                    "media_type": {"type": "string", "minLength": 1},
+                    "producer_phase": {"type": ["string", "null"]},
+                    "producer_component": {"type": ["string", "null"]},
+                    "producer_port": {"type": ["string", "null"]},
+                    "expected_digest": {"type": ["string", "null"]},
+                },
+                "additionalProperties": False,
+            },
+        },
+        "scheduling": {
+            "type": "object",
+            "properties": {
+                "backpressure": {
+                    "enum": [value.value for value in BackpressureDisposition]
+                },
+                "primary_first": {"type": "boolean"},
+                "shadow_queue_limit": {"type": ["integer", "null"], "minimum": 0},
+                "shadow_failure": {
+                    "enum": [value.value for value in ShadowFailurePolicy]
+                },
+            },
+            "additionalProperties": False,
+        },
+        "scheduled_triggers": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "trigger_id",
+                    "phase_id",
+                    "target_component",
+                    "scheduled_offset_seconds",
+                ],
+                "properties": {
+                    "trigger_id": {"type": "string", "minLength": 1},
+                    "phase_id": {"type": "string", "minLength": 1},
+                    "target_component": {"type": "string", "minLength": 1},
+                    "scheduled_offset_seconds": {"type": "number", "minimum": 0},
+                    "deadline_offset_seconds": {"type": ["number", "null"], "minimum": 0},
+                    "payload": {"type": "object"},
+                },
+                "additionalProperties": False,
+            },
+        },
+        "state_triggers": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "rule_id",
+                    "phase_id",
+                    "source_component",
+                    "target_component",
+                ],
+                "properties": {
+                    "rule_id": {"type": "string", "minLength": 1},
+                    "phase_id": {"type": "string", "minLength": 1},
+                    "source_component": {"type": "string", "minLength": 1},
+                    "target_component": {"type": "string", "minLength": 1},
+                    "transition_kind": {"type": ["string", "null"], "minLength": 1},
+                    "statuses": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "enum": ["applied", "rejected", "no_op", "rolled_back", "failed"]
+                        },
+                    },
+                    "delay_seconds": {"type": "number", "minimum": 0},
+                    "payload": {"type": "object"},
+                    "once": {"type": "boolean"},
+                },
+                "additionalProperties": False,
+            },
+        },
         "clock_policy": {"type": "object"},
         "recording": {"type": "object"},
         "validation": {"type": "object"},

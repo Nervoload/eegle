@@ -4,7 +4,9 @@ from eegle._domain import ComponentKind, Determinism, EquivalenceLevel, Executio
 from eegle.plugins.contracts import (
     Actuator,
     Adapter,
+    ArtifactProducer,
     ExecutionContext,
+    GraphNode,
     LifecycleComponent,
     Model,
     OutcomeResolver,
@@ -29,10 +31,12 @@ from eegle.plugins.registry import (
 __all__ = [
     "Actuator",
     "Adapter",
+    "ArtifactProducer",
     "ComponentKind",
     "Determinism",
     "EquivalenceLevel",
     "ExecutionContext",
+    "GraphNode",
     "ExecutionMode",
     "LifecycleComponent",
     "Model",

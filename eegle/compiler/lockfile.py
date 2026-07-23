@@ -78,6 +78,15 @@ class ExecutionLock:
         }
         if expected_components != dict(self.component_hashes):
             raise ValueError("lock component hashes differ from execution plan")
+        if plan.graph is not None and plan.graph.graph_hash != self.graph_hash:
+            raise ValueError("lock graph hash differs from execution plan")
+        expected_artifacts = {
+            value.artifact_id: value.expected_digest
+            for value in plan.artifacts
+            if value.expected_digest is not None
+        }
+        if expected_artifacts != dict(self.artifact_hashes):
+            raise ValueError("lock artifact hashes differ from execution plan")
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ExecutionLock":

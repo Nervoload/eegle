@@ -52,6 +52,117 @@ The “model” may be a threshold detector, a spectral estimator, an sklearn
 pipeline, a neural network, an adaptive decoder, an ensemble, or an external
 service. EEGle validates the execution context around it as well as its outputs.
 
+### 1.1 Higher-level value proposition
+
+EEGle treats the complete experimental model system, not an isolated decoder,
+as the scientific and engineering object. Reading a signal and producing a
+classification are necessary capabilities, but they do not establish that a
+live system behaved correctly. A useful account must connect participant or
+system intent to the information available at the time, the processing and
+state used, the resulting decision, any requested action, and the independently
+observed outcome.
+
+For a closed-loop experiment, EEGle should make the following chain inspectable:
+
+```text
+scientific intent
+→ available neurophysiological and behavioral evidence
+→ processing, quality, and model state
+→ prediction and decision policy
+→ independently authorized action request
+→ observed device response
+→ replayable and validated evidence
+```
+
+Its higher-level value is therefore to:
+
+- turn a scientific protocol and a portable system description into a resolved,
+  executable, and inspectable plan;
+- replace hidden laboratory assumptions and disconnected scripts with explicit
+  streams, phases, artifacts, permissions, clocks, and acceptance criteria;
+- let researchers progress through simulation, recording, calibration, shadow
+  execution, and authorized action without changing the scientific semantics;
+- separate poor model performance from failures of data quality, timing,
+  synchronization, coverage, deployment, policy, or device delivery;
+- make live behavior testable through causal replay and counterfactual comparison;
+- let experiments move between people, laboratories, computers, acquisition
+  systems, models, and devices while preserving portable intent and making local
+  differences explicit; and
+- provide a common evidence boundary for scientists, software engineers, device
+  integrators, reviewers, and operators without claiming that evidence alone
+  supplies clinical or hardware safety.
+
+The desired user outcome is not merely a working Python pipeline. It is a
+complete experimentation suite whose claims, execution, failures, and changes
+can be understood and revalidated.
+
+### 1.2 Who EEGle serves
+
+EEGle should expose the same core contracts at different levels of depth:
+
+| User | Primary value |
+|---|---|
+| Experimenter or neuroscientist | Define hypotheses, phases, measurements, models, outcomes, and acceptance criteria without rebuilding acquisition, synchronization, replay, and evidence handling for every study. |
+| Research laboratory | Share a portable suite while binding different local hardware, storage, permissions, and secrets through a separate deployment. Compare sessions and candidate systems on declared comparable evidence. |
+| Model researcher | Evaluate primary, shadow, candidate, and observer models on the same admitted inputs; diagnose divergence; and test replacements without allowing experimental labels or candidate outputs to silently affect live decisions. |
+| Hobbyist or independent builder | Begin with built-in simulation and observe-only execution, add small plain-Python components, and advance toward live adapters without first adopting an entire laboratory software stack. |
+| Software or systems engineer | Integrate acquisition, processing, models, external processes, storage, and actuators through typed, versioned plugin and runtime boundaries with explicit lifecycle, state, timing, and failure semantics. |
+| Professional, reviewer, or regulated team | Inspect provenance, integrity, authorization, timing, replay limits, and structured validation while keeping institutional governance, risk management, certification, and device safety outside EEGle's claims. |
+
+Simple systems must remain simple: recording-only, preprocessing-only,
+simulation, conversion, and validation suites must not be forced to declare a
+model, decision policy, or actuator. Closed-loop systems should add those
+capabilities through the same composition model rather than through a separate
+application framework.
+
+### 1.3 Complete closed-loop experimentation journey
+
+An EEG-controlled prosthetic is a motivating example of the complete product,
+not a special case in the kernel. A reusable suite for such a system could
+express:
+
+1. **Preflight:** validate stream identity, channels, units, rate, clock mapping,
+   signal quality, model compatibility, storage, device connectivity, safe state,
+   and operator requirements.
+2. **Calibration:** collect causally timed EEG, markers, behavior, and outcomes;
+   produce a versioned calibration or model artifact without granting action
+   authority.
+3. **Locked validation:** evaluate the frozen model against declared coverage,
+   rejection, false-activation, calibration, accuracy, and latency criteria.
+4. **Shadow control:** generate commands through the real processing, model, and
+   policy path while an observe-only or simulated actuator prevents physical
+   movement.
+5. **Supervised active control:** admit only bounded high-level commands through
+   an independent deployment authorization and interlock, with explicit operator
+   entry where required.
+6. **Replay and comparison:** reconstruct the execution, locate divergence, and
+   evaluate candidate models or policies on comparable admitted inputs without
+   repeating the participant session or retroactively changing the live claim.
+
+```mermaid
+flowchart LR
+    Preflight["Preflight"]
+    Calibration["Calibration"]
+    Validation["Locked validation"]
+    Shadow["Shadow or simulated control"]
+    Authorized["Independently authorized control"]
+    Review["Replay, compare, and validate"]
+
+    Preflight --> Calibration --> Validation --> Shadow --> Authorized --> Review
+    Shadow --> Review
+```
+
+The same pattern applies to neurofeedback, adaptive interfaces, robotic or
+haptic control, audiovisual actions, and stimulation research. A suite may stop
+at any earlier phase; observe-only is a complete and useful outcome rather than
+an incomplete form of device control.
+
+For physical devices, EEGle should normally produce bounded, high-level action
+intent. A separate real-time or embedded controller should enforce motor limits,
+watchdogs, command expiry, emergency stop, and safe fallback behavior. EEGle
+records why a command was requested, whether it was authorized, and what the
+device reported; it does not replace the device's safety controller.
+
 ## 2. Public product model: the four competencies
 
 The four competencies are the public way to understand EEGle. They share a
@@ -960,18 +1071,28 @@ eegle/
 │   └── quality.py        # quality decisions and reasons
 ├── models/
 │   ├── contracts.py      # modality-neutral model contracts
-│   ├── adapters.py       # callable and optional-framework adapters
 │   ├── bundles.py        # content-addressed bundles
 │   ├── calibration.py    # calibration contracts and methods
+│   ├── predictions.py    # framework-neutral prediction records
+│   ├── builtins.py       # dependency-light reference models
 │   └── roles.py          # primary, shadow, candidate, observer semantics
 ├── runtime/
-│   ├── engine.py         # the single execution engine
-│   ├── scheduling.py     # ordering, deadlines, backpressure, priorities
+│   ├── phases.py         # sole ExecutionEngine and phase machine
+│   ├── graph.py          # semantic graph coordinator
+│   ├── plan_runtime.py   # exact locked component construction
+│   ├── admission.py      # source ordering, monotonicity, watermarks
+│   ├── queueing.py       # bounded deterministic event queue
+│   ├── routing.py        # typed component dispatch and graph values
+│   ├── work.py           # deadlines and terminal work accounting
+│   ├── triggers.py       # compiled scheduled/state-triggered work
+│   ├── restoration.py    # persisted mid-phase restoration
 │   ├── state.py          # component and phase state
 │   └── outcomes.py       # delayed outcomes and matching
 ├── recording/
 │   ├── session.py        # generic session identity and lifecycle
 │   ├── artifacts.py      # namespaced registry, references, lineage
+│   ├── publications.py   # typed runtime artifact publications
+│   ├── producers.py      # dependency-light reference producers
 │   ├── bundles.py        # EvidenceBundle writer, reader, verification
 │   ├── evidence.py       # typed semantic record envelopes
 │   ├── framing.py        # checksums, truncation and prefix recovery
@@ -979,8 +1100,7 @@ eegle/
 │   ├── capture.py        # execution-capture authority
 │   ├── stores.py         # SampleStore protocol and reference store
 │   ├── external.py       # external verification status and local verifier
-│   ├── policies.py       # privacy, export, redaction, retention
-│   └── compat.py         # narrow legacy artifact-alias view
+│   └── policies.py       # privacy, export, redaction, retention
 ├── replay/
 │   ├── bundle.py         # plan-bearing EvidenceBundle replay bridge
 │   ├── source.py         # replay inputs and virtual timing
@@ -1103,7 +1223,12 @@ EEGle has delivered this vision when an independent user can:
    replay, and actions independently;
 9. share a suite without sharing local credentials, paths, or protected raw
    data;
-10. install the base library without the laboratory and research dependency
+10. progress one suite from simulation and observe-only execution to shadow and
+    independently authorized action without silently changing its scientific
+    semantics;
+11. keep high-level action intent and evidence in EEGle while a separate device
+    controller enforces physical safety; and
+12. install the base library without the laboratory and research dependency
     stack.
 
 The migration strategy for reaching these criteria is defined in

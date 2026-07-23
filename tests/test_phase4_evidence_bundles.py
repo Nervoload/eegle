@@ -20,12 +20,9 @@ from eegle.recording import (
     EvidenceWriter,
     IntegrityIssueCode,
     IntegrityStatus,
-    LegacyImportReport,
-    LegacySessionImporter,
     SampleStore,
     Sensitivity,
     Session,
-    SessionPaths,
     SessionStatus,
     WriterPhase,
     complete_interrupted_finalization,
@@ -34,6 +31,8 @@ from eegle.recording import (
     read_framed_sample_store,
     recover_framed_prefix,
 )
+from eegle.recording.compat import SessionPaths
+from eegle.recording.importers import LegacyImportReport, LegacySessionImporter
 from eegle.recording.stores import FramedSampleStore, SampleStorePurpose
 from eegle.streams import (
     ChannelSpec,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from eegle.recording.evidence import EvidenceRecord
 
@@ -36,4 +37,20 @@ class InMemoryEvidenceSink:
 
     @property
     def records(self) -> tuple[EvidenceRecord, ...]:
+        return tuple(self._records)
+
+
+@dataclass(slots=True)
+class InMemoryRecordSink:
+    """Dependency-light observer sink for arbitrary typed runtime records."""
+
+    _records: list[Any] = field(default_factory=list)
+
+    def append(self, record: Any) -> None:
+        if not callable(getattr(record, "to_payload", None)):
+            raise TypeError("record sink values must expose an explicit to_payload() contract")
+        self._records.append(record)
+
+    @property
+    def records(self) -> tuple[Any, ...]:
         return tuple(self._records)

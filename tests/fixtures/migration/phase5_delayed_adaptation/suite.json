@@ -1,0 +1,109 @@
+{
+  "schema": "eegle.suite_spec.v1",
+  "suite_id": "suite.delayed_adaptation",
+  "protocol_id": "protocol.delayed_adaptation",
+  "streams": [
+    {
+      "stream_id": "stream.outcomes",
+      "modality": "markers",
+      "clock_id": "device.clock",
+      "contract": {"type_id": "eegle.sparse_event_batch.v1"}
+    }
+  ],
+  "components": [
+    {
+      "component_id": "source.outcomes",
+      "kind": "source",
+      "plugin_id": null,
+      "stream_id": "stream.outcomes",
+      "config": {}
+    },
+    {
+      "component_id": "outcome.delayed",
+      "kind": "outcome",
+      "plugin_id": "eegle.outcomes.sparse_event",
+      "version_spec": "~=0.1.0",
+      "config": {
+        "event_kind": "trial.outcome",
+        "permitted_uses": ["metrics", "adaptation"]
+      },
+      "outcome_uses": ["metrics", "adaptation"]
+    },
+    {
+      "component_id": "adapter.counter",
+      "kind": "adapter",
+      "plugin_id": "eegle.adapters.adaptive_counter",
+      "version_spec": "~=0.1.0",
+      "config": {"required_use": "adaptation"},
+      "required_outcome_use": "adaptation"
+    },
+    {
+      "component_id": "sink.triggers",
+      "kind": "sink",
+      "plugin_id": "eegle.runtime.trigger_record_sink",
+      "version_spec": "~=0.1.0",
+      "config": {}
+    }
+  ],
+  "routes": [
+    {
+      "route_id": "route.events_outcomes",
+      "source": {"component": "source.outcomes", "port": "events"},
+      "target": {"component": "outcome.delayed", "port": "events"}
+    },
+    {
+      "route_id": "route.outcomes_adapter",
+      "source": {"component": "outcome.delayed", "port": "outcomes"},
+      "target": {"component": "adapter.counter", "port": "outcome"}
+    }
+  ],
+  "phases": [
+    {
+      "phase_id": "phase.adapt",
+      "components": [
+        "source.outcomes",
+        "outcome.delayed",
+        "adapter.counter",
+        "sink.triggers"
+      ],
+      "transitions": [],
+      "resume_policy": "checkpoint"
+    }
+  ],
+  "initial_phase": "phase.adapt",
+  "scheduling": {
+    "backpressure": "reject_newest",
+    "primary_first": true,
+    "shadow_queue_limit": null,
+    "shadow_failure": "continue"
+  },
+  "scheduled_triggers": [
+    {
+      "trigger_id": "trigger.phase_start",
+      "phase_id": "phase.adapt",
+      "target_component": "sink.triggers",
+      "scheduled_offset_seconds": 0.0,
+      "payload": {"kind": "phase_start"}
+    }
+  ],
+  "state_triggers": [
+    {
+      "rule_id": "rule.after_adaptation",
+      "phase_id": "phase.adapt",
+      "source_component": "adapter.counter",
+      "target_component": "sink.triggers",
+      "transition_kind": "adaptation",
+      "statuses": ["applied"],
+      "delay_seconds": 0.0,
+      "payload": {"kind": "adaptation_applied"},
+      "once": false
+    }
+  ],
+  "artifacts": [],
+  "clock_policy": {
+    "execution_clock_id": "boundary.clock",
+    "ordering": "availability_watermark"
+  },
+  "recording": {"execution_capture": true, "semantic_evidence": true},
+  "validation": {"require_replay_equivalence": true}
+}

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 from typing import Any, Mapping
 
 from eegle._validation import freeze_json, require_digest, require_identifier, thaw_json
@@ -80,3 +82,25 @@ class EngineCheckpoint:
         if payload.get("checkpoint_hash") != checkpoint.checkpoint_hash:
             raise ValueError("engine checkpoint hash mismatch")
         return checkpoint
+
+
+def write_checkpoint(path: str | Path, checkpoint: EngineCheckpoint) -> Path:
+    """Persist an integrity-checked checkpoint using an atomic local replace."""
+
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.tmp")
+    temporary.write_text(
+        json.dumps(checkpoint.to_payload(), sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(target)
+    return target
+
+
+def read_checkpoint(path: str | Path) -> EngineCheckpoint:
+    with Path(path).open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, Mapping):
+        raise TypeError("engine checkpoint file must contain a JSON object")
+    return EngineCheckpoint.from_payload(payload)
