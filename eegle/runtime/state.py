@@ -6,12 +6,101 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Mapping
 
+from eegle._domain import WorkStatus
 from eegle._validation import freeze_json, require_digest, require_identifier, thaw_json
 from eegle.streams.clocks import TimePoint
 
 
 REJECTION_SCHEMA = "eegle.rejection.v1"
 STATE_TRANSITION_SCHEMA = "eegle.state_transition.v1"
+WORK_RECORD_SCHEMA = "eegle.work_record.v1"
+
+
+@dataclass(frozen=True, slots=True)
+class WorkRecord:
+    """The explicit disposition of one bounded engine work item."""
+
+    work_id: str
+    component_id: str
+    stage: str
+    status: WorkStatus
+    started_time: TimePoint
+    input_ids: tuple[str, ...]
+    completed_time: TimePoint | None = None
+    deadline_time: TimePoint | None = None
+    role: str | None = None
+    reason_code: str | None = None
+    details: Mapping[str, Any] = None  # type: ignore[assignment]
+    schema: str = WORK_RECORD_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.schema != WORK_RECORD_SCHEMA:
+            raise ValueError(f"unsupported work record schema: {self.schema}")
+        for field in ("work_id", "component_id", "stage"):
+            object.__setattr__(self, field, require_identifier(getattr(self, field), field))
+        object.__setattr__(self, "status", WorkStatus(self.status))
+        inputs = tuple(require_identifier(value, "input_id") for value in self.input_ids)
+        object.__setattr__(self, "input_ids", inputs)
+        if self.role is not None:
+            object.__setattr__(self, "role", require_identifier(self.role, "role"))
+        if self.reason_code is not None:
+            object.__setattr__(
+                self, "reason_code", require_identifier(self.reason_code, "reason_code")
+            )
+        for point, field in (
+            (self.completed_time, "completed_time"),
+            (self.deadline_time, "deadline_time"),
+        ):
+            if point is not None and point.clock_id != self.started_time.clock_id:
+                raise ValueError(f"{field} must use the work clock")
+        if self.completed_time is not None and self.completed_time.seconds < self.started_time.seconds:
+            raise ValueError("completed_time cannot precede started_time")
+        if self.status == WorkStatus.PENDING and self.completed_time is not None:
+            raise ValueError("pending work cannot have completed_time")
+        if self.status != WorkStatus.PENDING and self.completed_time is None:
+            raise ValueError("terminal work requires completed_time")
+        object.__setattr__(self, "details", freeze_json(self.details or {}))
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "work_id": self.work_id,
+            "component_id": self.component_id,
+            "stage": self.stage,
+            "status": self.status.value,
+            "started_time": self.started_time.to_payload(),
+            "completed_time": None
+            if self.completed_time is None
+            else self.completed_time.to_payload(),
+            "deadline_time": None
+            if self.deadline_time is None
+            else self.deadline_time.to_payload(),
+            "input_ids": list(self.input_ids),
+            "role": self.role,
+            "reason_code": self.reason_code,
+            "details": thaw_json(self.details),
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "WorkRecord":
+        completed = payload.get("completed_time")
+        deadline = payload.get("deadline_time")
+        return cls(
+            schema=str(payload.get("schema", WORK_RECORD_SCHEMA)),
+            work_id=str(payload["work_id"]),
+            component_id=str(payload["component_id"]),
+            stage=str(payload["stage"]),
+            status=WorkStatus(str(payload["status"])),
+            started_time=TimePoint.from_payload(payload["started_time"]),
+            completed_time=None if completed is None else TimePoint.from_payload(completed),
+            deadline_time=None if deadline is None else TimePoint.from_payload(deadline),
+            input_ids=tuple(str(value) for value in payload.get("input_ids", ())),
+            role=None if payload.get("role") is None else str(payload["role"]),
+            reason_code=None
+            if payload.get("reason_code") is None
+            else str(payload["reason_code"]),
+            details=dict(payload.get("details") or {}),
+        )
 
 
 @dataclass(frozen=True, slots=True)

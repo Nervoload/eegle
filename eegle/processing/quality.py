@@ -4,13 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 import numpy as np
 
 from eegle._validation import freeze_json, require_identifier, thaw_json
 from eegle.streams.clocks import TimePoint
+from eegle.processing.windows import DenseWindow
 from eegle.streams.packets import DenseSampleBatch
+
+if TYPE_CHECKING:
+    from eegle.plugins.contracts import ExecutionContext
 
 
 QUALITY_DECISION_SCHEMA = "eegle.quality_decision.v1"
@@ -78,24 +82,29 @@ class FiniteQualityGate:
 
     def evaluate(
         self,
-        batch: DenseSampleBatch,
-        *,
-        decision_id: str,
-        decided_time: TimePoint,
+        item: Any,
+        context: "ExecutionContext",
     ) -> QualityDecision:
-        finite = np.isfinite(batch.values)
-        if batch.validity_mask is None:
+        if not isinstance(item, (DenseSampleBatch, DenseWindow)):
+            raise TypeError("finite quality gate requires dense packet or window input")
+        dense = item
+        if context.current_time.clock_id != dense.available_time.clock_id:
+            raise ValueError("quality decision and packet availability must use the execution clock")
+        if context.current_time.seconds < dense.available_time.seconds:
+            raise ValueError("quality gate cannot inspect an item before it is available")
+        finite = np.isfinite(dense.values)
+        if dense.validity_mask is None:
             valid = finite
         else:
-            valid = finite & batch.validity_mask
+            valid = finite & dense.validity_mask
         valid_fraction = float(np.mean(valid))
         accepted = valid_fraction >= self.minimum_valid_fraction
         return QualityDecision(
-            decision_id=decision_id,
-            item_id=batch.batch_id,
+            decision_id=context.next_id("quality"),
+            item_id=(dense.batch_id if isinstance(dense, DenseSampleBatch) else dense.window_id),
             gate_id=self.gate_id,
             status=QualityStatus.ACCEPTED if accepted else QualityStatus.REJECTED,
-            decided_time=decided_time,
+            decided_time=context.current_time,
             reasons=() if accepted else ("insufficient_valid_values",),
             metrics={"valid_fraction": valid_fraction},
         )

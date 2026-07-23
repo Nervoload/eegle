@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Mapping
 
+import numpy as np
+
 from eegle._validation import freeze_json, require_finite, require_identifier, thaw_json
 
 
@@ -84,14 +86,18 @@ class ChannelSpec:
 @dataclass(frozen=True, slots=True)
 class StreamSpec:
     stream_id: str
+    revision: int
     modality: str
     content_kind: ContentKind
     rate_model: RateModel
     clock_id: str
     channels: tuple[ChannelSpec, ...] = ()
     sample_rate_hz: float | None = None
+    sample_dtype: str | None = None
     missing_data_policy: MissingDataPolicy = MissingDataPolicy.FORBID
+    coordinate_frame: str | None = None
     geometry_reference: str | None = None
+    geometry_revision: str | None = None
     metadata: Mapping[str, Any] = None  # type: ignore[assignment]
     schema: str = STREAM_SPEC_SCHEMA
 
@@ -99,6 +105,9 @@ class StreamSpec:
         if self.schema != STREAM_SPEC_SCHEMA:
             raise ValueError(f"unsupported stream spec schema: {self.schema}")
         object.__setattr__(self, "stream_id", require_identifier(self.stream_id, "stream_id"))
+        object.__setattr__(self, "revision", int(self.revision))
+        if self.revision <= 0:
+            raise ValueError("stream revision must be positive")
         object.__setattr__(self, "clock_id", require_identifier(self.clock_id, "clock_id"))
         object.__setattr__(self, "content_kind", ContentKind(self.content_kind))
         object.__setattr__(self, "rate_model", RateModel(self.rate_model))
@@ -110,6 +119,15 @@ class StreamSpec:
             raise ValueError("stream channel identities must be unique")
         if self.content_kind == ContentKind.DENSE_SAMPLES and not self.channels:
             raise ValueError("dense sample streams require at least one channel")
+        if self.content_kind == ContentKind.DENSE_SAMPLES:
+            if self.sample_dtype is None:
+                raise ValueError("dense sample streams require sample_dtype")
+            dtype = np.dtype(self.sample_dtype)
+            if not np.issubdtype(dtype, np.number):
+                raise ValueError("dense sample stream dtype must be numeric")
+            object.__setattr__(self, "sample_dtype", dtype.name)
+        elif self.sample_dtype is not None:
+            raise ValueError("sample_dtype is only valid for dense sample streams")
         if self.rate_model == RateModel.REGULAR:
             if self.sample_rate_hz is None:
                 raise ValueError("regular streams require sample_rate_hz")
@@ -120,20 +138,28 @@ class StreamSpec:
                 raise ValueError("sample_rate_hz must be positive")
         elif self.sample_rate_hz is not None:
             raise ValueError("sample_rate_hz is only valid for regular streams")
+        for field in ("coordinate_frame", "geometry_reference", "geometry_revision"):
+            value = getattr(self, field)
+            if value is not None and not str(value).strip():
+                raise ValueError(f"{field} cannot be empty")
         object.__setattr__(self, "metadata", freeze_json(self.metadata or {}))
 
     def to_payload(self) -> dict[str, Any]:
         return {
             "schema": self.schema,
             "stream_id": self.stream_id,
+            "revision": self.revision,
             "modality": self.modality,
             "content_kind": self.content_kind.value,
             "rate_model": self.rate_model.value,
             "clock_id": self.clock_id,
             "channels": [channel.to_payload() for channel in self.channels],
             "sample_rate_hz": self.sample_rate_hz,
+            "sample_dtype": self.sample_dtype,
             "missing_data_policy": self.missing_data_policy.value,
+            "coordinate_frame": self.coordinate_frame,
             "geometry_reference": self.geometry_reference,
+            "geometry_revision": self.geometry_revision,
             "metadata": thaw_json(self.metadata),
         }
 
@@ -142,6 +168,7 @@ class StreamSpec:
         return cls(
             schema=str(payload.get("schema", STREAM_SPEC_SCHEMA)),
             stream_id=str(payload["stream_id"]),
+            revision=int(payload["revision"]),
             modality=str(payload["modality"]),
             content_kind=ContentKind(str(payload["content_kind"])),
             rate_model=RateModel(str(payload["rate_model"])),
@@ -150,11 +177,20 @@ class StreamSpec:
             sample_rate_hz=None
             if payload.get("sample_rate_hz") is None
             else float(payload["sample_rate_hz"]),
+            sample_dtype=None
+            if payload.get("sample_dtype") is None
+            else str(payload["sample_dtype"]),
             missing_data_policy=MissingDataPolicy(
                 str(payload.get("missing_data_policy", MissingDataPolicy.FORBID.value))
             ),
+            coordinate_frame=None
+            if payload.get("coordinate_frame") is None
+            else str(payload["coordinate_frame"]),
             geometry_reference=None
             if payload.get("geometry_reference") is None
             else str(payload["geometry_reference"]),
+            geometry_revision=None
+            if payload.get("geometry_revision") is None
+            else str(payload["geometry_revision"]),
             metadata=dict(payload.get("metadata") or {}),
         )

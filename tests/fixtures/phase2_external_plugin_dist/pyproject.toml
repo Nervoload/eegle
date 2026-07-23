@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eegle-phase2-external-fixture"
+version = "1.2.0"
+requires-python = ">=3.11"
+dependencies = ["eegle"]
+
+[project.entry-points."eegle.plugins"]
+fixture-scale = "phase2_external_plugin:plugin"
+

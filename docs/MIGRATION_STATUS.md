@@ -16,8 +16,8 @@ restate the full architecture or phase plan.
 
 | Field | Current value |
 |---|---|
-| Active phase | Phase 3 — single execution engine (ready, not started) |
-| Phase status | Phases 0–2 complete; Phase 3 scheduling decisions are next |
+| Active phase | Phase 3 — single execution engine (in progress) |
+| Phase status | First deterministic vertical slice and same-engine replay are implemented; delayed outcomes and general scheduled triggers remain before closure |
 | Code migration started | Yes |
 | Product vision | Accepted and documented |
 | Migration model | Selective preservation and clean rebuild |
@@ -29,7 +29,9 @@ restate the full architecture or phase plan.
 Phases 0 and 1 established the authority, inventory, and accepted scientific
 behavior. Phase 2 now provides the typed modality-neutral records, canonical
 locks, executable plugins, evidence primitives, processing capabilities, clean
-package boundaries, and Python 3.11+ base. The single engine has not started.
+package boundaries, and Python 3.11+ base. Phase 3 now has an executable
+dependency-light reference slice; it is not yet the final generalized routing
+surface.
 
 ## 2. Verified baseline
 
@@ -80,7 +82,12 @@ After Phase 2 closure:
   round-trippable;
 - canonical JSON locks, immutable plan drafts, content-addressed artifacts, and
   checksummed crash-detectable evidence frames are implemented;
-- an external entry-point plugin resolves, validates, constructs, and executes;
+- engine-facing built-ins consume typed packets plus execution context and emit
+  typed records with causal lineage;
+- a separately installed external wheel resolves from real entry-point
+  metadata, validates, constructs, and passes the shared transform contract;
+- stream and clock mappings have explicit revisions, clock mappings have causal
+  availability, and prediction lineage carries its input-availability frontier;
 - causal stateful and retrospective future-dependent transforms have
   machine-readable incompatible capabilities;
 - task environment mutation moved from `eegle.runtime` to the explicit
@@ -88,7 +95,30 @@ After Phase 2 closure:
 - the direct realtime classification/model cycle and top-level legacy facade
   imports were removed;
 - a Python 3.12 minimal-base installation, built wheel, optional-import blocking
-  test, 282-test suite, and compile-all check pass.
+  test, 285-test suite, and compile-all check pass;
+- CI defines Linux Python 3.11–3.13 plus macOS and Windows Python 3.12 core
+  runs, and packaging now builds under Python 3.12.
+
+After the first Phase 3 implementation slice:
+
+- [PHASE3_ENGINE.md](PHASE3_ENGINE.md) records decisions D-006, D-007, and
+  D-012 plus the implemented runtime and replay boundaries;
+- `ExecutionEngine` runs synthetic and captured sources through one deterministic
+  transform/window/quality/primary-shadow/policy path;
+- dense windows are materialized, bounded, availability-aware, revision-bound,
+  and snapshot/restorable;
+- source watermarks, total ordering, late-input rejection, bounded queues,
+  deadlines, cancellation, shadow shedding, partial runs, and failure evidence
+  are explicit;
+- original-availability and accelerated-causal replay use fresh components but
+  the identical engine class and captured source protocol;
+- replay comparison is capped at the weakest component claim and localizes a
+  changed shadow decision to its prediction output;
+- sixteen focused Phase 3 tests pass without task, hardware, LSL, sklearn,
+  Torch, MNE, or plotting dependencies;
+- the full suite passes 301 tests with five environment-dependent skips,
+  compile-all and `git diff --check` pass, and the built wheel contains and
+  imports the new runtime/replay modules.
 
 This is a behavior baseline, not an obligation to preserve every API, file,
 command, or artifact layout.
@@ -162,18 +192,18 @@ These are target behaviors, not instructions to copy their present modules.
 |---|---|---|---|
 | K-001 | **Resolved 2026-07-22:** nested model target metadata previously converted the target dictionary to a string and reset labels. | Exact nested semantic round-trip is now covered by a regression test. | Phase 1 |
 | K-002 | **Resolved for the target foundation 2026-07-22:** executable descriptors now combine schemas, ports, capabilities, versions, provenance, and factories. The old model registry remains legacy recipe code. | Independent plugin wheels can participate without editing EEGle; legacy registry removal remains Phase 6 cleanup. | Phase 2 |
-| K-003 | `SessionPaths` hard-codes recipe-specific artifact names and directory structure. | New suites inherit unrelated study assumptions and artifact collisions remain likely. | Phase 4 |
+| K-003 | **Resolved for the target storage model 2026-07-22:** generic sessions and namespaced artifact identities no longer derive from recipe paths. `SessionPaths` remains only an alias-registry view for selected legacy clients. | New suites can use arbitrary artifact namespaces; migration of old recipe clients remains Phase 4 cleanup. | Phase 4 |
 | K-004 | Task-specific epoch, label, condition, and inhibition semantics are embedded in nominally general realtime modules. | Core reuse is constrained and label leakage is harder to reason about. | Phases 2–3 |
 | K-005 | **Partially resolved:** new model predictions/roles and plugin boundaries are clean, while the legacy combined realtime model/training module remains. | Target imports are independent; legacy backend and training decomposition remains Phase 6. | Phases 2 and 6 |
 | K-006 | **Resolved for target foundations:** bundle I/O has one authority and executable construction belongs to the new plugin registry. | Legacy model construction remains isolated until its clients migrate. | Phases 1–2 |
-| K-007 | Present online and replay behavior is distributed across workers and analysis modules rather than one engine. | Semantic drift is likely when either path changes. | Phase 3 |
+| K-007 | **Partially resolved:** the target synthetic/captured path now uses one engine, while legacy workers/analysis and general outcome/scheduled routing remain outside it. | The new vertical slice cannot drift between live-like and replay execution; legacy removal and Phase 3 closure remain. | Phase 3 |
 | K-008 | **Resolved 2026-07-22:** task/PsychoPy environment setup moved to `eegle.integrations.task_environment`; the new `eegle.runtime` has no global environment mutation. | The target runtime namespace is clean; the legacy integration remains explicit and removable. | Phase 2 |
 | K-009 | Configuration resolves relative paths against the repository project root. | Installed-package and external-project behavior is not portable. | Phase 5 |
 | K-010 | **Partially resolved:** causal and retrospective transforms now declare incompatible machine-readable capabilities. | Direct validation prevents causal use; compiler-wide enforcement remains Phase 5. | Phases 2 and 5 |
 | K-011 | **Resolved 2026-07-22:** pure epoch-array helpers now break the direct realtime classification/models cycle. | Retained legacy modules are acyclic at this boundary. | Phase 2 |
 | K-012 | The CLI exposes study recipes and historical workflows as if they were the general library. | Public identity remains coupled to the current lab applications. | Phase 7 |
 | K-013 | **Resolved for the target branch 2026-07-22:** package metadata requires Python 3.11+ without an upper bound and declares the four base dependencies. | Initial supported-matrix enforcement remains release/CI work. | Phases 2 and 7 |
-| K-014 | Process supervision, task rendering, device detection, and semantic execution are interleaved. | Core failure behavior and deployment responsibilities are difficult to isolate. | Phases 2–3 |
+| K-014 | **Partially resolved for the target runtime:** semantic execution now carries explicit in-process/subprocess/external proxy placement independent of task or device code. | Cross-process health transport and legacy supervisor removal remain before the separation is complete. | Phases 2–3 |
 
 ## 6. Decisions and decision points
 
@@ -181,7 +211,7 @@ These are target behaviors, not instructions to copy their present modules.
 
 | ID | Decision | Resolution |
 |---|---|---|
-| D-001 | Historical artifact readability | Build a scoped, read-only, one-time importer after the new evidence model exists, currently Phase 4. Preserve originals, detect supported schema families, and do not add a general runtime compatibility layer. |
+| D-001 | Historical artifact readability | The initial Phase 4 reader now detects the selected BciPy-style family without mutation and exposes only registered compatibility aliases. A scoped one-time bundle importer still must report imported/derived/omitted/invalid artifacts, preserve originals, and must not become a legacy execution runtime. |
 | D-009 | Reference recipes | Use `classify8`, `attention8`, and `dsart8` as primary behavior inspiration and possible future external examples. Use `dsart32` as DSART deployment-scale evidence. Other recipes are historical evidence unless a later phase selects a specific invariant. |
 
 ### Resolved in Phase 2
@@ -194,6 +224,21 @@ These are target behaviors, not instructions to copy their present modules.
 | D-010 | Dependency floors | Python `>=3.11`; NumPy `>=2,<3`; SciPy `>=1.14,<2`; jsonschema `>=4.23,<5`; packaging `>=24,<27`. No Python upper bound; initial intended CI is 3.11–3.13. |
 | D-013 | Built-in processing scope | Maintain bounded buffers, identity, causal SOS, retrospective zero-phase SOS, generic window specs, and finite/validity quality in base. Specialized methods remain integrations/plugins. |
 
+### Resolved in Phase 3
+
+| ID | Decision | Resolution |
+|---|---|---|
+| D-006 | Runtime scheduling model | Use a deterministic synchronous semantic coordinator over virtual time. Sources publish monotonic availability watermarks; dispatch order is availability, source, stream revision, sequence, then packet identity. Typed workers/proxies may perform I/O or compute outside the loop. |
+| D-007 | Process boundary | In-process is the reference. Subprocess and external components participate through typed proxies; placement is evidence-bearing deployment metadata, never a second semantic engine. Admission, deadlines, cancellation, health, backpressure, and result disposition return to the coordinator. |
+| D-012 | Replay tolerances | Cap comparison at the weakest relevant equivalence declaration. Defaults are canonical bytes for bitwise and recursive `rtol=1e-7`, `atol=1e-9` for numeric; semantic and trace projections are explicit. Compare snapshot state when declared and substitute hardware with observe-only/simulated action traces. |
+
+### Resolved in Phase 4
+
+| ID | Decision | Resolution |
+|---|---|---|
+| D-015 | Session and bundle separation | A generic session owns lifecycle and a namespaced artifact registry. Each execution produces a versioned bundle with separate semantic ledger, execution-capture, archival-raw, component-state, and other artifact references. `SessionPaths` is only an explicit compatibility alias view. |
+| D-016 | Integrity and recovery | Per-frame checksums and artifact digests yield structured valid/recoverable/unrecoverable results. Only an incomplete final frame can be recovered automatically, by copying the proven prefix without modifying the source. |
+
 ### Remaining open decisions
 
 These decisions are intentionally not locked yet. Resolve them at or before the
@@ -203,11 +248,8 @@ document.
 | ID | Decision | Options or questions | Decision point |
 |---|---|---|---|
 | D-004 | Suite composition | Prefer one explicit base plus constrained overlays/JSON Merge Patch, or a small typed composition model. Avoid an inheritance language. | Phase 5 |
-| D-006 | Runtime scheduling model | Event loop, synchronous deterministic loop with workers, or hybrid; define watermarks and multi-stream ordering before engine implementation. | Phase 3 |
-| D-007 | Process boundary | Decide which components may be in-process, subprocess, or external and how state, health, and backpressure cross that boundary. | Phase 3 |
 | D-008 | Authorization provider | Define a minimal local authorization/interlock protocol and which actions require operator confirmation. | Phase 6 |
 | D-011 | Privacy classification | Define evidence field sensitivity, deployment redaction, participant identity policy, and export defaults. | Phase 4 |
-| D-012 | Replay tolerances | Define default numeric comparison, nondeterminism reporting, state equivalence, and hardware-action substitution. | Phase 3 |
 | D-014 | Public stability boundary | Decide which modules are public at alpha and how experimental interfaces are marked. | Phase 7 |
 
 ## 7. Immediate action board
@@ -238,13 +280,28 @@ Status values: `todo`, `in_progress`, `blocked`, `done`, or `dropped`.
 | P2-003 | done | Implement executable plugin metadata/factory contract. | External entry-point fixture resolves, validates, constructs, and runs |
 | P2-004 | done | Draft evidence, plan-lock, and stable-hashing schemas. | Decisions D-002/D-003, tamper tests, framing/truncation tests |
 | P2-005 | done | Split causal and retrospective processing capabilities. | Capability rejection plus causal numerical/state-restoration tests |
-| P2-006 | done | Establish the Python 3.11+ base dependency matrix. | Minimal Python 3.12 install, wheel metadata/import, and full suite |
-| P3-001 | todo | Resolve engine scheduling model, ordering/watermarks, and process boundary. | Decisions D-006 and D-007 |
-| P3-002 | todo | Implement typed execution context and component lifecycle. | Deterministic lifecycle/failure tests |
-| P3-003 | todo | Implement input admission, ordering, availability enforcement, and routing. | Multi-stream virtual-time tests |
-| P3-004 | todo | Implement bounded work, deadlines, cancellation, and backpressure accounting. | Explicit terminal-state tests |
-| P3-005 | todo | Run primary/shadow models over shared admitted inputs with observe-only policy. | Generic synthetic vertical slice |
-| P3-006 | todo | Feed captured inputs through the identical engine and compare equivalence. | Live-like/replay parity and localized divergence |
+| P2-006 | done | Establish the Python 3.11+ base dependency matrix. | Linux 3.11–3.13 plus macOS/Windows 3.12 workflow; minimal local Python 3.12 install, wheel metadata/import, and full suite |
+| P2-007 | done | Align engine-facing component protocols, built-ins, factories, and contract tests. | Packet/context transforms, factory conformance checks, built-in descriptors, and reusable contract assertions pass |
+| P2-008 | done | Complete causal input lineage, clock-mapping availability, and stream revision semantics. | Round-trip and causality tests reject unavailable mappings, premature predictions, and unavailable component input |
+| P2-009 | done | Replace Python 3.10 automation and prove an independent plugin distribution boundary. | Cross-platform supported-version workflow plus installed external-wheel entry-point test |
+| P3-001 | done | Resolve engine scheduling model, ordering/watermarks, and process boundary. | Decisions D-006 and D-007; `PHASE3_ENGINE.md` |
+| P3-002 | done | Implement typed execution context and component lifecycle. | Deterministic IDs, lifecycle evidence, snapshots, single-use engine, controlled close, and failure tests |
+| P3-003 | done | Implement input admission, ordering, availability enforcement, and routing. | Multi-source virtual-time ordering and late-input tests |
+| P3-004 | done | Implement bounded work, deadlines, cancellation, and backpressure accounting. | Terminal/pending work, deadline, cancellation, queue, and shadow-shedding tests |
+| P3-005 | done | Run primary/shadow models over shared admitted inputs with observe-only policy. | Generic synthetic vertical slice with comparable admitted inputs |
+| P3-006 | done | Feed captured inputs through the identical engine and compare equivalence. | Original/accelerated replay parity and localized counterfactual shadow divergence |
+| P3-007 | todo | Generalize delayed outcome delivery, bounded pending predictions, expiry, and observe-only adaptation eligibility through the engine. | Outcome lifecycle tests and evidence without label leakage |
+| P3-008 | todo | Add general scheduled/state-triggered work and engine-level checkpoint/resume across a partial run. | Virtual-time trigger and restored-run equivalence tests |
+| P4-001 | done | Implement generic session identity/lifecycle and namespaced artifact registry. | Hashed session/artifact manifests, namespace isolation, external references, sensitivity, aliases, and lineage tests |
+| P4-002 | done | Implement versioned evidence bundle writer/reader and direct engine-result persistence. | Self-describing complete bundle round-trip and Phase 3 result assembly tests |
+| P4-003 | done | Move target ledgers and capture framing into `recording`. | Typed evidence ledger, framed packet store, and isolated historical CLRE1 reader |
+| P4-004 | done | Define and implement the `SampleStore` protocol. | Runtime protocol check and exact dense-packet/stream-revision round-trip |
+| P4-005 | done | Add checksums, truncation classification, and non-destructive prefix recovery. | Deliberately truncated capture reports artifact/frame/proven boundary/expected/observed fields and recovers only complete frames |
+| P4-006 | done | Add artifact lineage and component-state snapshots. | Producing component/version/input digests persist; canonical state hash equals its artifact digest |
+| P4-007 | done | Keep selected existing sessions readable without restoring path authority. | Mutation-free read-only legacy discovery and frozen CLRE1 tests |
+| P4-008 | todo | Define interrupted-writer restart/finalization policy and one-time historical bundle importer. | Explicit open-run discovery/resume tests and imported/derived/omitted/invalid report |
+| P4-009 | todo | Resolve privacy, redaction, retention, and export policy (D-011). | Policy schemas and secret/redaction/export acceptance tests |
+| P4-010 | todo | Add source-native/large-data store evidence and migrate selected target clients off compatibility aliases. | External/local large-store verification plus no target runtime `SessionPaths` imports |
 
 Only the next two phases should normally be expanded into fine-grained tasks.
 Later phase detail belongs in `MIGRATION.md` until it becomes actionable.
@@ -257,12 +314,13 @@ Later phase detail belongs in `MIGRATION.md` until it becomes actionable.
 | R-002 | open | Freezing behavior could be misread as preserving old APIs and recipes. | Freeze only named scientific invariants and evidence; allow clean public interfaces. |
 | R-003 | open | A new specification system could grow into an opaque workflow language. | Keep the domain vocabulary bounded; compile to typed ports; custom logic remains Python plugins. |
 | R-004 | open | Modality neutrality could produce abstract types that are inefficient for real EEG or high-density data. | Benchmark dense EEG first, then add sparse and high-channel-count fixtures before claiming support. |
-| R-005 | open | One engine could become one monolithic process. | Keep semantic execution unified while allowing explicit in-process, subprocess, and external component boundaries. |
-| R-006 | open | Replay “equivalence” may be overstated for nondeterministic frameworks or hardware. | Require declared equivalence levels and report the weakest applicable guarantee. |
+| R-005 | monitoring | One engine could become one monolithic process. | Process placement is now explicit proxy metadata; Phase 3 closure must prove health/backpressure transport without duplicating semantic execution. |
+| R-006 | monitoring | Replay “equivalence” may be overstated for nondeterministic frameworks or hardware. | The comparator now caps claims at the weakest declaration; hardware substitution still needs an actuator integration test. |
 | R-007 | open | Action support may be mistaken for hardware safety. | Keep authorization independent, default to observe-only, and document adapter/safety boundaries. |
-| R-008 | open | Evidence capture could duplicate very large raw streams. | Separate execution capture from archival stores and support content-addressed external references. |
+| R-008 | monitoring | Evidence capture could duplicate very large raw streams. | Bundle v1 now separates execution capture from archival stores and supports content-addressed external references; a large source-native integration test remains. |
 | R-009 | open | Maintaining old and new architectures too long could recreate compatibility debt. | Use short extraction windows, phase gates, and delete superseded paths rather than adding permanent adapters. |
 | R-010 | monitoring | Optional dependency imports could leak back into the base package. | A subprocess test now blocks fourteen optional families while importing every foundation package; retain it as a release gate. |
+| R-011 | monitoring | Locally configured supported-version workflows may expose platform-specific failures on their first remote run. | Keep the five-job 3.11–3.13/Linux plus 3.12/macOS/Windows matrix as a Phase 3 gate and record any observed platform issue without weakening the core contract. |
 
 No migration blocker is currently recorded. Unresolved design choices are not
 blockers until their decision point prevents the next phase gate.
@@ -289,6 +347,10 @@ blockers until their decision point prevents the next phase gate.
 | 2026-07-22 | Evidence and lock foundations implemented | Canonical plan hashes, content-addressed manifests, checksummed framing, tamper detection, and truncation recovery pass. |
 | 2026-07-22 | Runtime boundary cleaned | PsychoPy environment mutation moved to an integration and the realtime classification/model cycle was removed. |
 | 2026-07-22 | Phase 2 closed | Minimal Python 3.12 base installation, built wheel/import, 282 tests, and compile-all pass; Phase 3 is ready but not started. |
+| 2026-07-22 | Phase 2 closure hardening completed | Unified typed component calls, causal lineage and revision semantics, real external-wheel discovery, and supported cross-platform automation are in place; 285 tests pass locally with five skips. |
+| 2026-07-22 | Phase 3 decisions locked | Deterministic hybrid scheduling, typed process proxies, and graded replay tolerances resolve D-006, D-007, and D-012. |
+| 2026-07-22 | First Phase 3 engine slice implemented | Synthetic execution, bounded windows, primary/shadow roles, observe-only policy, explicit work evidence, same-engine replay, and divergence localization pass sixteen focused tests; the 301-test full suite, compile-all, diff check, wheel build, and installed import smoke pass. Phase 3 remains open for P3-007/P3-008. |
+| 2026-07-22 | First Phase 4 evidence slice implemented | Generic sessions, namespaced artifacts, EvidenceBundle v1, framed semantic/sample stores, component snapshots, external raw references, legacy read-only discovery, and precise truncation recovery pass seven focused tests. The 308-test Python 3.12 suite, compile-all, diff check, wheel build, and installed API import pass with five skips. Phase 4 remains open for P4-008 through P4-010. |
 
 ## 10. Instructions for future Codex work
 

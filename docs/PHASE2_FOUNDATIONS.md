@@ -1,6 +1,6 @@
 # EEGle Phase 2 Foundation Contracts
 
-**Status:** Implemented and verified  
+**Status:** Implemented, closure-hardened, and locally verified
 **Date:** 2026-07-22  
 **Architecture authority:** [EEGLE.md](EEGLE.md)  
 **Migration authority:** [MIGRATION.md](MIGRATION.md)
@@ -63,8 +63,10 @@ EEGle uses a hybrid distribution model:
 - resolution locks an exact version, implementation, distribution, descriptor
   hash, ports, capabilities, state behavior, determinism, and equivalence.
 
-An external fixture outside `eegle/` proves discovery, JSON Schema validation,
-version resolution, construction, and execution.
+An independent fixture distribution outside `eegle/` is assembled as a real
+`py3-none-any` wheel, installed into an isolated target, discovered through its
+installed entry-point metadata, schema-validated, constructed, and exercised
+through the same packet contract as built-ins.
 
 ### D-010 — Python and base dependencies
 
@@ -78,10 +80,12 @@ jsonschema >=4.23,<5
 packaging >=24,<27
 ```
 
-There is no artificial Python upper bound. The initial intended CI matrix is
-Python 3.11, 3.12, and 3.13. Phase 2 was installed and tested from a built
-Python 3.12 environment with only base dependencies; optional research,
-transport, task, UI, and vendor packages were deliberately unavailable.
+There is no artificial Python upper bound. Repository CI covers Python 3.11,
+3.12, and 3.13 on Linux, plus Python 3.12 on macOS and Windows. Phase 2 was
+locally installed and tested from a built Python 3.12 environment with only
+base dependencies; optional research, transport, task, UI, and vendor packages
+were deliberately unavailable. Remote matrix execution remains release
+evidence rather than a claim made by this local verification record.
 
 ### D-013 — maintained processing scope
 
@@ -103,9 +107,10 @@ base. They can be selected later when they strengthen the four competencies.
 ### Streams and channels
 
 `ChannelSpec` records stable identity, channel kind, unit, sensor/anatomical
-references, and explicit geometry metadata. `StreamSpec` records modality,
-content kind, rate model, clock, ordered channels, sample rate where regular,
-and missing-data policy.
+references, and explicit geometry metadata. `StreamSpec` records an immutable
+positive revision, modality, content kind, rate model, clock, ordered channels,
+portable numeric dtype for dense streams, sample rate where regular, coordinate
+frame, geometry reference/revision, and missing-data policy.
 
 The core does not assume EEG, microvolts, scalp positions, regular sampling, or
 low channel counts.
@@ -113,9 +118,9 @@ low channel counts.
 ### Dense samples
 
 `DenseSampleBatch` uses a strict `samples × channels` array. Channel order is
-explicit and unique. A batch has a stable identity, contiguous sequence range,
-source timing, boundary receive/availability timing, optional lineage, and one
-of two timing models:
+explicit and unique. A batch binds to an exact positive stream revision and has
+a stable identity, contiguous sequence range, source timing, boundary
+receive/availability timing, optional lineage, and one of two timing models:
 
 - regular: first sample time plus a positive sample period;
 - irregular: one nondecreasing clock-bearing time per sample.
@@ -133,16 +138,18 @@ changes.
 
 ### Clocks
 
-Every `TimePoint` carries a clock identity. `ClockMapping` uses the explicit
-mapping:
+Every `TimePoint` carries a clock identity. `ClockMapping` has a positive
+revision, an explicit target-clock availability time, optional supersession,
+and uses the mapping:
 
 ```text
 target_seconds = offset_seconds + scale * source_seconds
 ```
 
 It includes uncertainty, a source-clock validity interval, measurement time,
-and provenance. The mapping refuses a point from the wrong clock or outside its
-validity interval.
+and provenance. Mapping a point requires an explicit `as_of` time and fails if
+the mapping was not yet available, if the clocks are wrong, or if the source
+point falls outside the validity interval.
 
 ## 3. Semantic evidence records
 
@@ -158,9 +165,12 @@ Phase 2 adds versioned round-trippable records for:
 - actuator receipts and reported delivery;
 - artifact references, evidence records, and evidence manifests.
 
-Predictions do not include outcome or task-label fields. Outcomes are separate
-and declare whether they may be used for metrics, calibration, adaptation, or
-policy.
+Predictions do not include outcome or task-label fields. Their lineage must
+exactly match admitted input IDs and carries the latest input availability in
+the execution clock, stream revisions, clock-mapping revisions, component
+version, and component-state hash. A prediction cannot be produced before that
+availability frontier. Outcomes are separate and declare whether they may be
+used for metrics, calibration, adaptation, or policy.
 
 ## 4. Component and plugin contracts
 
@@ -180,6 +190,12 @@ Sink.append
 StatefulComponent.snapshot_state / restore_state
 ```
 
+`ExecutionContext` supplies execution/component identity and version,
+execution mode, current logical time, active clock-mapping revisions, and
+deterministic record-ID allocation. Packet transforms and quality gates consume
+that context uniformly; raw NumPy-only signatures are internal numerical
+details rather than engine component contracts.
+
 `PluginDescriptor` adds:
 
 - stable ID and validated version;
@@ -194,19 +210,26 @@ StatefulComponent.snapshot_state / restore_state
 
 The registry can hold multiple versions, resolve PEP 440 version constraints,
 validate configuration before construction, validate execution-mode support,
-and discover independent distributions.
+reject factories missing the methods or snapshot behavior claimed by their
+descriptor, register dependency-light first-party built-ins, and discover
+independent distributions. Reusable behavioral contract assertions exercise
+the exact packet/context call and typed return path because runtime-checkable
+protocols alone cannot validate Python signatures.
 
 ## 5. Processing causality
 
 Every transform exposes machine-readable `TransformCapabilities`.
 
-The causal SOS filter:
+The causal SOS filter component:
 
 - has no lookahead and does not require future data;
 - retains exact filter state between chunks;
 - snapshots its coefficient hash, channel count, state, and state hash;
 - rejects restoration from different coefficients, channels, or corrupted
-  state.
+  state;
+- consumes and produces `DenseSampleBatch`, advances output availability to the
+  component time, and records the exact input availability and pre-update state
+  used by the result.
 
 The retrospective SOS filter declares that it requires future samples and
 supports only retrospective and oracle execution. Asking it to validate for a
@@ -251,14 +274,17 @@ Phase 2 acceptance verifies:
 - chunked causal filtering matches one-pass causal filtering and restores exact
   state;
 - retrospective filtering cannot validate for causal execution;
-- an external entry-point plugin resolves, validates, constructs, and runs;
+- a real external plugin wheel installs, resolves through entry-point metadata,
+  validates, constructs, and passes the shared transform contract;
 - foundation imports succeed while LSL, MNE, MNE-LSL, PsychoPy, sklearn, Torch,
   Braindecode, MOABB, plotting, pandas, PyRiemann, ONNX, pyglet, and SPECParam
   imports are blocked;
 - foundation sources contain no selected recipe names or `PROJECT_ROOT`;
 - the direct legacy classifier/model import cycle is absent;
-- the complete legacy and migration test suite remains green in the minimal
-  Python 3.12 base environment.
+- the complete 285-test legacy and migration suite remains green in the minimal
+  Python 3.12 base environment, with five environment-only skips;
+- repository CI defines supported base runs for Linux 3.11–3.13 and macOS and
+  Windows 3.12, while the package build workflow uses Python 3.12.
 
 ## 8. Deliberate deferrals
 

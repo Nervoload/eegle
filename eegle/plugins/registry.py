@@ -151,6 +151,21 @@ class PluginRegistry:
             )
         versions[version] = descriptor
 
+    def register_builtins(self) -> tuple[str, ...]:
+        """Register dependency-light first-party components.
+
+        The import is intentionally local so plugin contracts never acquire a
+        package-import cycle through processing implementations.
+        """
+
+        from eegle.plugins.builtins import builtin_plugin_descriptors
+
+        registered: list[str] = []
+        for descriptor in builtin_plugin_descriptors():
+            self.register(descriptor)
+            registered.append(descriptor.plugin_id)
+        return tuple(registered)
+
     def unregister(self, plugin_id: str, version: str | None = None) -> None:
         normalized = require_identifier(plugin_id, "plugin_id")
         if normalized not in self._plugins:
@@ -197,7 +212,9 @@ class PluginRegistry:
         descriptor = self.resolve(plugin_id, version_spec, mode=mode)
         config_copy = thaw_json(freeze_json(config))
         validate_payload(config_copy, descriptor.config_schema)
-        return descriptor.factory(config_copy)
+        component = descriptor.factory(config_copy)
+        validate_component_instance(descriptor, component)
+        return component
 
     def descriptors(self) -> tuple[PluginDescriptor, ...]:
         return tuple(
@@ -234,3 +251,44 @@ def _coerce_descriptors(value: Any) -> tuple[PluginDescriptor, ...]:
         if all(isinstance(item, PluginDescriptor) for item in descriptors):
             return descriptors
     raise TypeError("plugin entry point must load a PluginDescriptor or iterable of descriptors")
+
+
+_REQUIRED_COMPONENT_MEMBERS: Mapping[ComponentKind, tuple[str, ...]] = {
+    ComponentKind.SOURCE: ("stream_spec", "read", "close"),
+    ComponentKind.TRANSFORM: ("update",),
+    ComponentKind.WINDOW: ("update",),
+    ComponentKind.QUALITY: ("evaluate",),
+    ComponentKind.MODEL: ("predict",),
+    ComponentKind.OUTCOME: ("update",),
+    ComponentKind.ADAPTER: ("update",),
+    ComponentKind.POLICY: ("decide",),
+    ComponentKind.ACTUATOR: ("submit",),
+    ComponentKind.SINK: ("append",),
+}
+
+
+def validate_component_instance(descriptor: PluginDescriptor, component: Any) -> None:
+    """Fail construction when a factory cannot satisfy its declared role.
+
+    This deliberately checks behavior names rather than concrete classes.
+    Reusable contract tests remain responsible for exercising exact calls and
+    return types because Python runtime protocols do not validate signatures.
+    """
+
+    for member in _REQUIRED_COMPONENT_MEMBERS[descriptor.kind]:
+        value = getattr(component, member, None)
+        if member != "stream_spec" and not callable(value):
+            raise TypeError(
+                f"plugin {descriptor.plugin_id} factory produced {type(component).__name__} "
+                f"without callable {member}"
+            )
+        if member == "stream_spec" and value is None:
+            raise TypeError(
+                f"plugin {descriptor.plugin_id} source does not expose stream_spec"
+            )
+    if descriptor.capabilities.state_behavior == StateBehavior.SNAPSHOT_RESTORE:
+        for member in ("snapshot_state", "restore_state"):
+            if not callable(getattr(component, member, None)):
+                raise TypeError(
+                    f"plugin {descriptor.plugin_id} declares snapshot_restore but lacks {member}"
+                )

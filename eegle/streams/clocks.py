@@ -79,14 +79,17 @@ class ClockIdentity:
 @dataclass(frozen=True, slots=True)
 class ClockMapping:
     mapping_id: str
+    revision: int
     source_clock_id: str
     target_clock_id: str
     offset_seconds: float
+    available_time: TimePoint
     scale: float = 1.0
     uncertainty_seconds: float = 0.0
     valid_source_start: float | None = None
     valid_source_end: float | None = None
     measured_at: TimePoint | None = None
+    supersedes_mapping_id: str | None = None
     provenance: Mapping[str, Any] = None  # type: ignore[assignment]
     schema: str = CLOCK_MAPPING_SCHEMA
 
@@ -94,6 +97,9 @@ class ClockMapping:
         if self.schema != CLOCK_MAPPING_SCHEMA:
             raise ValueError(f"unsupported clock mapping schema: {self.schema}")
         object.__setattr__(self, "mapping_id", require_identifier(self.mapping_id, "mapping_id"))
+        object.__setattr__(self, "revision", int(self.revision))
+        if self.revision <= 0:
+            raise ValueError("clock mapping revision must be positive")
         object.__setattr__(
             self, "source_clock_id", require_identifier(self.source_clock_id, "source_clock_id")
         )
@@ -102,6 +108,16 @@ class ClockMapping:
         )
         if self.source_clock_id == self.target_clock_id:
             raise ValueError("clock mapping source and target must be different")
+        if self.available_time.clock_id != self.target_clock_id:
+            raise ValueError("clock mapping available_time must use the target clock")
+        if self.supersedes_mapping_id is not None:
+            object.__setattr__(
+                self,
+                "supersedes_mapping_id",
+                require_identifier(self.supersedes_mapping_id, "supersedes_mapping_id"),
+            )
+            if self.supersedes_mapping_id == self.mapping_id:
+                raise ValueError("clock mapping cannot supersede itself")
         object.__setattr__(
             self, "offset_seconds", require_finite(self.offset_seconds, "offset_seconds")
         )
@@ -135,7 +151,11 @@ class ClockMapping:
             raise ValueError("clock mapping validity end precedes start")
         object.__setattr__(self, "provenance", freeze_json(self.provenance or {}))
 
-    def map_time(self, source: TimePoint) -> TimePoint:
+    def map_time(self, source: TimePoint, *, as_of: TimePoint) -> TimePoint:
+        if as_of.clock_id != self.available_time.clock_id:
+            raise ValueError("clock mapping use time must share the availability clock")
+        if as_of.seconds < self.available_time.seconds:
+            raise ValueError("clock mapping was not available at the requested use time")
         if source.clock_id != self.source_clock_id:
             raise ValueError(
                 f"mapping expects clock {self.source_clock_id}, received {source.clock_id}"
@@ -153,14 +173,17 @@ class ClockMapping:
         return {
             "schema": self.schema,
             "mapping_id": self.mapping_id,
+            "revision": self.revision,
             "source_clock_id": self.source_clock_id,
             "target_clock_id": self.target_clock_id,
             "offset_seconds": self.offset_seconds,
+            "available_time": self.available_time.to_payload(),
             "scale": self.scale,
             "uncertainty_seconds": self.uncertainty_seconds,
             "valid_source_start": self.valid_source_start,
             "valid_source_end": self.valid_source_end,
             "measured_at": None if self.measured_at is None else self.measured_at.to_payload(),
+            "supersedes_mapping_id": self.supersedes_mapping_id,
             "provenance": thaw_json(self.provenance),
         }
 
@@ -170,9 +193,11 @@ class ClockMapping:
         return cls(
             schema=str(payload.get("schema", CLOCK_MAPPING_SCHEMA)),
             mapping_id=str(payload["mapping_id"]),
+            revision=int(payload["revision"]),
             source_clock_id=str(payload["source_clock_id"]),
             target_clock_id=str(payload["target_clock_id"]),
             offset_seconds=float(payload["offset_seconds"]),
+            available_time=TimePoint.from_payload(payload["available_time"]),
             scale=float(payload.get("scale", 1.0)),
             uncertainty_seconds=float(payload.get("uncertainty_seconds", 0.0)),
             valid_source_start=None
@@ -182,5 +207,8 @@ class ClockMapping:
             if payload.get("valid_source_end") is None
             else float(payload["valid_source_end"]),
             measured_at=None if measured is None else TimePoint.from_payload(measured),
+            supersedes_mapping_id=None
+            if payload.get("supersedes_mapping_id") is None
+            else str(payload["supersedes_mapping_id"]),
             provenance=dict(payload.get("provenance") or {}),
         )

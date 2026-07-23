@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping, Protocol, runtime_checkable
 
+from eegle._domain import ExecutionMode
 from eegle.actions.commands import ActionCommand
 from eegle.actions.receipts import ActionReceipt
 from eegle.models.predictions import Prediction
@@ -11,24 +12,20 @@ from eegle.processing.quality import QualityDecision
 from eegle.processing.windows import Window
 from eegle.runtime.outcomes import Outcome
 from eegle.runtime.state import StateTransition
-from eegle.streams.channels import StreamSpec
+from eegle.streams.clocks import TimePoint
 from eegle.streams.packets import Packet
+from eegle.streams.sources import Source
 
 
 class ExecutionContext(Protocol):
     execution_id: str
+    component_id: str
+    component_version: str
+    execution_mode: ExecutionMode
+    current_time: TimePoint
+    clock_mapping_revisions: Mapping[str, int]
 
-
-@runtime_checkable
-class Source(Protocol):
-    @property
-    def stream_spec(self) -> StreamSpec:
-        ...
-
-    def read(self) -> Packet | None:
-        ...
-
-    def close(self) -> None:
+    def next_id(self, namespace: str) -> str:
         ...
 
 
@@ -102,4 +99,13 @@ class StatefulComponent(Protocol):
         ...
 
     def restore_state(self, state: Mapping[str, Any]) -> None:
+        ...
+
+
+@runtime_checkable
+class LifecycleComponent(Protocol):
+    def start(self, context: ExecutionContext) -> None:
+        ...
+
+    def stop(self, context: ExecutionContext) -> None:
         ...

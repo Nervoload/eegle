@@ -291,10 +291,16 @@ foundation build unless it is explicitly selected as temporary evidence.
   MOABB, and plotting unavailable.
 - Dense, sparse, event, clock, action, and state records round-trip through their
   declared schemas.
-- A third-party-style plugin package can declare, resolve, construct, and run a
-  trivial component.
+- A separately installed third-party-style plugin wheel can declare, resolve,
+  construct, and run a trivial component through the same typed packet/context
+  contract as first-party built-ins.
 - Causal and retrospective transform capabilities are distinguishable by
   machine validation.
+- Prediction lineage records the input-availability frontier, stream revisions,
+  clock-mapping revisions, component version, and component-state hash needed
+  for causal claims.
+- The repository defines base CI for Python 3.11–3.13 and exercises the core on
+  Linux, macOS, and Windows without platform-specific runtime contracts.
 - Canonical hashes are stable under documented conditions.
 - New foundations contain no task names, repository-root assumptions, or old
   session-path facade.
@@ -343,6 +349,20 @@ synthetic source
 - Support virtual time and deterministic simulated sources.
 - Feed recorded capture through the same source protocol and engine.
 - Implement controlled shutdown, partial-run status, and failure propagation.
+
+### Accepted implementation decisions
+
+- Use a deterministic synchronous semantic coordinator over virtual time, with
+  typed workers or external proxies permitted around compute and I/O.
+- Order admitted packets by availability, source, stream revision, sequence,
+  and packet identity; monotonic source watermarks determine dispatchability.
+- Treat in-process, subprocess, and external placement as deployment metadata.
+  All placements return through the same engine work/evidence boundary.
+- Cap replay claims at the weakest relevant component equivalence level. Use
+  canonical bytes for bitwise comparison and default recursive numeric
+  tolerances of `rtol=1e-7`, `atol=1e-9`.
+- Substitute hardware actions with observe-only/simulated adapters during
+  replay and compare action intent and observed trace at the declared level.
 
 ### Current-code context
 
@@ -394,14 +414,40 @@ evidence that can support arbitrary suites, large data, recovery, and replay.
 - Define truncation, resume, recovery, append, checksum, and finalization rules.
 - Define sensitivity classes, participant pseudonyms, deployment redaction,
   retention, and export controls.
-- Remove the old fixed `SessionPaths` authority after selected evidence and any
-  one-time importer are complete.
+- Retain `SessionPaths` only as a compatibility view over registered artifact
+  aliases while selected historical readers/recipes remain. It must not define
+  target artifact identity, require its old directory tree, or appear in the
+  new runtime. Remove individual aliases as their last selected client moves.
 
 ### Current-code context
 
 Current session and telemetry modules provide a useful inventory of artifact
 types, and the exact engine input capture demonstrates why execution evidence is
 needed. The names and directory tree are not the target schema.
+
+### Implementation checkpoint — 2026-07-22
+
+The first Phase 4 slice now provides:
+
+- generic `Session` identity/lifecycle and a versioned `session.json`;
+- a namespaced, content-addressed `ArtifactStore` with a hashed registry,
+  aliases, sensitivity, embedded/external references, and artifact lineage;
+- `EvidenceBundle`, `EvidenceWriter`, and `EvidenceReader` with separate
+  semantic logs, execution captures, archival raw references, component-state
+  snapshots, and other artifacts;
+- a runtime-checkable `SampleStore` protocol and framed reference
+  implementation for dense, sparse, and metadata packets;
+- typed integrity results for checksums, hashes, sequence gaps, missing
+  artifacts, and precisely bounded recoverable final-frame truncation;
+- non-destructive complete-prefix recovery;
+- read-only detection of the selected historical BciPy-style tree and CLRE1
+  capture reader, with `SessionPaths` demoted to an alias view;
+- direct persistence of a Phase 3 engine result into a self-describing bundle.
+
+This checkpoint satisfies the requested initial gate. Full Phase 4 closure still
+requires retention/export policy, deployment redaction, explicit interrupted
+writer resume/finalization policy, source-native store integrations, and removal
+of target clients that still use legacy paths.
 
 ### Exit gate
 

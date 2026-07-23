@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 import math
+from dataclasses import replace
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
-from unittest import mock
 
 import numpy as np
 from scipy import signal
@@ -31,10 +31,12 @@ from eegle.compiler import (
 )
 from eegle.models.predictions import Prediction
 from eegle.plugins import PluginRegistry
+from eegle.plugins.testing import exercise_dense_transform
 from eegle.processing import (
     BoundedBuffer,
     CausalSosFilter,
     FiniteQualityGate,
+    IdentityTransform,
     QualityDecision,
     RetrospectiveSosFilter,
 )
@@ -64,7 +66,7 @@ from eegle.streams import (
     StreamSpec,
     TimePoint,
 )
-from tests.fixtures.phase2_external_plugin import plugin as external_plugin
+from tests.fixtures.build_external_plugin_wheel import build_external_plugin_wheel
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -72,6 +74,52 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _time(seconds: float, clock: str = "host.monotonic") -> TimePoint:
     return TimePoint(seconds, clock)
+
+
+class FixtureExecutionContext:
+    def __init__(
+        self,
+        *,
+        component_id: str,
+        current_time: TimePoint,
+        component_version: str = "0.1.0",
+        execution_mode: ExecutionMode = ExecutionMode.CAUSAL,
+        clock_mapping_revisions: dict[str, int] | None = None,
+    ) -> None:
+        self.execution_id = "execution.phase2"
+        self.component_id = component_id
+        self.component_version = component_version
+        self.execution_mode = execution_mode
+        self.current_time = current_time
+        self.clock_mapping_revisions = clock_mapping_revisions or {}
+        self._next_sequence = 0
+
+    def next_id(self, namespace: str) -> str:
+        self._next_sequence += 1
+        return f"{self.execution_id}.{self.component_id}.{namespace}.{self._next_sequence}"
+
+
+def _dense_batch(
+    values: np.ndarray,
+    *,
+    batch_id: str = "batch.input",
+    sequence_start: int = 0,
+    received: float = 1.0,
+    available: float = 1.1,
+) -> DenseSampleBatch:
+    data = np.asarray(values)
+    return DenseSampleBatch(
+        batch_id=batch_id,
+        stream_id="stream.synthetic",
+        stream_revision=1,
+        sequence_start=sequence_start,
+        channel_ids=tuple(f"channel.{index}" for index in range(data.shape[1])),
+        values=data,
+        received_time=_time(received),
+        available_time=_time(available),
+        first_sample_time=_time(sequence_start * 0.01, "device.clock"),
+        sample_period_seconds=0.01,
+    )
 
 
 class CanonicalAndPlanTests(unittest.TestCase):
@@ -131,15 +179,18 @@ class StreamRecordTests(unittest.TestCase):
         clock = ClockIdentity("device.amp", ClockKind.DEVICE, provenance={"serial": "redacted"})
         mapping = ClockMapping(
             mapping_id="map.amp.host.1",
+            revision=1,
             source_clock_id="device.amp",
             target_clock_id="host.monotonic",
             offset_seconds=10.0,
+            available_time=_time(10.5),
             uncertainty_seconds=0.001,
             valid_source_start=0.0,
             valid_source_end=100.0,
         )
         stream = StreamSpec(
             stream_id="neural.primary",
+            revision=3,
             modality="opm-meg",
             content_kind=ContentKind.DENSE_SAMPLES,
             rate_model=RateModel.REGULAR,
@@ -149,13 +200,18 @@ class StreamRecordTests(unittest.TestCase):
                 ChannelSpec("sensor.002", "magnetometer", "tesla"),
             ),
             sample_rate_hz=1000.0,
+            sample_dtype="float64",
             missing_data_policy=MissingDataPolicy.VALIDITY_MASK,
+            coordinate_frame="device",
+            geometry_reference="artifact.geometry.opm.3",
+            geometry_revision="geometry.3",
         )
         values = np.array([[1.0, 2.0], [3.0, np.nan], [5.0, 6.0]], dtype=np.float64)
         mask = np.array([[True, True], [True, False], [True, True]])
         batch = DenseSampleBatch(
             batch_id="batch.1",
             stream_id=stream.stream_id,
+            stream_revision=stream.revision,
             sequence_start=12,
             channel_ids=tuple(channel.channel_id for channel in stream.channels),
             values=values,
@@ -168,7 +224,12 @@ class StreamRecordTests(unittest.TestCase):
 
         self.assertEqual(ClockIdentity.from_payload(clock.to_payload()), clock)
         self.assertEqual(ClockMapping.from_payload(mapping.to_payload()), mapping)
-        self.assertEqual(mapping.map_time(_time(2.0, "device.amp")), _time(12.0))
+        self.assertEqual(
+            mapping.map_time(_time(2.0, "device.amp"), as_of=_time(11.0)),
+            _time(12.0),
+        )
+        with self.assertRaisesRegex(ValueError, "not available"):
+            mapping.map_time(_time(2.0, "device.amp"), as_of=_time(10.0))
         self.assertEqual(StreamSpec.from_payload(stream.to_payload()), stream)
         restored = DenseSampleBatch.from_payload(batch.to_payload())
         self.assertEqual(restored, batch)
@@ -187,10 +248,11 @@ class StreamRecordTests(unittest.TestCase):
             received_time=_time(2.0),
             available_time=_time(2.1),
         )
-        batch = SparseEventBatch("events.1", "spikes", 5, (event,))
+        batch = SparseEventBatch("events.1", "spikes", 2, 5, (event,))
         metadata = MetadataEvent(
             event_id="montage.2",
             stream_id="neural.primary",
+            stream_revision=3,
             sequence=6,
             kind="sensor_geometry_change",
             event_time=_time(3.0, "device.amp"),
@@ -206,6 +268,7 @@ class StreamRecordTests(unittest.TestCase):
         base = dict(
             batch_id="batch.bad",
             stream_id="stream.1",
+            stream_revision=1,
             sequence_start=0,
             channel_ids=("c1",),
             received_time=_time(1.0),
@@ -223,7 +286,15 @@ class DomainRecordTests(unittest.TestCase):
     def test_prediction_quality_outcome_state_action_records_round_trip(self) -> None:
         prior = canonical_hash({"weights": [0.1]})
         resulting = canonical_hash({"weights": [0.2]})
-        lineage = Lineage("model.primary", ("window.1",), "1.0.0", prior)
+        lineage = Lineage(
+            component_id="model.primary",
+            input_ids=("window.1",),
+            component_version="1.0.0",
+            state_hash=prior,
+            latest_input_available_time=_time(3.9),
+            clock_mapping_revisions={"map.amp.host": 2},
+            stream_revisions={"neural.primary": 3},
+        )
         prediction = Prediction(
             prediction_id="prediction.1",
             model_id="model.primary",
@@ -235,10 +306,10 @@ class DomainRecordTests(unittest.TestCase):
             lineage=lineage,
             confidence=0.8,
         )
-        quality = FiniteQualityGate().evaluate(
-            DenseSampleBatch(
+        quality_batch = DenseSampleBatch(
                 batch_id="batch.quality",
                 stream_id="stream.quality",
+                stream_revision=1,
                 sequence_start=0,
                 channel_ids=("c1",),
                 values=np.ones((2, 1)),
@@ -246,9 +317,13 @@ class DomainRecordTests(unittest.TestCase):
                 sample_period_seconds=0.01,
                 received_time=_time(1.0),
                 available_time=_time(1.1),
+            )
+        quality = FiniteQualityGate().evaluate(
+            quality_batch,
+            FixtureExecutionContext(
+                component_id="quality.finite",
+                current_time=_time(1.2),
             ),
-            decision_id="quality.1",
-            decided_time=_time(1.2),
         )
         rejection = Rejection(
             "rejection.1",
@@ -317,60 +392,257 @@ class DomainRecordTests(unittest.TestCase):
         )
         self.assertEqual(ActionReceipt.from_payload(receipt.to_payload()), receipt)
 
+    def test_prediction_rejects_input_lineage_that_was_not_yet_available(self) -> None:
+        lineage = Lineage(
+            component_id="model.primary",
+            input_ids=("window.future",),
+            latest_input_available_time=_time(4.1),
+            stream_revisions={"neural.primary": 1},
+        )
+        with self.assertRaisesRegex(ValueError, "before its latest input"):
+            Prediction(
+                prediction_id="prediction.invalid",
+                model_id="model.primary",
+                role="primary",
+                outputs={"label": "state.a"},
+                produced_time=_time(4.0),
+                available_time=_time(4.2),
+                input_ids=("window.future",),
+                lineage=lineage,
+            )
+
 
 class PluginAndProcessingTests(unittest.TestCase):
-    def test_third_party_entry_point_resolves_validates_constructs_and_runs(self) -> None:
-        class Distribution:
-            name = "fixture-external-package"
+    def test_installed_external_wheel_discovers_and_satisfies_transform_contract(self) -> None:
+        fixture = ROOT / "tests" / "fixtures" / "phase2_external_plugin_dist"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wheel = build_external_plugin_wheel(fixture, root / "wheel")
+            target = root / "installed"
+            install = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "--no-deps",
+                    "--target",
+                    str(target),
+                    str(wheel),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(install.returncode, 0, install.stderr)
+            script = r'''
+import sys
+import numpy as np
 
-        class EntryPoint:
-            name = "fixture-scale"
-            value = "tests.fixtures.phase2_external_plugin:plugin"
-            dist = Distribution()
+sys.path.insert(0, __TARGET__)
 
-            @staticmethod
-            def load():
-                return external_plugin
+from eegle.plugins import ExecutionMode, PluginRegistry
+from eegle.streams import DenseSampleBatch, TimePoint
+from eegle.plugins.testing import exercise_dense_transform
 
-        class EntryPoints(tuple):
-            def select(self, **kwargs):
-                return self if kwargs.get("group") == "eegle.plugins" else ()
+class Context:
+    execution_id = "execution.external"
+    component_id = "scale.external"
+    component_version = "1.2.0"
+    execution_mode = ExecutionMode.CAUSAL
+    current_time = TimePoint(1.2, "host.monotonic")
+    clock_mapping_revisions = {"map.device.host": 1}
+    sequence = 0
 
+    def next_id(self, namespace):
+        self.sequence += 1
+        return f"external.{namespace}.{self.sequence}"
+
+packet = DenseSampleBatch(
+    batch_id="batch.external.input",
+    stream_id="stream.external",
+    stream_revision=4,
+    sequence_start=0,
+    channel_ids=("channel.0",),
+    values=np.array([[1.0], [2.0]]),
+    received_time=TimePoint(1.0, "host.monotonic"),
+    available_time=TimePoint(1.1, "host.monotonic"),
+    first_sample_time=TimePoint(0.0, "device.clock"),
+    sample_period_seconds=0.01,
+)
+registry = PluginRegistry()
+loaded = registry.load_entry_points()
+assert "fixture.external.scale" in loaded, loaded
+component = registry.create(
+    "fixture.external.scale",
+    {"scale": 2.5},
+    ">=1,<2",
+    mode=ExecutionMode.CAUSAL,
+)
+output = exercise_dense_transform(component, packet, Context())
+np.testing.assert_allclose(output.values, [[2.5], [5.0]])
+descriptor = registry.resolve("fixture.external.scale")
+assert descriptor.distribution == "eegle-phase2-external-fixture", descriptor.distribution
+print(descriptor.plugin_id, descriptor.version)
+'''.replace("__TARGET__", repr(str(target)))
+            executed = subprocess.run(
+                [sys.executable, "-c", script],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(executed.returncode, 0, executed.stderr)
+            self.assertIn("fixture.external.scale 1.2.0", executed.stdout)
+
+    def test_builtin_factories_satisfy_packet_and_quality_contracts(self) -> None:
         registry = PluginRegistry()
-        with mock.patch(
-            "eegle.plugins.registry.metadata.entry_points",
-            return_value=EntryPoints((EntryPoint(),)),
-        ):
-            loaded = registry.load_entry_points()
-
-        component = registry.create(
-            "fixture.external.scale",
-            {"scale": 2.5},
-            ">=1,<2",
+        registered = registry.register_builtins()
+        self.assertIn("eegle.processing.causal_sos", registered)
+        packet = _dense_batch(np.array([[1.0], [2.0]]))
+        identity = registry.create(
+            "eegle.processing.identity",
+            {},
             mode=ExecutionMode.CAUSAL,
         )
-        np.testing.assert_allclose(component.update(np.array([[1.0], [2.0]])), [[2.5], [5.0]])
-        self.assertEqual(loaded, ("fixture.external.scale",))
-        self.assertEqual(
-            registry.resolve("fixture.external.scale").distribution,
-            "fixture-external-package",
+        identity_context = FixtureExecutionContext(
+            component_id="transform.identity",
+            current_time=_time(1.2),
+            clock_mapping_revisions={"map.device.host": 1},
         )
-        with self.assertRaisesRegex(ValueError, "required property"):
-            registry.create("fixture.external.scale", {})
+        identity_output = exercise_dense_transform(identity, packet, identity_context)
+        np.testing.assert_array_equal(identity_output.values, packet.values)
+        self.assertEqual(
+            identity_output.lineage.clock_mapping_revisions["map.device.host"],
+            1,
+        )
+        with self.assertRaisesRegex(ValueError, "before it is available"):
+            identity.update(
+                packet,
+                FixtureExecutionContext(
+                    component_id="transform.identity",
+                    current_time=_time(1.0),
+                ),
+            )
+
+        quality = registry.create(
+            "eegle.processing.finite_quality",
+            {"minimum_valid_fraction": 1.0},
+            mode=ExecutionMode.CAUSAL,
+        )
+        quality_context = FixtureExecutionContext(
+            component_id="quality.finite",
+            current_time=_time(1.3),
+        )
+        decision = quality.evaluate(identity_output, quality_context)
+        self.assertEqual(decision.item_id, identity_output.batch_id)
+        self.assertEqual(decision.decided_time, quality_context.current_time)
+
+    def test_registry_rejects_factories_that_violate_role_or_state_claims(self) -> None:
+        registry = PluginRegistry()
+        registry.register_builtins()
+        identity_descriptor = registry.resolve("eegle.processing.identity")
+        registry.register(
+            replace(
+                identity_descriptor,
+                plugin_id="fixture.invalid.transform",
+                factory=lambda config: object(),
+                distribution="fixture-invalid",
+            )
+        )
+        with self.assertRaisesRegex(TypeError, "without callable update"):
+            registry.create("fixture.invalid.transform", {})
+
+        causal_descriptor = registry.resolve("eegle.processing.causal_sos")
+        registry.register(
+            replace(
+                causal_descriptor,
+                plugin_id="fixture.invalid.state",
+                factory=lambda config: IdentityTransform(),
+                distribution="fixture-invalid",
+            )
+        )
+        with self.assertRaisesRegex(TypeError, "declares snapshot_restore"):
+            registry.create(
+                "fixture.invalid.state",
+                {
+                    "sos": signal.butter(2, 0.2, output="sos").tolist(),
+                    "channel_count": 1,
+                },
+            )
 
     def test_causal_filter_chunking_matches_one_pass_and_restores_state(self) -> None:
         sos = signal.butter(2, 0.2, output="sos")
         samples = np.linspace(-1.0, 1.0, 80).reshape(40, 2)
         expected = signal.sosfilt(sos, samples, axis=0)
-        transform = CausalSosFilter(sos, channel_count=2)
-        first = transform.update(samples[:17])
+        registry = PluginRegistry()
+        registry.register_builtins()
+        config = {"sos": sos.tolist(), "channel_count": 2}
+        transform = registry.create(
+            "eegle.processing.causal_sos",
+            config,
+            mode=ExecutionMode.CAUSAL,
+        )
+        self.assertIsInstance(transform, CausalSosFilter)
+        first_packet = _dense_batch(
+            samples[:17],
+            batch_id="batch.chunk.1",
+            received=1.0,
+            available=1.1,
+        )
+        second_packet = _dense_batch(
+            samples[17:],
+            batch_id="batch.chunk.2",
+            sequence_start=17,
+            received=1.3,
+            available=1.4,
+        )
+        initial_state = transform.snapshot_state()
+        with self.assertRaisesRegex(ValueError, "before it is available"):
+            transform.update(
+                first_packet,
+                FixtureExecutionContext(
+                    component_id="filter.causal",
+                    current_time=_time(1.0),
+                ),
+            )
+        self.assertEqual(transform.snapshot_state(), initial_state)
+        first = exercise_dense_transform(
+            transform,
+            first_packet,
+            FixtureExecutionContext(
+                component_id="filter.causal",
+                current_time=_time(1.2),
+            ),
+        )
         snapshot = transform.snapshot_state()
-        second = transform.update(samples[17:])
-        restored = CausalSosFilter(sos, channel_count=2)
+        second = exercise_dense_transform(
+            transform,
+            second_packet,
+            FixtureExecutionContext(
+                component_id="filter.causal",
+                current_time=_time(1.5),
+            ),
+        )
+        restored = registry.create(
+            "eegle.processing.causal_sos",
+            config,
+            mode=ExecutionMode.CAUSAL,
+        )
         restored.restore_state(snapshot)
 
-        np.testing.assert_allclose(np.vstack([first, second]), expected)
-        np.testing.assert_allclose(restored.update(samples[17:]), second)
+        np.testing.assert_allclose(np.vstack([first.values, second.values]), expected)
+        restored_second = exercise_dense_transform(
+            restored,
+            second_packet,
+            FixtureExecutionContext(
+                component_id="filter.causal",
+                current_time=_time(1.5),
+            ),
+        )
+        np.testing.assert_allclose(restored_second.values, second.values)
+        self.assertEqual(restored_second.lineage.state_hash, second.lineage.state_hash)
         transform.capabilities.validate_mode(ExecutionMode.CAUSAL)
 
     def test_retrospective_filter_is_machine_rejected_for_causal_execution(self) -> None:

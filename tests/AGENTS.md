@@ -10,7 +10,17 @@ broader discovery when touching shared orchestration.
 - `test_phase1_migration_invariants.py`: selected domain-neutral scientific and
   execution behavior frozen before the clean rebuild.
 - `test_phase2_foundations.py`: typed records, canonical locks, evidence
-  framing, plugins, processing causality, clean imports, and dependency policy.
+  framing, packet/context plugin contracts, processing causality, real external
+  wheel discovery, clean imports, and dependency policy.
+- `test_phase3_execution_engine.py`: deterministic scheduling, typed bounded
+  windows, primary/shadow execution, work terminal states, evidence capture,
+  same-engine replay, divergence localization, deadlines, watermarks, and
+  backpressure.
+- `test_phase4_evidence_bundles.py`: generic sessions, namespaced artifacts,
+  evidence-bundle lifecycle, component snapshots, independent execution/raw
+  references, precise truncation recovery, and legacy read-only discovery.
+- `eegle.plugins.testing`: reusable behavioral assertions for independently
+  packaged components; tests must keep these focused on public typed contracts.
 - `test_classification.py`: classify8 workflow contracts, label-blind metadata,
   model bundles, epoch quality, dashboard/demo behavior, replay, and scoring.
 - `test_ml_infrastructure.py`: model registry, channel contracts,

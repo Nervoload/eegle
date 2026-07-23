@@ -13,14 +13,19 @@ acceptance evidence only as classified by the Phase 0 inventory.
 
 - `actions/`: commands, authorization decisions, and observed receipts.
 - `compiler/`: canonical JSON/hashing and immutable execution-plan drafts.
-- `plugins/`: executable descriptors, entry-point discovery, and component
-  protocols.
+- `plugins/`: executable descriptors, first-party built-in factories,
+  entry-point discovery, and packet/context component protocols.
 - `processing/`: bounded buffers, explicit causal/retrospective transforms,
   generic windows, and quality.
-- `recording/`: evidence envelopes, framed logs, artifacts, and store protocols.
-- `runtime/`: outcome and state records; the engine is a Phase 3 responsibility.
+- `recording/`: generic sessions, evidence bundles, framed ledgers/capture,
+  namespaced artifacts, component snapshots, integrity, and store protocols.
+- `runtime/`: the new deterministic semantic engine, typed execution context,
+  scheduling/watermark policies, work records, outcomes, and state transitions.
+- `replay/`: captured sources, fresh same-engine reruns, equivalence ceilings,
+  and localized divergence reports.
 - `specs/`: JSON Schema validation; full suite specifications arrive later.
-- `streams/`: modality-neutral channels, clocks, packets, and sources.
+- `streams/`: revision-bound modality-neutral channels, causally available
+  clock mappings, packets, and sources.
 - `integrations/`: task/framework/site behavior excluded from base imports.
 
 ## Package Map

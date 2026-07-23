@@ -1,0 +1,693 @@
+"""Versioned evidence-bundle lifecycle, writing, reading, and verification."""
+
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Iterable, Mapping
+
+from eegle._validation import freeze_json, require_digest, require_identifier, thaw_json
+from eegle.compiler.lock import canonical_hash, canonical_json_bytes
+from eegle.recording.artifacts import (
+    ArtifactLineage,
+    ArtifactReference,
+    ArtifactStore,
+    Sensitivity,
+)
+from eegle.recording.evidence import EvidenceRecord, EvidenceStatus
+from eegle.recording.framing import (
+    IntegrityIssue,
+    IntegrityIssueCode,
+    IntegrityStatus,
+    inspect_framed_payloads,
+)
+from eegle.recording.ledgers import EvidenceLedgerWriter, read_evidence_ledger
+from eegle.recording.stores import (
+    FRAMED_SAMPLE_MEDIA_TYPE,
+    FramedSampleStore,
+    SampleStorePurpose,
+    read_framed_sample_store,
+)
+from eegle.streams.channels import StreamSpec
+from eegle.streams.clocks import TimePoint
+from eegle.streams.packets import Packet
+
+if TYPE_CHECKING:
+    from eegle.recording.session import Session
+
+
+EVIDENCE_BUNDLE_SCHEMA = "eegle.evidence_bundle.v1"
+COMPONENT_STATE_SNAPSHOT_SCHEMA = "eegle.component_state_snapshot.v1"
+EVIDENCE_LOG_MEDIA_TYPE = "application/vnd.eegle.evidence-framed+json"
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentStateSnapshot:
+    snapshot_id: str
+    component_id: str
+    component_version: str
+    sequence: int
+    captured_time: TimePoint
+    state_hash: str
+    artifact: ArtifactReference
+    schema: str = COMPONENT_STATE_SNAPSHOT_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.schema != COMPONENT_STATE_SNAPSHOT_SCHEMA:
+            raise ValueError(f"unsupported component-state schema: {self.schema}")
+        object.__setattr__(self, "snapshot_id", require_identifier(self.snapshot_id, "snapshot_id"))
+        object.__setattr__(self, "component_id", require_identifier(self.component_id, "component_id"))
+        if not self.component_version.strip():
+            raise ValueError("component_version cannot be empty")
+        object.__setattr__(self, "sequence", int(self.sequence))
+        if self.sequence < 0:
+            raise ValueError("component-state sequence cannot be negative")
+        object.__setattr__(self, "state_hash", require_digest(self.state_hash, "state_hash"))
+        if self.artifact.digest != self.state_hash:
+            raise ValueError("component-state artifact digest must equal the canonical state hash")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "snapshot_id": self.snapshot_id,
+            "component_id": self.component_id,
+            "component_version": self.component_version,
+            "sequence": self.sequence,
+            "captured_time": self.captured_time.to_payload(),
+            "state_hash": self.state_hash,
+            "artifact": self.artifact.to_payload(),
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "ComponentStateSnapshot":
+        return cls(
+            schema=str(payload.get("schema", COMPONENT_STATE_SNAPSHOT_SCHEMA)),
+            snapshot_id=str(payload["snapshot_id"]),
+            component_id=str(payload["component_id"]),
+            component_version=str(payload["component_version"]),
+            sequence=int(payload["sequence"]),
+            captured_time=TimePoint.from_payload(payload["captured_time"]),
+            state_hash=str(payload["state_hash"]),
+            artifact=ArtifactReference.from_payload(payload["artifact"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceBundle:
+    bundle_id: str
+    session_id: str
+    plan_hash: str
+    status: EvidenceStatus
+    created_time: TimePoint
+    semantic_log: ArtifactReference
+    execution_captures: tuple[ArtifactReference, ...] = ()
+    raw_recordings: tuple[ArtifactReference, ...] = ()
+    artifacts: tuple[ArtifactReference, ...] = ()
+    component_states: tuple[ComponentStateSnapshot, ...] = ()
+    completed_time: TimePoint | None = None
+    last_sequence: int | None = None
+    metadata: Mapping[str, Any] = None  # type: ignore[assignment]
+    schema: str = EVIDENCE_BUNDLE_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.schema != EVIDENCE_BUNDLE_SCHEMA:
+            raise ValueError(f"unsupported evidence bundle schema: {self.schema}")
+        object.__setattr__(self, "bundle_id", _bundle_identifier(self.bundle_id))
+        object.__setattr__(self, "session_id", require_identifier(self.session_id, "session_id"))
+        object.__setattr__(self, "plan_hash", require_digest(self.plan_hash, "plan_hash"))
+        object.__setattr__(self, "status", EvidenceStatus(self.status))
+        if self.semantic_log.role != "evidence_log":
+            raise ValueError("semantic_log must have the evidence_log role")
+        if not self.semantic_log.embedded:
+            raise ValueError("semantic_log must be embedded in the evidence session")
+        if self.status == EvidenceStatus.OPEN:
+            raise ValueError("a published evidence bundle cannot have open status")
+        if self.completed_time is None:
+            raise ValueError("a published evidence bundle requires completed_time")
+        if self.completed_time.clock_id != self.created_time.clock_id:
+            raise ValueError("bundle created_time and completed_time must share a clock")
+        if self.completed_time.seconds < self.created_time.seconds:
+            raise ValueError("bundle completed_time cannot precede created_time")
+        if self.last_sequence is not None and int(self.last_sequence) < 0:
+            raise ValueError("last_sequence cannot be negative")
+        object.__setattr__(self, "metadata", freeze_json(self.metadata or {}))
+
+    @property
+    def bundle_hash(self) -> str:
+        return canonical_hash(self.content_payload())
+
+    def content_payload(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "bundle_id": self.bundle_id,
+            "session_id": self.session_id,
+            "plan_hash": self.plan_hash,
+            "status": self.status.value,
+            "created_time": self.created_time.to_payload(),
+            "completed_time": None
+            if self.completed_time is None
+            else self.completed_time.to_payload(),
+            "last_sequence": self.last_sequence,
+            "semantic_log": self.semantic_log.to_payload(),
+            "execution_captures": [ref.to_payload() for ref in self.execution_captures],
+            "raw_recordings": [ref.to_payload() for ref in self.raw_recordings],
+            "artifacts": [ref.to_payload() for ref in self.artifacts],
+            "component_states": [state.to_payload() for state in self.component_states],
+            "metadata": thaw_json(self.metadata),
+        }
+
+    def to_payload(self) -> dict[str, Any]:
+        payload = self.content_payload()
+        payload["bundle_hash"] = self.bundle_hash
+        return payload
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "EvidenceBundle":
+        completed = payload.get("completed_time")
+        bundle = cls(
+            schema=str(payload.get("schema", EVIDENCE_BUNDLE_SCHEMA)),
+            bundle_id=str(payload["bundle_id"]),
+            session_id=str(payload["session_id"]),
+            plan_hash=str(payload["plan_hash"]),
+            status=EvidenceStatus(str(payload["status"])),
+            created_time=TimePoint.from_payload(payload["created_time"]),
+            completed_time=None if completed is None else TimePoint.from_payload(completed),
+            last_sequence=None
+            if payload.get("last_sequence") is None
+            else int(payload["last_sequence"]),
+            semantic_log=ArtifactReference.from_payload(payload["semantic_log"]),
+            execution_captures=tuple(
+                ArtifactReference.from_payload(item)
+                for item in payload.get("execution_captures", ())
+            ),
+            raw_recordings=tuple(
+                ArtifactReference.from_payload(item) for item in payload.get("raw_recordings", ())
+            ),
+            artifacts=tuple(
+                ArtifactReference.from_payload(item) for item in payload.get("artifacts", ())
+            ),
+            component_states=tuple(
+                ComponentStateSnapshot.from_payload(item)
+                for item in payload.get("component_states", ())
+            ),
+            metadata=dict(payload.get("metadata") or {}),
+        )
+        if payload.get("bundle_hash") != bundle.bundle_hash:
+            raise ValueError("evidence bundle hash mismatch")
+        return bundle
+
+    @property
+    def references(self) -> tuple[ArtifactReference, ...]:
+        return (
+            self.semantic_log,
+            *self.execution_captures,
+            *self.raw_recordings,
+            *self.artifacts,
+            *(state.artifact for state in self.component_states),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BundleIntegrityReport:
+    status: IntegrityStatus
+    bundle_id: str
+    valid_record_count: int
+    last_complete_sequence: int | None
+    issues: tuple[IntegrityIssue, ...] = ()
+
+    @property
+    def valid(self) -> bool:
+        return self.status == IntegrityStatus.VALID
+
+    @property
+    def recoverable(self) -> bool:
+        return self.status == IntegrityStatus.RECOVERABLE
+
+
+class EvidenceWriter:
+    """Assemble semantic evidence and independent sample references into a bundle."""
+
+    def __init__(
+        self,
+        session: "Session",
+        *,
+        bundle_id: str,
+        plan_hash: str,
+        created_time: TimePoint,
+        durable: bool = False,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        if session.read_only:
+            raise PermissionError("cannot write evidence to a read-only session")
+        if session.status.value != "open":
+            raise RuntimeError("cannot write evidence to a finalized session")
+        self.session = session
+        self.bundle_id = _bundle_identifier(bundle_id)
+        self.plan_hash = require_digest(plan_hash, "plan_hash")
+        self.created_time = created_time
+        self.metadata = freeze_json(metadata or {})
+        self._namespace = f"bundles/{self.bundle_id}"
+        self._bundle_dir = session.root / "bundles" / self.bundle_id
+        if self._bundle_dir.exists():
+            raise FileExistsError(f"evidence bundle already exists: {self._bundle_dir}")
+        self._bundle_dir.mkdir(parents=True)
+        self._ledger_path = self._bundle_dir / "semantic.eegle"
+        self._ledger = EvidenceLedgerWriter(self._ledger_path, durable=durable)
+        self._execution: list[ArtifactReference] = []
+        self._raw: list[ArtifactReference] = []
+        self._artifacts: list[ArtifactReference] = []
+        self._states: list[ComponentStateSnapshot] = []
+        self._last_sequence: int | None = None
+        self._closed = False
+
+    def append(self, record: EvidenceRecord) -> None:
+        self._require_open()
+        self._ledger.append(record)
+        self._last_sequence = record.sequence
+
+    def add_execution_capture(self, reference: ArtifactReference) -> None:
+        self._require_open()
+        self._add_unique(self._execution, reference, expected_role="execution_capture")
+
+    def add_raw_recording(self, reference: ArtifactReference) -> None:
+        self._require_open()
+        self._add_unique(self._raw, reference, expected_role="archival_raw")
+
+    def add_artifact(self, reference: ArtifactReference) -> None:
+        self._require_open()
+        self._add_unique(self._artifacts, reference)
+
+    def capture_packets(
+        self,
+        streams: Iterable[StreamSpec],
+        packets: Iterable[Packet],
+        *,
+        store_id: str | None = None,
+    ) -> ArtifactReference:
+        self._require_open()
+        identifier = store_id or f"{self.bundle_id}.execution-capture"
+        sample_store = FramedSampleStore(
+            self.session.artifacts,
+            store_id=identifier,
+            purpose=SampleStorePurpose.EXECUTION_CAPTURE,
+            namespace=self._namespace,
+            relative_uri=f"bundles/{self.bundle_id}/execution-capture.eegle",
+        )
+        for stream in streams:
+            sample_store.open_stream(stream)
+        sample_store.append_all(packets)
+        reference = sample_store.close()
+        self.add_execution_capture(reference)
+        return reference
+
+    def snapshot_component(
+        self,
+        *,
+        component_id: str,
+        component_version: str,
+        sequence: int,
+        captured_time: TimePoint,
+        state: Mapping[str, Any],
+    ) -> ComponentStateSnapshot:
+        self._require_open()
+        snapshot_id = f"{self.bundle_id}.state.{component_id}.{sequence}"
+        state_payload = thaw_json(freeze_json(state))
+        reference = self.session.artifacts.register_json(
+            self._namespace,
+            snapshot_id,
+            "component_state",
+            state_payload,
+            sensitivity=Sensitivity.INTERNAL,
+            lineage=ArtifactLineage(
+                component_id=component_id,
+                component_version=component_version,
+                metadata={"evidence_sequence": int(sequence)},
+            ),
+        )
+        snapshot = ComponentStateSnapshot(
+            snapshot_id=snapshot_id,
+            component_id=component_id,
+            component_version=component_version,
+            sequence=sequence,
+            captured_time=captured_time,
+            state_hash=canonical_hash(state_payload),
+            artifact=reference,
+        )
+        self._states.append(snapshot)
+        return snapshot
+
+    def write_engine_result(
+        self,
+        result: Any,
+        *,
+        streams: Iterable[StreamSpec],
+    ) -> None:
+        """Persist a Phase 3 ``EngineRunResult`` without coupling to runtime imports."""
+
+        if result.plan_hash != self.plan_hash:
+            raise ValueError("engine result plan hash does not match evidence writer")
+        for record in result.evidence:
+            self.append(record)
+        packets = tuple(result.captured_packets)
+        if packets:
+            self.capture_packets(streams, packets)
+        component_versions: dict[str, str] = {}
+        for record in result.evidence:
+            if record.record_type == "component_started":
+                component_versions[str(record.payload["component_id"])] = str(
+                    record.payload["component_version"]
+                )
+            elif record.record_type == "component_state":
+                component_id = str(record.payload["component_id"])
+                self.snapshot_component(
+                    component_id=component_id,
+                    component_version=component_versions.get(component_id, "unknown"),
+                    sequence=record.sequence,
+                    captured_time=record.emitted_time,
+                    state=dict(record.payload["state"]),
+                )
+
+    def finalize(
+        self,
+        *,
+        status: EvidenceStatus,
+        completed_time: TimePoint,
+    ) -> EvidenceBundle:
+        self._require_open()
+        normalized_status = EvidenceStatus(status)
+        if normalized_status == EvidenceStatus.OPEN:
+            raise ValueError("finalized evidence status cannot be open")
+        self._ledger.close()
+        semantic_log = self.session.artifacts.register_file(
+            self._namespace,
+            f"{self.bundle_id}.semantic-log",
+            "evidence_log",
+            self._ledger_path,
+            EVIDENCE_LOG_MEDIA_TYPE,
+            sensitivity=Sensitivity.PSEUDONYMIZED,
+            copy=False,
+        )
+        bundle = EvidenceBundle(
+            bundle_id=self.bundle_id,
+            session_id=self.session.session_id,
+            plan_hash=self.plan_hash,
+            status=normalized_status,
+            created_time=self.created_time,
+            completed_time=completed_time,
+            last_sequence=self._last_sequence,
+            semantic_log=semantic_log,
+            execution_captures=tuple(self._execution),
+            raw_recordings=tuple(self._raw),
+            artifacts=tuple(self._artifacts),
+            component_states=tuple(self._states),
+            metadata=thaw_json(self.metadata),
+        )
+        manifest_path = self._bundle_dir / "bundle.json"
+        _atomic_write(manifest_path, canonical_json_bytes(bundle.to_payload()))
+        self.session.register_bundle(manifest_path.relative_to(self.session.root).as_posix())
+        self._closed = True
+        return bundle
+
+    def _add_unique(
+        self,
+        target: list[ArtifactReference],
+        reference: ArtifactReference,
+        *,
+        expected_role: str | None = None,
+    ) -> None:
+        if not any(entry.reference == reference for entry in self.session.artifacts.entries):
+            raise ValueError(
+                f"artifact must be registered in the session store before bundling: "
+                f"{reference.artifact_id}"
+            )
+        if expected_role is not None and reference.role != expected_role:
+            raise ValueError(
+                f"artifact {reference.artifact_id} must have role {expected_role}, "
+                f"observed {reference.role}"
+            )
+        known = {
+            ref
+            for ref in (*self._execution, *self._raw, *self._artifacts)
+        }
+        known.update(state.artifact for state in self._states)
+        if reference in known:
+            raise ValueError(f"artifact is already part of this bundle: {reference.artifact_id}")
+        target.append(reference)
+
+    def _require_open(self) -> None:
+        if self._closed:
+            raise RuntimeError("evidence writer is closed")
+
+
+class EvidenceReader:
+    def __init__(self, session: "Session", bundle: EvidenceBundle, manifest_path: Path) -> None:
+        self.session = session
+        self.bundle = bundle
+        self.manifest_path = manifest_path
+
+    @classmethod
+    def open(
+        cls,
+        session: "Session",
+        bundle: str | Path,
+    ) -> "EvidenceReader":
+        candidate = Path(bundle)
+        if not candidate.is_absolute():
+            if candidate.suffix == ".json" or "/" in candidate.as_posix():
+                candidate = (session.root / candidate).resolve()
+                try:
+                    candidate.relative_to(session.root)
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise ValueError("relative evidence bundle path escapes the session") from exc
+            else:
+                identifier = _bundle_identifier(str(bundle))
+                candidate = session.root / "bundles" / identifier / "bundle.json"
+        payload = _read_json(candidate)
+        parsed = EvidenceBundle.from_payload(payload)
+        if parsed.session_id != session.session_id:
+            raise ValueError("evidence bundle belongs to a different session")
+        return cls(session, parsed, candidate)
+
+    def records(self, *, allow_recoverable: bool = False) -> tuple[EvidenceRecord, ...]:
+        path = self.session.artifacts.resolve(self.bundle.semantic_log)
+        result = read_evidence_ledger(path)
+        if result.integrity.status != IntegrityStatus.VALID and not (
+            allow_recoverable and result.integrity.status == IntegrityStatus.RECOVERABLE
+        ):
+            raise ValueError(
+                f"evidence ledger integrity is {result.integrity.status.value}: "
+                f"{result.integrity.issues[0].message if result.integrity.issues else 'unknown issue'}"
+            )
+        return result.records
+
+    def verify(self) -> BundleIntegrityReport:
+        issues: list[IntegrityIssue] = []
+        registered = {entry.reference for entry in self.session.artifacts.entries}
+        for reference in self.bundle.references:
+            if reference not in registered:
+                issues.append(
+                    IntegrityIssue(
+                        code=IntegrityIssueCode.MANIFEST_MISMATCH,
+                        message=(
+                            f"bundle artifact is absent from the session registry: "
+                            f"{reference.artifact_id}"
+                        ),
+                        artifact_id=reference.artifact_id,
+                    )
+                )
+        log_path = self.session.artifacts.resolve(self.bundle.semantic_log)
+        if not log_path.is_file():
+            issues.append(
+                IntegrityIssue(
+                    code=IntegrityIssueCode.ARTIFACT_MISSING,
+                    message=f"artifact missing: {self.bundle.semantic_log.artifact_id}",
+                    artifact_id=self.bundle.semantic_log.artifact_id,
+                )
+            )
+            records = ()
+        else:
+            ledger = read_evidence_ledger(log_path)
+            records = ledger.records
+            issues.extend(
+                _with_artifact(issue, self.bundle.semantic_log.artifact_id)
+                for issue in ledger.integrity.issues
+            )
+            _verify_reference(
+                self.session.artifacts,
+                self.bundle.semantic_log,
+                issues,
+                suppress_digest=ledger.integrity.status == IntegrityStatus.RECOVERABLE,
+            )
+
+        for reference in self.bundle.execution_captures:
+            if not reference.embedded:
+                continue
+            path = self.session.artifacts.resolve(reference)
+            if not path.is_file():
+                issues.append(
+                    IntegrityIssue(
+                        code=IntegrityIssueCode.ARTIFACT_MISSING,
+                        message=f"artifact missing: {reference.artifact_id}",
+                        artifact_id=reference.artifact_id,
+                    )
+                )
+                continue
+            if reference.media_type == FRAMED_SAMPLE_MEDIA_TYPE:
+                framing = inspect_framed_payloads(path)
+                issues.extend(
+                    _with_artifact(issue, reference.artifact_id) for issue in framing.issues
+                )
+                if framing.status != IntegrityStatus.RECOVERABLE:
+                    _verify_reference(self.session.artifacts, reference, issues)
+                # For a recoverable final frame, the declared size/digest
+                # describe the pre-interruption object; framing supplies the
+                # actionable proven boundary.
+                try:
+                    read_framed_sample_store(path)
+                except ValueError as exc:
+                    issues.append(
+                        IntegrityIssue(
+                            code=IntegrityIssueCode.MANIFEST_MISMATCH,
+                            message=str(exc),
+                            artifact_id=reference.artifact_id,
+                        )
+                    )
+            else:
+                _verify_reference(self.session.artifacts, reference, issues)
+
+        for reference in (
+            *self.bundle.raw_recordings,
+            *self.bundle.artifacts,
+            *(state.artifact for state in self.bundle.component_states),
+        ):
+            _verify_reference(self.session.artifacts, reference, issues)
+
+        if self.bundle.last_sequence is None:
+            observed_last = None
+        else:
+            observed_last = records[-1].sequence if records else None
+            if observed_last != self.bundle.last_sequence and not any(
+                issue.recoverable for issue in issues
+            ):
+                issues.append(
+                    IntegrityIssue(
+                        code=IntegrityIssueCode.MANIFEST_MISMATCH,
+                        message=(
+                            f"bundle last_sequence mismatch: expected {self.bundle.last_sequence}, "
+                            f"observed {observed_last}"
+                        ),
+                        expected=self.bundle.last_sequence,
+                        observed=observed_last,
+                    )
+                )
+        status = IntegrityStatus.VALID
+        if any(not issue.recoverable for issue in issues):
+            status = IntegrityStatus.UNRECOVERABLE
+        elif issues:
+            status = IntegrityStatus.RECOVERABLE
+        return BundleIntegrityReport(
+            status=status,
+            bundle_id=self.bundle.bundle_id,
+            valid_record_count=len(records),
+            last_complete_sequence=records[-1].sequence if records else None,
+            issues=tuple(issues),
+        )
+
+
+def persist_engine_run(
+    session: "Session",
+    result: Any,
+    *,
+    streams: Iterable[StreamSpec],
+    bundle_id: str | None = None,
+) -> EvidenceBundle:
+    """Create a complete/partial/failed bundle from one semantic engine result."""
+
+    records = tuple(result.evidence)
+    if not records:
+        raise ValueError("an engine result without evidence cannot form an evidence bundle")
+    identifier = bundle_id or f"bundle.{result.execution_id}"
+    writer = EvidenceWriter(
+        session,
+        bundle_id=identifier,
+        plan_hash=result.plan_hash,
+        created_time=records[0].emitted_time,
+        metadata={"execution_id": result.execution_id, "engine_status": result.status.value},
+    )
+    writer.write_engine_result(result, streams=streams)
+    status_value = str(result.status.value)
+    evidence_status = {
+        "complete": EvidenceStatus.COMPLETE,
+        "partial": EvidenceStatus.PARTIAL,
+        "cancelled": EvidenceStatus.PARTIAL,
+        "failed": EvidenceStatus.FAILED,
+    }.get(status_value, EvidenceStatus.FAILED)
+    return writer.finalize(status=evidence_status, completed_time=records[-1].emitted_time)
+
+
+def _with_artifact(issue: IntegrityIssue, artifact_id: str) -> IntegrityIssue:
+    return IntegrityIssue(
+        code=issue.code,
+        message=issue.message,
+        artifact_id=artifact_id,
+        frame_offset=issue.frame_offset,
+        last_complete_offset=issue.last_complete_offset,
+        expected=issue.expected,
+        observed=issue.observed,
+        recoverable=issue.recoverable,
+    )
+
+
+def _bundle_identifier(value: str) -> str:
+    identifier = require_identifier(value, "bundle_id")
+    if "/" in identifier or identifier in {".", ".."}:
+        raise ValueError("bundle_id must be one safe path component")
+    return identifier
+
+
+def _verify_reference(
+    store: ArtifactStore,
+    reference: ArtifactReference,
+    issues: list[IntegrityIssue],
+    *,
+    suppress_digest: bool = False,
+) -> None:
+    valid, message = store.verify(reference)
+    if valid or message is None:
+        return
+    if suppress_digest and ("size mismatch" in message or "digest mismatch" in message):
+        return
+    if "missing" in message:
+        code = IntegrityIssueCode.ARTIFACT_MISSING
+    elif "size mismatch" in message:
+        code = IntegrityIssueCode.ARTIFACT_SIZE_MISMATCH
+    else:
+        code = IntegrityIssueCode.ARTIFACT_DIGEST_MISMATCH
+    issues.append(
+        IntegrityIssue(code=code, message=message, artifact_id=reference.artifact_id)
+    )
+
+
+def _read_json(path: Path) -> Mapping[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid evidence bundle JSON: {path}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("evidence bundle manifest must be a JSON object")
+    return payload
+
+
+def _atomic_write(path: Path, data: bytes) -> None:
+    temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    try:
+        with temporary.open("wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()

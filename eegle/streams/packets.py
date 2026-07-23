@@ -28,6 +28,7 @@ def _validate_boundary_times(received_time: TimePoint, available_time: TimePoint
 class DenseSampleBatch:
     batch_id: str
     stream_id: str
+    stream_revision: int
     sequence_start: int
     channel_ids: tuple[str, ...]
     values: np.ndarray
@@ -45,6 +46,9 @@ class DenseSampleBatch:
             raise ValueError(f"unsupported dense sample batch schema: {self.schema}")
         object.__setattr__(self, "batch_id", require_identifier(self.batch_id, "batch_id"))
         object.__setattr__(self, "stream_id", require_identifier(self.stream_id, "stream_id"))
+        object.__setattr__(self, "stream_revision", int(self.stream_revision))
+        if self.stream_revision <= 0:
+            raise ValueError("stream_revision must be positive")
         if int(self.sequence_start) < 0:
             raise ValueError("sequence_start cannot be negative")
         object.__setattr__(self, "sequence_start", int(self.sequence_start))
@@ -125,6 +129,7 @@ class DenseSampleBatch:
             self.schema == other.schema
             and self.batch_id == other.batch_id
             and self.stream_id == other.stream_id
+            and self.stream_revision == other.stream_revision
             and self.sequence_start == other.sequence_start
             and self.channel_ids == other.channel_ids
             and self.values.dtype == other.values.dtype
@@ -151,9 +156,10 @@ class DenseSampleBatch:
             "schema": self.schema,
             "batch_id": self.batch_id,
             "stream_id": self.stream_id,
+            "stream_revision": self.stream_revision,
             "sequence_start": self.sequence_start,
             "channel_ids": list(self.channel_ids),
-            "dtype": self.values.dtype.str,
+            "dtype": self.values.dtype.name,
             "shape": list(self.values.shape),
             "values": rows,
             "validity_mask": None if mask is None else mask.astype(bool).tolist(),
@@ -188,6 +194,7 @@ class DenseSampleBatch:
             schema=str(payload.get("schema", DENSE_SAMPLE_BATCH_SCHEMA)),
             batch_id=str(payload["batch_id"]),
             stream_id=str(payload["stream_id"]),
+            stream_revision=int(payload["stream_revision"]),
             sequence_start=int(payload["sequence_start"]),
             channel_ids=tuple(str(value) for value in payload["channel_ids"]),
             values=values,
@@ -249,6 +256,7 @@ class SparseEvent:
 class SparseEventBatch:
     batch_id: str
     stream_id: str
+    stream_revision: int
     sequence_start: int
     events: tuple[SparseEvent, ...]
     lineage: Lineage | None = None
@@ -259,6 +267,9 @@ class SparseEventBatch:
             raise ValueError(f"unsupported sparse event batch schema: {self.schema}")
         object.__setattr__(self, "batch_id", require_identifier(self.batch_id, "batch_id"))
         object.__setattr__(self, "stream_id", require_identifier(self.stream_id, "stream_id"))
+        object.__setattr__(self, "stream_revision", int(self.stream_revision))
+        if self.stream_revision <= 0:
+            raise ValueError("stream_revision must be positive")
         if int(self.sequence_start) < 0:
             raise ValueError("sequence_start cannot be negative")
         object.__setattr__(self, "sequence_start", int(self.sequence_start))
@@ -277,6 +288,7 @@ class SparseEventBatch:
             "schema": self.schema,
             "batch_id": self.batch_id,
             "stream_id": self.stream_id,
+            "stream_revision": self.stream_revision,
             "sequence_start": self.sequence_start,
             "events": [event.to_payload() for event in self.events],
             "lineage": None if self.lineage is None else self.lineage.to_payload(),
@@ -289,6 +301,7 @@ class SparseEventBatch:
             schema=str(payload.get("schema", SPARSE_EVENT_BATCH_SCHEMA)),
             batch_id=str(payload["batch_id"]),
             stream_id=str(payload["stream_id"]),
+            stream_revision=int(payload["stream_revision"]),
             sequence_start=int(payload["sequence_start"]),
             events=tuple(SparseEvent.from_payload(item) for item in payload["events"]),
             lineage=None if lineage is None else Lineage.from_payload(lineage),
@@ -299,6 +312,7 @@ class SparseEventBatch:
 class MetadataEvent:
     event_id: str
     stream_id: str
+    stream_revision: int
     sequence: int
     kind: str
     event_time: TimePoint
@@ -313,6 +327,9 @@ class MetadataEvent:
             raise ValueError(f"unsupported metadata event schema: {self.schema}")
         object.__setattr__(self, "event_id", require_identifier(self.event_id, "event_id"))
         object.__setattr__(self, "stream_id", require_identifier(self.stream_id, "stream_id"))
+        object.__setattr__(self, "stream_revision", int(self.stream_revision))
+        if self.stream_revision <= 0:
+            raise ValueError("stream_revision must be positive")
         if int(self.sequence) < 0:
             raise ValueError("metadata sequence cannot be negative")
         object.__setattr__(self, "sequence", int(self.sequence))
@@ -326,6 +343,7 @@ class MetadataEvent:
             "schema": self.schema,
             "event_id": self.event_id,
             "stream_id": self.stream_id,
+            "stream_revision": self.stream_revision,
             "sequence": self.sequence,
             "kind": self.kind,
             "event_time": self.event_time.to_payload(),
@@ -342,6 +360,7 @@ class MetadataEvent:
             schema=str(payload.get("schema", METADATA_EVENT_SCHEMA)),
             event_id=str(payload["event_id"]),
             stream_id=str(payload["stream_id"]),
+            stream_revision=int(payload["stream_revision"]),
             sequence=int(payload["sequence"]),
             kind=str(payload["kind"]),
             event_time=TimePoint.from_payload(payload["event_time"]),

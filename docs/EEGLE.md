@@ -415,9 +415,10 @@ Minimum data-plane types include:
 
 ### `StreamSpec`
 
-Describes a logical stream: identity, modality, content kind, rate model,
-channels, units, layout, clock, geometry reference, source capabilities, and
-quality expectations.
+Describes a revisioned logical stream: identity, modality, content kind, rate
+model, numeric dtype where applicable, channels, units, layout, clock,
+coordinate frame, geometry reference/revision, source capabilities, and quality
+expectations.
 
 ### `ChannelSpec`
 
@@ -426,9 +427,10 @@ optional geometry. Channel identity is stable even when ordering changes.
 
 ### `DenseSampleBatch`
 
-Represents dense samples with channel identity, sample or batch timing,
-availability, sequence information, and provenance. It accommodates regular and
-irregular rates when explicitly declared.
+Represents dense samples bound to an exact stream revision, with channel
+identity, sample or batch timing, availability, sequence information, and
+provenance. It accommodates regular and irregular rates when explicitly
+declared.
 
 ### `SparseEventBatch`
 
@@ -442,8 +444,9 @@ calibration, stream schema, or other time-varying metadata.
 
 ### `ClockMapping`
 
-Represents a measured or declared relationship between two clocks, including
-uncertainty and the interval for which the mapping is valid.
+Represents a revisioned measured or declared relationship between two clocks,
+including uncertainty, when the mapping became available for causal use, and
+the interval for which the mapping is valid.
 
 ### `ActionCommand` and `ActionReceipt`
 
@@ -452,7 +455,9 @@ including intended and actual timing, authorization, failure, cancellation, and
 clock identities.
 
 All records require stable identifiers, schema versions, and lineage sufficient
-to associate derived outputs with admitted inputs and component state.
+to associate derived outputs with admitted inputs and component state. Derived
+lineage records the latest admitted-input availability in the execution clock
+and the stream and clock-mapping revisions used.
 
 ## 7. Component and plugin model
 
@@ -535,6 +540,36 @@ The engine must be able to express:
 
 Fairness and resource policies must be explicit. A shadow model must not cause a
 primary model to miss a declared deadline unless the plan explicitly permits it.
+
+The reference scheduling model is a deterministic hybrid coordinator:
+
+- semantic dispatch is a single ordered loop over a virtual execution clock;
+- acquisition, heavyweight inference, and hardware I/O may run behind typed
+  proxies, but they do not create another semantic engine;
+- every source publishes a monotonic availability watermark stating that it
+  will not later emit an earlier on-time packet;
+- an input is dispatchable only when its availability time is at or before the
+  minimum watermark of active contributing sources;
+- equal-availability inputs use a locked total order over source, stream
+  revision, sequence, and packet identity;
+- lateness, queue overflow, deadline expiry, and shadow shedding follow explicit
+  plan policies and always produce evidence.
+
+This keeps live execution responsive without making thread timing, operating
+system scheduling, or process arrival order part of the scientific semantics.
+
+### 8.2 Process boundaries
+
+In-process components are the reference implementation. A subprocess or
+external component participates through a typed proxy that preserves component
+identity, version, inputs, availability, deadline, cancellation, result, state,
+health, and backpressure information. Placement is deployment metadata, not a
+different runtime or scientific code path.
+
+The semantic engine owns admission and disposition on both sides of the proxy.
+A worker may compute a result, but it cannot silently accept different inputs,
+change ordering, or invent a successful terminal state. Process supervision and
+transport recovery remain separable deployment responsibilities.
 
 ## 9. Models, outcomes, calibration, and adaptation
 
@@ -661,6 +696,44 @@ Writes should be append-oriented, crash-detectable, checksummed where useful,
 and resilient to partial final records. Derived corrections belong in derived
 artifacts; raw ledgers remain truthful and append-only.
 
+### 11.2.1 Versioned storage model
+
+The initial storage model has three independent layers:
+
+```text
+Session
+├── ArtifactStore                    namespaced registry and content references
+└── EvidenceBundle[]                 one versioned result per execution
+    ├── semantic evidence ledger      normalized events, outputs, transitions
+    ├── execution capture[]           exact packets admitted by the engine
+    ├── archival raw reference[]       lossless/source-native data, local or external
+    ├── component-state snapshot[]    canonical state plus component/version lineage
+    └── additional artifacts[]         plan, locks, validation, receipts, reports
+```
+
+`Session` identity is independent of participant folders and recipes. The
+`ArtifactStore` assigns identity by namespace plus artifact ID and records a
+typed content reference; filenames are storage locations, not contracts. An
+artifact may be embedded in the session or external while retaining its SHA-256
+digest, size, media type, sensitivity, and producing lineage.
+
+`EvidenceBundle` v1 references semantic evidence, admitted execution capture,
+raw recording, state, and derived artifacts separately. This prevents a replay
+capture from being mistaken for source-native archival data and permits large
+raw stores to remain external without weakening the bundle's identity.
+
+Semantic ledgers and the dependency-light reference sample store use canonical
+JSON frames with a length prefix and per-frame SHA-256 checksum. Integrity
+inspection distinguishes valid, recoverable, and unrecoverable results. A
+partial final frame is recoverable only to the last complete byte boundary;
+checksum, header, interior, canonicalization, record-hash, or sequence failures
+are not silently repaired. Recovery copies the proven prefix and leaves the
+source untouched.
+
+Historical `SessionPaths` names may be exposed only through an explicit artifact
+alias registry. They are a compatibility view for selected readers and recipes,
+not a target runtime API or a required directory layout.
+
 ### 11.3 Privacy and sensitivity
 
 Recording policies must support:
@@ -709,6 +782,15 @@ Components and plans declare the strongest equivalence level they support:
 The validator must not claim a stronger level than the weakest relevant
 component permits. Hardware action replay normally substitutes a simulated or
 observe-only actuator and compares the recorded command/receipt trace.
+
+The default numeric policy uses recursive comparison with relative tolerance
+`1e-7` and absolute tolerance `1e-9`; a suite may lock different justified
+tolerances. Bitwise comparison uses canonical serialized payloads. Semantic
+comparison normalizes decisions, labels, acceptance, work disposition, state
+transitions, and action intent. Trace comparison checks ordered control flow,
+roles, and lineage. Snapshot-capable component state is compared when declared.
+If any relevant component is `non_replayable`, EEGle reports that limitation
+rather than manufacturing an equivalence result.
 
 ## 13. Validation architecture
 
@@ -822,11 +904,15 @@ eegle/
 │   ├── state.py          # component and phase state
 │   └── outcomes.py       # delayed outcomes and matching
 ├── recording/
-│   ├── session.py        # run identity and lifecycle
-│   ├── artifacts.py      # namespaced artifacts and manifests
-│   ├── evidence.py       # evidence records and bundle writer/reader
-│   ├── capture.py        # admitted input capture
-│   └── stores.py         # SampleStore and external raw-store contracts
+│   ├── session.py        # generic session identity and lifecycle
+│   ├── artifacts.py      # namespaced registry, references, lineage
+│   ├── bundles.py        # EvidenceBundle writer, reader, verification
+│   ├── evidence.py       # typed semantic record envelopes
+│   ├── framing.py        # checksums, truncation and prefix recovery
+│   ├── ledgers.py        # contiguous typed semantic ledgers
+│   ├── capture.py        # execution-capture authority
+│   ├── stores.py         # SampleStore protocol and reference store
+│   └── compat.py         # narrow legacy artifact-alias view
 ├── replay/
 │   ├── source.py         # replay inputs and virtual timing
 │   ├── runner.py         # replay through ExecutionEngine
@@ -907,7 +993,9 @@ deliberately revised:
 
 1. EEG-first implementation must not create EEG-only kernel types.
 2. Live, simulation, and replay use one execution engine.
-3. Causal claims are enforced through availability, clock, and lineage evidence.
+3. Causal claims are enforced through availability, clock, revision, and lineage
+   evidence; predictions record the latest availability of their admitted
+   inputs.
 4. Retrospective and oracle results are never silently labeled live-equivalent.
 5. Runtime consumes a validated, immutable execution plan—not raw dictionaries.
 6. Scientific intent and local deployment are separate specifications.

@@ -35,10 +35,19 @@ class Prediction:
         if not inputs:
             raise ValueError("prediction must reference at least one admitted input")
         object.__setattr__(self, "input_ids", inputs)
+        if self.lineage.input_ids != inputs:
+            raise ValueError("prediction input_ids must exactly match lineage input_ids")
+        latest_input = self.lineage.latest_input_available_time
+        if latest_input is None:
+            raise ValueError("prediction lineage requires latest input availability")
         if self.produced_time.clock_id != self.available_time.clock_id:
             raise ValueError("prediction produced_time and available_time must share a clock")
         if self.available_time.seconds < self.produced_time.seconds:
             raise ValueError("prediction available_time cannot precede produced_time")
+        if latest_input.clock_id != self.produced_time.clock_id:
+            raise ValueError("prediction input availability must use the execution clock")
+        if self.produced_time.seconds < latest_input.seconds:
+            raise ValueError("prediction cannot be produced before its latest input was available")
         if self.confidence is not None and not 0.0 <= float(self.confidence) <= 1.0:
             raise ValueError("prediction confidence must be in [0, 1]")
         if self.confidence is not None:

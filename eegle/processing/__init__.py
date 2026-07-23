@@ -4,7 +4,13 @@ from eegle.processing.buffers import BoundedBuffer, BufferEntry
 from eegle.processing.capabilities import TransformCapabilities
 from eegle.processing.quality import FiniteQualityGate, QualityDecision, QualityStatus
 from eegle.processing.transforms import CausalSosFilter, IdentityTransform, RetrospectiveSosFilter
-from eegle.processing.windows import ContinuousWindowSpec, EventWindowSpec, Window
+from eegle.processing.windows import (
+    ContinuousWindowBuilder,
+    ContinuousWindowSpec,
+    DenseWindow,
+    EventWindowSpec,
+    Window,
+)
 
 
 __all__ = [
@@ -12,6 +18,8 @@ __all__ = [
     "BufferEntry",
     "CausalSosFilter",
     "ContinuousWindowSpec",
+    "ContinuousWindowBuilder",
+    "DenseWindow",
     "EventWindowSpec",
     "FiniteQualityGate",
     "IdentityTransform",

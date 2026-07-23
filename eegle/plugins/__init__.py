@@ -1,8 +1,11 @@
 """Executable plugin descriptors, discovery, component protocols, and registry."""
 
+from eegle._domain import ComponentKind, Determinism, EquivalenceLevel, ExecutionMode
 from eegle.plugins.contracts import (
     Actuator,
     Adapter,
+    ExecutionContext,
+    LifecycleComponent,
     Model,
     OutcomeResolver,
     Policy,
@@ -19,12 +22,19 @@ from eegle.plugins.registry import (
     PluginRegistry,
     PortSpec,
     StateBehavior,
+    validate_component_instance,
 )
 
 
 __all__ = [
     "Actuator",
     "Adapter",
+    "ComponentKind",
+    "Determinism",
+    "EquivalenceLevel",
+    "ExecutionContext",
+    "ExecutionMode",
+    "LifecycleComponent",
     "Model",
     "OutcomeResolver",
     "PluginCapabilities",
@@ -39,4 +49,5 @@ __all__ = [
     "StatefulComponent",
     "Transform",
     "WindowBuilder",
+    "validate_component_instance",
 ]

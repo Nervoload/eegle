@@ -18,6 +18,7 @@ from eegle.models.calibration import (
     read_calibration_state,
     write_calibration_state,
 )
+from eegle.models.builtins import MeanThresholdModel
 from eegle.models.contracts import ModelContract, PreprocessingContract, TargetContract
 from eegle.models.predictions import Prediction
 from eegle.models.roles import ModelRole, ModelRoleKind
@@ -30,6 +31,7 @@ __all__ = [
     "ModelContract",
     "ModelRole",
     "ModelRoleKind",
+    "MeanThresholdModel",
     "Prediction",
     "PreprocessingContract",
     "TargetContract",
