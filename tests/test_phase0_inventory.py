@@ -28,13 +28,15 @@ class Phase0InventoryTests(unittest.TestCase):
         self.assertFalse(policy["runtime_compatibility_layer"])
         self.assertTrue(policy["preserve_originals"])
 
-    def test_recorded_repository_paths_exist(self) -> None:
+    def test_recorded_repository_paths_are_historical_not_retention_requirements(self) -> None:
         paths = [item["path"] for item in self.baseline["largest_modules"]]
         paths.extend(self.baseline["configs"])
         paths.extend(self.baseline["legacy_documents"])
-        for relative_path in paths:
-            with self.subTest(path=relative_path):
-                self.assertTrue((ROOT / relative_path).is_file())
+
+        self.assertEqual(len(paths), len(set(paths)))
+        self.assertTrue(all(path and not Path(path).is_absolute() for path in paths))
+        self.assertIn("baseline_commit", self.baseline)
+        self.assertTrue(self.baseline["historical_artifact_policy"]["preserve_originals"])
 
     def test_every_current_top_level_package_has_a_disposition(self) -> None:
         for package in self.baseline["package_file_counts"]:

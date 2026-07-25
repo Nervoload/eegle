@@ -15,7 +15,7 @@
       "sensitivity": "non_sensitive",
       "equivalence": "semantic",
       "tests": [
-        "tests.test_public_api.PublicApiTests.test_model_contract_v2_nested_payload_round_trips_without_semantic_loss"
+        "tests.test_phase1_migration_invariants.Phase1MigrationInvariantTests.test_model_contract_nested_payload_round_trips_without_semantic_loss"
       ],
       "current_sources": [
         "eegle/models/contracts.py"
@@ -32,11 +32,10 @@
       "equivalence": "semantic",
       "tests": [
         "tests.test_phase1_migration_invariants.Phase1MigrationInvariantTests.test_causal_model_metadata_is_label_blind",
-        "tests.test_classification.ClassificationTests.test_model_metadata_is_label_blind"
+        "tests.test_classification.ClassificationContractTests.test_model_metadata_is_label_blind"
       ],
       "current_sources": [
-        "eegle/realtime/classification.py",
-        "eegle/workers/realtime_processor.py"
+        "eegle/realtime/classification.py"
       ],
       "future_destination": "compiler causality validation and typed runtime context",
       "regeneration": "Pass the declared safe timing and channel fields together with deliberate truth fields through the inference sanitizer."
@@ -49,16 +48,15 @@
       "sensitivity": "non_sensitive",
       "equivalence": "trace",
       "tests": [
-        "tests.test_phase1_migration_invariants.Phase1MigrationInvariantTests.test_primary_and_shadow_share_admitted_input_and_are_accounted",
-        "tests.test_realtime_synchrony.RealtimeSynchronyTests.test_inference_stage_emits_primary_before_skipping_shadow_under_budget_pressure"
+        "tests.test_phase5_remaining_semantics.Phase5RemainingSemanticsTests.test_event_windows_multirate_primary_shadow_and_authorized_action"
       ],
       "current_sources": [
-        "eegle/workers/realtime_processor.py",
-        "eegle/realtime/models.py",
-        "eegle/realtime/performance.py"
+        "eegle/runtime/execution.py",
+        "eegle/runtime/queueing.py",
+        "eegle/models/roles.py"
       ],
       "future_destination": "eegle.runtime.engine and eegle.models.roles",
-      "regeneration": "Execute the inference helper with shadow-first input order and verify primary-first trace, shared prepared identity, role rows, and terminal accounting."
+      "regeneration": "Compile and execute the durable primary/shadow event-window suite; verify primary-first trace, shared admitted lineage, explicit shadow disposition, and terminal accounting."
     },
     {
       "id": "exact-input-capture-and-divergence",
@@ -73,7 +71,7 @@
       },
       "tests": [
         "tests.test_phase1_migration_invariants.Phase1MigrationInvariantTests.test_exact_capture_and_prediction_divergence_are_explicit",
-        "tests.test_classification.ClassificationTests.test_classifier_capture_replay_matches_online_predictions"
+        "tests.test_classification.ClassificationContractTests.test_capture_replay_accounts_for_all_predictions"
       ],
       "current_sources": [
         "eegle/realtime/event_features.py",
@@ -127,16 +125,16 @@
       "sensitivity": "non_sensitive",
       "equivalence": "trace",
       "tests": [
-        "tests.test_dynamic_sart_task.DynamicSartTaskTests.test_abort_preserves_completed_rows_and_full_plan",
-        "tests.test_dsart_recording.DsartRecordingTests.test_partial_attempt_is_preserved_and_resume_retries_only_incomplete_phase",
-        "tests.test_dsart_recording.DsartRecordingTests.test_resume_refuses_changed_effective_recording_configuration"
+        "tests.test_phase5_plan_execution.Phase5PlanExecutionTests.test_failed_phase_restores_source_checkpoint_and_retries",
+        "tests.test_phase5_remaining_semantics.Phase5RemainingSemanticsTests.test_checkpoint_roundtrip_restores_a_fresh_runtime_mid_phase"
       ],
       "current_sources": [
-        "eegle/pipelines/dsart_recording.py",
-        "eegle/tasks/dynamic_sart.py"
+        "eegle/runtime/execution.py",
+        "eegle/runtime/checkpoints.py",
+        "eegle/recording/bundles.py"
       ],
       "future_destination": "ExecutionPlan phase state and EvidenceBundle transition ledger",
-      "regeneration": "Run deterministic interrupted and resumed synthetic suites and compare phase attempts and locked identity."
+      "regeneration": "Interrupt a compiled synthetic phase, restore its integrity-checked checkpoint in a fresh runtime, and compare attempts, state, and locked identity."
     },
     {
       "id": "content-addressed-model-bundle",
@@ -146,8 +144,7 @@
       "sensitivity": "non_sensitive",
       "equivalence": "bitwise artifact integrity",
       "tests": [
-        "tests.test_public_api.PublicApiTests.test_model_bundle_public_loader_validates_hashes",
-        "tests.test_classification.ClassificationTests.test_model_bundle_round_trip_and_integrity"
+        "tests.test_classification.ClassificationContractTests.test_model_bundle_round_trip_detects_tampering"
       ],
       "current_sources": [
         "eegle/models/bundles.py"

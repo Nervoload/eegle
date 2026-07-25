@@ -9,7 +9,6 @@ from setuptools.command.build_py import build_py
 LEGACY_ROOT_MODULES = frozenset(
     {
         "cli",
-        "components",
         "config",
         "eeg_csv",
         "experiment",

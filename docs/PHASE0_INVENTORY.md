@@ -322,6 +322,41 @@ authorization, receipt, and state-transition tests.
 Precondition: the new CLI completes compile, validate, run, replay, compare, and
 export smoke workflows; external examples install independently.
 
+### Cleanup checkpoint 1 — isolated legacy removal (2026-07-24)
+
+The user authorized an early source cleanup after Phase 5 closed. The deletion
+boundary was determined from Phases 6–8 rather than from file age:
+
+| Disposition | Paths or behavior | Reason |
+|---|---|---|
+| Deleted | `eegle/core`, `eegle/protocols`, and `eegle/components.py` | Compatibility/metadata facades had no target consumers; typed sessions, specs, plugins, and records already own their responsibilities. |
+| Deleted | All `alpha8`, `attention8`, `classify8`, `dsart*`, and `inhibition8` pipeline modules, their shell launchers, recipe-only tests, and the legacy `Makefile` | The plan-owned runtime and durable Phase 5 suites now own orchestration. Model/action and analysis assertions were retained at their direct contract boundaries. These study recipes are recoverable from the Phase 0 commit and must not constrain v1 APIs. |
+| Rewritten | Mixed classification/adaptation tests and Phase 1 migration invariants | Scientific checks now enter through model, outcome, capture, and validation boundaries instead of old workers, sessions, dashboards, or recipe CLIs. |
+| Protected for Phase 6 | `models`, `ml`, relevant `realtime` model/label/adaptation/policy logic, `calibration`, and their scientific tests | Model bundles, frameworks, outcomes, adaptation, policies, and action semantics still require deliberate extraction. |
+| Protected for Phase 7 | `devices`, `hardware`, `integrations`, `lsl.py`, `preflight.py`, recording health, task/worker hardware evidence, and deployment configs | They contain real adapter, preflight, synchronization, and optional-dependency requirements for the new CLI/integration layer. |
+| Protected for Phase 8 | `analysis`, legacy replay/evaluation algorithms, report/metric logic, and integrity fixtures | Validation and reporting algorithms must be classified and moved before their application shells are removed. |
+| Staged | Legacy root application modules, tasks, workers, configs, and remaining examples/scripts | Some still combine protected Phase 6–8 evidence. Delete each immediately after replacement evidence exists; do not add compatibility adapters. |
+
+The machine-readable Phase 0 baseline is an immutable historical inventory, not
+a file-retention manifest. Tests therefore validate its identity, policy, and
+recoverability without requiring every recorded path to remain in the current
+tree. A source-boundary test now prevents all v1 target packages from importing
+the staged application code.
+
+#### Protected extraction ledger after checkpoint 1
+
+This ledger is conservative: “protected” means inspect and extract before
+deletion, not preserve the old API or module location.
+
+| Roadmap owner | Protected current paths | Deletion release condition |
+|---|---|---|
+| Phase 6 — models, outcomes, adaptation, actions | Target `eegle/models/**`, `eegle/ml/**`, and `eegle/actions/**`; legacy `eegle/realtime/{classification,models,online_adaptation,online_labels,performance,policy,registry,task_feedback,alpha}.py`; `eegle/calibration/**`; model-oriented examples and tests | General target contracts and optional adapters cover the selected algorithms, delayed/missing outcomes, adaptation state, role semantics, authorization, and receipts with replacement tests. |
+| Phase 7 — CLI and integrations | `eegle/devices/**`, `eegle/hardware/**`, `eegle/integrations/**`, `eegle/{lsl,preflight,eeg_csv,psychopy_input,recording_health}.py`, `eegle/tasks/**`, `eegle/workers/**`, site/hardware portions of `configs/**`, and the remaining root application modules | New CLI and first-party adapter packages own preflight, source/outlet discovery, task-framework boundaries, process health, and site-local deployment without importing the old application. |
+| Phase 8 — validation and reports | `eegle/analysis/**`, validation/replay portions of legacy realtime code, report/export scripts, analysis fixtures, and their direct algorithm tests | Structured validation results, metrics, causality/integrity checks, replay comparisons, and optional report renderers have target owners and equivalent acceptance evidence. |
+
+Everything outside the target packages or this ledger is immediately eligible
+for another cleanup batch once an import scan proves it isolated.
+
 ## 12. Phase 0 gate evidence
 
 | Gate requirement | Evidence |

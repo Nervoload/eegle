@@ -6,9 +6,11 @@ portable scientific intent plus site-local deployment bindings into one
 immutable typed execution plan, then uses the same engine for simulated,
 recorded, and replay execution.
 
-This branch is the clean v1.0 rebuild. Historical task, PsychoPy, LSL worker,
-analysis, and study-recipe code remains temporarily in the source tree as
-migration evidence. It is not a public compatibility surface.
+This branch is the clean v1.0 rebuild. The first destructive cleanup removed
+the superseded compatibility facades and the alpha, attention, classification,
+DSART, and inhibition study recipes. Selected task, PsychoPy, LSL/hardware, model,
+adaptation, and analysis code remains temporarily as Phase 6–8 extraction
+evidence. It is not a public compatibility surface.
 
 ## Current status
 

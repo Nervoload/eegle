@@ -7,7 +7,7 @@ inference, and conservative closed-loop safety defaults.
 ## Development Setup
 
 ```bash
-python3.10 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
@@ -27,7 +27,7 @@ python -m pip install -e ".[torch]"
 Run focused tests first:
 
 ```bash
-python3 -m unittest tests.test_public_api
+python3 -m unittest tests.test_phase2_foundations tests.test_source_boundaries
 python3 -m unittest tests.test_ml_infrastructure tests.test_classification
 python3 -m compileall -q eegle tests
 ```
@@ -42,6 +42,7 @@ python3 -m unittest discover -s tests
 
 - Do not commit generated `data/` session recordings.
 - Keep online classifier metadata label-blind.
-- Keep `classify8 demo` predictions separate from real classifier artifacts.
-- Keep foundation-model integrations optional and shadow-first until their
-  contracts, latency, and replay behavior are validated.
+- Keep foundation-model integrations optional. The plan-owned runtime must run
+  primary roles first and explicitly account for every shadow disposition.
+- Do not recreate deleted recipe or compatibility APIs; use the typed specs,
+  compiler, runtime, recording, replay, and plugin boundaries.

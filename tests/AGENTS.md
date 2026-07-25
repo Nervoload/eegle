@@ -7,8 +7,9 @@ broader discovery when touching shared orchestration.
 
 - `test_phase0_inventory.py`: migration inventory, authority notices, baseline,
   recipe decisions, and historical compatibility policy.
-- `test_phase1_migration_invariants.py`: selected domain-neutral scientific and
-  execution behavior frozen before the clean rebuild.
+- `test_phase1_migration_invariants.py`: the remaining domain-neutral
+  label-blindness, capture/divergence, and delayed-adaptation evidence frozen
+  before the clean rebuild. Primary/shadow scheduling is owned by Phase 5 tests.
 - `test_phase2_foundations.py`: typed records, canonical locks, evidence
   framing, packet/context plugin contracts, processing causality, real external
   wheel discovery, clean imports, and dependency policy.
@@ -28,10 +29,13 @@ broader discovery when touching shared orchestration.
   outcome/action permissions, and the final durable Phase 5 suites.
 - `test_phase5_packaging.py`: clean-wheel root-module exclusions and the inert
   dependency-free `python -m eegle` boundary before the Phase 7 CLI exists.
+- `test_source_boundaries.py`: target packages may not import legacy
+  application, recipe, worker, task, or analysis modules.
 - `eegle.plugins.testing`: reusable behavioral assertions for independently
   packaged components; tests must keep these focused on public typed contracts.
-- `test_classification.py`: classify8 workflow contracts, label-blind metadata,
-  model bundles, epoch quality, dashboard/demo behavior, replay, and scoring.
+- `test_classification.py`: recipe-independent Phase 6/8 evidence for
+  label-blind metadata, input contracts, model bundles, epoch quality, replay,
+  rejection accounting, and training eligibility.
 - `test_ml_infrastructure.py`: model registry, channel contracts,
   attention-lapse targets, threshold calibration, external checkpoint adapters,
   and stimulation policy gates.
@@ -39,7 +43,6 @@ broader discovery when touching shared orchestration.
   integration behavior.
 - `test_realtime_synchrony.py`: marker timing, realtime synchrony, and process
   coordination behavior.
-- `test_inhibition8.py`: observe-only inhibition pipeline behavior.
 - `test_portability.py`: config/package portability and import-level checks.
 
 ## Common Commands

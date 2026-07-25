@@ -1,7 +1,8 @@
 # EEGle Package Guidance
 
-`eegle/` currently contains the legacy implementation behind the installed
-commands and the new foundations will be introduced here phase by phase. Read
+`eegle/` contains the v1 foundations plus selected Phase 6–8 extraction
+evidence. The first destructive cleanup removed recipe and compatibility
+facades that no target package consumed. Read
 `docs/EEGLE.md`, `docs/MIGRATION.md`, `docs/MIGRATION_STATUS.md`, and
 `docs/PHASE0_INVENTORY.md` before changing package boundaries.
 
@@ -30,26 +31,28 @@ acceptance evidence only as classified by the Phase 0 inventory.
   clock mappings, packets, and sources.
 - `integrations/`: task/framework/site behavior excluded from base imports.
 
-## Package Map
+## Protected extraction evidence
 
 - `__main__.py`: dependency-free notice until the Phase 7 CLI exists.
 - `cli.py`: historical command parser retained only as source-checkout evidence;
   it is excluded from wheels and is not a target authority.
-- `pipelines/`: top-level operator workflows that configure and call shared
-  orchestration, including the abort-safe `dsart8`/`dsart32` recording suite.
 - `experiment.py`: forward task plus recording orchestration.
 - `feedback_manager.py`: managed process lifecycle for recorder, realtime
   processor, dashboard, and offline analyzer.
 - `session.py`: BciPy-inspired session directory creation.
 - `telemetry.py`: JSONL telemetry and console routing.
 - `tasks/`: PVT and Go/No-go task implementations plus registry metadata.
-- `realtime/`: online buffers, preprocessing, epoching, model contracts,
-  adapters, policies, and feedback emitters.
+- `realtime/`: Phase 6/8 evidence for online buffers, preprocessing, epoching,
+  model adapters, policies, delayed outcomes, and feedback emitters.
 - `workers/`: process entrypoints.
 - `analysis/`: post-session reports, ERP/P300 analysis, classifier scoring, and
   replay.
 - `calibration/`: posterior-alpha calibration helpers.
 - `devices/` and `hardware/`: LSL and hardware discovery/setup helpers.
+
+The deleted `core`, `protocols`, `components`, `alpha8`, `attention8`,
+`classify8`, `dsart*`, and `inhibition8` paths are recoverable from the Phase 0
+baseline commit. Do not recreate their APIs.
 
 ## Classifier Invariants
 
@@ -59,12 +62,10 @@ the listed module locations:
 - Keep shared epoch quality and model metadata sanitation in
   `realtime/classification.py`.
 - Keep training and inference adapter behavior in `realtime/models.py`.
-- Keep online worker loading, primary/shadow model execution, and prediction row
-  emission in `workers/realtime_processor.py`.
-- Keep `classify8` CLI workflow wiring in `pipelines/classify8.py`.
+- Primary/shadow scheduling now belongs only to the plan-owned target runtime.
+  Legacy worker behavior is extraction evidence, not an authority.
 - Do not feed ground-truth labels, stimulus condition, or response correctness
   into online model metadata.
-- Do not let `classify8 demo` write real classifier prediction artifacts.
 
 ## Migration Rules
 
@@ -78,8 +79,8 @@ the listed module locations:
 - Remove rather than facade a superseded authority after its phase gate passes.
 - Keep migration-only root orchestration modules out of built wheels; update the
   isolated Phase 5 packaging test whenever the approved root surface changes.
-- Follow the cleanup preconditions in `docs/PHASE0_INVENTORY.md`; do not perform
-  destructive cleanup early.
+- Follow the cleanup checkpoints in `docs/PHASE0_INVENTORY.md`. Preserve the
+  named Phase 6–8 evidence until its replacement acceptance test exists.
 
 ## Realtime and Worker Rules
 

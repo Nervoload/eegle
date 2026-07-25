@@ -11,7 +11,6 @@ import numpy as np
 from eegle.analysis.alpha import run_alpha_validation
 from eegle.analysis.html_summary import generate_experiment_html_report
 from eegle.calibration.posterior_alpha import PosteriorAlphaCalibrationSuite
-from eegle.pipelines.alpha8 import Alpha8PipelineOptions, run_full_pipeline
 from eegle.realtime.alpha import (
     AlphaPowerEstimator,
     ArtifactGate,
@@ -596,104 +595,6 @@ class ClosedLoopModelSystemTests(unittest.TestCase):
             self.assertEqual(summary["display_timebase"], "monotonic")
             self.assertEqual(data["display_timebase"], "monotonic")
             self.assertLess(max(marker["time"] for marker in data["markers"]), data["raw"]["duration_seconds"] + 1.0)
-
-    def test_alpha8_full_pipeline_dry_run_runs_in_sequence(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            config = {
-                "runtime": {"session_root": str(root / "data"), "runtime_cache_dir": str(root / ".runtime")},
-                "experiment": {
-                    "experiment_id": "alpha8_test",
-                    "participant_id": "p1",
-                    "task": "go_nogo",
-                    "components": {
-                        "task": "go_nogo",
-                        "eeg_recorder": "disabled",
-                        "realtime_processor": "disabled",
-                        "feedback": "disabled",
-                        "analysis": "minimal",
-                    },
-                },
-                "telemetry": {"console_level": "disabled", "file_level": "disabled"},
-                "hardware": {
-                    "eeg": {
-                        "profile": "enobio8_alpha_posterior",
-                        "expected_channel_counts": [8],
-                        "expected_sample_rate_hz": 100,
-                        "lsl_stream_type": "EEG",
-                        "lsl_name_patterns": ["enobio", "nic"],
-                        "stream_timeout_seconds": 0.1,
-                        "required_for_run": False,
-                    },
-                    "markers": {"lsl_stream_name": "EEGleMarkers", "lsl_stream_type": "Markers"},
-                },
-                "processes": {
-                    "recorder": {"enabled": False, "backend": "disabled"},
-                    "realtime_processor": {"enabled": False, "backend": "disabled"},
-                    "feedback": {"enabled": False, "backend": "disabled"},
-                    "offline_analyzer": {"enabled": True, "backend": "minimal", "timeout_seconds": 30.0},
-                },
-                "tasks": {
-                    "go_nogo": {
-                        "trials": 2,
-                        "no_go_probability": 0.3,
-                        "stimulus_seconds": 0.01,
-                        "isi_seconds": 0.01,
-                        "response_keys": ["space"],
-                        "escape_keys": ["escape"],
-                        "no_go": {"shape": "x", "color": "white", "randomize": False},
-                    }
-                },
-                "calibration": {
-                    "posterior_alpha": {
-                        "eyes_open_seconds": 2.0,
-                        "eyes_closed_seconds": 2.0,
-                        "go_nogo_practice_seconds": 2.0,
-                        "go_nogo_practice_trials": 2,
-                        "synthetic_phase_seconds": 2.0,
-                        "welch_window_seconds": 1.0,
-                        "write_plot": False,
-                        "posterior_channels": ["P3", "P4", "PO3", "PO4", "Pz", "O1", "O2", "Oz"],
-                    }
-                },
-                "realtime": {
-                    "enabled": False,
-                    "epoching": {"enabled": True, "marker_prefix": "go_nogo_stimulus_onset"},
-                    "alpha": {"enabled": False},
-                    "decision_policy": {},
-                    "feedback": {"client": {"enabled": False}},
-                },
-                "analysis": {
-                    "erp": {"enabled": True},
-                    "alpha": {"enabled": True},
-                    "html": {"enabled": True, "max_raw_points": 1000, "max_alpha_points": 1000},
-                },
-            }
-            config_path = root / "alpha8_config.json"
-            config_path.write_text(json.dumps(config), encoding="utf-8")
-
-            summary = run_full_pipeline(
-                Alpha8PipelineOptions(
-                    config_path=config_path,
-                    task_mode="dry-run",
-                    trials=2,
-                    record_eeg=False,
-                    require_eeg=False,
-                    lsl_wait_seconds=0.1,
-                    quiet=True,
-                    max_raw_points=1000,
-                    max_alpha_points=1000,
-                )
-            )
-
-            self.assertEqual(summary["status"], "complete")
-            self.assertEqual([step["step"] for step in summary["steps"]], ["preflight", "calibration_and_experiment", "analysis"])
-            session = Path(summary["session_dir"])
-            self.assertTrue((session / "reports" / "alpha8_full_summary.json").exists())
-            self.assertTrue((session / "reports" / "summary.json").exists())
-            self.assertTrue((session / "reports" / "experiment_summary.html").exists())
-            self.assertEqual(summary["task"]["summary"]["trials"], 2)
-
 
 if __name__ == "__main__":
     unittest.main()

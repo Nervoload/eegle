@@ -9,54 +9,13 @@ from pathlib import Path
 import numpy as np
 
 from eegle.analysis.classification import replay_classifier_session
-from eegle.config import load_config
-from eegle.pipelines import attention8
 from eegle.realtime.epoching import MarkerEvent
 from eegle.realtime.event_features import EngineInputCaptureWriter
 from eegle.realtime.models import PreparedEpochCache, make_model_adapter, train_epoch_model
-from eegle.realtime.online_adaptation import AdaptationUpdateResult
-from eegle.realtime.online_labels import OnlineAttentionLapseLabeler, trial_complete_from_event_record
-from eegle.session import create_session
-from eegle.tasks.go_nogo import GoNoGoTask
-from eegle.workers.realtime_processor import _process_ready_adaptation_updates
+from eegle.realtime.online_labels import OnlineAttentionLapseLabeler
 
 
 class Attention8OnlineAdaptationTests(unittest.TestCase):
-    def test_attention8_config_defaults_are_safe_and_observe_only(self) -> None:
-        config = load_config("configs/forward_attention_lapse_go_nogo8.json")
-        adaptation = config["realtime"]["adaptation"]
-
-        self.assertFalse(adaptation["enabled"])
-        self.assertTrue(adaptation["update_primary"])
-        self.assertFalse(adaptation["update_shadows"])
-        self.assertEqual(adaptation["label_mode"], "slow_go_rt")
-        self.assertTrue(config["realtime"]["decision_policy"]["enabled"])
-        self.assertFalse(config["realtime"]["decision_policy"]["allow_task_adaptation"])
-        self.assertFalse(config["realtime"]["decision_policy"]["allow_stimulation"])
-        self.assertFalse(config["realtime"]["feedback"]["allow_task_adaptation"])
-        self.assertFalse(config["realtime"]["feedback"]["allow_stimulation"])
-
-    def test_attention8_online_cli_exposes_explicit_adaptation_opt_in(self) -> None:
-        args = attention8.build_parser().parse_args(
-            [
-                "online",
-                "--model-dir",
-                "/tmp/models",
-                "--enable-adaptation",
-                "--adaptation-label-mode",
-                "composite_lapse",
-                "--min-correct-go-rts-for-threshold",
-                "5",
-                "--session-root",
-                "C:\\EEGleData",
-            ]
-        )
-
-        self.assertTrue(args.enable_adaptation)
-        self.assertEqual(args.adaptation_label_mode, "composite_lapse")
-        self.assertEqual(args.min_correct_go_rts_for_threshold, 5)
-        self.assertEqual(args.session_root, "C:\\EEGleData")
-
     def test_slow_go_rt_labeler_uses_only_past_correct_go_rts(self) -> None:
         labeler = OnlineAttentionLapseLabeler(
             {
@@ -78,116 +37,6 @@ class Attention8OnlineAdaptationTests(unittest.TestCase):
         self.assertEqual(third.label, 1)
         self.assertAlmostEqual(third.threshold_value or 0.0, 0.3)
         self.assertEqual(third.metadata["past_correct_go_rt_count"], 2)
-
-    def test_go_nogo_dry_run_writes_delayed_trial_complete_events(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            config = load_config("configs/forward_attention_lapse_go_nogo8.json")
-            config["runtime"]["session_root"] = tmp
-            config["telemetry"]["console_level"] = "quiet"
-            paths = create_session(config, task="go_nogo", participant_id="unit", root=tmp)
-
-            GoNoGoTask(config, mode="dry-run", trials=2, participant_id="unit").run(paths)
-
-            rows = [json.loads(line) for line in paths.events_jsonl.read_text(encoding="utf-8").splitlines()]
-            complete = [trial_complete_from_event_record(row) for row in rows]
-            complete = [row for row in complete if row is not None]
-
-        self.assertEqual(len(complete), 2)
-        self.assertEqual(complete[0]["event_type_name"], "go_nogo_trial_complete")
-        self.assertIn(complete[0]["condition"], {"go", "no_go"})
-        self.assertIn("correct", complete[0])
-        self.assertIn("omission_error", complete[0])
-        self.assertIn("commission_error", complete[0])
-
-    def test_attention_challenge_cues_are_recorded_in_dry_run_manifest(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            config = load_config("configs/forward_attention_lapse_go_nogo8.json")
-            config["runtime"]["session_root"] = tmp
-            config["telemetry"]["console_level"] = "quiet"
-            config["tasks"]["go_nogo"]["attention_challenge"] = {
-                "enabled": True,
-                "cue_trials": [2],
-                "window_trials": 2,
-                "cue_duration_seconds": 0.0,
-                "expected_state_label": "deliberate_inattention",
-                "cue_text": "Let attention drift for this test window.",
-            }
-            paths = create_session(config, task="go_nogo", participant_id="unit", root=tmp)
-
-            GoNoGoTask(config, mode="dry-run", trials=3, participant_id="unit").run(paths)
-
-            manifest = json.loads((paths.events / "stimulus_manifest.json").read_text(encoding="utf-8"))
-            events = [json.loads(line) for line in paths.events_jsonl.read_text(encoding="utf-8").splitlines()]
-
-        trials = manifest["trials"]
-        self.assertEqual(trials[0]["attention_challenge"]["expected_state"], "normal")
-        self.assertTrue(trials[1]["attention_challenge"]["is_cue_trial"])
-        self.assertEqual(trials[1]["attention_challenge"]["expected_state"], "deliberate_inattention")
-        self.assertEqual(trials[2]["attention_challenge"]["cue_start_trial"], 2)
-        cues = [row for row in events if row["label"] == "attention_challenge_cue"]
-        self.assertEqual(len(cues), 1)
-        self.assertEqual(cues[0]["trial"], 2)
-        complete = [row for row in events if row["label"] == "go_nogo_trial_complete" and row["trial"] == 2]
-        self.assertEqual(complete[0]["metadata"]["attention_challenge"]["expected_state"], "deliberate_inattention")
-
-    def test_trial_complete_does_not_update_until_prediction_exists(self) -> None:
-        writer = _MemoryWriter()
-        telemetry = _SilentTelemetry()
-        labeler = OnlineAttentionLapseLabeler(
-            {
-                "label_mode": "slow_go_rt",
-                "slow_rt_quantile": 0.5,
-                "min_correct_go_rts_for_threshold": 1,
-                "initial_correct_go_rts": [0.3],
-            }
-        )
-        outcomes = {1: _go_event(1, 0.5)}
-        pending: dict[int, list[dict[str, object]]] = {}
-
-        with tempfile.TemporaryDirectory() as tmp:
-            state_dir = Path(tmp)
-            _process_ready_adaptation_updates(
-                pending,
-                outcomes,
-                labeler,
-                _adaptation_config(),
-                writer,
-                state_dir,
-                telemetry,
-            )
-            self.assertEqual(writer.rows, [])
-            self.assertIn(1, outcomes)
-
-            adapter = _FakeAdaptiveAdapter()
-            pending[1] = [
-                {
-                    "adapter": adapter,
-                    "prepared": object(),
-                    "prediction_row": {
-                        "trial": 1,
-                        "prediction_label": "attentive",
-                        "probability_attention_lapse": 0.8,
-                    },
-                    "model_id": "primary",
-                    "model_role": "primary",
-                    "model_kind": "foundation_prototype",
-                }
-            ]
-            _process_ready_adaptation_updates(
-                pending,
-                outcomes,
-                labeler,
-                _adaptation_config(),
-                writer,
-                state_dir,
-                telemetry,
-            )
-
-        self.assertEqual(len(writer.rows), 1)
-        self.assertEqual(writer.rows[0]["update_status"], "updated")
-        self.assertEqual(writer.rows[0]["true_online_label"], 1)
-        self.assertNotIn(1, outcomes)
-        self.assertEqual(adapter.labels, [1])
 
     @unittest.skipIf(importlib.util.find_spec("joblib") is None, "joblib not installed")
     def test_foundation_prototype_online_update_changes_lapse_prototype_state(self) -> None:
@@ -448,53 +297,6 @@ def _write_attention_epochs(root: Path) -> dict[str, object]:
         slow_go_rt=labels,
     )
     return {"x": x, "times": times, "channels": channels}
-
-
-class _MemoryWriter:
-    def __init__(self) -> None:
-        self.rows: list[dict[str, object]] = []
-
-    def write(self, row: dict[str, object]) -> None:
-        self.rows.append(row)
-
-
-class _SilentTelemetry:
-    def emit(self, *args: object, **kwargs: object) -> None:
-        return None
-
-
-class _FakeAdaptiveAdapter:
-    supports_online_update = True
-
-    def __init__(self) -> None:
-        self.labels: list[int] = []
-
-    def snapshot_adaptation_state(self) -> dict[str, object]:
-        return {
-            "schema": "eegle.online_adaptation_state.v1",
-            "model_kind": "foundation_prototype",
-            "target": "attention_lapse_binary",
-            "label_mode": "slow_go_rt",
-            "model_id": "primary",
-            "model_role": "primary",
-            "support_size": len(self.labels),
-            "class_counts": {
-                "0": sum(label == 0 for label in self.labels),
-                "1": sum(label == 1 for label in self.labels),
-            },
-            "calibration_state_hash": f"hash-{len(self.labels)}",
-        }
-
-    def update_after_trial(
-        self,
-        prepared: object,
-        label: int,
-        metadata: dict[str, object],
-    ) -> AdaptationUpdateResult:
-        before = self.snapshot_adaptation_state()
-        self.labels.append(int(label))
-        after = self.snapshot_adaptation_state()
-        return AdaptationUpdateResult(status="updated", state_before=before, state_after=after, update_time_ms=0.1)
 
 
 if __name__ == "__main__":

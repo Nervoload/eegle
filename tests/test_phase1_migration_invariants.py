@@ -4,79 +4,23 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from time import monotonic
-from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 
 from eegle.analysis.classification import _prediction_differences
+from eegle.models.contracts import ModelContract, PreprocessingContract, TargetContract
 from eegle.realtime.classification import sanitize_model_metadata
 from eegle.realtime.epoching import MarkerEvent
 from eegle.realtime.event_features import EngineInputCaptureWriter, read_engine_capture
-from eegle.realtime.models import ModelPrediction
 from eegle.realtime.online_adaptation import (
     AdaptationUpdateResult,
     OnlineAdaptationState,
     apply_delayed_adaptation_update,
 )
-from eegle.realtime.performance import RealtimePerformanceConfig, RealtimePerformanceStats
-from eegle.workers.realtime_processor import InferenceWorkItem, _process_inference_item
 
 
 FIXTURE_MANIFEST = Path(__file__).parent / "fixtures" / "migration" / "phase1_invariants.json"
-
-
-class _MemoryWriter:
-    def __init__(self) -> None:
-        self.rows: list[dict[str, Any]] = []
-
-    def write(self, payload: dict[str, Any]) -> None:
-        self.rows.append(payload)
-
-
-class _Telemetry:
-    def __init__(self) -> None:
-        self.events: list[tuple[str, dict[str, Any]]] = []
-
-    def emit(self, event: str, **payload: Any) -> None:
-        self.events.append((event, payload))
-
-
-class _Emitter:
-    def __init__(self) -> None:
-        self.payloads: list[dict[str, Any]] = []
-
-    def emit(self, payload: dict[str, Any]) -> None:
-        self.payloads.append(payload)
-
-
-class _ObserveOnlyPolicy:
-    def decide(self, prediction: ModelPrediction, metadata: dict[str, Any]) -> list[Any]:
-        return []
-
-
-class _RecordingAdapter:
-    def __init__(self, name: str, calls: list[dict[str, Any]]) -> None:
-        self.name = name
-        self.calls = calls
-
-    def predict_prepared_epoch(self, prepared: Any) -> ModelPrediction:
-        self.calls.append(
-            {
-                "name": self.name,
-                "prepared_id": id(prepared),
-                "epoch": np.asarray(prepared.epoch).copy(),
-                "metadata": dict(prepared.metadata),
-            }
-        )
-        probability = 0.8 if self.name == "primary" else 0.7
-        return ModelPrediction(
-            label="positive",
-            score=probability,
-            probability=probability,
-            model_kind="synthetic_binary",
-        )
 
 
 class _AdaptiveAdapter:
@@ -106,6 +50,32 @@ class _AdaptiveAdapter:
 
 
 class Phase1MigrationInvariantTests(unittest.TestCase):
+    def test_model_contract_nested_payload_round_trips_without_semantic_loss(self) -> None:
+        contract = ModelContract(
+            input_kind="rolling_window",
+            channel_names=("Fz", "Cz"),
+            required_channels=("Cz",),
+            optional_channels=("Fz",),
+            sample_rate_hz=250.0,
+            epoch_window_seconds=(-1.0, 0.0),
+            prediction_horizon_seconds=(0.0, 0.2),
+            preprocessing=PreprocessingContract(
+                reference="average",
+                filters=({"kind": "bandpass", "low_hz": 1.0, "high_hz": 40.0},),
+                baseline_seconds=(-1.0, -0.8),
+            ),
+            target=TargetContract(
+                name="attention_lapse",
+                positive_label="lapse",
+                label_mapping={"attentive": 0, "lapse": 1},
+                learning_problem="binary_classification",
+            ),
+            latency_budget_ms=50.0,
+            adaptation_permissions=("calibration",),
+        )
+
+        self.assertEqual(ModelContract.from_payload(contract.payload()), contract)
+
     def test_fixture_manifest_is_complete_and_non_sensitive(self) -> None:
         manifest = json.loads(FIXTURE_MANIFEST.read_text(encoding="utf-8"))
         fixtures = manifest["fixtures"]
@@ -150,71 +120,6 @@ class Phase1MigrationInvariantTests(unittest.TestCase):
                 "epoch_window_seconds": [-0.2, 0.8],
             },
         )
-
-    def test_primary_and_shadow_share_admitted_input_and_are_accounted(self) -> None:
-        calls: list[dict[str, Any]] = []
-        prediction_writer = _MemoryWriter()
-        decision_writer = _MemoryWriter()
-        pending: dict[int, list[dict[str, Any]]] = {}
-        epoch_data = np.arange(12, dtype=float).reshape(6, 2)
-        metadata = {
-            "relative_times": np.linspace(-0.2, 0.8, 6).tolist(),
-            "sample_rate_hz": 5.0,
-            "channel_names": ["sensor-a", "sensor-b"],
-            "epoch_window_seconds": [-0.2, 0.8],
-        }
-        item = InferenceWorkItem(
-            epoch_payload={
-                "epoch_index": 3,
-                "trial": 7,
-                "epoch_window_seconds": [-0.2, 0.8],
-                "marker": {"timestamp": 12.5},
-            },
-            epoch=SimpleNamespace(epoch_index=3, data=epoch_data),
-            model_metadata=metadata,
-            quality={"valid": True, "reasons": [], "metrics": {}},
-            queued_at_monotonic=monotonic(),
-        )
-
-        result = _process_inference_item(
-            item,
-            queue_depth=0,
-            model_entries=[
-                {"id": "shadow", "role": "shadow", "kind": "synthetic_binary", "adapter": _RecordingAdapter("shadow", calls)},
-                {"id": "primary", "role": "primary", "kind": "synthetic_binary", "adapter": _RecordingAdapter("primary", calls)},
-            ],
-            sample_rate=5.0,
-            channel_names=["sensor-a", "sensor-b"],
-            classifier_mode=True,
-            model_prediction_writer=prediction_writer,
-            decision_writer=decision_writer,
-            emitter=_Emitter(),
-            policy=_ObserveOnlyPolicy(),
-            sample_count=6,
-            processed_count=6,
-            marker_count=1,
-            epoch_count=1,
-            performance_config=RealtimePerformanceConfig(primary_latency_budget_ms=10000.0),
-            performance_stats=RealtimePerformanceStats(),
-            telemetry=_Telemetry(),
-            adaptation_config={"enabled": True},
-            pending_predictions=pending,
-        )
-
-        self.assertEqual([call["name"] for call in calls], ["primary", "shadow"])
-        self.assertEqual(calls[0]["prepared_id"], calls[1]["prepared_id"])
-        np.testing.assert_array_equal(calls[0]["epoch"], calls[1]["epoch"])
-        self.assertEqual(calls[0]["metadata"], calls[1]["metadata"])
-        self.assertEqual(result.prediction_count, 2)
-        self.assertEqual(result.primary_prediction_count, 1)
-        self.assertEqual(result.skipped_shadow_count, 0)
-        self.assertEqual(
-            [(row["status"], row["model_role"]) for row in prediction_writer.rows],
-            [("predicted", "primary"), ("predicted", "shadow")],
-        )
-        self.assertEqual(len(pending[7]), 2)
-        self.assertIs(pending[7][0]["prepared"], pending[7][1]["prepared"])
-        self.assertEqual(len(decision_writer.rows), 1)
 
     def test_exact_capture_and_prediction_divergence_are_explicit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
