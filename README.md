@@ -14,7 +14,7 @@ evidence. It is not a public compatibility surface.
 
 ## Current status
 
-Phases 0 through 5 are complete and Phase 6 is active. The verified v1
+Phases 0 through 6 are complete and Phase 7 is ready to begin. The verified v1
 foundation provides:
 
 - versioned `ProtocolSpec`, `SuiteSpec`, and `DeploymentSpec` contracts;
@@ -58,9 +58,12 @@ through the same compiler, runtime, evidence, and replay path. Minimal
 estimator-shaped and tensor-callable fixtures confirm that optional framework
 adapters need only be ordinary external model plugins returning `ModelResult`;
 EEGle does not need a framework-specific runtime. These are compatibility
-proofs, not claims of validated modality or sklearn/Torch support. P6-009 legacy
-authority removal is the next active slice. The classifier-shaped built-in
-remains transitional evidence rather than the final model API.
+proofs, not claims of validated modality or sklearn/Torch support. Phase 6
+closure additionally verifies artifact-backed factory construction and initial
+state, parameterized preprocessing lineage, required-output accounting,
+provider-visible action parameters, and alias-safe rollback. Every model now
+requires a manifest binding; no classifier-shaped built-in, v1 prediction,
+suite-wide role fallback, or `eegle.ml` package ships in the v1 wheel.
 
 The public command-line interface is intentionally absent during the migration.
 Phase 7 will add `compile`, `run`, `record`, `replay`, `compare`, `inspect`, and
@@ -111,7 +114,7 @@ from eegle.plugins import PluginRegistry
 from eegle.runtime import ExecutionEngine
 from eegle.specs import DeploymentSpec, ProtocolSpec, SuiteSpec
 
-fixture = Path("tests/fixtures/migration/phase5_simulated")
+fixture = Path("tests/fixtures/migration/phase5_delayed_adaptation")
 
 protocol = ProtocolSpec.from_payload(
     json.loads((fixture / "protocol.json").read_text())
@@ -194,7 +197,7 @@ git diff --check
   risks, completed work, and next tasks.
 - [docs/PHASE5_COMPILER.md](docs/PHASE5_COMPILER.md) records the current compiler
   and runtime boundary.
-- [docs/PHASE6_MODEL_SYSTEMS.md](docs/PHASE6_MODEL_SYSTEMS.md) records the active
+- [docs/PHASE6_MODEL_SYSTEMS.md](docs/PHASE6_MODEL_SYSTEMS.md) records the completed
   model, role, outcome, adaptation, and authorization boundary.
 - [docs/PHASE3_ENGINE.md](docs/PHASE3_ENGINE.md) preserves accepted execution
   semantics and their mapping into the sole plan-owned engine.

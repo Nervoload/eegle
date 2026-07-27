@@ -32,6 +32,14 @@ V1_ROOT_WHEEL_PATHS = {
     "eegle/_domain.py",
     "eegle/_validation.py",
 }
+P6_REMOVED_WHEEL_PATHS = {
+    "eegle/models/builtins.py",
+    "eegle/models/bundles.py",
+    "eegle/models/registry.py",
+    "eegle/models/registry_types.py",
+    "eegle/models/roles.py",
+    "eegle/models/targets.py",
+}
 
 
 class Phase5PackagingTests(unittest.TestCase):
@@ -56,6 +64,7 @@ class Phase5PackagingTests(unittest.TestCase):
                     "pip",
                     "wheel",
                     ".",
+                    "--no-build-isolation",
                     "--no-deps",
                     "--wheel-dir",
                     str(wheel_dir),
@@ -71,6 +80,8 @@ class Phase5PackagingTests(unittest.TestCase):
             with zipfile.ZipFile(wheels[0]) as archive:
                 names = set(archive.namelist())
             self.assertFalse(LEGACY_ROOT_WHEEL_PATHS & names)
+            self.assertFalse(P6_REMOVED_WHEEL_PATHS & names)
+            self.assertFalse(any(name.startswith("eegle/ml/") for name in names))
             root_modules = {
                 name
                 for name in names

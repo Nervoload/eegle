@@ -36,6 +36,7 @@ from eegle.runtime.action_broker import (
 )
 from eegle.runtime.context import DeterministicIdSource, RuntimeExecutionContext
 from eegle.runtime.checkpoints import EngineCheckpoint
+from eegle.runtime.canonical_state import capture_canonical_state
 from eegle.runtime.model_runtime import (
     ModelComparison,
     ModelComparisonStatus,
@@ -224,20 +225,8 @@ class PlanGraphExecutor:
         self.max_idle_cycles = int(validation.get("max_idle_cycles", 1))
         scheduling = self.plan.scheduling_policy
         self.backpressure = str(scheduling.get("backpressure", "fail_run"))
-        # These suite-wide role knobs exist only for unbound Phase 5 extraction
-        # fixtures. Compiled Phase 6 model bindings use PlannedModelRole.
-        self.legacy_primary_first = bool(scheduling.get("primary_first", True))
-        raw_shadow_limit = scheduling.get("shadow_queue_limit")
-        self.legacy_shadow_queue_limit = (
-            None if raw_shadow_limit is None else int(raw_shadow_limit)
-        )
-        self.legacy_shadow_failure = str(
-            scheduling.get("shadow_failure", "fail_run")
-        )
         if self.backpressure not in {"fail_run", "reject_newest"}:
             raise ValueError("unknown graph backpressure policy")
-        if self.legacy_shadow_failure not in {"fail_run", "continue"}:
-            raise ValueError("unknown shadow failure policy")
         if (
             self.max_events <= 0
             or self.max_pending_events <= 0
@@ -815,20 +804,6 @@ class PlanGraphExecutor:
                                 "component_id": node.component_id,
                                 "role_id": role.role_id,
                                 "disposition": role.failure_disposition.value,
-                                "failure": f"{type(exc).__name__}: {exc}",
-                            },
-                        )
-                        continue
-                    if (
-                        role is None
-                        and node.planned.role == "shadow"
-                        and self.legacy_shadow_failure == "continue"
-                    ):
-                        self._emit(
-                            evidence,
-                            "legacy_shadow_failure_continued",
-                            {
-                                "component_id": node.component_id,
                                 "failure": f"{type(exc).__name__}: {exc}",
                             },
                         )
@@ -1472,8 +1447,8 @@ class PlanGraphExecutor:
         if reason is not None:
             return
         assert callable(adapt) and callable(snapshot) and callable(restore)
-        prior_state = snapshot()
-        prior_hash = canonical_hash(prior_state)
+        prior_state = capture_canonical_state(node.component)
+        prior_hash = prior_state.state_hash
         trigger_ids = (match.prediction.prediction_id, match.outcome.outcome_id)
         requested = StateTransition(
             transition_id=self._ids.next("transition"),
@@ -1492,8 +1467,7 @@ class PlanGraphExecutor:
             result = adapt(match.prediction, match.outcome, self._context(node))
             if not isinstance(result, AdaptationResult):
                 raise TypeError("adaptive model must return AdaptationResult")
-            resulting_state = snapshot()
-            resulting_hash = canonical_hash(resulting_state)
+            resulting_hash = capture_canonical_state(node.component).state_hash
             if result.status == TransitionStatus.APPLIED and resulting_hash == prior_hash:
                 raise ValueError("applied adaptation did not change model state")
             if result.status != TransitionStatus.APPLIED and resulting_hash != prior_hash:
@@ -1519,9 +1493,19 @@ class PlanGraphExecutor:
                 phase_id, transition, active, queue, evidence
             )
         except Exception as exc:
-            changed_hash = canonical_hash(snapshot())
-            restore(prior_state)
-            restored_hash = canonical_hash(snapshot())
+            # A failed updater may leave state in a value that cannot itself be
+            # serialized. Restoration must not depend on successfully
+            # inspecting that damaged intermediate state.
+            changed_hash: str | None = None
+            try:
+                changed_hash = capture_canonical_state(node.component).state_hash
+            except Exception:
+                pass
+            try:
+                restore(prior_state.thaw())
+            except Exception as rollback_exc:
+                raise RuntimeError("adaptive model rollback failed") from rollback_exc
+            restored_hash = capture_canonical_state(node.component).state_hash
             if restored_hash != prior_hash:
                 raise RuntimeError("adaptive model rollback did not restore prior state") from exc
             failed = StateTransition(
@@ -1538,7 +1522,7 @@ class PlanGraphExecutor:
                 metadata={"adaptation_id": planned.adaptation_id},
             )
             self._emit(evidence, "state_transition", failed.to_payload())
-            if changed_hash != prior_hash:
+            if changed_hash is None or changed_hash != prior_hash:
                 rolled_back = StateTransition(
                     transition_id=self._ids.next("transition"),
                     component_id=planned.model_component_id,
@@ -1711,16 +1695,17 @@ class PlanGraphExecutor:
         error: ModelResultRejected,
         evidence: list[EvidenceRecord],
     ) -> None:
-        disposition = ModelResultDisposition(
-            disposition_id=self._ids.next("model_result_disposition"),
-            component_id=node.component_id,
-            output_port=error.output_port,
-            status=ModelResultDispositionStatus.REJECTED,
-            decided_time=self._current_time,
-            result_digest=error.result_digest,
-            reason_code=error.reason_code,
-        )
-        self._emit(evidence, "model_result_disposition", disposition.to_payload())
+        for violation in error.violations:
+            disposition = ModelResultDisposition(
+                disposition_id=self._ids.next("model_result_disposition"),
+                component_id=node.component_id,
+                output_port=violation.output_port,
+                status=ModelResultDispositionStatus.REJECTED,
+                decided_time=self._current_time,
+                result_digest=violation.result_digest,
+                reason_code=violation.reason_code,
+            )
+            self._emit(evidence, "model_result_disposition", disposition.to_payload())
 
     def _record_cancelled_model_results(
         self,
@@ -1764,7 +1749,6 @@ class PlanGraphExecutor:
         available = available_time(value, self._current_time)
         self._require_execution_time(available)
         node = self.runtime.node(component_id)
-        planned = node.planned
         role = None if node.model_binding is None else node.model_binding.role
         evicted: QueuedEvent | None = None
         if role is not None and role.queue_limit is not None:
@@ -1780,21 +1764,9 @@ class PlanGraphExecutor:
                     evicted = queue.pop_oldest_component(component_id, kind="work")
                     if evicted is None or role.queue_limit == 0:
                         return WorkSchedulingDisposition("model_role_queue_limit")
-        elif (
-            role is None
-            and planned.role == "shadow"
-            and self.legacy_shadow_queue_limit is not None
-            and queue.count_component(component_id, kind="work")
-            >= self.legacy_shadow_queue_limit
-        ):
-            return WorkSchedulingDisposition("shadow_queue_limit")
         priority = 25
         if role is not None:
             priority = role.scheduling_priority
-        elif self.legacy_primary_first and planned.role == "primary":
-            priority = 0
-        elif self.legacy_primary_first and planned.role == "shadow":
-            priority = 100
         self._event_sequence += 1
         accepted = queue.push(
             QueuedEvent(

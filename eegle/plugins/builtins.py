@@ -10,7 +10,7 @@ from eegle._domain import ComponentKind, Determinism, EquivalenceLevel, Executio
 from eegle.actions.policies import LabelActionPolicy, ObserveOnlyPolicy
 from eegle.actions.providers import SimulationAuthorizationProvider
 from eegle.actions.simulated import SimulatedActuator
-from eegle.models.builtins import MeanThresholdModel
+from eegle.models.predictions import PREDICTION_RECORD_SCHEMA
 from eegle.plugins.registry import (
     PluginCapabilities,
     PluginDescriptor,
@@ -36,7 +36,7 @@ _DENSE_PACKET = "eegle.dense_sample_batch.v1"
 _SPARSE_PACKET = "eegle.sparse_event_batch.v1"
 _QUALITY_DECISION = "eegle.quality_decision.v1"
 _DENSE_WINDOW = "eegle.dense_window.v1"
-_PREDICTION = "eegle.prediction.v1"
+_PREDICTION = PREDICTION_RECORD_SCHEMA
 _OUTCOME = "eegle.outcome.v2"
 _STATE_TRANSITION = "eegle.state_transition.v1"
 _ACTION_REQUEST = "eegle.action_request.v1"
@@ -247,36 +247,6 @@ def builtin_plugin_descriptors() -> tuple[PluginDescriptor, ...]:
                 max_buffer_samples=int(config.get("max_buffer_samples", 100_000)),
             ),
             implementation="eegle.processing.windows:EventWindowBuilder",
-            distribution="eegle",
-        ),
-        PluginDescriptor(
-            plugin_id="eegle.models.mean_threshold",
-            version="0.1.0",
-            kind=ComponentKind.MODEL,
-            config_schema={
-                "$schema": _SCHEMA_BASE,
-                "type": "object",
-                "properties": {
-                    "model_id": {"type": "string", "minLength": 1},
-                    "role": {"type": "string", "minLength": 1},
-                    "threshold": {"type": "number"},
-                    "negative_label": {"type": "string", "minLength": 1},
-                    "positive_label": {"type": "string", "minLength": 1},
-                    "latency_seconds": {"type": "number", "minimum": 0.0},
-                },
-                "required": ["model_id", "role"],
-                "additionalProperties": False,
-            },
-            input_ports=(PortSpec("window", _DENSE_WINDOW),),
-            output_ports=(PortSpec("prediction", _PREDICTION),),
-            capabilities=PluginCapabilities(
-                supported_modes=frozenset(ExecutionMode),
-                determinism=Determinism.DETERMINISTIC,
-                equivalence=EquivalenceLevel.NUMERIC,
-                state_behavior=StateBehavior.STATELESS,
-            ),
-            factory=lambda config: MeanThresholdModel(**dict(config)),
-            implementation="eegle.models.builtins:MeanThresholdModel",
             distribution="eegle",
         ),
         PluginDescriptor(

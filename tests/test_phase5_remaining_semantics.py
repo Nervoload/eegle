@@ -32,6 +32,10 @@ from tests.test_phase5_plan_execution import (
     _recording_suite,
     _with_packets,
 )
+from tests.fixtures.phase5_model_components import (
+    compile_phase5_suite as compile_suite,
+    register_phase5_plugins,
+)
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "migration"
@@ -44,6 +48,7 @@ def _load(directory: str, name: str) -> dict:
 def _compile_reference(directory: str, deployment: dict):
     registry = PluginRegistry()
     registry.register_builtins()
+    register_phase5_plugins(registry)
     result = compile_suite(
         ProtocolSpec.from_payload(_load(directory, "protocol.json")),
         SuiteSpec.from_payload(_load(directory, "suite.json")),
@@ -203,31 +208,6 @@ class Phase5RemainingSemanticTests(unittest.TestCase):
             tuple(value.to_payload() for value in receipts),
         )
 
-        shed_suite = _load("phase5_event_window_actions", "suite.json")
-        shed_suite["scheduling"]["shadow_queue_limit"] = 0
-        shed = compile_suite(
-            ProtocolSpec.from_payload(
-                _load("phase5_event_window_actions", "protocol.json")
-            ),
-            SuiteSpec.from_payload(shed_suite),
-            DeploymentSpec.from_payload(deployment),
-            registry,
-        )
-        shed_run = ExecutionEngine.from_plan(shed.plan, registry).run()
-        self.assertEqual(shed_run.status, EngineStatus.COMPLETE)
-        self.assertEqual(
-            shed_run.phase_results[0].emissions_from("model.shadow", "prediction"),
-            (),
-        )
-        self.assertTrue(
-            any(
-                value.component_id == "model.shadow"
-                and value.status == WorkStatus.SKIPPED
-                and value.reason_code == "shadow_queue_limit"
-                for value in shed_run.work
-            )
-        )
-
     def test_checkpoint_roundtrip_restores_a_fresh_runtime_mid_phase(self) -> None:
         suite = _recording_suite()
         suite["phases"][0]["resume_policy"] = "checkpoint"
@@ -360,9 +340,6 @@ class Phase5RemainingSemanticTests(unittest.TestCase):
         pressure_suite["validation"]["max_pending_events"] = 1
         pressure_suite["scheduling"] = {
             "backpressure": "reject_newest",
-            "primary_first": True,
-            "shadow_queue_limit": None,
-            "shadow_failure": "continue",
         }
         pressured = compile_suite(
             ProtocolSpec.from_payload(_payload("protocol.json")),

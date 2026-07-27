@@ -91,7 +91,6 @@ suite = SuiteSpec.from_payload(
                 "kind": "model",
                 "plugin_id": "fixture.external.stateful_model",
                 "version_spec": "~=1.0",
-                "role": "primary",
                 "config": {"initial_total": 2.0},
             }
         ],

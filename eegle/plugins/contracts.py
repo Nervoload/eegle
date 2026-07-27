@@ -7,6 +7,7 @@ from typing import Any, Iterable, Mapping, Protocol, runtime_checkable
 from eegle._domain import ExecutionMode
 from eegle.actions.authorization import (
     AuthorizationDecision,
+    AuthorizationEvaluation,
     AuthorizationRequest,
     AuthorizationResult,
 )
@@ -124,14 +125,14 @@ class Policy(Protocol):
 class AuthorizationProvider(Protocol):
     def authorize(
         self,
-        request: AuthorizationRequest,
+        evaluation: AuthorizationEvaluation,
         context: ExecutionContext,
     ) -> AuthorizationResult:
         ...
 
     def resolve(
         self,
-        request: AuthorizationRequest,
+        evaluation: AuthorizationEvaluation,
         pending: AuthorizationDecision,
         context: ExecutionContext,
     ) -> AuthorizationResult:

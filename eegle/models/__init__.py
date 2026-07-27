@@ -13,17 +13,15 @@ from typing import Any
 __all__ = [
     "CalibrationArtifact",
     "CallableModel",
-    "MeanThresholdModel",
     "ModelContract",
     "ModelImplementationRequirement",
     "ModelInputContract",
     "ModelManifest",
     "ModelOutputContract",
     "ModelResult",
-    "ModelRole",
-    "ModelRoleKind",
     "ModelStateBehavior",
     "ModelStateContract",
+    "ModelStateArtifact",
     "Prediction",
     "PreprocessingOwnership",
     "PreprocessingRequirement",
@@ -33,7 +31,6 @@ __all__ = [
 _EXPORTS = {
     "CalibrationArtifact": ("eegle.models.calibration", "CalibrationArtifact"),
     "CallableModel": ("eegle.models.callable", "CallableModel"),
-    "MeanThresholdModel": ("eegle.models.builtins", "MeanThresholdModel"),
     "ModelContract": ("eegle.models.contracts", "ModelContract"),
     "ModelImplementationRequirement": (
         "eegle.models.manifests",
@@ -43,10 +40,9 @@ _EXPORTS = {
     "ModelManifest": ("eegle.models.manifests", "ModelManifest"),
     "ModelOutputContract": ("eegle.models.contracts", "ModelOutputContract"),
     "ModelResult": ("eegle.models.results", "ModelResult"),
-    "ModelRole": ("eegle.models.roles", "ModelRole"),
-    "ModelRoleKind": ("eegle.models.roles", "ModelRoleKind"),
     "ModelStateBehavior": ("eegle.models.contracts", "ModelStateBehavior"),
     "ModelStateContract": ("eegle.models.contracts", "ModelStateContract"),
+    "ModelStateArtifact": ("eegle.models.state_artifacts", "ModelStateArtifact"),
     "Prediction": ("eegle.models.predictions", "Prediction"),
     "PreprocessingOwnership": (
         "eegle.models.contracts",

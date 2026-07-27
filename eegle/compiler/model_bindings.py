@@ -23,11 +23,12 @@ from eegle.compiler.plan import (
     PlannedModelFailureDisposition,
     PlannedModelQueueDisposition,
     PlannedModelRole,
+    PlannedPreprocessingAttestation,
 )
 from eegle.models.contracts import PreprocessingOwnership
 from eegle.models.manifests import ModelManifest
 from eegle.models.predictions import PREDICTION_RECORD_SCHEMA
-from eegle.plugins.registry import PluginDescriptor
+from eegle.plugins.registry import ConstructionAPI, PluginDescriptor
 from eegle.specs.deployment import DeploymentSpec
 from eegle.specs.protocol import ProtocolSpec
 from eegle.specs.suite import (
@@ -59,6 +60,7 @@ def compile_model_bindings(
     resolved: Mapping[str, PluginDescriptor],
     graph: CompiledGraph | None,
     manifests: Mapping[str, ModelManifest],
+    component_configs: Mapping[str, Mapping[str, Any]],
     diagnostics: list[CompilationDiagnostic],
 ) -> tuple[tuple[PlannedModelBinding, ...], dict[str, str]]:
     """Compile the exact model/plugin/artifact/role join without materializing files."""
@@ -103,31 +105,16 @@ def compile_model_bindings(
     role_ids: dict[str, str] = {}
     planned: list[PlannedModelBinding] = []
 
-    if suite.model_uses:
-        legacy_scheduling = suite.scheduling
-        if (
-            not legacy_scheduling.primary_first
-            or legacy_scheduling.shadow_queue_limit is not None
-            or legacy_scheduling.shadow_failure.value != "fail_run"
-        ):
+    for component_index, component in enumerate(suite.components):
+        if component.kind == ComponentKind.MODEL and component.component_id not in uses:
             diagnostics.append(
                 _error(
-                    "model.legacy_role_scheduling",
-                    "$.suite.scheduling",
-                    "suite-wide primary/shadow scheduling is not valid for compiled model "
-                    "bindings; use a custom model role permission set",
+                    "model.binding_missing",
+                    f"$.suite.components[{component_index}]",
+                    "model component is not joined to a manifest and compiled role",
+                    component_id=component.component_id,
                 )
             )
-        for component_index, component in enumerate(suite.components):
-            if component.kind == ComponentKind.MODEL and component.component_id not in uses:
-                diagnostics.append(
-                    _error(
-                        "model.binding_missing",
-                        f"$.suite.components[{component_index}]",
-                        "model component is not joined to a manifest and compiled role",
-                        component_id=component.component_id,
-                    )
-                )
 
     for index, use in enumerate(suite.model_uses):
         path = f"$.suite.model_uses[{index}]"
@@ -153,15 +140,6 @@ def compile_model_bindings(
             continue
         if descriptor is None or descriptor.kind != ComponentKind.MODEL:
             continue
-        if component.role is not None and component.role != use.role_id:
-            diagnostics.append(
-                _error(
-                    "model.role_conflict",
-                    f"{path}.role_id",
-                    f"model use role {use.role_id} conflicts with component role {component.role}",
-                )
-            )
-
         manifest = manifest_by_digest.get(use.manifest_digest)
         if manifest is None:
             diagnostics.append(
@@ -191,12 +169,13 @@ def compile_model_bindings(
             path,
             diagnostics,
         )
-        lineage = _validate_model_ports_and_preprocessing(
+        lineage, attestations = _validate_model_ports_and_preprocessing(
             component,
             manifest,
             descriptor,
             resolved,
             graph,
+            component_configs,
             path,
             diagnostics,
         )
@@ -268,6 +247,7 @@ def compile_model_bindings(
                 comparison_group=use.comparison_group,
                 artifacts=tuple(materializations),
                 preprocessing_lineage=lineage,
+                preprocessing_attestations=attestations,
             )
         )
 
@@ -393,6 +373,15 @@ def _validate_model_manifest_implementation(
     path: str,
     diagnostics: list[CompilationDiagnostic],
 ) -> None:
+    if manifest.artifacts and descriptor.construction_api != ConstructionAPI.MODEL_CONTEXT_V1:
+        diagnostics.append(
+            _error(
+                "model.construction_api",
+                f"{path}.manifest_digest",
+                "artifact-bearing models require the model_context_v1 construction API",
+                plugin_id=descriptor.plugin_id,
+            )
+        )
     if protocol.execution_mode not in manifest.contract.supported_modes:
         diagnostics.append(
             _error(
@@ -444,11 +433,12 @@ def _validate_model_ports_and_preprocessing(
     descriptor: PluginDescriptor,
     resolved: Mapping[str, PluginDescriptor],
     graph: CompiledGraph | None,
+    component_configs: Mapping[str, Mapping[str, Any]],
     path: str,
     diagnostics: list[CompilationDiagnostic],
-) -> dict[str, tuple[str, ...]]:
+) -> tuple[dict[str, tuple[str, ...]], tuple[PlannedPreprocessingAttestation, ...]]:
     if graph is None:
-        return {}
+        return {}, ()
     ports = {(value.component_id, value.direction, value.name): value for value in graph.ports}
     required_inputs = {value.name for value in descriptor.input_ports if value.required}
     required_outputs = {value.name for value in descriptor.output_ports if value.required}
@@ -472,6 +462,7 @@ def _validate_model_ports_and_preprocessing(
         )
 
     lineage_by_port: dict[str, tuple[str, ...]] = {}
+    attestations: list[PlannedPreprocessingAttestation] = []
     for input_contract in manifest.contract.inputs:
         compiled = ports.get((component.component_id, PortDirection.INPUT, input_contract.port_name))
         if compiled is None:
@@ -507,14 +498,19 @@ def _validate_model_ports_and_preprocessing(
                 )
         lineage = _upstream_lineage(graph, compiled.endpoint)
         lineage_by_port[input_contract.port_name] = lineage
-        _validate_preprocessing_requirements(
-            input_contract.preprocessing,
-            component.component_id,
-            descriptor,
-            lineage,
-            resolved,
-            path,
-            diagnostics,
+        attestations.extend(
+            _validate_preprocessing_requirements(
+                input_contract.preprocessing,
+                input_contract.port_name,
+                component.component_id,
+                descriptor,
+                manifest.manifest_digest,
+                lineage,
+                resolved,
+                component_configs,
+                path,
+                diagnostics,
+            )
         )
 
     for output_contract in manifest.contract.outputs:
@@ -540,7 +536,7 @@ def _validate_model_ports_and_preprocessing(
                     f"{output_contract.type_id}, plugin declares {compiled.type_id}",
                 )
             )
-    return lineage_by_port
+    return lineage_by_port, tuple(attestations)
 
 
 def _model_signal_contract(
@@ -643,23 +639,29 @@ def _upstream_lineage(graph: CompiledGraph, target: str) -> tuple[str, ...]:
 
 def _validate_preprocessing_requirements(
     requirements: Any,
+    input_port: str,
     component_id: str,
     descriptor: PluginDescriptor,
+    manifest_digest: str,
     lineage: tuple[str, ...],
     resolved: Mapping[str, PluginDescriptor],
+    component_configs: Mapping[str, Mapping[str, Any]],
     path: str,
     diagnostics: list[CompilationDiagnostic],
-) -> None:
-    upstream_operations = {
-        operation
+) -> tuple[PlannedPreprocessingAttestation, ...]:
+    attestations: list[PlannedPreprocessingAttestation] = []
+    upstream_bindings = {
+        upstream: {
+            value.operation: value
+            for value in resolved[upstream].capabilities.processing_operations
+        }
         for upstream in lineage
-        for operation in (
-            ()
-            if resolved.get(upstream) is None
-            else resolved[upstream].capabilities.processing_operations
-        )
+        if upstream in resolved
     }
-    internal_operations = set(descriptor.capabilities.processing_operations)
+    internal_bindings = {
+        value.operation: value
+        for value in descriptor.capabilities.processing_operations
+    }
     for requirement in requirements:
         missing_lineage = set(requirement.required_lineage) - set(lineage)
         if missing_lineage:
@@ -674,7 +676,16 @@ def _validate_preprocessing_requirements(
                 )
             )
         if requirement.ownership == PreprocessingOwnership.UPSTREAM:
-            if requirement.operation not in upstream_operations:
+            candidates = [
+                upstream
+                for upstream in lineage
+                if requirement.operation in upstream_bindings.get(upstream, {})
+            ]
+            if requirement.required_lineage:
+                candidates = [
+                    value for value in candidates if value in requirement.required_lineage
+                ]
+            if not candidates:
                 diagnostics.append(
                     _error(
                         "model.preprocessing_missing",
@@ -683,8 +694,40 @@ def _validate_preprocessing_requirements(
                         requirement_id=requirement.requirement_id,
                     )
                 )
+                continue
+            if len(candidates) != 1:
+                diagnostics.append(
+                    _error(
+                        "model.preprocessing_ambiguous",
+                        f"{path}.manifest_digest",
+                        f"operation {requirement.operation} has multiple upstream authorities: "
+                        + ", ".join(candidates),
+                        requirement_id=requirement.requirement_id,
+                    )
+                )
+                continue
+            owner_id = candidates[0]
+            observed = _attest_processing_parameters(
+                upstream_bindings[owner_id][requirement.operation],
+                component_configs.get(owner_id, {}),
+                requirement,
+                path,
+                diagnostics,
+            )
+            if observed is not None:
+                attestations.append(
+                    PlannedPreprocessingAttestation(
+                        input_port,
+                        requirement.requirement_id,
+                        requirement.operation,
+                        requirement.ownership.value,
+                        owner_id,
+                        observed,
+                    )
+                )
         elif requirement.ownership == PreprocessingOwnership.MODEL_INTERNAL:
-            if requirement.operation not in internal_operations:
+            binding = internal_bindings.get(requirement.operation)
+            if binding is None:
                 diagnostics.append(
                     _error(
                         "model.preprocessing_internal_missing",
@@ -693,7 +736,13 @@ def _validate_preprocessing_requirements(
                         requirement_id=requirement.requirement_id,
                     )
                 )
-            if requirement.operation in upstream_operations:
+                continue
+            upstream_owners = [
+                upstream
+                for upstream in lineage
+                if requirement.operation in upstream_bindings.get(upstream, {})
+            ]
+            if upstream_owners:
                 diagnostics.append(
                     _error(
                         "model.preprocessing_duplicate",
@@ -702,8 +751,30 @@ def _validate_preprocessing_requirements(
                         requirement_id=requirement.requirement_id,
                     )
                 )
+                continue
+            observed = _attest_processing_parameters(
+                binding,
+                component_configs.get(component_id, {}),
+                requirement,
+                path,
+                diagnostics,
+            )
+            if observed is not None:
+                attestations.append(
+                    PlannedPreprocessingAttestation(
+                        input_port,
+                        requirement.requirement_id,
+                        requirement.operation,
+                        requirement.ownership.value,
+                        component_id,
+                        observed,
+                    )
+                )
         elif requirement.ownership == PreprocessingOwnership.ARTIFACT_PREPARED:
-            if requirement.operation in upstream_operations | internal_operations:
+            present = requirement.operation in internal_bindings or any(
+                requirement.operation in values for values in upstream_bindings.values()
+            )
+            if present:
                 diagnostics.append(
                     _error(
                         "model.preprocessing_duplicate",
@@ -712,8 +783,54 @@ def _validate_preprocessing_requirements(
                         requirement_id=requirement.requirement_id,
                     )
                 )
+            else:
+                attestations.append(
+                    PlannedPreprocessingAttestation(
+                        input_port,
+                        requirement.requirement_id,
+                        requirement.operation,
+                        requirement.ownership.value,
+                        manifest_digest,
+                        requirement.parameters,
+                    )
+                )
         elif requirement.ownership == PreprocessingOwnership.FORBIDDEN:
-            if requirement.operation in upstream_operations | internal_operations:
+            candidates = [
+                (
+                    upstream,
+                    upstream_bindings[upstream][requirement.operation],
+                    component_configs.get(upstream, {}),
+                )
+                for upstream in lineage
+                if requirement.operation in upstream_bindings.get(upstream, {})
+            ]
+            if requirement.operation in internal_bindings:
+                candidates.append(
+                    (
+                        component_id,
+                        internal_bindings[requirement.operation],
+                        component_configs.get(component_id, {}),
+                    )
+                )
+            prohibited = False
+            for _, binding, config in candidates:
+                try:
+                    observed = binding.attest(config)
+                except KeyError:
+                    diagnostics.append(
+                        _error(
+                            "model.preprocessing_parameters_unattested",
+                            f"{path}.manifest_digest",
+                            f"operation {requirement.operation} cannot attest its locked parameters",
+                            requirement_id=requirement.requirement_id,
+                        )
+                    )
+                    continue
+                if not requirement.parameters or _required_parameters_match(
+                    requirement.parameters, observed
+                ):
+                    prohibited = True
+            if prohibited:
                 diagnostics.append(
                     _error(
                         "model.preprocessing_forbidden",
@@ -722,6 +839,59 @@ def _validate_preprocessing_requirements(
                         requirement_id=requirement.requirement_id,
                     )
                 )
+            elif not candidates:
+                attestations.append(
+                    PlannedPreprocessingAttestation(
+                        input_port,
+                        requirement.requirement_id,
+                        requirement.operation,
+                        requirement.ownership.value,
+                        "compiled_route",
+                        {},
+                    )
+                )
+    return tuple(attestations)
+
+
+def _attest_processing_parameters(
+    binding: Any,
+    config: Mapping[str, Any],
+    requirement: Any,
+    path: str,
+    diagnostics: list[CompilationDiagnostic],
+) -> Mapping[str, Any] | None:
+    try:
+        observed = binding.attest(config)
+    except KeyError as exc:
+        diagnostics.append(
+            _error(
+                "model.preprocessing_parameters_unattested",
+                f"{path}.manifest_digest",
+                f"operation {requirement.operation} cannot resolve locked config {exc.args[0]}",
+                requirement_id=requirement.requirement_id,
+            )
+        )
+        return None
+    if not _required_parameters_match(requirement.parameters, observed):
+        diagnostics.append(
+            _error(
+                "model.preprocessing_parameters",
+                f"{path}.manifest_digest",
+                f"operation {requirement.operation} parameters differ from the model contract",
+                requirement_id=requirement.requirement_id,
+                expected=thaw_json(requirement.parameters),
+                observed=thaw_json(observed),
+            )
+        )
+        return None
+    return observed
+
+
+def _required_parameters_match(
+    required: Mapping[str, Any],
+    observed: Mapping[str, Any],
+) -> bool:
+    return all(key in observed and observed[key] == value for key, value in required.items())
 
 
 def _validate_model_role_routes(

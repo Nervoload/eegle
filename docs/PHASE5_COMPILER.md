@@ -154,7 +154,7 @@ The sole `eegle.execution_plan.v1` representation contains typed:
 
 - the complete compiled graph, including port contracts, routes, and stable
   component order;
-- component roles, logical stream identities, and required capabilities;
+- compiled model-use roles, logical stream identities, and required capabilities;
 - phase records and transitions;
 - scheduling policy, scheduled triggers, and state-trigger rules;
 - deployment placements, resource identities, endpoint identities, and secret

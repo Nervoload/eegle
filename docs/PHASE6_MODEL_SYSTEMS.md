@@ -1,6 +1,6 @@
 # Phase 6 Model-System Semantics
 
-**Status:** Active implementation design  
+**Status:** Complete implementation design
 **Authority:** [EEGLE.md](EEGLE.md)  
 **Phase gate:** [MIGRATION.md](MIGRATION.md#11-phase-6--general-model-outcome-adaptation-and-action-semantics)
 
@@ -40,7 +40,8 @@ microvolts, binary labels or one scalar confidence.
 
 Preprocessing requirements name exactly one owner: upstream graph,
 model-internal, artifact preparation, or forbidden. The compiled binding later
-proves those requirements against actual route lineage. Model-specific
+proves those requirements and their canonical parameters against actual route
+lineage and stores the resulting attestations. Model-specific
 placement, worker and timeout abstractions are not introduced; the generic
 component placement and proxy boundary remains authoritative.
 
@@ -173,10 +174,8 @@ content verification belongs to construction/runtime admission. Plan diffing
 classifies manifest, contract, role, digest, and lineage changes as scientific,
 while a local materialization URI change is operational.
 
-Suites using the Phase 6 model vocabulary must bind every model component. The
-remaining Phase 5 fixtures with no `model_uses` are temporary extraction
-evidence and are not an alternate target model API; P6-009 removes that
-migration seam after the runtime replacement exists.
+Every model component must bind exactly one canonical manifest and compiled
+role. An unbound model is rejected during compilation and construction.
 
 ## 9. Implemented runtime model boundary
 
@@ -197,7 +196,9 @@ artifact, result, state, input, and timing identities. The plugin cannot
 self-author any field in that envelope.
 
 Every returned result receives a terminal `emitted`, `rejected`, `late`, or
-`cancelled` disposition. Component deadlines reject late results before graph
+`cancelled` disposition. Every required output port must be present and
+non-empty; omission creates a separate terminal rejection for each missing
+port. Component deadlines reject late results before graph
 emission; phase termination records cancellation for still-pending results.
 Executor-owned admitted-input lineage is included in persisted checkpoints so
 restoration cannot replace graph evidence with component claims.
@@ -206,9 +207,7 @@ The base `CallableModel` wraps ordinary Python callables without permitting
 import strings in suite JSON. A separately built and installed stateful model
 wheel proves entry-point discovery, compilation, canonical predictions,
 pre-inference state hashes, snapshot restoration in a fresh runtime, and
-continued execution without modifying EEGle source. Unbound Phase 5 model
-fixtures still use the extraction record only until P6-009; they are not a
-second target runtime contract.
+continued execution without modifying EEGle source.
 
 ## 10. Implemented role and comparison boundary
 
@@ -216,10 +215,11 @@ P6-004 makes each `PlannedModelRole` a typed runtime authority. Built-in
 primary, candidate, shadow, and observer profiles compile to explicit
 scheduling priority, equivalent-input requirement, policy/outcome/adaptation
 permissions, queue limit and disposition, and failure disposition. Custom roles
-use exactly the same compiled representation. Non-default suite-wide
-`primary_first`, `shadow_queue_limit`, and `shadow_failure` values are rejected
-when Phase 6 model bindings are present; those fields remain only for unbound
-Phase 5 extraction fixtures until P6-009.
+use exactly the same compiled representation. Suite-wide `primary_first`,
+`shadow_queue_limit`, and `shadow_failure` fields are not part of `SuiteSpec`;
+`ComponentSpec` also has no duplicate role field. Role intent exists only in a
+model use, and all model scheduling behavior comes from the compiled permission
+set.
 
 The executor uses compiled priorities without inspecting a bound model's role
 name. Queue overflow produces terminal fail-run, reject-newest, or shed-oldest
@@ -285,7 +285,8 @@ invalid mutation records failure, restores the exact prior snapshot, and records
 rollback when restoration changed state. Outcome coordinator and component
 state snapshots share the normal checkpoint boundary, so delayed adaptation and
 the next prediction reproduce through bundle replay without a second learning
-loop.
+loop. Snapshot capture deep-freezes canonical JSON before the update, so even a
+component returning a live nested mapping cannot mutate its rollback authority.
 
 ## 13. Implemented action authorization boundary
 
@@ -304,6 +305,16 @@ disposition. No grant or provider means observe-only. Provider failure resolves
 to the locked observe-only or denied disposition. Pending authorization is
 semantic scheduled work: it may resolve later, expire, or be cancelled by phase
 termination without blocking the coordinator.
+
+Provider calls receive an `AuthorizationEvaluation` containing the typed
+request and an immutable copy of the actual parameters. The broker verifies
+that copy against the persistent request digest before both `authorize()` and
+`resolve()`, so providers never decide from an opaque digest alone.
+
+Phase 6 does not invent a generic device-history or interlock-state vocabulary.
+A concrete integration that needs broker-owned command history, actuator state,
+or interlock attestations must add a narrow immutable runtime view and declare
+that capability explicitly; it must not receive the executor or mutable queues.
 
 The built-in provider and actuator are explicitly simulation-only. The compiler
 prevents that provider from granting a non-simulated capability. Replay checks
@@ -349,9 +360,34 @@ It deliberately adds no sklearn/Torch imports, loaders, training APIs, model
 zoo, tensor abstraction, or second plugin registry to the base package. P6-003
 already proves that a separately installed model-plugin wheel can be discovered
 and executed without modifying EEGle source. Actual dependency-backed companion
-distributions, artifact materialization, supported versions, and installation
-extras remain Phase 7 integration work.
+distributions, framework-specific artifact decoding, supported versions, and
+installation extras remain Phase 7 integration work. Generic deployment
+materialization and digest verification are complete in the Phase 6 runtime
+admission boundary.
 
 These fixtures establish **architectural compatibility only**. They do not make
 claims about validated fNIRS, Neuropixels, sklearn, Torch, throughput, model
 quality, or hardware support.
+
+## 15. Closure boundary
+
+P6-009/P6-010 remove the transitional authorities rather than preserve them as
+compatibility APIs:
+
+- artifact-bearing factories use the explicit `model_context_v1` construction
+  API and receive only independently verified materializations;
+- typed model-state artifacts are restored and exact-hash checked before the
+  component is admitted;
+- preprocessing operations expose fixed/config-projected parameter
+  attestations, including manifest-bound artifact preparation and route-wide
+  forbidden-operation proof;
+- v1 predictions, the classifier-shaped model built-in, metadata-only target
+  registry, local runtime bundle authority, unbound models, string-role
+  executor fallbacks, and suite-wide role knobs are absent from the target;
+- `eegle.ml`, optional framework extras, legacy applications, and retained
+  Phase 7/8 extraction evidence are outside package discovery and target
+  imports.
+
+The Phase 6 exit gate is covered by the dedicated P6 tests, the installed
+external-wheel fixture, source-boundary and clean-wheel tests, and the complete
+suite recorded in `MIGRATION_STATUS.md`.

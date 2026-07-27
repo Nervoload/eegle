@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from importlib import metadata
 from typing import Any, Callable, Iterable, Mapping
@@ -13,12 +13,18 @@ from packaging.version import InvalidVersion, Version
 from eegle._domain import ComponentKind, Determinism, EquivalenceLevel, ExecutionMode
 from eegle._validation import freeze_json, require_identifier, thaw_json
 from eegle.compiler.lock import canonical_hash
+from eegle.plugins.construction import ModelConstructionContext
 from eegle.specs.schemas import validate_payload, validate_schema
 
 
 PLUGIN_ENTRY_POINT_GROUP = "eegle.plugins"
 PLUGIN_DESCRIPTOR_SCHEMA = "eegle.plugin_descriptor.v1"
-PluginFactory = Callable[[Mapping[str, Any]], Any]
+PluginFactory = Callable[..., Any]
+
+
+class ConstructionAPI(str, Enum):
+    CONFIG_V1 = "config_v1"
+    MODEL_CONTEXT_V1 = "model_context_v1"
 
 
 class StateBehavior(str, Enum):
@@ -26,6 +32,46 @@ class StateBehavior(str, Enum):
     SNAPSHOT_RESTORE = "snapshot_restore"
     RECORD_ONLY = "record_only"
     EXTERNAL = "external"
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessingOperationBinding:
+    """Canonical parameters a plugin attests for one processing operation."""
+
+    operation: str
+    fixed_parameters: Mapping[str, Any] = field(default_factory=dict)
+    config_projection: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "operation",
+            require_identifier(self.operation, "processing operation"),
+        )
+        object.__setattr__(self, "fixed_parameters", freeze_json(self.fixed_parameters))
+        projections: dict[str, str] = {}
+        for parameter, pointer in self.config_projection.items():
+            normalized = require_identifier(str(parameter), "processing parameter")
+            pointer = str(pointer)
+            if not pointer.startswith("/"):
+                raise ValueError("processing config projections must be JSON pointers")
+            projections[normalized] = pointer
+        if set(self.fixed_parameters) & set(projections):
+            raise ValueError("processing parameters cannot be both fixed and projected")
+        object.__setattr__(self, "config_projection", freeze_json(projections))
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "operation": self.operation,
+            "fixed_parameters": thaw_json(self.fixed_parameters),
+            "config_projection": thaw_json(self.config_projection),
+        }
+
+    def attest(self, config: Mapping[str, Any]) -> Mapping[str, Any]:
+        parameters = thaw_json(self.fixed_parameters)
+        for parameter, pointer in self.config_projection.items():
+            parameters[parameter] = _resolve_json_pointer(config, pointer)
+        return freeze_json(parameters)
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +103,7 @@ class PluginCapabilities:
     requires_future: bool = False
     resources: tuple[str, ...] = ()
     supports_triggers: bool = False
-    processing_operations: tuple[str, ...] = ()
+    processing_operations: tuple[ProcessingOperationBinding | str, ...] = ()
     simulation_only: bool = False
 
     def __post_init__(self) -> None:
@@ -74,10 +120,13 @@ class PluginCapabilities:
             tuple(require_identifier(value, "resource") for value in self.resources),
         )
         operations = tuple(
-            require_identifier(value, "processing operation")
+            value
+            if isinstance(value, ProcessingOperationBinding)
+            else ProcessingOperationBinding(str(value))
             for value in self.processing_operations
         )
-        if len(operations) != len(set(operations)):
+        operation_ids = tuple(value.operation for value in operations)
+        if len(operation_ids) != len(set(operation_ids)):
             raise ValueError("plugin processing operations must be unique")
         object.__setattr__(self, "processing_operations", operations)
         if ExecutionMode.CAUSAL in modes and self.requires_future:
@@ -92,7 +141,7 @@ class PluginCapabilities:
             "requires_future": self.requires_future,
             "resources": list(self.resources),
             "supports_triggers": self.supports_triggers,
-            "processing_operations": list(self.processing_operations),
+            "processing_operations": [value.to_payload() for value in self.processing_operations],
             "simulation_only": self.simulation_only,
         }
 
@@ -109,6 +158,7 @@ class PluginDescriptor:
     factory: PluginFactory
     implementation: str
     distribution: str | None = None
+    construction_api: ConstructionAPI = ConstructionAPI.CONFIG_V1
     schema: str = PLUGIN_DESCRIPTOR_SCHEMA
 
     def __post_init__(self) -> None:
@@ -120,6 +170,12 @@ class PluginDescriptor:
         except InvalidVersion as exc:
             raise ValueError(f"invalid plugin version {self.version!r}") from exc
         object.__setattr__(self, "kind", ComponentKind(self.kind))
+        object.__setattr__(self, "construction_api", ConstructionAPI(self.construction_api))
+        if (
+            self.construction_api == ConstructionAPI.MODEL_CONTEXT_V1
+            and self.kind != ComponentKind.MODEL
+        ):
+            raise ValueError("model-context construction is valid only for model plugins")
         if not callable(self.factory):
             raise TypeError("plugin factory must be callable")
         if not self.implementation.strip():
@@ -144,6 +200,7 @@ class PluginDescriptor:
             "capabilities": self.capabilities.to_payload(),
             "implementation": self.implementation,
             "distribution": self.distribution,
+            "construction_api": self.construction_api.value,
         }
 
     @property
@@ -221,11 +278,23 @@ class PluginRegistry:
         version_spec: str | None = None,
         *,
         mode: ExecutionMode | None = None,
+        construction_context: ModelConstructionContext | None = None,
     ) -> Any:
         descriptor = self.resolve(plugin_id, version_spec, mode=mode)
         config_copy = thaw_json(freeze_json(config))
         validate_payload(config_copy, descriptor.config_schema)
-        component = descriptor.factory(config_copy)
+        if descriptor.construction_api == ConstructionAPI.CONFIG_V1:
+            if construction_context is not None:
+                raise TypeError(
+                    f"plugin {descriptor.plugin_id} uses config-only construction"
+                )
+            component = descriptor.factory(config_copy)
+        else:
+            if construction_context is None:
+                raise TypeError(
+                    f"plugin {descriptor.plugin_id} requires model construction context"
+                )
+            component = descriptor.factory(config_copy, construction_context)
         validate_component_instance(descriptor, component)
         return component
 
@@ -264,6 +333,24 @@ def _coerce_descriptors(value: Any) -> tuple[PluginDescriptor, ...]:
         if all(isinstance(item, PluginDescriptor) for item in descriptors):
             return descriptors
     raise TypeError("plugin entry point must load a PluginDescriptor or iterable of descriptors")
+
+
+def _resolve_json_pointer(value: Mapping[str, Any], pointer: str) -> Any:
+    current: Any = value
+    for raw_token in pointer.split("/")[1:]:
+        token = raw_token.replace("~1", "/").replace("~0", "~")
+        if isinstance(current, Mapping):
+            if token not in current:
+                raise KeyError(pointer)
+            current = current[token]
+        elif isinstance(current, (list, tuple)):
+            try:
+                current = current[int(token)]
+            except (ValueError, IndexError) as exc:
+                raise KeyError(pointer) from exc
+        else:
+            raise KeyError(pointer)
+    return thaw_json(freeze_json(current))
 
 
 _REQUIRED_COMPONENT_MEMBERS: Mapping[ComponentKind, tuple[str, ...]] = {

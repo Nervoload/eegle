@@ -556,7 +556,6 @@ def _suite(case: GeneralityCase, manifest: ModelManifest) -> SuiteSpec:
             "kind": "model",
             "plugin_id": plugin_id,
             "version_spec": "~=1.0",
-            "role": "observer",
             "config": {},
         },
     ]
@@ -854,7 +853,6 @@ class Phase6GeneralityTests(unittest.TestCase):
                             "kind": "model",
                             "plugin_id": plugin_id,
                             "version_spec": "~=1.0",
-                            "role": "observer",
                             "config": {},
                         }
                     ],

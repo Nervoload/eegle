@@ -177,7 +177,6 @@ class SchedulingPolicy:
     backpressure: BackpressurePolicy = BackpressurePolicy.REJECT_NEWEST
     lateness: LatenessPolicy = LatenessPolicy.REJECT
     max_idle_cycles: int = 1
-    shadow_queue_limit: int | None = None
     fail_fast: bool = True
 
     def __post_init__(self) -> None:
@@ -201,10 +200,6 @@ class SchedulingPolicy:
         object.__setattr__(self, "max_idle_cycles", int(self.max_idle_cycles))
         if self.max_idle_cycles <= 0:
             raise ValueError("max_idle_cycles must be positive")
-        if self.shadow_queue_limit is not None:
-            object.__setattr__(self, "shadow_queue_limit", int(self.shadow_queue_limit))
-            if self.shadow_queue_limit < 0:
-                raise ValueError("shadow_queue_limit cannot be negative")
 
 
 @dataclass(frozen=True, slots=True)

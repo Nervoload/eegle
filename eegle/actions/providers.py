@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from eegle.actions.authorization import (
     AuthorizationDecision,
+    AuthorizationEvaluation,
     AuthorizationRequest,
     AuthorizationResult,
     AuthorizationStatus,
@@ -43,7 +44,7 @@ class SimulationAuthorizationProvider:
 
     def authorize(
         self,
-        request: AuthorizationRequest,
+        evaluation: AuthorizationEvaluation,
         context: "ExecutionContext",
     ) -> AuthorizationResult:
         if self.decision_delay_seconds > 0:
@@ -57,7 +58,7 @@ class SimulationAuthorizationProvider:
 
     def resolve(
         self,
-        request: AuthorizationRequest,
+        evaluation: AuthorizationEvaluation,
         pending: AuthorizationDecision,
         context: "ExecutionContext",
     ) -> AuthorizationResult:

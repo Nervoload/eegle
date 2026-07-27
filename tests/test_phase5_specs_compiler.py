@@ -33,6 +33,10 @@ from eegle.specs import (
     SuiteSpec,
     compose_suite,
 )
+from tests.fixtures.phase5_model_components import (
+    compile_phase5_suite as compile_suite,
+    register_phase5_plugins,
+)
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "migration" / "phase5_simulated"
@@ -54,6 +58,7 @@ def _specs() -> tuple[ProtocolSpec, SuiteSpec, DeploymentSpec]:
 def _registry() -> PluginRegistry:
     value = PluginRegistry()
     value.register_builtins()
+    register_phase5_plugins(value)
     return value
 
 

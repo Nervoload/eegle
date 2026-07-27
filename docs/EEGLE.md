@@ -592,11 +592,11 @@ Source.read() -> Packet | None
 Transform.update(packet, context) -> Packet | None
 WindowBuilder.update(packet, context) -> Iterable[Window]
 QualityGate.evaluate(item, context) -> QualityDecision
-Model.predict(item, context) -> Prediction
+Model.predict(item, context) -> ModelResult
 OutcomeResolver.update(packet, context) -> Iterable[Outcome]
-Adapter.update(outcome, state, context) -> StateUpdate | None
-Policy.decide(prediction, state, context) -> ActionDecision
-Actuator.submit(command, context) -> ActionReceipt
+AdaptationComponent.adapt(prediction, outcome, context) -> AdaptationResult
+Policy.decide(prediction, state, context) -> ActionRequest | None
+Actuator.submit(authorized_command, context) -> ActionReceipt
 Sink.append(record) -> None
 ```
 
@@ -743,6 +743,29 @@ self-assert those evidence identities. Output and uncertainty semantics use
 explicit schemas rather than assuming one learning-problem taxonomy or one
 scalar confidence.
 
+Artifact-bearing model plugins use one explicit versioned construction API.
+Before invoking their factory, deployment materializes every locked artifact,
+EEGle independently verifies its byte length and digest, and the factory
+receives an immutable `ModelConstructionContext`. If the manifest names initial
+state, EEGle then validates the state artifact against model and contract
+identity, restores it through the component protocol, and verifies the exact
+resulting state hash. Config-only factories cannot be used to bypass artifact
+admission. The state envelope uses contract identity rather than a circular
+manifest reference; the enclosing manifest already binds the state artifact's
+exact byte digest.
+
+Preprocessing compatibility is parameterized evidence, not operation-name
+matching. A plugin declares how fixed values and locked configuration fields
+attest each processing operation. Compilation compares those canonical
+parameters with the model requirement and stores an attestation in the plan.
+Artifact-prepared parameters are bound by the manifest; forbidden operations
+are checked across the complete upstream and model-internal lineage.
+
+Every required model output port must yield at least one `ModelResult`. Missing
+required ports are rejected explicitly and receive one terminal disposition per
+missing output; omission can never look like successful abstention or absence
+of work.
+
 Inference metadata must remain label-blind. Stimulus condition, response
 correctness, trial label, or later outcome must not be included in model inputs
 unless the protocol explicitly declares a non-causal research mode.
@@ -788,6 +811,11 @@ update records:
 - timestamps and availability;
 - failure, rejection, rollback, or no-op reason.
 
+Snapshots used for eligibility, checkpoints, rollback, and replay are deep,
+canonical JSON copies. A component may not protect a failed update by returning
+an alias to live mutable state: restoration is verified against the exact prior
+hash before rollback is recorded as successful.
+
 Replay must restore and advance adaptive state under the declared replay policy.
 
 ## 10. Actions and device boundaries
@@ -816,6 +844,12 @@ provider; other providers operate only within locked capability, parameter,
 timing, expiry, and failure bounds. Operator confirmation is an explicitly
 configured provider mechanism rather than an implicit fallback, and it must not
 block the semantic coordinator.
+
+Authorization evaluation receives the typed request plus an immutable copy of
+the actual action parameters whose canonical digest appears in persistent
+evidence. This preserves compact, privacy-aware request records without asking
+the provider to decide from a hash alone. EEGle verifies the copy against the
+digest before calling either initial or pending-resolution provider logic.
 
 Core evidence records:
 

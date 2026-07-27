@@ -249,6 +249,60 @@ class PlannedModelRole:
 
 
 @dataclass(frozen=True, slots=True)
+class PlannedPreprocessingAttestation:
+    input_port: str
+    requirement_id: str
+    operation: str
+    owner_kind: str
+    owner_id: str
+    parameters: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "input_port",
+            "requirement_id",
+            "operation",
+            "owner_kind",
+            "owner_id",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                require_identifier(getattr(self, field_name), field_name),
+            )
+        object.__setattr__(self, "parameters", freeze_json(self.parameters))
+
+    @property
+    def parameters_digest(self) -> str:
+        return canonical_hash(thaw_json(self.parameters))
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "input_port": self.input_port,
+            "requirement_id": self.requirement_id,
+            "operation": self.operation,
+            "owner_kind": self.owner_kind,
+            "owner_id": self.owner_id,
+            "parameters": thaw_json(self.parameters),
+            "parameters_digest": self.parameters_digest,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "PlannedPreprocessingAttestation":
+        value = cls(
+            input_port=str(payload["input_port"]),
+            requirement_id=str(payload["requirement_id"]),
+            operation=str(payload["operation"]),
+            owner_kind=str(payload["owner_kind"]),
+            owner_id=str(payload["owner_id"]),
+            parameters=dict(payload.get("parameters") or {}),
+        )
+        if payload.get("parameters_digest") != value.parameters_digest:
+            raise ValueError("planned preprocessing parameter digest mismatch")
+        return value
+
+
+@dataclass(frozen=True, slots=True)
 class PlannedModelArtifactBinding:
     artifact_id: str
     digest: str
@@ -295,6 +349,7 @@ class PlannedModelBinding:
     artifacts: tuple[PlannedModelArtifactBinding, ...] = ()
     comparison_group: str | None = None
     preprocessing_lineage: Mapping[str, tuple[str, ...]] = None  # type: ignore[assignment]
+    preprocessing_attestations: tuple[PlannedPreprocessingAttestation, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -331,6 +386,12 @@ class PlannedModelBinding:
                 raise ValueError("preprocessing lineage components must be unique")
             lineage[port] = values
         object.__setattr__(self, "preprocessing_lineage", freeze_json(lineage))
+        identities = tuple(
+            (value.input_port, value.requirement_id)
+            for value in self.preprocessing_attestations
+        )
+        if len(identities) != len(set(identities)):
+            raise ValueError("planned preprocessing attestations must be unique per input")
 
     @property
     def manifest_digest(self) -> str:
@@ -352,6 +413,9 @@ class PlannedModelBinding:
             "comparison_group": self.comparison_group,
             "artifacts": [value.to_payload() for value in self.artifacts],
             "preprocessing_lineage": thaw_json(self.preprocessing_lineage),
+            "preprocessing_attestations": [
+                value.to_payload() for value in self.preprocessing_attestations
+            ],
         }
 
     @classmethod
@@ -380,6 +444,10 @@ class PlannedModelBinding:
                 str(key): tuple(str(item) for item in value)
                 for key, value in dict(payload.get("preprocessing_lineage") or {}).items()
             },
+            preprocessing_attestations=tuple(
+                PlannedPreprocessingAttestation.from_payload(value)
+                for value in payload.get("preprocessing_attestations", ())
+            ),
         )
 
 

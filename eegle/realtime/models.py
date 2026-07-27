@@ -16,7 +16,7 @@ from eegle.ml.calibration import binary_metrics_at_threshold, select_binary_thre
 from eegle.ml.contracts import contract_hash, normalize_input_contract, validate_supported_resampling
 from eegle.ml.registry import get_model_spec, resolve_model_kind
 from eegle.ml.targets import build_training_target
-from eegle.models.bundles import file_sha256, load_model_bundle, write_model_bundle
+from eegle.realtime._legacy_model_bundles import file_sha256, load_model_bundle, write_model_bundle
 from eegle.realtime._legacy_calibration import calibration_state_hash, make_prototype_state
 from eegle.realtime.epoch_arrays import (
     epoch_to_channels_samples,

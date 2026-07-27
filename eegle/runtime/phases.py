@@ -21,6 +21,7 @@ from eegle.runtime.graph import (
 )
 from eegle.runtime.checkpoints import EngineCheckpoint
 from eegle.runtime.plan_runtime import (
+    ArtifactResolver,
     ComponentProxyFactory,
     PlanRuntime,
     construct_plan_runtime,
@@ -226,6 +227,7 @@ class ExecutionEngine:
         execution_id: str | None = None,
         proxy_factory: ComponentProxyFactory | None = None,
         component_overrides: Mapping[str, Any] | None = None,
+        artifact_resolver: ArtifactResolver | None = None,
     ) -> "ExecutionEngine":
         return cls(
             construct_plan_runtime(
@@ -233,6 +235,7 @@ class ExecutionEngine:
                 registry,
                 proxy_factory=proxy_factory,
                 component_overrides=component_overrides,
+                artifact_resolver=artifact_resolver,
             ),
             execution_id=execution_id,
         )

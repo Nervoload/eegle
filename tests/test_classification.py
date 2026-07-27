@@ -9,7 +9,7 @@ from unittest.mock import patch
 import numpy as np
 
 from eegle.analysis.classification import replay_classifier_session
-from eegle.models.bundles import load_model_bundle, write_model_bundle
+from eegle.realtime._legacy_model_bundles import load_model_bundle, write_model_bundle
 from eegle.realtime.classification import (
     assess_epoch_quality,
     baseline_correct,

@@ -27,7 +27,7 @@ from eegle.realtime.classification import (
     model_skip_row,
     sanitize_model_metadata,
 )
-from eegle.models.bundles import load_model_bundle, snapshot_model_bundle
+from eegle.realtime._legacy_model_bundles import load_model_bundle, snapshot_model_bundle
 from eegle.realtime.epoching import EpochingConfig, MarkerEvent, RealtimeEpocher, expected_sample_count
 from eegle.realtime.event_features import EngineInputCaptureWriter, RealtimeEventEngine
 from eegle.realtime.models import PreparedEpochCache

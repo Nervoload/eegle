@@ -7,7 +7,15 @@ import unittest
 
 import numpy as np
 
-from eegle.actions import ActionCancellation, ActionDisposition, ActionRequest
+from eegle.actions import (
+    ActionCancellation,
+    ActionDisposition,
+    ActionRequest,
+    AuthorizationEvaluation,
+    AuthorizationRequest,
+    AuthorizationResult,
+    AuthorizationStatus,
+)
 from eegle._domain import (
     ComponentKind,
     Determinism,
@@ -27,6 +35,10 @@ from eegle.replay import ReplayActionSafetyError, ReplayRunner
 from eegle.runtime import EngineStatus, ExecutionEngine
 from eegle.specs import DeploymentSpec, ProtocolSpec, SuiteSpec
 from eegle.streams import DenseSampleBatch, SparseEvent, SparseEventBatch, TimePoint
+from tests.fixtures.phase5_model_components import (
+    compile_phase5_suite as compile_suite,
+    register_phase5_plugins,
+)
 
 
 FIXTURE = (
@@ -45,6 +57,7 @@ def _payload(name: str) -> dict:
 def _registry(*descriptors: PluginDescriptor) -> PluginRegistry:
     registry = PluginRegistry()
     registry.register_builtins()
+    register_phase5_plugins(registry)
     for descriptor in descriptors:
         registry.register(descriptor)
     return registry
@@ -152,6 +165,20 @@ class FailingProvider:
         raise RuntimeError("interlock service unavailable")
 
 
+class ParameterAwareProvider:
+    def authorize(self, evaluation, context):
+        intensity = float(evaluation.parameters["intensity"])
+        return AuthorizationResult(
+            AuthorizationStatus.AUTHORIZED
+            if intensity <= 0.5
+            else AuthorizationStatus.DENIED,
+            reason="provider_parameter_bound",
+            evidence={"evaluated_intensity": intensity},
+        )
+
+    def resolve(self, evaluation, pending, context):
+        raise AssertionError("parameter-aware provider never returns pending")
+
 def _failing_provider_descriptor() -> PluginDescriptor:
     return PluginDescriptor(
         plugin_id="test.authorization.failing",
@@ -176,6 +203,30 @@ def _failing_provider_descriptor() -> PluginDescriptor:
     )
 
 
+def _parameter_aware_provider_descriptor() -> PluginDescriptor:
+    return PluginDescriptor(
+        plugin_id="test.authorization.parameter_aware",
+        version="1.0.0",
+        kind=ComponentKind.AUTHORIZATION,
+        config_schema={
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": False,
+        },
+        input_ports=(),
+        output_ports=(),
+        capabilities=PluginCapabilities(
+            supported_modes=frozenset(ExecutionMode),
+            determinism=Determinism.DETERMINISTIC,
+            equivalence=EquivalenceLevel.BITWISE,
+            state_behavior=StateBehavior.STATELESS,
+        ),
+        factory=lambda config: ParameterAwareProvider(),
+        implementation="tests.test_phase6_action_authorization:ParameterAwareProvider",
+        distribution="tests",
+    )
+
+
 class ForgedCommandPolicy:
     def decide(self, prediction, state, context):
         return None
@@ -191,7 +242,7 @@ def _forged_policy_descriptor() -> PluginDescriptor:
             "type": "object",
             "additionalProperties": False,
         },
-        input_ports=(PortSpec("prediction", "eegle.prediction.v1"),),
+        input_ports=(PortSpec("prediction", "eegle.prediction.v2"),),
         output_ports=(PortSpec("request", "eegle.authorized_command.v1"),),
         capabilities=PluginCapabilities(
             supported_modes=frozenset(ExecutionMode),
@@ -244,7 +295,7 @@ def _forged_request_policy_descriptor() -> PluginDescriptor:
             "required": ["forgery"],
             "additionalProperties": False,
         },
-        input_ports=(PortSpec("prediction", "eegle.prediction.v1"),),
+        input_ports=(PortSpec("prediction", "eegle.prediction.v2"),),
         output_ports=(PortSpec("request", "eegle.action_request.v1"),),
         capabilities=PluginCapabilities(
             supported_modes=frozenset(ExecutionMode),
@@ -418,6 +469,33 @@ class Phase6ActionAuthorizationTests(unittest.TestCase):
                 decisions = _records(run, "authorization_decision")
                 self.assertEqual(decisions[-1]["status"], "denied")
                 self.assertIn(reason, decisions[-1]["reason"])
+
+    def test_provider_receives_immutable_parameters_while_evidence_keeps_only_digest(self) -> None:
+        suite = _payload("suite.json")
+        suite["components"][6]["config"]["parameters"] = {"intensity": 0.75}
+        deployment = _payload("deployment.json")
+        deployment["authorization_providers"][0].update(
+            {
+                "plugin_id": "test.authorization.parameter_aware",
+                "version_spec": "==1.0.0",
+                "config": {},
+            }
+        )
+        registry = _registry(_parameter_aware_provider_descriptor())
+        _, run = _run(suite=suite, deployment=deployment, registry=registry)
+
+        request = _records(run, "authorization_request")[0]
+        decision = _records(run, "authorization_decision")[-1]
+        self.assertNotIn("parameters", request)
+        self.assertIn("parameters_digest", request)
+        self.assertEqual(decision["status"], "denied")
+        self.assertEqual(decision["evidence"]["evaluated_intensity"], 0.75)
+        self.assertEqual(_records(run, "authorized_command"), [])
+        with self.assertRaisesRegex(ValueError, "parameter digest mismatch"):
+            AuthorizationEvaluation(
+                AuthorizationRequest.from_payload(request),
+                {"intensity": 0.25},
+            )
 
     def test_pending_authorization_resolves_or_expires_causally(self) -> None:
         deployment = _payload("deployment.json")

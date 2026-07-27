@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Mapping
 import unittest
@@ -550,7 +551,7 @@ class Phase6RoleSemanticTests(unittest.TestCase):
             run.phase_results[0].failure or "",
         )
 
-    def test_compiler_rejects_legacy_role_knobs_and_split_comparison_phases(self) -> None:
+    def test_specs_reject_legacy_role_knobs_and_compiler_rejects_split_comparison_phases(self) -> None:
         manifest = _manifest()
         payload = _suite_payload(
             manifest,
@@ -567,7 +568,14 @@ class Phase6RoleSemanticTests(unittest.TestCase):
                 },
             ),
         )
-        payload["scheduling"]["shadow_queue_limit"] = 4
+        legacy = deepcopy(payload)
+        legacy["scheduling"]["shadow_queue_limit"] = 4
+        with self.assertRaisesRegex(Exception, "Additional properties"):
+            SuiteSpec.from_payload(legacy)
+        duplicate_role = deepcopy(payload)
+        duplicate_role["components"][0]["role"] = "primary"
+        with self.assertRaisesRegex(Exception, "Additional properties"):
+            SuiteSpec.from_payload(duplicate_role)
         payload["phases"][0]["components"] = ["model.primary"]
         with self.assertRaises(CompilationError) as raised:
             compile_suite(
@@ -578,7 +586,6 @@ class Phase6RoleSemanticTests(unittest.TestCase):
                 model_manifests={manifest.manifest_digest: manifest},
             )
         codes = {value.code for value in raised.exception.diagnostics}
-        self.assertIn("model.legacy_role_scheduling", codes)
         self.assertIn("model.comparison_phase", codes)
 
 

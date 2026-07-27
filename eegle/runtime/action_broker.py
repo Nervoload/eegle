@@ -11,6 +11,7 @@ from eegle.actions.authorization import (
     ActionDisposition,
     ActionDispositionStatus,
     AuthorizationDecision,
+    AuthorizationEvaluation,
     AuthorizationRequest,
     AuthorizationResult,
     AuthorizationStatus,
@@ -126,7 +127,11 @@ class ActionBroker:
 
         runtime_provider = self._runtime.authorization_provider(grant.provider_id)
         try:
-            result = runtime_provider.provider.authorize(authorization_request, context)
+            evaluation = AuthorizationEvaluation(
+                authorization_request,
+                request.parameters,
+            )
+            result = runtime_provider.provider.authorize(evaluation, context)
             return self._from_result(
                 request,
                 actuator_id,
@@ -174,8 +179,12 @@ class ActionBroker:
             raise RuntimeError("pending authorization no longer matches the immutable plan")
         runtime_provider = self._runtime.authorization_provider(grant.provider_id)
         try:
-            result = runtime_provider.provider.resolve(
+            evaluation = AuthorizationEvaluation(
                 authorization_request,
+                request.parameters,
+            )
+            result = runtime_provider.provider.resolve(
+                evaluation,
                 pending.pending_decision,
                 context,
             )

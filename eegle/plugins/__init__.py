@@ -20,11 +20,14 @@ from eegle.plugins.contracts import (
     Transform,
     WindowBuilder,
 )
+from eegle.plugins.construction import MaterializedArtifact, ModelConstructionContext
 from eegle.plugins.registry import (
+    ConstructionAPI,
     PluginCapabilities,
     PluginDescriptor,
     PluginRegistry,
     PortSpec,
+    ProcessingOperationBinding,
     StateBehavior,
     validate_component_instance,
 )
@@ -37,6 +40,7 @@ __all__ = [
     "Adapter",
     "ArtifactProducer",
     "ComponentKind",
+    "ConstructionAPI",
     "Determinism",
     "EquivalenceLevel",
     "ExecutionContext",
@@ -44,12 +48,15 @@ __all__ = [
     "ExecutionMode",
     "LifecycleComponent",
     "Model",
+    "MaterializedArtifact",
+    "ModelConstructionContext",
     "OutcomeResolver",
     "PluginCapabilities",
     "PluginDescriptor",
     "PluginRegistry",
     "Policy",
     "PortSpec",
+    "ProcessingOperationBinding",
     "QualityGate",
     "Sink",
     "Source",

@@ -48,6 +48,10 @@ from eegle.streams import (
     StreamSpec,
     TimePoint,
 )
+from tests.fixtures.phase5_model_components import (
+    compile_phase5_suite as compile_suite,
+    register_phase5_plugins,
+)
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "migration" / "phase5_simulated"
@@ -83,6 +87,7 @@ def _calibration_payload(name: str) -> dict:
 def _registry() -> PluginRegistry:
     value = PluginRegistry()
     value.register_builtins()
+    register_phase5_plugins(value)
     return value
 
 
@@ -202,7 +207,7 @@ class Phase5PlanExecutionTests(unittest.TestCase):
             "model.primary", "prediction"
         )
         self.assertEqual(len(predictions), 3)
-        self.assertEqual(predictions[0].role, "primary")
+        self.assertEqual(predictions[0].role_id, "primary")
         prediction_records = [
             record
             for record in run.evidence
@@ -248,8 +253,6 @@ class Phase5PlanExecutionTests(unittest.TestCase):
         suite = _payload("suite.json")
         suite["components"] = suite["components"][:-1]
         suite["routes"] = suite["routes"][:-1]
-        suite["components"][-1]["role"] = "candidate"
-        suite["components"][-1]["config"]["role"] = "candidate"
         suite["phases"][0]["components"] = suite["phases"][0]["components"][:-1]
         deployment = _with_packets(
             _payload("deployment.json"),
@@ -263,7 +266,7 @@ class Phase5PlanExecutionTests(unittest.TestCase):
         prediction = run.phase_results[0].emissions_from(
             "model.primary", "prediction"
         )[0]
-        self.assertEqual(prediction.role, "candidate")
+        self.assertEqual(prediction.role_id, "observer")
 
     def test_dense_and_sparse_sources_are_merged_by_availability_and_recorded(self) -> None:
         suite = _recording_suite()

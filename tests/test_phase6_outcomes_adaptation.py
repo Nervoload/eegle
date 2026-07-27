@@ -47,6 +47,7 @@ from eegle.runtime import (
     OutcomeReference,
     OutcomeReferenceKind,
     OutcomeUse,
+    PlanConstructionError,
     StateTransition,
     TransitionStatus,
 )
@@ -104,6 +105,54 @@ class AdaptiveMeanModel:
         self.bias = float(state["bias"])
 
 
+class LiveMappingFailingModel:
+    """Adversarial component that exposes its mutable internal state directly."""
+
+    def __init__(self, config: Mapping[str, Any]) -> None:
+        self.state = {
+            "schema": "fixture.phase6_live_mapping_state.v1",
+            "nested": {"bias": float(config.get("initial_bias", 0.0))},
+        }
+
+    def predict(self, packet: DenseSampleBatch, context: Any) -> ModelResult:
+        return ModelResult(
+            {"score": float(np.mean(packet.values)) + self.state["nested"]["bias"]}
+        )
+
+    def adapt(
+        self,
+        prediction: Prediction,
+        outcome: Outcome,
+        context: Any,
+    ) -> AdaptationResult:
+        self.state["nested"]["bias"] += 3.0
+        self.state["invalid_intermediate"] = object()
+        raise RuntimeError("deliberate live-state mutation")
+
+    def snapshot_state(self) -> Mapping[str, Any]:
+        return self.state
+
+    def restore_state(self, state: Mapping[str, Any]) -> None:
+        self.state = {
+            "schema": str(state["schema"]),
+            "nested": {"bias": float(state["nested"]["bias"])},
+        }
+
+
+class InvalidSnapshotModel(LiveMappingFailingModel):
+    """A noncanonical initial state must fail before execution begins."""
+
+    def snapshot_state(self) -> Mapping[str, Any]:
+        return {**self.state, "invalid": object()}
+
+
+class BrokenRestoreModel(LiveMappingFailingModel):
+    """A failed rollback is fatal rather than reported as a transition."""
+
+    def restore_state(self, state: Mapping[str, Any]) -> None:
+        raise RuntimeError("deliberate restore failure")
+
+
 class PredictionOutcomeResolver:
     def __init__(self, config: Mapping[str, Any]) -> None:
         self.mode = str(config.get("mode", "one"))
@@ -158,7 +207,7 @@ def _capabilities(*, stateful: bool = False) -> PluginCapabilities:
     )
 
 
-def _registry() -> PluginRegistry:
+def _registry(*, model_factory: Any = AdaptiveMeanModel) -> PluginRegistry:
     registry = PluginRegistry()
     registry.register_builtins()
     registry.register(
@@ -185,7 +234,7 @@ def _registry() -> PluginRegistry:
             input_ports=(PortSpec("samples", DENSE, required=False),),
             output_ports=(PortSpec("prediction", PREDICTION_RECORD_SCHEMA),),
             capabilities=_capabilities(stateful=True),
-            factory=AdaptiveMeanModel,
+            factory=model_factory,
             implementation="tests.phase6_outcomes:AdaptiveMeanModel",
             distribution="phase6-outcome-fixture",
         )
@@ -418,10 +467,12 @@ def _deployment(
 
 def _compiled(
     packets: tuple[DenseSampleBatch, ...],
+    *,
+    model_factory: Any = AdaptiveMeanModel,
     **suite_options: Any,
 ):
     manifest = _manifest()
-    registry = _registry()
+    registry = _registry(model_factory=model_factory)
     adaptation = bool(suite_options.get("adaptation", False))
     compiled = compile_suite(
         _protocol(),
@@ -592,6 +643,57 @@ class Phase6OutcomeAdaptationTests(unittest.TestCase):
             ["requested", "failed", "rolled_back"],
         )
         self.assertEqual(failed_engine.runtime.node("model.adaptive").component.bias, 0.0)
+
+        adversarial, registry = _compiled(
+            (packet,),
+            model_factory=LiveMappingFailingModel,
+            adaptation=True,
+        )
+        adversarial_engine = ExecutionEngine.from_plan(adversarial.plan, registry)
+        adversarial_run = adversarial_engine.run()
+        component = adversarial_engine.runtime.node("model.adaptive").component
+        transitions = [
+            value.payload
+            for value in adversarial_run.evidence
+            if value.record_type == "state_transition"
+        ]
+        self.assertEqual(
+            [value["status"] for value in transitions],
+            ["requested", "failed", "rolled_back"],
+        )
+        self.assertEqual(component.state["nested"]["bias"], 0.0)
+        self.assertEqual(
+            transitions[0]["prior_state_hash"],
+            transitions[-1]["resulting_state_hash"],
+        )
+
+        invalid, registry = _compiled(
+            (packet,),
+            model_factory=InvalidSnapshotModel,
+            adaptation=True,
+        )
+        with self.assertRaisesRegex(
+            PlanConstructionError,
+            "model admission failed.*explicitly JSON-compatible",
+        ):
+            ExecutionEngine.from_plan(invalid.plan, registry)
+
+        broken, registry = _compiled(
+            (packet,),
+            model_factory=BrokenRestoreModel,
+            adaptation=True,
+        )
+        broken_run = ExecutionEngine.from_plan(broken.plan, registry).run()
+        self.assertEqual(broken_run.status, EngineStatus.FAILED)
+        self.assertIn("adaptive model rollback failed", broken_run.reason or "")
+        self.assertNotIn(
+            "rolled_back",
+            [
+                value.payload["status"]
+                for value in broken_run.evidence
+                if value.record_type == "state_transition"
+            ],
+        )
 
     def test_outcome_state_survives_checkpoint_and_adaptation_bundle_replay(self) -> None:
         packets = (

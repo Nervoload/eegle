@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 import unittest
 
 from eegle._domain import ComponentKind, Determinism, EquivalenceLevel, ExecutionMode
@@ -24,10 +25,12 @@ from eegle.models import (
     PreprocessingRequirement,
 )
 from eegle.plugins import (
+    ConstructionAPI,
     PluginCapabilities,
     PluginDescriptor,
     PluginRegistry,
     PortSpec,
+    ProcessingOperationBinding,
     StateBehavior,
 )
 from eegle.recording import ArtifactReference, Sensitivity
@@ -77,6 +80,11 @@ def _descriptor(
         factory=lambda config: object(),
         implementation=f"tests.phase6:{plugin_id.rsplit('.', 1)[-1]}",
         distribution="phase6-fixture",
+        construction_api=(
+            ConstructionAPI.MODEL_CONTEXT_V1
+            if kind == ComponentKind.MODEL
+            else ConstructionAPI.CONFIG_V1
+        ),
     )
 
 
@@ -131,6 +139,7 @@ def _manifest(
     required_channels: tuple[str, ...] = ("sensor.oxy", "sensor.deoxy"),
     implementation: str = "fixture.model.slow",
     supported_modes: frozenset[ExecutionMode] = frozenset({ExecutionMode.CAUSAL}),
+    detrend_parameters: dict | None = None,
 ) -> ModelManifest:
     contract = ModelContract(
         inputs=(
@@ -150,6 +159,7 @@ def _manifest(
                         requirement_id="requirement.detrend",
                         operation="detrend",
                         ownership=PreprocessingOwnership.UPSTREAM,
+                        parameters=detrend_parameters or {},
                         required_lineage=("transform.detrend",),
                     ),
                     PreprocessingRequirement(
@@ -267,7 +277,6 @@ def _suite(manifest: ModelManifest, *, role: str = "primary", policy: bool = Fal
             "kind": "model",
             "plugin_id": "fixture.model.slow",
             "version_spec": "~=1.2",
-            "role": role,
             "config": {},
         },
     ]
@@ -447,6 +456,114 @@ class Phase6CompilerBindingTests(unittest.TestCase):
             {value.code for value in raised.exception.diagnostics},
         )
 
+    def test_preprocessing_parameters_are_projected_and_locked(self) -> None:
+        manifest = _manifest(
+            detrend_parameters={"causal": True, "axis": "time"}
+        )
+        registry = _registry()
+        registry.unregister("fixture.transform.detrend")
+        registry.register(
+            PluginDescriptor(
+                plugin_id="fixture.transform.detrend",
+                version="1.2.0",
+                kind=ComponentKind.TRANSFORM,
+                config_schema={
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {"axis": {"type": "string"}},
+                    "additionalProperties": False,
+                },
+                input_ports=(PortSpec("input", _DENSE_WINDOW),),
+                output_ports=(PortSpec("output", _DENSE_WINDOW),),
+                capabilities=PluginCapabilities(
+                    supported_modes=frozenset({ExecutionMode.CAUSAL}),
+                    determinism=Determinism.DETERMINISTIC,
+                    equivalence=EquivalenceLevel.NUMERIC,
+                    state_behavior=StateBehavior.STATELESS,
+                    processing_operations=(
+                        ProcessingOperationBinding(
+                            "detrend",
+                            fixed_parameters={"causal": True},
+                            config_projection={"axis": "/axis"},
+                        ),
+                    ),
+                ),
+                factory=lambda config: object(),
+                implementation="tests.phase6:parameterized_detrend",
+                distribution="phase6-fixture",
+            )
+        )
+        suite = _suite(manifest)
+        suite["components"][1]["config"] = {"axis": "time"}
+        compiled = _compile(manifest, suite=suite, registry=registry)
+        attestation = compiled.plan.model_bindings[0].preprocessing_attestations[0]
+        self.assertEqual(attestation.owner_id, "transform.detrend")
+        self.assertEqual(
+            dict(attestation.parameters),
+            {"causal": True, "axis": "time"},
+        )
+
+        mismatched = deepcopy(suite)
+        mismatched["components"][1]["config"]["axis"] = "channels"
+        with self.assertRaises(CompilationError) as raised:
+            _compile(manifest, suite=mismatched, registry=registry)
+        self.assertIn(
+            "model.preprocessing_parameters",
+            {value.code for value in raised.exception.diagnostics},
+        )
+
+    def test_artifact_prepared_and_forbidden_processing_are_digest_bound(self) -> None:
+        manifest = _manifest()
+        input_contract = manifest.contract.inputs[0]
+        processing = (
+            *input_contract.preprocessing,
+            PreprocessingRequirement(
+                requirement_id="requirement.artifact-scaling",
+                operation="robust_scaling",
+                ownership=PreprocessingOwnership.ARTIFACT_PREPARED,
+                parameters={"quantile_low": 0.1, "quantile_high": 0.9},
+            ),
+            PreprocessingRequirement(
+                requirement_id="requirement.no-zero-phase",
+                operation="zero_phase_filter",
+                ownership=PreprocessingOwnership.FORBIDDEN,
+            ),
+        )
+        contract = replace(
+            manifest.contract,
+            inputs=(replace(input_contract, preprocessing=processing),),
+        )
+        manifest = replace(manifest, contract=contract)
+
+        compiled = _compile(manifest)
+
+        attestations = {
+            value.requirement_id: value
+            for value in compiled.plan.model_bindings[0].preprocessing_attestations
+        }
+        artifact = attestations["requirement.artifact-scaling"]
+        self.assertEqual(artifact.owner_kind, "artifact_prepared")
+        self.assertEqual(artifact.owner_id, manifest.manifest_digest)
+        self.assertEqual(
+            dict(artifact.parameters),
+            {"quantile_low": 0.1, "quantile_high": 0.9},
+        )
+        forbidden = attestations["requirement.no-zero-phase"]
+        self.assertEqual(forbidden.owner_id, "compiled_route")
+
+    def test_every_model_requires_a_manifest_binding(self) -> None:
+        manifest = _manifest()
+        suite = _suite(manifest)
+        suite["model_uses"] = []
+
+        with self.assertRaises(CompilationError) as raised:
+            _compile(manifest, suite=suite)
+
+        self.assertIn(
+            "model.binding_missing",
+            {value.code for value in raised.exception.diagnostics},
+        )
+
     def test_artifact_digest_and_implementation_are_compiler_checked(self) -> None:
         manifest = _manifest()
         deployment = _deployment(manifest)
@@ -470,6 +587,19 @@ class Phase6CompilerBindingTests(unittest.TestCase):
             {value.code for value in raised.exception.diagnostics},
         )
 
+        config_only = _registry()
+        descriptor = config_only.resolve("fixture.model.slow", "==1.2.0")
+        config_only.unregister("fixture.model.slow")
+        config_only.register(
+            replace(descriptor, construction_api=ConstructionAPI.CONFIG_V1)
+        )
+        with self.assertRaises(CompilationError) as raised:
+            _compile(manifest, registry=config_only)
+        self.assertIn(
+            "model.construction_api",
+            {value.code for value in raised.exception.diagnostics},
+        )
+
     def test_role_permissions_prevent_shadow_policy_influence(self) -> None:
         manifest = _manifest()
         suite = _suite(manifest, role="shadow", policy=True)
@@ -487,7 +617,6 @@ class Phase6CompilerBindingTests(unittest.TestCase):
         suite = _suite(manifest)
         shadow = deepcopy(suite["components"][2])
         shadow["component_id"] = "model.shadow"
-        shadow["role"] = "shadow"
         suite["components"].append(shadow)
         suite["routes"].append(
             {

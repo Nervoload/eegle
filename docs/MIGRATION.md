@@ -988,16 +988,16 @@ runtime switch between old and new engines.
 The authoritative live status is in `MIGRATION_STATUS.md`. This table summarizes
 the intended gates.
 
-| Phase | Name | Status at 2026-07-23 | Principal deliverable |
+| Phase | Name | Status at 2026-07-27 | Principal deliverable |
 |---|---|---|---|
 | 0 | Charter, inventory, cleanup boundaries | Complete | Authority, inventory, fixtures, deletion decisions |
 | 1 | Correctness and behavior evidence | Complete | Corrected current contracts and golden invariants |
 | 2 | New foundations | Complete | Typed records, plugin contracts, schemas, clean package boundaries |
 | 3 | Single execution engine | Complete | One engine for simulation and replay with causal accounting |
 | 4 | Adaptive sessions and evidence | Complete | Versioned evidence bundles, stores, recovery, privacy |
-| 5 | Specifications and compiler | In progress | Protocol/Suite/Deployment to locked ExecutionPlan and sole graph engine |
-| 6 | General semantics | Not started | Modality-neutral models, outcomes, adaptation, actions |
-| 7 | CLI and integrations | Not started | New CLI, minimal wheel, LSL and optional adapters |
+| 5 | Specifications and compiler | Complete | Protocol/Suite/Deployment to locked ExecutionPlan and sole graph engine |
+| 6 | General semantics | Complete | Modality-neutral models, outcomes, adaptation, actions |
+| 7 | CLI and integrations | Ready | New CLI, minimal wheel, LSL and optional adapters |
 | 8 | Validation and public alpha | Not started | Layered validation, hardening, truthful support release |
 
 ## 19. Definition of migration complete

@@ -256,6 +256,7 @@ def compile_suite(
         resolved,
         graph,
         model_manifests or {},
+        merged_configs,
         diagnostics,
     )
     planned_expectations, planned_adaptations = _compile_outcome_adaptation(
@@ -307,7 +308,7 @@ def compile_suite(
             config=merged_configs[component.component_id],
             input_bindings=input_bindings.get(component.component_id, {}),
             output_bindings=output_bindings.get(component.component_id, {}),
-            role=compiled_model_roles.get(component.component_id, component.role),
+            role=compiled_model_roles.get(component.component_id),
             stream_id=component.stream_id,
             required_capabilities=component.required_capabilities,
             outcome_uses=component.outcome_uses,
@@ -1225,7 +1226,7 @@ def _capability_tokens(descriptor: PluginDescriptor) -> set[str]:
         f"equivalence:{capabilities.equivalence.value}",
         f"state:{capabilities.state_behavior.value}",
         *(f"resource:{value}" for value in capabilities.resources),
-        *(f"processing:{value}" for value in capabilities.processing_operations),
+        *(f"processing:{value.operation}" for value in capabilities.processing_operations),
     }
     if capabilities.requires_future:
         values.add("requires_future")

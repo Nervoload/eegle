@@ -153,6 +153,20 @@ class AuthorizationRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class AuthorizationEvaluation:
+    """Runtime-only canonical parameters paired with persistent request evidence."""
+
+    request: AuthorizationRequest
+    parameters: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        parameters = freeze_json(self.parameters)
+        if canonical_hash(thaw_json(parameters)) != self.request.parameters_digest:
+            raise ValueError("authorization parameter digest mismatch")
+        object.__setattr__(self, "parameters", parameters)
+
+
+@dataclass(frozen=True, slots=True)
 class AuthorizationResult:
     """Provider-returned result without plan or evidence identity authority."""
 

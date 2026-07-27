@@ -18,10 +18,20 @@ from eegle.compiler.plan import (
     PlannedPlacement,
 )
 from eegle.plugins.registry import (
+    ConstructionAPI,
     PluginDescriptor,
     PluginRegistry,
     StateBehavior,
     validate_component_instance,
+)
+from eegle.plugins.construction import ModelConstructionContext
+from eegle.runtime.canonical_state import canonicalize_state, capture_canonical_state
+from eegle.runtime.model_admission import (
+    ArtifactResolver,
+    LocalFileArtifactResolver,
+    ModelAdmissionReceipt,
+    admit_model_instance,
+    materialize_model_context,
 )
 
 
@@ -39,6 +49,7 @@ class ComponentProxyFactory(Protocol):
         plugin: LockedPlugin,
         descriptor: PluginDescriptor,
         placement: PlannedPlacement,
+        construction_context: "ModelConstructionContext | None",
     ) -> Any:
         ...
 
@@ -51,6 +62,7 @@ class RuntimeNode:
     placement: PlannedPlacement
     component: Any
     model_binding: PlannedModelBinding | None = None
+    model_admission: ModelAdmissionReceipt | None = None
 
     @property
     def component_id(self) -> str:
@@ -160,16 +172,25 @@ class PlanRuntime:
             raise PlanConstructionError(
                 "runtime model bindings do not exactly match the immutable plan"
             )
-        if planned_model_bindings:
-            model_components = {
-                value.component_id
-                for value in nodes
-                if value.plugin.kind == ComponentKind.MODEL
-            }
-            if set(planned_model_bindings) != model_components:
-                raise PlanConstructionError(
-                    "every model component requires exactly one planned model binding"
-                )
+        model_components = {
+            value.component_id
+            for value in nodes
+            if value.plugin.kind == ComponentKind.MODEL
+        }
+        if set(planned_model_bindings) != model_components:
+            raise PlanConstructionError(
+                "every model component requires exactly one planned model binding"
+            )
+        missing_admission = sorted(
+            value.component_id
+            for value in nodes
+            if value.plugin.kind == ComponentKind.MODEL
+            and value.model_admission is None
+        )
+        if missing_admission:
+            raise PlanConstructionError(
+                "model runtime admission is incomplete for " + ", ".join(missing_admission)
+            )
         self._verify_graph_ports()
         self._closed = False
 
@@ -255,7 +276,7 @@ class PlanRuntime:
                     f"component {node.component_id} must expose snapshot and restore together"
                 )
             if callable(snapshot):
-                states[node.component_id] = snapshot()
+                states[node.component_id] = capture_canonical_state(node.component).thaw()
         for provider in self.authorization_providers:
             snapshot = getattr(provider.provider, "snapshot_state", None)
             restore = getattr(provider.provider, "restore_state", None)
@@ -264,7 +285,9 @@ class PlanRuntime:
                     f"authorization provider {provider.provider_id} must expose snapshot and restore together"
                 )
             if callable(snapshot):
-                states[f"authorization:{provider.provider_id}"] = snapshot()
+                states[f"authorization:{provider.provider_id}"] = capture_canonical_state(
+                    provider.provider
+                ).thaw()
         return PlanRuntimeSnapshot(self.plan.plan_hash, states)
 
     def restore_state(self, snapshot: PlanRuntimeSnapshot) -> None:
@@ -291,20 +314,23 @@ class PlanRuntime:
                 f"(missing={missing}, unexpected={unexpected})"
             )
         for component_id, state in snapshot.component_states.items():
+            expected_state = canonicalize_state(state)
             if component_id.startswith("authorization:"):
                 provider_id = component_id.split(":", 1)[1]
-                restore = getattr(
-                    self.authorization_provider(provider_id).provider,
-                    "restore_state",
-                    None,
-                )
+                authority = self.authorization_provider(provider_id).provider
             else:
-                restore = getattr(self.node(component_id).component, "restore_state", None)
+                authority = self.node(component_id).component
+            restore = getattr(authority, "restore_state", None)
             if not callable(restore):
                 raise PlanConstructionError(
                     f"runtime authority {component_id} cannot restore locked state"
                 )
-            restore(thaw_json(state))
+            restore(expected_state.thaw())
+            observed_state = capture_canonical_state(authority)
+            if observed_state.state_hash != expected_state.state_hash:
+                raise PlanConstructionError(
+                    f"runtime authority {component_id} did not restore the exact locked state"
+                )
 
     def close(self) -> tuple[str, ...]:
         if self._closed:
@@ -331,6 +357,7 @@ def construct_plan_runtime(
     *,
     proxy_factory: ComponentProxyFactory | None = None,
     component_overrides: Mapping[str, Any] | None = None,
+    artifact_resolver: ArtifactResolver | None = None,
 ) -> PlanRuntime:
     """Construct exactly the implementations locked by a compiled plan."""
 
@@ -348,6 +375,7 @@ def construct_plan_runtime(
         )
     nodes: list[RuntimeNode] = []
     model_bindings = {value.component_id: value for value in plan.model_bindings}
+    resolver = artifact_resolver or LocalFileArtifactResolver()
     for component in plan.components:
         key = (component.plugin_id, component.plugin_version)
         plugin = locked.get(key)
@@ -370,6 +398,29 @@ def construct_plan_runtime(
             component.component_id,
             PlannedPlacement(component.component_id, "in_process"),
         )
+        model_binding = model_bindings.get(component.component_id)
+        construction_context = None
+        if plugin.kind == ComponentKind.MODEL:
+            if model_binding is None:
+                if descriptor.construction_api == ConstructionAPI.MODEL_CONTEXT_V1:
+                    raise PlanConstructionError(
+                        f"context-constructed model {component.component_id} lacks a locked binding"
+                    )
+            else:
+                if (
+                    model_binding.artifacts
+                    and descriptor.construction_api != ConstructionAPI.MODEL_CONTEXT_V1
+                ):
+                    raise PlanConstructionError(
+                        f"artifact-bearing model {component.component_id} requires "
+                        "model_context_v1 construction"
+                    )
+                try:
+                    construction_context = materialize_model_context(model_binding, resolver)
+                except Exception as exc:
+                    raise PlanConstructionError(
+                        f"model artifact admission failed for {component.component_id}: {exc}"
+                    ) from exc
         if component.component_id in overrides:
             if plugin.kind != ComponentKind.SOURCE:
                 raise PlanConstructionError(
@@ -387,6 +438,11 @@ def construct_plan_runtime(
                 component.config,
                 f"=={component.plugin_version}",
                 mode=plan.execution_mode,
+                construction_context=(
+                    construction_context
+                    if descriptor.construction_api == ConstructionAPI.MODEL_CONTEXT_V1
+                    else None
+                ),
             )
         else:
             if proxy_factory is None:
@@ -398,8 +454,23 @@ def construct_plan_runtime(
                 plugin,
                 descriptor,
                 placement,
+                construction_context,
             )
             validate_component_instance(descriptor, instance)
+        model_admission = None
+        if model_binding is not None:
+            assert construction_context is not None
+            try:
+                model_admission = admit_model_instance(
+                    model_binding,
+                    construction_context,
+                    instance,
+                    state_behavior=descriptor.capabilities.state_behavior,
+                )
+            except Exception as exc:
+                raise PlanConstructionError(
+                    f"model admission failed for {component.component_id}: {exc}"
+                ) from exc
         nodes.append(
             RuntimeNode(
                 component,
@@ -407,7 +478,8 @@ def construct_plan_runtime(
                 descriptor,
                 placement,
                 instance,
-                model_bindings.get(component.component_id),
+                model_binding,
+                model_admission,
             )
         )
     if overrides:  # pragma: no cover - guarded above, retained defensively

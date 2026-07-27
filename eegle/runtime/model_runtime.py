@@ -17,6 +17,7 @@ from eegle.models.predictions import PREDICTION_RECORD_SCHEMA, Prediction
 from eegle.models.results import ModelResult
 from eegle.plugins.registry import StateBehavior
 from eegle.runtime.context import RuntimeExecutionContext
+from eegle.runtime.canonical_state import capture_canonical_state
 from eegle.runtime.plan_runtime import RuntimeNode
 from eegle.streams.clocks import TimePoint
 
@@ -271,11 +272,39 @@ class ModelResultRejected(ValueError):
         output_port: str,
         reason_code: str,
         result_digest: str | None = None,
+        violations: tuple[ModelOutputViolation, ...] | None = None,
     ) -> None:
         super().__init__(message)
-        self.output_port = output_port
-        self.reason_code = reason_code
-        self.result_digest = result_digest
+        declared = violations or (
+            ModelOutputViolation(output_port, reason_code, result_digest),
+        )
+        if not declared:
+            raise ValueError("model result rejection requires at least one violation")
+        self.violations = tuple(declared)
+        self.output_port = self.violations[0].output_port
+        self.reason_code = self.violations[0].reason_code
+        self.result_digest = self.violations[0].result_digest
+
+
+@dataclass(frozen=True, slots=True)
+class ModelOutputViolation:
+    output_port: str
+    reason_code: str
+    result_digest: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "output_port", require_identifier(self.output_port, "output_port")
+        )
+        object.__setattr__(
+            self, "reason_code", require_identifier(self.reason_code, "reason_code")
+        )
+        if self.result_digest is not None:
+            object.__setattr__(
+                self,
+                "result_digest",
+                require_digest(self.result_digest, "result_digest"),
+            )
 
 
 def execute_bound_model(
@@ -293,6 +322,8 @@ def execute_bound_model(
     binding = node.model_binding
     if binding is None:
         raise TypeError(f"model component {node.component_id} lacks a planned binding")
+    if node.model_admission is None:
+        raise TypeError(f"model component {node.component_id} lacks an admission receipt")
     state_digest = _state_digest(node, binding)
     raw = _invoke_model(node, input_port, value, context)
     output_contracts = {
@@ -305,6 +336,27 @@ def execute_bound_model(
             f"model {node.component_id} returned undeclared ports: {sorted(unknown)}",
             output_port=sorted(unknown)[0],
             reason_code="undeclared_output_port",
+        )
+    missing_violations: list[ModelOutputViolation] = []
+    for port in node.descriptor.output_ports:
+        if not port.required:
+            continue
+        if port.name not in raw or raw[port.name] is None:
+            missing_violations.append(
+                ModelOutputViolation(port.name, "missing_required_output")
+            )
+            continue
+        if port.multiple and isinstance(raw[port.name], (list, tuple)) and not raw[port.name]:
+            missing_violations.append(
+                ModelOutputViolation(port.name, "missing_required_output")
+            )
+    if missing_violations:
+        missing = ", ".join(value.output_port for value in missing_violations)
+        raise ModelResultRejected(
+            f"model {node.component_id} did not return required outputs: {missing}",
+            output_port=missing_violations[0].output_port,
+            reason_code="missing_required_output",
+            violations=tuple(missing_violations),
         )
     input_ids = (require_identifier(input_id, "model input_id"),)
     admitted_input_ids = tuple(
@@ -423,9 +475,7 @@ def _state_digest(node: RuntimeNode, binding: PlannedModelBinding) -> str | None
     if behavior == StateBehavior.STATELESS:
         return None
     if behavior == StateBehavior.SNAPSHOT_RESTORE:
-        snapshot = node.component.snapshot_state()
-        # Freeze first so mutable or non-JSON state cannot become evidence.
-        return canonical_hash(thaw_json(freeze_json(snapshot)))
+        return capture_canonical_state(node.component).state_hash
     if binding.manifest.contract.state.state_affects_predictions:
         raise ModelResultRejected(
             "prediction-affecting external state requires an attestable state digest",

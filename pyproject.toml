@@ -45,18 +45,6 @@ analysis = [
   "mne>=1.12,<2",
   "pandas>=2.3,<3",
 ]
-ml = [
-  "joblib>=1.5,<2",
-  "pyriemann>=0.9,<1",
-  "scikit-learn>=1.7,<2",
-]
-torch = [
-  "onnxruntime>=1.23,<2",
-  "torch>=2.9,<3",
-]
-foundation = [
-  "torch>=2.9,<3",
-]
 docs = [
   "mkdocs>=1.6,<2",
   "mkdocstrings[python]>=0.26,<1",
@@ -69,18 +57,13 @@ dev = [
   "twine>=5,<7",
 ]
 all = [
-  "joblib>=1.5,<2",
   "matplotlib>=3.10,<4",
   "mne>=1.12,<2",
-  "onnxruntime>=1.23,<2",
   "pandas>=2.3,<3",
   "pylsl>=1.18,<2",
-  "pyriemann>=0.9,<1",
   "psychopy>=2026.1,<2027",
-  "scikit-learn>=1.7,<2",
   "scipy>=1.14,<2",
   "specparam>=2.0.0rc6,<3",
-  "torch>=2.9,<3",
 ]
 
 [project.urls]
@@ -94,7 +77,6 @@ include = [
   "eegle",
   "eegle.actions*",
   "eegle.compiler*",
-  "eegle.ml*",
   "eegle.models*",
   "eegle.plugins*",
   "eegle.processing*",

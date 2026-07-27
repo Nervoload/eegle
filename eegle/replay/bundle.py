@@ -16,6 +16,7 @@ from eegle.replay.compare import EquivalencePolicy, compare_runs
 from eegle.replay.runner import ReplayExecution, require_simulation_only_actions
 from eegle.replay.source import ReplayMode, build_replay_source_overrides
 from eegle.runtime.phases import EngineRunResult, EngineStatus, ExecutionEngine, OperatorController
+from eegle.runtime.model_admission import ArtifactResolver
 from eegle.runtime.plan_runtime import ComponentProxyFactory
 from eegle.streams.channels import StreamSpec
 from eegle.streams.packets import Packet
@@ -112,9 +113,11 @@ class BundleReplayRunner:
         registry: PluginRegistry,
         *,
         proxy_factory: ComponentProxyFactory | None = None,
+        artifact_resolver: ArtifactResolver | None = None,
     ) -> None:
         self.registry = registry
         self.proxy_factory = proxy_factory
+        self.artifact_resolver = artifact_resolver
 
     def run(
         self,
@@ -138,6 +141,7 @@ class BundleReplayRunner:
             self.registry,
             proxy_factory=self.proxy_factory,
             component_overrides=overrides,
+            artifact_resolver=self.artifact_resolver,
         )
         external_ids = {
             value.artifact_id for value in recorded.plan.artifacts if value.external

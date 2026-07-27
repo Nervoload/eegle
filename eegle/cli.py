@@ -18,7 +18,7 @@ from eegle.experiment import ForwardExperimentRunner
 from eegle.factory import make_task_component
 from eegle.ml.registry import list_model_kinds, list_model_specs
 from eegle.ml.targets import SUPPORTED_TARGETS
-from eegle.models.bundles import import_runtime_bundle
+from eegle.realtime._legacy_model_bundles import import_runtime_bundle
 from eegle.preflight import run_preflight, write_preflight_report
 from eegle.realtime.controller import ClosedLoopController
 from eegle.realtime.epoching import extract_epochs_for_session

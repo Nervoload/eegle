@@ -25,8 +25,8 @@ broader discovery when touching shared orchestration.
 - `test_phase5_execution_semantics.py`: durable target-shaped quality,
   cancellation, watermark, deadline, and runtime-surface acceptance.
 - `test_phase5_remaining_semantics.py`: compiled triggers, mid-phase checkpoint
-  restoration, timeout/acceptance decisions, role-aware backpressure,
-  outcome/action permissions, and the final durable Phase 5 suites.
+  restoration, timeout/acceptance decisions, outcome/action permissions, and
+  the final durable Phase 5 suites using canonical Phase 6 model bindings.
 - `test_phase5_packaging.py`: clean-wheel root-module exclusions and the inert
   dependency-free `python -m eegle` boundary before the Phase 7 CLI exists.
 - `test_phase6_model_authority.py`: modality-neutral model contracts, path-free
@@ -59,7 +59,8 @@ broader discovery when touching shared orchestration.
 - `test_classification.py`: recipe-independent Phase 6/8 evidence for
   label-blind metadata, input contracts, model bundles, epoch quality, replay,
   rejection accounting, and training eligibility.
-- `test_ml_infrastructure.py`: model registry, channel contracts,
+- `test_ml_infrastructure.py`: source-only extraction evidence for the retired
+  model registry, channel contracts,
   attention-lapse targets, threshold calibration, external checkpoint adapters,
   and stimulation policy gates.
 - `test_closed_loop_model_system.py`: closed-loop model system and realtime

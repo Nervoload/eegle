@@ -61,12 +61,10 @@
     {
       "component_id": "model.primary",
       "kind": "model",
-      "plugin_id": "eegle.models.mean_threshold",
+      "plugin_id": "fixture.phase5.mean_threshold",
       "version_spec": "~=0.1.0",
-      "role": "primary",
       "config": {
         "model_id": "model.mean.primary",
-        "role": "primary",
         "threshold": 0.0
       },
       "input_contracts": {

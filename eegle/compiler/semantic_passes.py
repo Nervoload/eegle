@@ -272,22 +272,7 @@ def validate_roles_and_actions(
     diagnostics: list[CompilationDiagnostic],
     model_bindings: tuple[PlannedModelBinding, ...] = (),
 ) -> None:
-    models = [value for value in suite.components if value.kind == ComponentKind.MODEL]
     bound_models = {value.component_id: value for value in model_bindings}
-    if models:
-        missing = [
-            value.component_id
-            for value in models
-            if value.role is None and value.component_id not in bound_models
-        ]
-        if missing:
-            diagnostics.append(
-                _error(
-                    "role.missing",
-                    "$.suite.components",
-                    f"model roles are required: {', '.join(missing)}",
-                )
-            )
     components = {value.component_id: value for value in suite.components}
     incoming_models: dict[str, set[str]] = {}
     for route in suite.routes:
@@ -320,39 +305,20 @@ def validate_roles_and_actions(
                 for value in routed_models
                 if value.component_id in bound_models
             ]
-            if bound_routed:
-                authorized = [
-                    value for value in bound_routed if value.role.may_feed_policy
-                ]
-                if len(authorized) != 1 or len(bound_routed) != len(authorized):
-                    diagnostics.append(
-                        _error(
-                            "role.policy_feeder",
-                            f"$.suite.phases[{phase_index}].components",
-                            f"policy {policy.component_id} requires exactly one routed model "
-                            "whose compiled role may feed policy",
-                        )
-                    )
+            if len(bound_routed) != len(routed_models):
                 continue
-            primary = [value for value in routed_models if value.role == "primary"]
-            if len(primary) != 1:
+            authorized = [
+                value for value in bound_routed if value.role.may_feed_policy
+            ]
+            if len(authorized) != 1 or len(bound_routed) != len(authorized):
                 diagnostics.append(
                     _error(
-                        "role.primary",
+                        "role.policy_feeder",
                         f"$.suite.phases[{phase_index}].components",
-                        f"policy {policy.component_id} requires exactly one routed primary "
-                        f"model in this phase; observed {len(primary)}",
+                        f"policy {policy.component_id} requires exactly one routed model "
+                        "whose compiled role may feed policy",
                     )
                 )
-    for index, component in enumerate(suite.components):
-        if component.kind != ComponentKind.MODEL and component.role is not None:
-            diagnostics.append(
-                _error(
-                    "role.kind",
-                    f"$.suite.components[{index}].role",
-                    "only model components may declare model roles",
-                )
-            )
     component_ids = {value.component_id for value in suite.components}
     for index, permission in enumerate(deployment.permissions):
         for component_id in permission.component_ids:

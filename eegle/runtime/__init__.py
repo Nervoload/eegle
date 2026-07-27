@@ -29,6 +29,11 @@ from eegle.runtime.plan_runtime import (
     RuntimeNode,
     construct_plan_runtime,
 )
+from eegle.runtime.model_admission import (
+    ArtifactResolver,
+    LocalFileArtifactResolver,
+    ModelAdmissionReceipt,
+)
 from eegle.runtime.model_runtime import (
     ModelComparison,
     ModelComparisonStatus,
@@ -59,6 +64,7 @@ from eegle.runtime.scheduling import ScheduledTrigger, StateTriggerRule, Trigger
 
 __all__ = [
     "ActionBroker",
+    "ArtifactResolver",
     "DeterministicIdSource",
     "AcceptanceResult",
     "AdaptationEligibilityDecision",
@@ -75,6 +81,7 @@ __all__ = [
     "GraphRunStatus",
     "OperatorController",
     "ModelResultDisposition",
+    "ModelAdmissionReceipt",
     "ModelResultDispositionStatus",
     "ModelResultRejected",
     "ModelComparison",
@@ -87,6 +94,7 @@ __all__ = [
     "OutcomeRoutingPolicy",
     "OutcomeUse",
     "PendingAuthorization",
+    "LocalFileArtifactResolver",
     "PhaseAttempt",
     "PhaseTransitionRecord",
     "PlanConstructionError",

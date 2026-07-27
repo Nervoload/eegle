@@ -1,4 +1,4 @@
-"""Plan-owned canonical predictions and temporary extraction evidence."""
+"""Plan-owned canonical predictions."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from eegle.streams.clocks import TimePoint
 
 
 PREDICTION_RECORD_SCHEMA = "eegle.prediction.v2"
-LEGACY_PREDICTION_RECORD_SCHEMA = "eegle.prediction.v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,12 +128,6 @@ class Prediction:
             )
 
     @property
-    def role(self) -> str:
-        """Migration view; target callers should use ``role_id``."""
-
-        return self.role_id
-
-    @property
     def outputs(self) -> Mapping[str, Any]:
         """Convenience view for policies consuming mapping-shaped output values."""
 
@@ -215,60 +208,3 @@ class Prediction:
                 for key, value in dict(payload.get("artifact_digests") or {}).items()
             },
         )
-
-
-@dataclass(frozen=True, slots=True)
-class LegacyPrediction:
-    """Temporary Phase 5 extraction record removed with the P6-009 cleanup."""
-
-    prediction_id: str
-    model_id: str
-    role: str
-    outputs: Mapping[str, Any]
-    produced_time: TimePoint
-    available_time: TimePoint
-    input_ids: tuple[str, ...]
-    lineage: Lineage
-    confidence: float | None = None
-    schema: str = LEGACY_PREDICTION_RECORD_SCHEMA
-
-    def __post_init__(self) -> None:
-        if self.schema != LEGACY_PREDICTION_RECORD_SCHEMA:
-            raise ValueError(f"unsupported legacy prediction schema: {self.schema}")
-        for field_name in ("prediction_id", "model_id", "role"):
-            object.__setattr__(
-                self,
-                field_name,
-                require_identifier(getattr(self, field_name), field_name),
-            )
-        inputs = tuple(require_identifier(value, "input_id") for value in self.input_ids)
-        if not inputs or self.lineage.input_ids != inputs:
-            raise ValueError("legacy prediction inputs must exactly match lineage inputs")
-        object.__setattr__(self, "input_ids", inputs)
-        latest = self.lineage.latest_input_available_time
-        if latest is None or self.produced_time.seconds < latest.seconds:
-            raise ValueError("legacy prediction cannot precede its latest input")
-        if self.produced_time.clock_id != self.available_time.clock_id:
-            raise ValueError("legacy prediction times must share a clock")
-        if self.available_time.seconds < self.produced_time.seconds:
-            raise ValueError("legacy prediction availability cannot precede production")
-        if self.confidence is not None:
-            confidence = float(self.confidence)
-            if not 0.0 <= confidence <= 1.0:
-                raise ValueError("legacy prediction confidence must be in [0, 1]")
-            object.__setattr__(self, "confidence", confidence)
-        object.__setattr__(self, "outputs", freeze_json(self.outputs))
-
-    def to_payload(self) -> dict[str, Any]:
-        return {
-            "schema": self.schema,
-            "prediction_id": self.prediction_id,
-            "model_id": self.model_id,
-            "role": self.role,
-            "outputs": thaw_json(self.outputs),
-            "produced_time": self.produced_time.to_payload(),
-            "available_time": self.available_time.to_payload(),
-            "input_ids": list(self.input_ids),
-            "lineage": self.lineage.to_payload(),
-            "confidence": self.confidence,
-        }

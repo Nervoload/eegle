@@ -72,10 +72,7 @@
   ],
   "initial_phase": "phase.adapt",
   "scheduling": {
-    "backpressure": "reject_newest",
-    "primary_first": true,
-    "shadow_queue_limit": null,
-    "shadow_failure": "continue"
+    "backpressure": "reject_newest"
   },
   "scheduled_triggers": [
     {

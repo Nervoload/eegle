@@ -527,7 +527,6 @@ class ComponentSpec:
     plugin_id: str | None = None
     version_spec: str | None = None
     config: Mapping[str, Any] = None  # type: ignore[assignment]
-    role: str | None = None
     stream_id: str | None = None
     required_capabilities: tuple[str, ...] = ()
     input_contracts: Mapping[str, SignalContract] = None  # type: ignore[assignment]
@@ -547,8 +546,6 @@ class ComponentSpec:
             )
         if self.version_spec is not None and not self.version_spec.strip():
             raise ValueError("version_spec cannot be empty")
-        if self.role is not None:
-            object.__setattr__(self, "role", require_identifier(self.role, "role"))
         if self.stream_id is not None:
             object.__setattr__(
                 self, "stream_id", require_identifier(self.stream_id, "stream_id")
@@ -596,7 +593,6 @@ class ComponentSpec:
             "plugin_id": self.plugin_id,
             "version_spec": self.version_spec,
             "config": thaw_json(self.config),
-            "role": self.role,
             "stream_id": self.stream_id,
             "required_capabilities": list(self.required_capabilities),
             "input_contracts": {
@@ -620,7 +616,6 @@ class ComponentSpec:
             if payload.get("version_spec") is None
             else str(payload["version_spec"]),
             config=dict(payload.get("config") or {}),
-            role=None if payload.get("role") is None else str(payload["role"]),
             stream_id=None
             if payload.get("stream_id") is None
             else str(payload["stream_id"]),
@@ -704,46 +699,21 @@ class BackpressureDisposition(str, Enum):
     REJECT_NEWEST = "reject_newest"
 
 
-class ShadowFailurePolicy(str, Enum):
-    FAIL_RUN = "fail_run"
-    CONTINUE = "continue"
-
-
 @dataclass(frozen=True, slots=True)
 class SchedulingSpec:
     backpressure: BackpressureDisposition = BackpressureDisposition.FAIL_RUN
-    primary_first: bool = True
-    shadow_queue_limit: int | None = None
-    shadow_failure: ShadowFailurePolicy = ShadowFailurePolicy.FAIL_RUN
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "backpressure", BackpressureDisposition(self.backpressure))
-        object.__setattr__(self, "shadow_failure", ShadowFailurePolicy(self.shadow_failure))
-        if self.shadow_queue_limit is not None:
-            object.__setattr__(self, "shadow_queue_limit", int(self.shadow_queue_limit))
-            if self.shadow_queue_limit < 0:
-                raise ValueError("shadow_queue_limit cannot be negative")
 
     def to_payload(self) -> dict[str, Any]:
-        return {
-            "backpressure": self.backpressure.value,
-            "primary_first": self.primary_first,
-            "shadow_queue_limit": self.shadow_queue_limit,
-            "shadow_failure": self.shadow_failure.value,
-        }
+        return {"backpressure": self.backpressure.value}
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "SchedulingSpec":
         return cls(
             backpressure=BackpressureDisposition(
                 str(payload.get("backpressure", BackpressureDisposition.FAIL_RUN.value))
-            ),
-            primary_first=bool(payload.get("primary_first", True)),
-            shadow_queue_limit=None
-            if payload.get("shadow_queue_limit") is None
-            else int(payload["shadow_queue_limit"]),
-            shadow_failure=ShadowFailurePolicy(
-                str(payload.get("shadow_failure", ShadowFailurePolicy.FAIL_RUN.value))
             ),
         )
 
@@ -1357,7 +1327,6 @@ _COMPONENT_SCHEMA: Mapping[str, Any] = {
         "plugin_id": {"type": ["string", "null"], "minLength": 1},
         "version_spec": {"type": ["string", "null"], "minLength": 1},
         "config": {"type": "object"},
-        "role": {"type": ["string", "null"], "minLength": 1},
         "stream_id": {"type": ["string", "null"], "minLength": 1},
         "required_capabilities": {"type": "array", "items": {"type": "string"}},
         "input_contracts": {
@@ -1605,11 +1574,6 @@ SUITE_JSON_SCHEMA: Mapping[str, Any] = {
             "properties": {
                 "backpressure": {
                     "enum": [value.value for value in BackpressureDisposition]
-                },
-                "primary_first": {"type": "boolean"},
-                "shadow_queue_limit": {"type": ["integer", "null"], "minimum": 0},
-                "shadow_failure": {
-                    "enum": [value.value for value in ShadowFailurePolicy]
                 },
             },
             "additionalProperties": False,

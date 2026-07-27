@@ -63,12 +63,12 @@ Install for development:
 macOS/Linux:
   python3.11 -m venv .venv
   source .venv/bin/activate
-  python -m pip install -e ".[runtime,ml]"
+  python -m pip install -e ".[runtime]"
 
 Windows PowerShell:
   py -3.11 -m venv .venv
   .venv\Scripts\Activate.ps1
-  python -m pip install -e ".[runtime,ml]"
+  python -m pip install -e ".[runtime]"
 ```
 
 Fast foundation checks:

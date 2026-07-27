@@ -1,4 +1,4 @@
-"""Versioned EEGle model-bundle helpers."""
+"""Legacy local model bundles retained only as Phase 8 extraction evidence."""
 
 from __future__ import annotations
 

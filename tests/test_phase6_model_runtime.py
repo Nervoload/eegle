@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -24,16 +26,19 @@ from eegle.models import (
     ModelOutputContract,
     ModelResult,
     ModelStateContract,
+    ModelStateArtifact,
 )
 from eegle.models.predictions import PREDICTION_RECORD_SCHEMA, Prediction
 from eegle.plugins import (
     PluginCapabilities,
+    ConstructionAPI,
     PluginDescriptor,
     PluginRegistry,
     PortSpec,
     StateBehavior,
 )
-from eegle.runtime import ExecutionEngine, GraphInput
+from eegle.recording import ArtifactReference, Sensitivity
+from eegle.runtime import ExecutionEngine, GraphInput, PlanConstructionError
 from eegle.specs import DeploymentSpec, ProtocolSpec, SuiteSpec
 from eegle.streams import TimePoint
 from tests.fixtures.build_phase6_model_wheel import build_phase6_model_wheel
@@ -68,15 +73,15 @@ class Observation:
         }
 
 
-def _manifest() -> ModelManifest:
+def _manifest(*, output_names: tuple[str, ...] = ("prediction",)) -> ModelManifest:
     return ModelManifest(
         model_id="model.callable-fixture",
         model_version="1.0.0",
         contract=ModelContract(
             inputs=(ModelInputContract("observation", OBSERVATION_SCHEMA),),
-            outputs=(
+            outputs=tuple(
                 ModelOutputContract(
-                    "prediction",
+                    output_name,
                     PREDICTION_RECORD_SCHEMA,
                     value_schema={
                         "type": "object",
@@ -97,7 +102,8 @@ def _manifest() -> ModelManifest:
                         "additionalProperties": False,
                     },
                     abstention_supported=True,
-                ),
+                )
+                for output_name in output_names
             ),
             state=ModelStateContract(),
         ),
@@ -147,7 +153,6 @@ def _suite(manifest: ModelManifest, *, phase_timeout: float | None = None) -> Su
                     "kind": "model",
                     "plugin_id": "fixture.model.callable",
                     "version_spec": "~=1.0",
-                    "role": "observer",
                     "config": {},
                 }
             ],
@@ -192,14 +197,21 @@ def _deployment() -> DeploymentSpec:
     )
 
 
-def _descriptor(factory: Any) -> PluginDescriptor:
+def _descriptor(
+    factory: Any,
+    *,
+    output_names: tuple[str, ...] = ("prediction",),
+) -> PluginDescriptor:
     return PluginDescriptor(
         plugin_id="fixture.model.callable",
         version="1.0.0",
         kind=ComponentKind.MODEL,
         config_schema=EMPTY_SCHEMA,
         input_ports=(PortSpec("observation", OBSERVATION_SCHEMA, required=False),),
-        output_ports=(PortSpec("prediction", PREDICTION_RECORD_SCHEMA),),
+        output_ports=tuple(
+            PortSpec(output_name, PREDICTION_RECORD_SCHEMA)
+            for output_name in output_names
+        ),
         capabilities=PluginCapabilities(
             supported_modes=frozenset({ExecutionMode.CAUSAL}),
             determinism=Determinism.DETERMINISTIC,
@@ -218,10 +230,11 @@ def _compiled(
     delay: float = 0.0,
     component_deadline: float | None = None,
     phase_timeout: float | None = None,
+    output_names: tuple[str, ...] = ("prediction",),
 ):
-    manifest = _manifest()
+    manifest = _manifest(output_names=output_names)
     registry = PluginRegistry()
-    registry.register(_descriptor(factory))
+    registry.register(_descriptor(factory, output_names=output_names))
     suite = _suite(manifest, phase_timeout=phase_timeout)
     if component_deadline is not None:
         payload = suite.to_payload()
@@ -252,6 +265,32 @@ class InvalidModel:
     def predict(self, item: Observation, context: Any) -> Mapping[str, Any]:
         # A plugin cannot bypass the runtime by returning its own graph record.
         return {"score": item.value}
+
+
+class MissingOutputsModel:
+    def process(self, input_port: str, item: Observation, context: Any) -> Mapping[str, Any]:
+        return {}
+
+
+class ArtifactBackedModel:
+    def __init__(self, config: Mapping[str, Any], construction: Any) -> None:
+        weights = construction.artifacts["artifact.weights"].location.read_bytes()
+        if weights != b"phase6-weights":
+            raise ValueError("unexpected admitted weights")
+        self.bias = 0.0
+
+    def predict(self, item: Observation, context: Any) -> ModelResult:
+        return _result(
+            Observation(item.record_id, item.value + self.bias, item.available_time)
+        )
+
+    def snapshot_state(self) -> Mapping[str, Any]:
+        return {"schema": "fixture.phase6_admitted_state.v1", "bias": self.bias}
+
+    def restore_state(self, state: Mapping[str, Any]) -> None:
+        if state.get("schema") != "fixture.phase6_admitted_state.v1":
+            raise ValueError("unsupported admitted state")
+        self.bias = float(state["bias"])
 
 
 class Phase6ModelRuntimeTests(unittest.TestCase):
@@ -355,6 +394,182 @@ class Phase6ModelRuntimeTests(unittest.TestCase):
             if value.record_type == "model_result_disposition"
         )
         self.assertEqual(disposition["reason_code"], "invalid_value")
+
+    def test_every_missing_required_output_receives_a_terminal_disposition(self) -> None:
+        compiled, registry = _compiled(
+            lambda config: MissingOutputsModel(),
+            output_names=("prediction", "uncertainty_estimate"),
+        )
+        run = ExecutionEngine.from_plan(compiled.plan, registry).run(
+            inputs_by_phase={
+                "phase.run": (
+                    GraphInput(
+                        "model.callable",
+                        "observation",
+                        Observation(
+                            "observation.missing-outputs",
+                            1.0,
+                            TimePoint(0.0, "boundary.clock"),
+                        ),
+                    ),
+                )
+            }
+        )
+
+        dispositions = [
+            value.payload
+            for value in run.evidence
+            if value.record_type == "model_result_disposition"
+        ]
+        self.assertEqual(run.status.value, "complete")
+        self.assertEqual(
+            [(value["output_port"], value["reason_code"]) for value in dispositions],
+            [
+                ("prediction", "missing_required_output"),
+                ("uncertainty_estimate", "missing_required_output"),
+            ],
+        )
+
+    def test_artifacts_and_initial_state_are_verified_before_model_admission(self) -> None:
+        contract = ModelContract(
+            inputs=(ModelInputContract("observation", OBSERVATION_SCHEMA),),
+            outputs=_manifest().contract.outputs,
+            state=ModelStateContract(
+                behavior="snapshot_restore",
+                state_schema_id="fixture.phase6_admitted_state.v1",
+                initial_state_required=True,
+                state_affects_predictions=True,
+            ),
+        )
+        state_artifact = ModelStateArtifact.create(
+            model_id="model.artifact-backed",
+            model_version="1.0.0",
+            contract_digest=contract.contract_digest,
+            state_schema_id="fixture.phase6_admitted_state.v1",
+            state={"schema": "fixture.phase6_admitted_state.v1", "bias": 4.0},
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            weights_path = root / "weights.bin"
+            weights_path.write_bytes(b"phase6-weights")
+            state_path = root / "initial-state.json"
+            state_bytes = json.dumps(
+                state_artifact.to_payload(), sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+            state_path.write_bytes(state_bytes)
+
+            def reference(artifact_id: str, path: Path, role: str, media_type: str):
+                payload = path.read_bytes()
+                return ArtifactReference(
+                    artifact_id=artifact_id,
+                    role=role,
+                    uri=f"artifact://{artifact_id}",
+                    digest=f"sha256:{hashlib.sha256(payload).hexdigest()}",
+                    media_type=media_type,
+                    size_bytes=len(payload),
+                    sensitivity=Sensitivity.INTERNAL,
+                )
+
+            artifacts = (
+                reference(
+                    "artifact.weights",
+                    weights_path,
+                    "model_parameters",
+                    "application/octet-stream",
+                ),
+                reference(
+                    "artifact.initial-state",
+                    state_path,
+                    "model_initial_state",
+                    "application/json",
+                ),
+            )
+            manifest = ModelManifest(
+                model_id="model.artifact-backed",
+                model_version="1.0.0",
+                contract=contract,
+                artifacts=artifacts,
+                implementations=(
+                    ModelImplementationRequirement("fixture.model.callable", "~=1.0"),
+                ),
+                initial_state_artifact_id="artifact.initial-state",
+            )
+            deployment_payload = _deployment().to_payload()
+            deployment_payload["model_artifacts"] = [
+                {
+                    "manifest_digest": manifest.manifest_digest,
+                    "artifact_id": artifact.artifact_id,
+                    "uri": path.as_uri(),
+                    "digest": artifact.digest,
+                }
+                for artifact, path in zip(artifacts, (weights_path, state_path), strict=True)
+            ]
+            registry = PluginRegistry()
+            registry.register(
+                PluginDescriptor(
+                    plugin_id="fixture.model.callable",
+                    version="1.0.0",
+                    kind=ComponentKind.MODEL,
+                    config_schema=EMPTY_SCHEMA,
+                    input_ports=(
+                        PortSpec("observation", OBSERVATION_SCHEMA, required=False),
+                    ),
+                    output_ports=(PortSpec("prediction", PREDICTION_RECORD_SCHEMA),),
+                    capabilities=PluginCapabilities(
+                        supported_modes=frozenset({ExecutionMode.CAUSAL}),
+                        determinism=Determinism.DETERMINISTIC,
+                        equivalence=EquivalenceLevel.BITWISE,
+                        state_behavior=StateBehavior.SNAPSHOT_RESTORE,
+                    ),
+                    factory=ArtifactBackedModel,
+                    implementation="tests.phase6_runtime:ArtifactBackedModel",
+                    distribution="phase6-runtime-fixture",
+                    construction_api=ConstructionAPI.MODEL_CONTEXT_V1,
+                )
+            )
+            compiled = compile_suite(
+                _protocol(),
+                _suite(manifest),
+                DeploymentSpec.from_payload(deployment_payload),
+                registry,
+                model_manifests={manifest.manifest_digest: manifest},
+            )
+            engine = ExecutionEngine.from_plan(compiled.plan, registry)
+            admission = engine.runtime.node("model.callable").model_admission
+            self.assertIsNotNone(admission)
+            assert admission is not None
+            self.assertEqual(admission.restored_state_hash, state_artifact.state_hash)
+            self.assertEqual(
+                engine.runtime.node("model.callable").component.bias,
+                4.0,
+            )
+            admitted_run = engine.run(
+                inputs_by_phase={
+                    "phase.run": (
+                        GraphInput(
+                            "model.callable",
+                            "observation",
+                            Observation(
+                                "observation.admitted-state",
+                                1.0,
+                                TimePoint(0.0, "boundary.clock"),
+                            ),
+                        ),
+                    )
+                }
+            )
+            prediction = admitted_run.phase_results[0].emissions_from(
+                "model.callable", "prediction"
+            )[0]
+            self.assertEqual(prediction.state_digest, admission.restored_state_hash)
+            self.assertEqual(
+                dict(prediction.artifact_digests),
+                dict(admission.artifact_digests),
+            )
+
+            weights_path.write_bytes(b"tampered")
+            with self.assertRaisesRegex(PlanConstructionError, "artifact.weights"):
+                ExecutionEngine.from_plan(compiled.plan, registry)
 
     def test_late_and_phase_cancelled_results_have_terminal_dispositions(self) -> None:
         factory = lambda config: CallableModel(lambda item: _result(item, delay=0.2))
