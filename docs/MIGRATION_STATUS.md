@@ -1,8 +1,8 @@
 # EEGle Migration Status
 
 **Status:** Living project and decision tracker  
-**Snapshot date:** 2026-07-23
-**Branch:** `sep`  
+**Snapshot date:** 2026-07-27
+**Branch:** `split`
 **Architecture authority:** [EEGLE.md](EEGLE.md)  
 **Execution plan:** [MIGRATION.md](MIGRATION.md)
 
@@ -16,8 +16,8 @@ restate the full architecture or phase plan.
 
 | Field | Current value |
 |---|---|
-| Active phase | Phase 6 — model, outcome, adaptation, and action semantics (ready to begin) |
-| Phase status | Phase 5 complete; all compiler, reference-suite, and semantic-convergence gates verified |
+| Active phase | Phase 6 — model, outcome, adaptation, and action semantics |
+| Phase status | P6-000 through P6-008 complete; P6-009 legacy authority removal is next |
 | Code migration started | Yes |
 | Product vision | Accepted and documented |
 | Migration model | Selective preservation and clean rebuild |
@@ -47,6 +47,27 @@ and producer lineage. Compiled triggers, checkpoint restoration, timeout and
 acceptance semantics, role-aware scheduling/backpressure, and outcome/action
 permission checks execute in that same engine. [PHASE5_COMPILER.md](PHASE5_COMPILER.md)
 records the completed boundary and the narrower Phase 6 work that follows.
+
+Phase 6 began by fixing semantic ownership before adding runtime features.
+[PHASE6_MODEL_SYSTEMS.md](PHASE6_MODEL_SYSTEMS.md) separates executable plugin
+metadata, scientific model contracts and manifests, suite intent, deployment
+materialization, compiled bindings, runtime-created predictions, component
+state, outcome enrollment, and independent action authorization. The first
+implementation slices replace the EEG/classifier-shaped model contract with
+canonical modality-neutral contracts and compile suite/deployment/plugin/model
+intent into exact plan-owned model bindings. Runtime-created prediction
+envelopes, permission-driven scheduling, bounded comparison evidence,
+policy-input provenance, enrolled direct-reference outcome lifecycles, explicit
+adaptation state transitions, and deployment-owned action authorization are now
+implemented. Policies produce requests rather than authority; the engine alone
+constructs commands after exact provider and grant checks. Missing authority is
+observe-only, pending decisions are causally scheduled and cancellable, and
+replay refuses non-simulation action services before construction.
+The P6-008 matrix now proves regular dense, explicitly timed irregular dense,
+sparse-event plus dense, and multi-rate systems through the same compile,
+execution, evidence-integrity, and replay path. Estimator and tensor-callable
+fixtures use the normal external model boundary; no framework-specific runtime
+or base imports were added.
 
 ## 2. Verified baseline
 
@@ -173,6 +194,148 @@ After Phase 5 closure:
   admission, and authorized simulated action with bundle replay;
 - all 41 focused Phase 5 tests and the 344-test Python 3.14.4 suite pass with
   five environment-dependent skips; compile-all passes.
+
+After the Phase 6 semantic-authority checkpoint and first P6-001 slice:
+
+- decisions D-008 and D-022 through D-029 fix the model, artifact, role,
+  outcome, state, and authorization ownership boundaries;
+- modality-neutral model contracts use typed ports, schema-bound outputs and
+  uncertainty, explicit preprocessing ownership, declared state behavior, and
+  canonical content hashes without EEG, epoch, label, or scalar-confidence
+  defaults;
+- portable model manifests contain logical content-addressed artifact
+  references and compatible plugin requirements, never local paths, factories,
+  downloads, framework imports, or environment probing;
+- seven dedicated Phase 6 authority tests, the 234-test Python 3.14 full suite,
+  compile-all, source-boundary checks, and the clean-wheel packaging test pass
+  with five environment-dependent skips;
+- the remaining direct legacy model authorities stay extraction-only until
+  compiler/runtime replacements permit their deletion and minimal-wheel
+  inspection at P6-009.
+
+After P6-002 compiler model binding:
+
+- portable suite model uses and role profiles are separate from site-local
+  artifact materializations, while model manifests enter compilation through a
+  digest-keyed explicit catalog;
+- `PlannedModelBinding` locks the exact manifest, contract, executable plugin
+  version, compiled permission set, comparison group, artifact digests and
+  URIs, and input-specific preprocessing component lineage;
+- common signal contracts now prove dense, sparse, irregular, channel/feature,
+  per-identity unit, event-kind, missingness, layout, and duration constraints
+  through the existing graph rather than a model-only type system;
+- compilation rejects incompatible implementation versions, modes, state and
+  replay capabilities, input/output ports, unproven or duplicated
+  preprocessing, artifact digests, non-equivalent comparison inputs, and role
+  influence on policies or outcomes;
+- local model URI changes are operational diffs, while manifest, contract,
+  role, digest, and lineage changes are scientific diffs;
+- nine P6-002 tests, all 57 focused Phase 5/6/source-boundary tests, and the
+  243-test Python 3.14 full suite pass with five environment-dependent skips;
+  compile-all and diff checks pass.
+
+After P6-003 runtime model binding:
+
+- executable plugins return schema-bound `ModelResult` values with no authority
+  to assign component, plugin, model, role, artifact, state, input, timing, or
+  prediction identity;
+- the sole graph executor validates output, uncertainty, validity, abstention,
+  and completion semantics before constructing `eegle.prediction.v2` from the
+  immutable model binding;
+- canonical predictions record the exact plugin/model versions, manifest,
+  contract and result digests, artifacts, role, immediate model input, root
+  admitted inputs, causal revisions, pre-inference state digest, and timing;
+- executor-owned root-input lineage survives checkpoints, while emitted,
+  rejected, deadline-late, and phase-cancelled results receive explicit durable
+  dispositions;
+- the dependency-light `CallableModel` and an independently installed stateful
+  plugin wheel run through the same compiler and engine; fresh-runtime state
+  restoration reproduces the exact next prediction state;
+- four P6-003 tests, all 82 focused model/compiler/runtime/source-boundary/
+  packaging tests, and the 247-test Python 3.14.4 suite pass with five
+  environment-dependent skips; compile-all and diff checks pass.
+
+After P6-004 role and comparison semantics:
+
+- built-in primary, candidate, shadow, and observer profiles plus custom roles
+  compile into typed priority, policy-influence, failure, queue, outcome, and
+  adaptation permissions;
+- the target runtime schedules from those compiled permissions, records
+  reject-newest and shed-oldest dispositions, isolates reject-result failures,
+  and no longer derives target behavior from role-name strings;
+- comparison groups require compatible output contracts and co-activated
+  phases, then emit complete or incomplete records tied to exact prediction,
+  result, immediate-input, and admitted-input identities;
+- policies accept only canonical predictions emitted by the current execution
+  and permitted by the exact planned model binding; suite-wide primary/shadow
+  knobs are rejected for compiled Phase 6 model uses;
+- five P6-004 tests and all 66 focused Phase 5/6/source-boundary tests pass. The
+  252-test Python 3.14.4 suite passes with five environment-dependent skips;
+  compile-all and diff checks pass.
+
+After P6-005 outcome lifecycles and P6-006 calibration/adaptation semantics:
+
+- only predictions enrolled by a compiled `OutcomeExpectationSpec` enter the
+  bounded matcher; stable typed references replace hidden temporal matching;
+- every enrolled prediction and received outcome obtains explicit delayed,
+  missing, duplicate, disputed, expired, overflowed, rejected,
+  retrospective-only, cancelled, or pending-at-close evidence;
+- pending matcher state, terminal history, exact predictions, and deadlines
+  survive checkpoints and restore without resetting session semantics;
+- canonical calibration artifacts bind support inputs and outcomes to a
+  content-addressed model-state artifact without local-path authority;
+- adaptation requires compiled role, phase, outcome-use, model-state, plugin,
+  and independent deployment permission, and records eligibility plus
+  requested/applied/rejected/no-op/failed/rollback transitions;
+- failed mutations restore the exact prior component-owned state, while bundle
+  replay reproduces the delayed update and the next prediction;
+- five dedicated P6-005/P6-006 tests, all 91 focused Phase 2/5/6/source-boundary
+  tests, and the 257-test Python 3.14.4 suite pass with five environment-
+  dependent skips; compile-all, diff checks, and clean-wheel packaging pass.
+
+After P6-007 deployment-owned action authorization:
+
+- policy output is an unprivileged `ActionRequest`; suite graph components and
+  plugin results cannot create or route an `AuthorizedCommand`;
+- deployment binds exact authorization-provider plugins and grants containing
+  actuator, capability, parameter, request-lifetime, delivery-delay,
+  decision-delay, and provider-failure bounds;
+- the engine-owned broker alone creates canonical authorization requests,
+  decisions, commands, cancellations, and dispositions, while actuators accept
+  only the authorized envelope and return receipts tied to its decision;
+- missing grants are observe-only, provider failures apply the locked
+  observe-only or denied fallback, and pending decisions resolve, expire, or
+  cancel through semantic scheduling without blocking the coordinator;
+- runtime checks policy-owned prediction and state references against exact
+  graph inputs and engine-owned state before admitting a request;
+- the built-in provider and actuator are simulation-only, physical capabilities
+  cannot use that provider, and replay rejects every non-simulation action
+  service before invoking its factory;
+- eight dedicated P6-007 tests and the 265-test Python 3.14.4 suite pass with
+  five environment-dependent skips; compile-all, diff checks, clean-wheel
+  packaging, existing simulated bundle replay, and adversarial physical replay
+  refusal pass.
+
+After P6-008 representational and framework-boundary generality:
+
+- regular multichannel EEG-like data, irregular long-window fNIRS-like data,
+  sparse spikes plus dense LFP, and mixed 250 Hz/1 kHz/event-rate auxiliary
+  streams compile and execute through the sole graph engine;
+- every fixture produces runtime-owned predictions, a verified plan-bearing
+  evidence bundle, exact execution capture, and equivalent same-plan replay;
+- input contracts prove content kind, regular/irregular/event rate, channel and
+  unit identity, event kinds, and duration; a deliberately false irregular-to-
+  regular declaration fails before construction;
+- estimator `predict_proba` and tensor-callable adapters cross the same
+  `ModelResult` boundary without adding framework imports, component kinds,
+  tensor types, loaders, trainers, or registries to EEGle;
+- the P6-003 independently installed plugin wheel remains the packaging proof;
+  dependency-backed sklearn/Torch distributions and artifact loading remain
+  Phase 7 integration work;
+- three dedicated P6-008 tests, 62 focused Phase 2/6/source-boundary tests, and
+  the 268-test Python 3.14.4 suite pass with five environment-dependent skips;
+  compile-all, diff checks, clean-wheel packaging, bundle integrity, and replay
+  equivalence pass.
 
 This is a behavior baseline, not an obligation to preserve every API, file,
 command, or artifact layout.
@@ -305,6 +468,20 @@ These are target behaviors, not instructions to copy their present modules.
 | D-020 | Scheduling and checkpoint policy | Compile scheduled/state triggers and primary/shadow/backpressure disposition into the immutable plan. Execute them in the same semantic queue as packets and component work. Checkpoint only at a queue-empty source boundary; persist plan/execution identity, runtime/component state, admitted artifacts, clocks, identifiers, trigger state, original phase start, and evidence-prefix digest for integrity-checked fresh-runtime restoration. |
 | D-021 | Phase 5 permission boundary | Components declare outcome uses, required adaptation use, and actuator action capabilities. The compiler requires exact independent deployment grants before construction, and runtime routing rechecks the locked use/capability. This is an execution permission boundary, not the Phase 6 hardware-safety/interlock provider. |
 
+### Resolved in Phase 6
+
+| ID | Decision | Resolution |
+|---|---|---|
+| D-008 | Authorization provider | Authorization is a deployment-owned service outside suite graph composition. Operator confirmation is one deliberately configured provider mechanism, never an implicit fallback. |
+| D-022 | Model authority | `PluginDescriptor` alone owns executable construction. `ModelManifest` owns portable scientific artifact identity and `ModelContract` owns scientific requirements; neither can construct code. |
+| D-023 | Artifact materialization | Model manifests use content-addressed logical artifact references. Deployment resolves materializations and the compiled plan locks content identity instead of machine-local paths. |
+| D-024 | Canonical model output | A plugin returns a schema-bound `ModelResult`. The runtime validates it and constructs `Prediction` with plan-owned implementation, artifact, contract, role, admitted-input, state, and timing evidence. |
+| D-025 | Role semantics | Primary, shadow, candidate, and observer are built-in profiles compiled into general permission sets. Runtime semantics consume permissions, not role-name branches, and roles cannot grant action authorization. |
+| D-026 | Outcome matching | Only predictions enrolled in an explicit outcome expectation enter the bounded lifecycle. Kernel matching uses direct stable references; heuristics are plugins that emit resolved references. |
+| D-027 | State ownership | Mutable state belongs to the component. The engine owns eligibility, transition ordering, evidence, checkpointing, restoration, and replay comparison. Calibration artifacts and online transitions remain distinct. |
+| D-028 | Action authorization | Policies emit action requests. Only a deployment-owned provider can supply an authorization decision from which the runtime can construct an actuator-ready command. Suites cannot self-authorize. |
+| D-029 | Missing-provider policy | No provider means observe-only. A simulation provider may authorize simulation only; missing, expired, unavailable, or failed authorization never implies permission. |
+
 ### Remaining open decisions
 
 These decisions are intentionally not locked yet. Resolve them at or before the
@@ -313,7 +490,6 @@ document.
 
 | ID | Decision | Options or questions | Decision point |
 |---|---|---|---|
-| D-008 | Authorization provider | Define a minimal local authorization/interlock protocol and which actions require operator confirmation. | Phase 6 |
 | D-014 | Public stability boundary | Decide which modules are public at alpha and how experimental interfaces are marked. | Phase 7 |
 
 ## 7. Immediate action board
@@ -382,6 +558,17 @@ engine rather than recovered through compatibility code.
 | P5-007 | done | Add the remaining reference-suite families and close the compiler-to-runtime construction boundary. | Four durable families cover simulated continuous observation, calibration/mixed streams, delayed outcome/adaptation, primary/shadow event windows, broader multi-rate admission, and authorized simulated action. The action family persists and bundle-replays with equivalent receipts. |
 | P5-008 | done | Complete Phase 3 semantic convergence in the sole plan-owned graph coordinator. | The sole engine owns watermark scheduling, bounded fail-run/reject-newest queues, primary-first shadow disposition, deadlines, quality/cancellation, compiled scheduled/state triggers, integrity-checked fresh-runtime checkpoint restoration, source-substitution bundle replay, and typed outcome/action routing. No retired runtime API or semantic skips remain. |
 | P5-009 | done | Close the pre-Phase-7 legacy command and root-wheel boundary. | No console scripts; dependency-free inert `python -m eegle`; custom build boundary and isolated wheel test admit only four approved root modules and reject legacy orchestration. |
+| P6-000 | done | Lock semantic authorities, identity distinctions, role permissions, direct outcome references, state ownership, and independent authorization defaults. | Decisions D-008 and D-022 through D-029; `docs/PHASE6_MODEL_SYSTEMS.md` and the normative architecture are aligned. |
+| P6-001 | done | Replace legacy-shaped model contracts and bundles with modality-neutral scientific contracts and canonical path-free manifests. | Typed ports, schema-bound result/uncertainty, preprocessing ownership, state semantics, logical artifacts, implementation constraints, canonical hashes, tamper rejection, multimodal and procedural-model fixtures pass. Physical materialization belongs to deployment/P6-002; old extraction evidence is deleted at P6-009. |
+| P6-002 | done | Compile definitive model bindings from suite model intent, deployment artifact resolution, executable plugins, roles, state, and preprocessing lineage. | `ModelUseSpec`, permission-bearing roles, local artifact bindings, exact `PlannedModelBinding`/lock round trips, common signal constraints, preprocessing proof, comparison input checks, precise diagnostics, and scientific/operational plan diffs pass. |
+| P6-003 | done | Implement the runtime model boundary. | Callable and independently installed external stateful plugins return schema-bound `ModelResult`; the sole runtime creates canonical predictions from plan/input/state authority, records terminal result dispositions, and restores exact state in a fresh runtime. |
+| P6-004 | done | Replace target role strings and special cases with compiled role permissions and comparisons. | Typed priorities, reject-newest/shed-oldest queues, role-local failure, candidate/observer/custom profiles, compatible co-activated comparison groups, complete/incomplete comparison evidence, and canonical policy-input isolation pass. Unbound Phase 5 string behavior is an explicit P6-009 extraction seam. |
+| P6-005 | done | Implement enrolled direct-reference outcome lifecycles and bounded dispositions. | Only explicitly enrolled predictions enter bounded direct-reference matching; delayed, missing, duplicate, disputed, expired, overflowed, rejected-use, retrospective-only, cancelled, pending-at-close, checkpoint, and replay evidence pass. |
+| P6-006 | done | Implement calibration artifacts and permissioned adaptation transitions. | Canonical calibration artifacts and compiler-gated eligibility plus requested/applied/rejected/no-op/failed/rollback transitions reproduce exact model-owned state after checkpoint and bundle replay. |
+| P6-007 | done | Implement the deployment-owned authorization broker. | Policies emit requests; exact deployment providers and grants bound parameters/timing/expiry; the engine alone creates authorized envelopes; pending, denied, expired, failed, cancelled, simulated receipt, and terminal disposition evidence pass; no authority is observe-only; suites cannot self-authorize; replay fails closed before constructing non-simulation services. |
+| P6-008 | done | Add representational generality and prove the optional framework boundary without creating framework-specific core APIs. | Dense EEG-like, irregular slow-signal, sparse-event plus dense-LFP, and multi-rate suites compile/run/persist/verify/replay through one engine. Estimator and tensor-callable fixtures use ordinary external model contracts; P6-003 supplies the installed-wheel proof, while actual sklearn/Torch distributions remain Phase 7 integration work. No support overclaims. |
+| P6-009 | todo | Delete replaced model/outcome/action legacy authorities and inspect the minimal wheel. | No `eegle.ml` package discovery, metadata-only model registry, superseded realtime authority, compatibility wrappers, or optional framework imports in base. |
+| P6-010 | todo | Close Phase 6 against every normative gate. | One-engine compile/run/record/replay/validate evidence, external plugin proof, causal-label rejection, state reproduction, safe action defaults, and no EEG-only core assumptions. |
 | C-001 | done | Audit the source tree against the Phase 6–8 roadmap and establish a protected extraction boundary. | Target packages have no imports from legacy applications; model/outcome/action, integration/hardware, and validation/analysis evidence is explicitly protected in the Phase 0 inventory. |
 | C-002 | done | Remove the first isolated legacy batch and its recipe-shaped tests. | Deleted compatibility facades, every obsolete recipe family, launchers, the legacy Makefile, and recipe-only tests; mixed scientific tests now exercise contracts without pipeline or worker imports. |
 | C-003 | in_progress | Extract the remaining Phase 6–8 evidence and delete its application shells immediately after replacement tests exist. | Root orchestration, tasks/workers/configs, dashboards, and legacy analysis shells remain staged; no compatibility layer is authorized. |
@@ -396,10 +583,10 @@ Later phase detail belongs in `MIGRATION.md` until it becomes actionable.
 | R-001 | monitoring | “Cleanup” could delete the only executable example of a subtle scientific behavior. | The inventory binds every cleanup batch to replacement evidence; Phase 1 fixtures and Git history provide separate acceptance and recovery paths. |
 | R-002 | open | Freezing behavior could be misread as preserving old APIs and recipes. | Freeze only named scientific invariants and evidence; allow clean public interfaces. |
 | R-003 | open | A new specification system could grow into an opaque workflow language. | Keep the domain vocabulary bounded; compile to typed ports; custom logic remains Python plugins. |
-| R-004 | open | Modality neutrality could produce abstract types that are inefficient for real EEG or high-density data. | Benchmark dense EEG first, then add sparse and high-channel-count fixtures before claiming support. |
+| R-004 | monitoring | Modality neutrality could produce abstract types that are inefficient for real EEG or high-density data. | P6-008 proves representation and semantics only. Benchmark dense EEG, sparse traffic, and high-channel-count throughput before claiming validated modality support. |
 | R-005 | monitoring | One engine could become one monolithic process. | Process placement remains explicit proxy metadata and the coordinator owns semantics. Cross-process transport/health must preserve the proven boundary without duplicating the engine. |
 | R-006 | monitoring | Replay “equivalence” may be overstated for nondeterministic frameworks or hardware. | The comparator caps claims at the weakest declaration; simulated command/receipt substitution now passes, while real hardware remains an observe-only or trace claim. |
-| R-007 | open | Action support may be mistaken for hardware safety. | Keep authorization independent, default to observe-only, and document adapter/safety boundaries. |
+| R-007 | monitoring | Action support may be mistaken for hardware safety. | The independent broker defaults to observe-only and replay rejects non-simulation services, while documentation keeps device, interlock, and clinical safety outside EEGle's claims. |
 | R-008 | monitoring | Evidence capture could duplicate very large raw streams. | Bundle v1 separates capture from archival stores; a real external source-native fixture proves no copy and local digest verification. Broader sparse/high-channel throughput evidence remains before modality support claims. |
 | R-009 | monitoring | Maintaining old and new architectures too long could recreate compatibility debt. | Cleanup checkpoint 1 removed isolated recipes/facades and added a source-boundary test. C-003 tracks the smaller protected extraction remainder; no compatibility adapter is authorized. |
 | R-010 | monitoring | Optional dependency imports could leak back into the base package. | A subprocess test now blocks fourteen optional families while importing every foundation package; retain it as a release gate. |
@@ -409,7 +596,8 @@ Later phase detail belongs in `MIGRATION.md` until it becomes actionable.
 
 No migration blocker is currently recorded. Phase 5 is complete over the Phase
 2 foundations, converged Phase 3 engine semantics, and Phase 4 evidence
-boundary. Phase 6 is ready to begin from the verified plan-owned runtime.
+boundary. Phase 6 is active from that verified plan-owned runtime; P6-009 is the
+next implementation task.
 
 ## 9. Completion log
 
@@ -448,6 +636,14 @@ boundary. Phase 6 is ready to begin from the verified plan-owned runtime.
 | 2026-07-23 | Phase 5 semantic and packaging hardening | The graph coordinator delegates admission, bounded queueing, typed routing, and deadline/work construction to focused modules and is reduced from about 1,100 to 827 lines. Target-shaped tests prove quality suppression, terminal pre-run cancellation, and honest runtime exports; six skipped contracts name the remaining P5-008/Phase 6 behavior. Console scripts remain absent, `python -m eegle` is an inert dependency-free notice, and an isolated real-wheel test rejects every migration-only root module. Forty-two focused Phase 5 tests run with six skips; the complete 345-test suite passes with eleven skips, and compile-all passes. The clean 196 KB wheel contains 103 files, exactly four root modules, and passes installed target-package imports. |
 | 2026-07-24 | Legacy cleanup checkpoint 1 | Target-to-legacy imports were audited and structurally blocked. `core`, `protocols`, `components.py`, every alpha/attention/classification/DSART/inhibition recipe, their launchers and recipe-only tests, and the legacy Makefile were removed. Classification, adaptation, analysis, and migration tests retain scientific evidence without importing recipes or the realtime worker. The focused 28-test cleanup/packaging suite passes with three optional-dependency skips; the complete 227-test Python 3.14 suite passes with five skips; compile-all and diff checks pass. Phase 6–8 evidence remains protected and the smaller application remainder is staged under C-003. |
 | 2026-07-23 | Phase 5 closed | P5-006 through P5-008 add compiled scheduled/state triggers, semantic timeout and acceptance decisions, primary-first/shadow scheduling, nonfatal reject-newest backpressure, exact outcome/adaptation/action permission checks, and tamper-detecting fresh-runtime mid-phase restoration. Durable delayed-adaptation and event-window/multi-rate/simulated-action suites compile and execute; the latter persists and bundle-replays with equivalent receipts. All 41 focused tests and the 344-test full suite pass with five environment-dependent skips; compile-all passes. Phase 6 is ready. |
+| 2026-07-26 | Phase 6 semantic authorities locked | P6-000 resolves model/plugin/artifact/binding/prediction ownership, permission-defined roles, enrolled direct-reference outcomes, component state ownership, and deployment-only authorization with observe-only default. `PHASE6_MODEL_SYSTEMS.md`, `EEGLE.md`, and the migration plan agree. |
+| 2026-07-26 | P6-001 model authority completed | Modality-neutral canonical model contracts and path-free model manifests replace the target authority while legacy contract/bundle helpers leave the package-level model surface. Seven dedicated tests and the 234-test Python 3.14 suite pass with five skips; compile-all, source boundaries, diff checks, and clean-wheel packaging pass. Compiler bindings are P6-002 and legacy deletion remains P6-009. |
+| 2026-07-26 | P6-002 compiler model binding completed | Suite model uses and roles plus deployment materializations compile into exact immutable model bindings with manifest/plugin/state/input/preprocessing/artifact/comparison/permission checks. Nine dedicated tests, 57 focused tests, and the 243-test Python 3.14 suite pass with five skips; compile-all, source boundaries, diff checks, and clean-wheel packaging pass. Runtime-owned model results and predictions are P6-003. |
+| 2026-07-26 | P6-003 runtime model boundary completed | Contract-bound plugin results now become plan-owned canonical predictions with executor-derived admitted inputs, exact pre-inference state and terminal emitted/rejected/late/cancelled dispositions. A plain callable and independently installed stateful wheel prove one-engine execution and fresh-runtime restoration. Four dedicated tests, 82 focused tests, and the 247-test Python 3.14.4 suite pass with five skips; P6-004 replaces the remaining role-name runtime branches. |
+| 2026-07-27 | P6-004 role and comparison semantics completed | Permission-bearing roles now drive target scheduling, queue and failure dispositions; comparison groups emit exact complete/incomplete evidence; policies reject predictions not emitted by the current locked execution. Five dedicated tests, 66 focused tests, and the 252-test Python 3.14.4 suite pass with five skips; compile-all and diff checks pass. P6-005 implements enrolled direct-reference outcome lifecycles. |
+| 2026-07-27 | P6-005/P6-006 outcome and adaptation semantics completed | Compiled expectations enroll only declared predictions into a bounded, checkpointable direct-reference lifecycle with explicit dispositions. Canonical calibration artifacts and independently permissioned adaptation emit eligibility and requested/applied/rejected/no-op/failed/rollback state evidence; failed mutation restores prior state and bundle replay reproduces delayed updates. Five dedicated tests, 91 focused tests, and the 257-test Python 3.14.4 suite pass with five skips; compile-all, diff checks, and clean-wheel packaging pass. P6-007 is the deployment-owned authorization broker. |
+| 2026-07-27 | P6-007 deployment-owned action authorization completed | Policies emit unprivileged requests; exact deployment providers and grants bound capabilities, parameters, timing, expiry, and failure behavior; the engine alone creates actuator-ready commands. Observe-only defaults, pending resolution, expiry, cancellation, simulated receipts, lineage-forgery rejection, and fail-closed physical replay pass. Eight dedicated tests and the 265-test Python 3.14.4 suite pass with five skips; compile-all, diff checks, and clean-wheel packaging pass. P6-008 is next. |
+| 2026-07-27 | P6-008 representational generality completed | Four modality-neutral suites prove regular/irregular dense, sparse plus dense, and multi-rate streams through compile, run, verified evidence, and equivalent replay. Estimator and tensor-callable fixtures prove the external framework boundary without adding a framework runtime; dependency-backed packages remain Phase 7. Three dedicated tests, 62 focused tests, and the 268-test Python 3.14.4 suite pass with five skips; compile-all, diff checks, and clean-wheel packaging pass. P6-009 is next. |
 
 ## 10. Instructions for future Codex work
 

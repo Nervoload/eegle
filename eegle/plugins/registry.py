@@ -57,6 +57,8 @@ class PluginCapabilities:
     requires_future: bool = False
     resources: tuple[str, ...] = ()
     supports_triggers: bool = False
+    processing_operations: tuple[str, ...] = ()
+    simulation_only: bool = False
 
     def __post_init__(self) -> None:
         modes = frozenset(ExecutionMode(value) for value in self.supported_modes)
@@ -71,6 +73,13 @@ class PluginCapabilities:
             "resources",
             tuple(require_identifier(value, "resource") for value in self.resources),
         )
+        operations = tuple(
+            require_identifier(value, "processing operation")
+            for value in self.processing_operations
+        )
+        if len(operations) != len(set(operations)):
+            raise ValueError("plugin processing operations must be unique")
+        object.__setattr__(self, "processing_operations", operations)
         if ExecutionMode.CAUSAL in modes and self.requires_future:
             raise ValueError("a causal plugin cannot require future information")
 
@@ -83,6 +92,8 @@ class PluginCapabilities:
             "requires_future": self.requires_future,
             "resources": list(self.resources),
             "supports_triggers": self.supports_triggers,
+            "processing_operations": list(self.processing_operations),
+            "simulation_only": self.simulation_only,
         }
 
 
@@ -264,6 +275,7 @@ _REQUIRED_COMPONENT_MEMBERS: Mapping[ComponentKind, tuple[str, ...]] = {
     ComponentKind.OUTCOME: ("update",),
     ComponentKind.ADAPTER: ("update",),
     ComponentKind.POLICY: ("decide",),
+    ComponentKind.AUTHORIZATION: ("authorize", "resolve"),
     ComponentKind.ACTUATOR: ("submit",),
     ComponentKind.ARTIFACT: ("produce",),
     ComponentKind.SINK: ("append",),

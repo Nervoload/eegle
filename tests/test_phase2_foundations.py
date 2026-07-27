@@ -14,10 +14,12 @@ from scipy import signal
 
 from eegle._domain import ComponentKind, ExecutionMode, Lineage
 from eegle.actions import (
-    ActionCommand,
+    ActionRequest,
     ActionReceipt,
     AuthorizationDecision,
+    AuthorizationRequest,
     AuthorizationStatus,
+    AuthorizedCommand,
     ReceiptStatus,
 )
 from eegle.compiler import (
@@ -51,7 +53,12 @@ from eegle.recording import (
     iter_framed_payloads,
 )
 from eegle.runtime import Rejection, StateTransition, TransitionStatus
-from eegle.runtime.outcomes import Outcome, OutcomeUse
+from eegle.runtime.outcomes import (
+    Outcome,
+    OutcomeReference,
+    OutcomeReferenceKind,
+    OutcomeUse,
+)
 from eegle.streams import (
     ChannelSpec,
     ClockIdentity,
@@ -298,14 +305,24 @@ class DomainRecordTests(unittest.TestCase):
         )
         prediction = Prediction(
             prediction_id="prediction.1",
+            component_id="model.primary",
+            plugin_id="fixture.model",
+            plugin_version="1.0.0",
             model_id="model.primary",
-            role="primary",
-            outputs={"label": "state.a", "probabilities": [0.8, 0.2]},
+            model_version="1.0.0",
+            manifest_digest=canonical_hash({"manifest": "primary"}),
+            contract_digest=canonical_hash({"contract": "primary"}),
+            result_digest=canonical_hash({"result": "primary"}),
+            role_id="primary",
+            role_profile="primary",
+            output_port="prediction",
+            value={"label": "state.a", "probabilities": [0.8, 0.2]},
             produced_time=_time(4.0),
             available_time=_time(4.01),
             input_ids=("window.1",),
+            admitted_input_ids=("window.1",),
             lineage=lineage,
-            confidence=0.8,
+            artifact_digests={},
         )
         quality_batch = DenseSampleBatch(
                 batch_id="batch.quality",
@@ -343,7 +360,12 @@ class DomainRecordTests(unittest.TestCase):
             _time(5.0, "task.clock"),
             _time(6.0),
             frozenset({OutcomeUse.METRICS, OutcomeUse.ADAPTATION}),
-            (prediction.prediction_id,),
+            (
+                OutcomeReference(
+                    OutcomeReferenceKind.PREDICTION,
+                    prediction.prediction_id,
+                ),
+            ),
         )
         transition = StateTransition(
             "transition.1",
@@ -355,8 +377,8 @@ class DomainRecordTests(unittest.TestCase):
             resulting,
             (prediction.prediction_id, outcome.outcome_id),
         )
-        command = ActionCommand(
-            "command.1",
+        request = ActionRequest(
+            "request.1",
             "audio.tone",
             "policy.observe",
             {"frequency_hz": 440.0},
@@ -364,13 +386,45 @@ class DomainRecordTests(unittest.TestCase):
             _time(7.0),
             prediction_id=prediction.prediction_id,
         )
+        authorization_request = AuthorizationRequest.from_action(
+            authorization_request_id="authorization_request.1",
+            action_request_id=request.request_id,
+            permission_id="permission.audio",
+            provider_id="site.authorization",
+            actuator_id="actuator.simulated",
+            capability=request.capability,
+            parameters=request.parameters,
+            requested_time=request.requested_time,
+            available_time=request.available_time,
+            expires_at=request.expires_at,
+        )
         authorization = AuthorizationDecision(
             "authorization.1",
-            command.command_id,
-            "site.observe_only",
-            AuthorizationStatus.OBSERVE_ONLY,
+            authorization_request.authorization_request_id,
+            request.request_id,
+            authorization_request.permission_id,
+            authorization_request.provider_id,
+            AuthorizationStatus.AUTHORIZED,
             _time(7.01),
-            reason="deployment is observe-only",
+            _time(7.01),
+            valid_until=_time(8.0),
+            reason="deployment authorized simulation",
+        )
+        command = AuthorizedCommand(
+            "command.1",
+            request.request_id,
+            authorization_request.authorization_request_id,
+            authorization.decision_id,
+            authorization_request.permission_id,
+            authorization_request.provider_id,
+            authorization_request.actuator_id,
+            request.capability,
+            request.parameters,
+            request.requested_time,
+            authorization.available_time,
+            expires_at=authorization.valid_until,
+            prediction_id=request.prediction_id,
+            policy_state_hash=request.policy_state_hash,
         )
         receipt = ActionReceipt(
             "receipt.1",
@@ -387,7 +441,12 @@ class DomainRecordTests(unittest.TestCase):
         self.assertEqual(Rejection.from_payload(rejection.to_payload()), rejection)
         self.assertEqual(Outcome.from_payload(outcome.to_payload()), outcome)
         self.assertEqual(StateTransition.from_payload(transition.to_payload()), transition)
-        self.assertEqual(ActionCommand.from_payload(command.to_payload()), command)
+        self.assertEqual(ActionRequest.from_payload(request.to_payload()), request)
+        self.assertEqual(
+            AuthorizationRequest.from_payload(authorization_request.to_payload()),
+            authorization_request,
+        )
+        self.assertEqual(AuthorizedCommand.from_payload(command.to_payload()), command)
         self.assertEqual(
             AuthorizationDecision.from_payload(authorization.to_payload()), authorization
         )
@@ -397,19 +456,31 @@ class DomainRecordTests(unittest.TestCase):
         lineage = Lineage(
             component_id="model.primary",
             input_ids=("window.future",),
+            component_version="1.0.0",
             latest_input_available_time=_time(4.1),
             stream_revisions={"neural.primary": 1},
         )
         with self.assertRaisesRegex(ValueError, "before its latest input"):
             Prediction(
                 prediction_id="prediction.invalid",
+                component_id="model.primary",
+                plugin_id="fixture.model",
+                plugin_version="1.0.0",
                 model_id="model.primary",
-                role="primary",
-                outputs={"label": "state.a"},
+                model_version="1.0.0",
+                manifest_digest=canonical_hash({"manifest": "invalid"}),
+                contract_digest=canonical_hash({"contract": "invalid"}),
+                result_digest=canonical_hash({"result": "invalid"}),
+                role_id="primary",
+                role_profile="primary",
+                output_port="prediction",
+                value={"label": "state.a"},
                 produced_time=_time(4.0),
                 available_time=_time(4.2),
                 input_ids=("window.future",),
+                admitted_input_ids=("window.future",),
                 lineage=lineage,
+                artifact_digests={},
             )
 
 

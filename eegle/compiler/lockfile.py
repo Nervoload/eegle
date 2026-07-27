@@ -23,6 +23,7 @@ class ExecutionLock:
     schema_hashes: Mapping[str, str]
     graph_hash: str
     artifact_hashes: Mapping[str, str] = None  # type: ignore[assignment]
+    model_hashes: Mapping[str, str] = None  # type: ignore[assignment]
     schema: str = EXECUTION_LOCK_SCHEMA
 
     def __post_init__(self) -> None:
@@ -34,7 +35,13 @@ class ExecutionLock:
         plugin_keys = tuple((value.plugin_id, value.version) for value in self.plugins)
         if len(plugin_keys) != len(set(plugin_keys)):
             raise ValueError("execution lock plugins must be unique")
-        for field in ("spec_hashes", "component_hashes", "schema_hashes", "artifact_hashes"):
+        for field in (
+            "spec_hashes",
+            "component_hashes",
+            "schema_hashes",
+            "artifact_hashes",
+            "model_hashes",
+        ):
             values = getattr(self, field) or {}
             normalized = {
                 require_identifier(str(key), f"{field} key"): require_digest(
@@ -59,6 +66,7 @@ class ExecutionLock:
             "schema_hashes": thaw_json(self.schema_hashes),
             "graph_hash": self.graph_hash,
             "artifact_hashes": thaw_json(self.artifact_hashes),
+            "model_hashes": thaw_json(self.model_hashes),
         }
 
     def to_payload(self) -> dict[str, Any]:
@@ -87,6 +95,11 @@ class ExecutionLock:
         }
         if expected_artifacts != dict(self.artifact_hashes):
             raise ValueError("lock artifact hashes differ from execution plan")
+        expected_models = {
+            value.component_id: value.manifest_digest for value in plan.model_bindings
+        }
+        if expected_models != dict(self.model_hashes):
+            raise ValueError("lock model hashes differ from execution plan")
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ExecutionLock":
@@ -106,6 +119,10 @@ class ExecutionLock:
             artifact_hashes={
                 str(key): str(item)
                 for key, item in dict(payload.get("artifact_hashes") or {}).items()
+            },
+            model_hashes={
+                str(key): str(item)
+                for key, item in dict(payload.get("model_hashes") or {}).items()
             },
         )
         if payload.get("lock_hash") != value.lock_hash:

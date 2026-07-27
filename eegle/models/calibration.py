@@ -1,148 +1,91 @@
-"""Calibration protocols and threshold helpers for EEGle models."""
+"""Canonical calibration artifacts admitted as initial model state."""
 
 from __future__ import annotations
 
-import json
-import hashlib
-from dataclasses import asdict, dataclass, field
-from pathlib import Path
-from typing import Any, Protocol
+from dataclasses import dataclass
+from typing import Any, Mapping
 
-import numpy as np
-
-from eegle.ml.calibration import binary_metrics_at_threshold, select_binary_threshold, threshold_candidates
+from eegle._validation import freeze_json, require_identifier, thaw_json
+from eegle.compiler.lock import canonical_hash
+from eegle.recording.artifacts import ArtifactReference
+from eegle.streams.clocks import TimePoint
 
 
-CALIBRATION_STATE_SCHEMA = "eegle.calibration_state.v1"
+CALIBRATION_ARTIFACT_SCHEMA = "eegle.calibration_artifact.v1"
 
 
-@dataclass(frozen=True)
-class CalibrationState:
-    """Versioned adaptation state that can be logged and replayed."""
+@dataclass(frozen=True, slots=True)
+class CalibrationArtifact:
+    calibration_id: str
+    algorithm_id: str
+    model_id: str
+    state_reference: ArtifactReference
+    support_input_ids: tuple[str, ...]
+    support_outcome_ids: tuple[str, ...]
+    produced_time: TimePoint
+    provenance: Mapping[str, Any] = None  # type: ignore[assignment]
+    schema: str = CALIBRATION_ARTIFACT_SCHEMA
 
-    kind: str
-    parameters: dict[str, Any] = field(default_factory=dict)
-    schema: str = CALIBRATION_STATE_SCHEMA
-    source: str = "unspecified"
-    update_count: int = 0
-    metadata: dict[str, Any] = field(default_factory=dict)
+    def __post_init__(self) -> None:
+        if self.schema != CALIBRATION_ARTIFACT_SCHEMA:
+            raise ValueError(f"unsupported calibration artifact schema: {self.schema}")
+        for field in ("calibration_id", "algorithm_id", "model_id"):
+            object.__setattr__(
+                self, field, require_identifier(getattr(self, field), field)
+            )
+        if not isinstance(self.state_reference, ArtifactReference):
+            raise TypeError("calibration state must be a generic artifact reference")
+        inputs = tuple(
+            require_identifier(value, "support_input_id")
+            for value in self.support_input_ids
+        )
+        outcomes = tuple(
+            require_identifier(value, "support_outcome_id")
+            for value in self.support_outcome_ids
+        )
+        if not inputs or not outcomes:
+            raise ValueError("calibration artifact requires support inputs and outcomes")
+        if len(inputs) != len(set(inputs)) or len(outcomes) != len(set(outcomes)):
+            raise ValueError("calibration support identities must be unique")
+        object.__setattr__(self, "support_input_ids", inputs)
+        object.__setattr__(self, "support_outcome_ids", outcomes)
+        object.__setattr__(self, "provenance", freeze_json(self.provenance or {}))
 
-    def payload(self) -> dict[str, Any]:
-        return asdict(self)
+    @property
+    def calibration_digest(self) -> str:
+        return canonical_hash(self.content_payload())
+
+    def content_payload(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "calibration_id": self.calibration_id,
+            "algorithm_id": self.algorithm_id,
+            "model_id": self.model_id,
+            "state_reference": self.state_reference.to_payload(),
+            "support_input_ids": list(self.support_input_ids),
+            "support_outcome_ids": list(self.support_outcome_ids),
+            "produced_time": self.produced_time.to_payload(),
+            "provenance": thaw_json(self.provenance),
+        }
+
+    def to_payload(self) -> dict[str, Any]:
+        payload = self.content_payload()
+        payload["calibration_digest"] = self.calibration_digest
+        return payload
 
     @classmethod
-    def from_payload(cls, payload: dict[str, Any]) -> "CalibrationState":
-        if payload.get("schema") != CALIBRATION_STATE_SCHEMA:
-            raise ValueError(f"unsupported calibration state schema: {payload.get('schema')}")
-        return cls(
-            kind=str(payload["kind"]),
-            parameters=dict(payload.get("parameters") or {}),
-            schema=str(payload.get("schema", CALIBRATION_STATE_SCHEMA)),
-            source=str(payload.get("source", "unspecified")),
-            update_count=int(payload.get("update_count", 0)),
-            metadata=dict(payload.get("metadata") or {}),
+    def from_payload(cls, payload: Mapping[str, Any]) -> "CalibrationArtifact":
+        value = cls(
+            schema=str(payload.get("schema", CALIBRATION_ARTIFACT_SCHEMA)),
+            calibration_id=str(payload["calibration_id"]),
+            algorithm_id=str(payload["algorithm_id"]),
+            model_id=str(payload["model_id"]),
+            state_reference=ArtifactReference.from_payload(payload["state_reference"]),
+            support_input_ids=tuple(str(item) for item in payload["support_input_ids"]),
+            support_outcome_ids=tuple(str(item) for item in payload["support_outcome_ids"]),
+            produced_time=TimePoint.from_payload(payload["produced_time"]),
+            provenance=dict(payload.get("provenance") or {}),
         )
-
-
-class CalibrationAdapter(Protocol):
-    """Protocol for explicit, replayable calibration and adaptation."""
-
-    kind: str
-
-    def fit(self, support_set: Any) -> CalibrationState:
-        ...
-
-    def transform_epoch(self, epoch: np.ndarray, state: CalibrationState) -> np.ndarray:
-        ...
-
-    def transform_window(self, window: np.ndarray, state: CalibrationState) -> np.ndarray:
-        ...
-
-    def update_unsupervised(self, window: np.ndarray, state: CalibrationState) -> CalibrationState:
-        ...
-
-    def update_supervised(self, epoch: np.ndarray, label: Any, state: CalibrationState) -> CalibrationState:
-        ...
-
-    def export_state(self, state: CalibrationState, path: str | Path) -> None:
-        ...
-
-    def load_state(self, path: str | Path) -> CalibrationState:
-        ...
-
-
-def write_calibration_state(state: CalibrationState, path: str | Path) -> CalibrationState:
-    target = Path(path).expanduser().resolve()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with target.open("w", encoding="utf-8") as handle:
-        json.dump(state.payload(), handle, indent=2, sort_keys=True)
-        handle.write("\n")
-    return state
-
-
-def read_calibration_state(path: str | Path) -> CalibrationState:
-    with Path(path).expanduser().resolve().open("r", encoding="utf-8") as handle:
-        return CalibrationState.from_payload(json.load(handle))
-
-
-def calibration_state_hash(state: CalibrationState | dict[str, Any]) -> str:
-    payload = state.payload() if isinstance(state, CalibrationState) else dict(state)
-    encoded = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def make_threshold_state(
-    calibration: dict[str, Any],
-    *,
-    source: str,
-    support_size: int | None = None,
-    query_size: int | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> CalibrationState:
-    parameters = {
-        "selected_threshold": calibration.get("selected_threshold"),
-        "metric": calibration.get("metric"),
-        "selected_metrics": calibration.get("selected_metrics"),
-    }
-    if support_size is not None:
-        parameters["support_size"] = int(support_size)
-    if query_size is not None:
-        parameters["query_size"] = int(query_size)
-    return CalibrationState(
-        kind="threshold",
-        parameters={key: value for key, value in parameters.items() if value is not None},
-        source=source,
-        update_count=0,
-        metadata=dict(metadata or {}),
-    )
-
-
-def make_prototype_state(
-    *,
-    lapse_prototype: np.ndarray,
-    non_lapse_prototype: np.ndarray,
-    support_counts: dict[str, int],
-    distance_metric: str,
-    alpha: float,
-    bias: float,
-    selected_threshold: float,
-    normalizer: dict[str, Any] | None = None,
-    source: str = "support_set",
-    metadata: dict[str, Any] | None = None,
-) -> CalibrationState:
-    return CalibrationState(
-        kind="prototype",
-        parameters={
-            "lapse_prototype": np.asarray(lapse_prototype, dtype=float).tolist(),
-            "non_lapse_prototype": np.asarray(non_lapse_prototype, dtype=float).tolist(),
-            "support_counts": {str(key): int(value) for key, value in support_counts.items()},
-            "distance_metric": str(distance_metric),
-            "alpha": float(alpha),
-            "bias": float(bias),
-            "selected_threshold": float(selected_threshold),
-            "normalizer": dict(normalizer or {}),
-        },
-        source=source,
-        update_count=0,
-        metadata=dict(metadata or {}),
-    )
+        if payload.get("calibration_digest") != value.calibration_digest:
+            raise ValueError("calibration artifact digest mismatch")
+        return value

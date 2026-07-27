@@ -1,6 +1,7 @@
 """Integrated records and the sole plan-owned semantic execution engine."""
 
 from eegle._domain import WorkStatus
+from eegle.runtime.action_broker import ActionBroker, BrokerOutcome, PendingAuthorization
 from eegle.runtime.context import DeterministicIdSource, RuntimeExecutionContext
 from eegle.runtime.checkpoints import EngineCheckpoint, read_checkpoint, write_checkpoint
 from eegle.runtime.graph import (
@@ -28,14 +29,42 @@ from eegle.runtime.plan_runtime import (
     RuntimeNode,
     construct_plan_runtime,
 )
-from eegle.runtime.state import Rejection, StateTransition, TransitionStatus, WorkRecord
-from eegle.runtime.outcomes import Outcome, OutcomeRoutingPolicy, OutcomeUse
+from eegle.runtime.model_runtime import (
+    ModelComparison,
+    ModelComparisonStatus,
+    ModelResultDisposition,
+    ModelResultDispositionStatus,
+    ModelResultRejected,
+)
+from eegle.runtime.state import (
+    AdaptationEligibilityDecision,
+    AdaptationEligibilityStatus,
+    AdaptationResult,
+    Rejection,
+    StateTransition,
+    TransitionStatus,
+    WorkRecord,
+)
+from eegle.runtime.outcomes import (
+    Outcome,
+    OutcomeDisposition,
+    OutcomeDispositionStatus,
+    OutcomeReference,
+    OutcomeReferenceKind,
+    OutcomeRoutingPolicy,
+    OutcomeUse,
+)
 from eegle.runtime.scheduling import ScheduledTrigger, StateTriggerRule, TriggerResult
 
 
 __all__ = [
+    "ActionBroker",
     "DeterministicIdSource",
     "AcceptanceResult",
+    "AdaptationEligibilityDecision",
+    "AdaptationEligibilityStatus",
+    "AdaptationResult",
+    "BrokerOutcome",
     "EngineCheckpoint",
     "EngineRunResult",
     "EngineStatus",
@@ -45,9 +74,19 @@ __all__ = [
     "GraphPhaseResult",
     "GraphRunStatus",
     "OperatorController",
+    "ModelResultDisposition",
+    "ModelResultDispositionStatus",
+    "ModelResultRejected",
+    "ModelComparison",
+    "ModelComparisonStatus",
     "Outcome",
+    "OutcomeDisposition",
+    "OutcomeDispositionStatus",
+    "OutcomeReference",
+    "OutcomeReferenceKind",
     "OutcomeRoutingPolicy",
     "OutcomeUse",
+    "PendingAuthorization",
     "PhaseAttempt",
     "PhaseTransitionRecord",
     "PlanConstructionError",

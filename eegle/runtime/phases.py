@@ -553,6 +553,18 @@ class ExecutionEngine:
             reason = f"{type(exc).__name__}: {exc}"
             evidence.append(self.graph.record_event("plan_failure", {"reason": reason}))
         finally:
+            if status != EngineStatus.CHECKPOINTED:
+                evidence.extend(
+                    self.graph.finalize_outcomes(
+                        cancelled=status
+                        in {
+                            EngineStatus.CANCELLED,
+                            EngineStatus.FAILED,
+                            EngineStatus.PARTIAL,
+                            EngineStatus.TIMED_OUT,
+                        }
+                    )
+                )
             close_failures = self.runtime.close()
             if close_failures:
                 status = EngineStatus.FAILED

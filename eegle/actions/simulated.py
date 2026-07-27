@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from eegle.actions.commands import ActionCommand
+from eegle.actions.commands import AuthorizedCommand
 from eegle.actions.receipts import ActionReceipt, ReceiptStatus
 from eegle.streams.clocks import TimePoint
 
@@ -18,7 +18,7 @@ class SimulatedActuator:
     actuator_id = "eegle.simulated_actuator"
 
     def submit(
-        self, command: ActionCommand, context: "ExecutionContext"
+        self, command: AuthorizedCommand, context: "ExecutionContext"
     ) -> ActionReceipt:
         if command.available_time.clock_id != context.current_time.clock_id:
             raise ValueError("actuator context and command availability must share a clock")
@@ -34,9 +34,14 @@ class SimulatedActuator:
         return ActionReceipt(
             receipt_id=context.next_id("receipt"),
             command_id=command.command_id,
-            actuator_id=self.actuator_id,
+            actuator_id=command.actuator_id,
             status=ReceiptStatus.EXPIRED if expired else ReceiptStatus.DELIVERED,
             observed_time=observed,
             delivered_time=None if expired else observed,
-            details={"simulated": True},
+            authorization_decision_id=command.authorization_decision_id,
+            details={
+                "simulated": True,
+                "adapter_id": self.actuator_id,
+                "request_id": command.request_id,
+            },
         )

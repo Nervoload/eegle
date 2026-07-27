@@ -5,15 +5,21 @@ from __future__ import annotations
 from typing import Any, Iterable, Mapping, Protocol, runtime_checkable
 
 from eegle._domain import ExecutionMode
-from eegle.actions.commands import ActionCommand
+from eegle.actions.authorization import (
+    AuthorizationDecision,
+    AuthorizationRequest,
+    AuthorizationResult,
+)
+from eegle.actions.commands import ActionRequest, AuthorizedCommand
 from eegle.actions.receipts import ActionReceipt
 from eegle.models.predictions import Prediction
+from eegle.models.results import ModelResult
 from eegle.recording.publications import ArtifactPublication
 from eegle.processing.quality import QualityDecision
 from eegle.processing.windows import Window
 from eegle.runtime.outcomes import Outcome
 from eegle.runtime.scheduling import ScheduledTrigger, TriggerResult
-from eegle.runtime.state import StateTransition
+from eegle.runtime.state import AdaptationResult, StateTransition
 from eegle.streams.clocks import TimePoint
 from eegle.streams.packets import Packet
 from eegle.streams.sources import Source
@@ -69,7 +75,20 @@ class QualityGate(Protocol):
 
 @runtime_checkable
 class Model(Protocol):
-    def predict(self, item: Any, context: ExecutionContext) -> Prediction:
+    def predict(self, item: Any, context: ExecutionContext) -> ModelResult:
+        ...
+
+
+@runtime_checkable
+class AdaptiveModel(Model, Protocol):
+    """State-owning model whose updates are coordinated and evidenced by EEGle."""
+
+    def adapt(
+        self,
+        prediction: Prediction,
+        outcome: Outcome,
+        context: ExecutionContext,
+    ) -> AdaptationResult:
         ...
 
 
@@ -97,13 +116,31 @@ class Policy(Protocol):
         prediction: Prediction,
         state: Mapping[str, Any],
         context: ExecutionContext,
-    ) -> ActionCommand | None:
+    ) -> ActionRequest | None:
+        ...
+
+
+@runtime_checkable
+class AuthorizationProvider(Protocol):
+    def authorize(
+        self,
+        request: AuthorizationRequest,
+        context: ExecutionContext,
+    ) -> AuthorizationResult:
+        ...
+
+    def resolve(
+        self,
+        request: AuthorizationRequest,
+        pending: AuthorizationDecision,
+        context: ExecutionContext,
+    ) -> AuthorizationResult:
         ...
 
 
 @runtime_checkable
 class Actuator(Protocol):
-    def submit(self, command: ActionCommand, context: ExecutionContext) -> ActionReceipt:
+    def submit(self, command: AuthorizedCommand, context: ExecutionContext) -> ActionReceipt:
         ...
 
 

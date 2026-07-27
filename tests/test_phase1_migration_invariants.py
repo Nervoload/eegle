@@ -9,7 +9,15 @@ from typing import Any
 import numpy as np
 
 from eegle.analysis.classification import _prediction_differences
-from eegle.models.contracts import ModelContract, PreprocessingContract, TargetContract
+from eegle.models.contracts import (
+    ModelContract,
+    ModelInputContract,
+    ModelOutputContract,
+    ModelStateBehavior,
+    ModelStateContract,
+    PreprocessingOwnership,
+    PreprocessingRequirement,
+)
 from eegle.realtime.classification import sanitize_model_metadata
 from eegle.realtime.epoching import MarkerEvent
 from eegle.realtime.event_features import EngineInputCaptureWriter, read_engine_capture
@@ -52,29 +60,52 @@ class _AdaptiveAdapter:
 class Phase1MigrationInvariantTests(unittest.TestCase):
     def test_model_contract_nested_payload_round_trips_without_semantic_loss(self) -> None:
         contract = ModelContract(
-            input_kind="rolling_window",
-            channel_names=("Fz", "Cz"),
-            required_channels=("Cz",),
-            optional_channels=("Fz",),
-            sample_rate_hz=250.0,
-            epoch_window_seconds=(-1.0, 0.0),
-            prediction_horizon_seconds=(0.0, 0.2),
-            preprocessing=PreprocessingContract(
-                reference="average",
-                filters=({"kind": "bandpass", "low_hz": 1.0, "high_hz": 40.0},),
-                baseline_seconds=(-1.0, -0.8),
+            inputs=(
+                ModelInputContract(
+                    port_name="window",
+                    type_id="eegle.dense_window.v1",
+                    requirements={
+                        "channel_ids": ["sensor.fz", "sensor.cz"],
+                        "required_channel_ids": ["sensor.cz"],
+                        "sample_rate_hz": 250.0,
+                        "window_seconds": [-1.0, 0.0],
+                    },
+                    preprocessing=(
+                        PreprocessingRequirement(
+                            requirement_id="requirement.bandpass",
+                            operation="sos_bandpass",
+                            ownership=PreprocessingOwnership.UPSTREAM,
+                            parameters={"low_hz": 1.0, "high_hz": 40.0},
+                            required_lineage=("component.bandpass",),
+                        ),
+                    ),
+                ),
             ),
-            target=TargetContract(
-                name="attention_lapse",
-                positive_label="lapse",
-                label_mapping={"attentive": 0, "lapse": 1},
-                learning_problem="binary_classification",
+            outputs=(
+                ModelOutputContract(
+                    port_name="prediction",
+                    type_id="eegle.model_result.v1",
+                    value_schema={
+                        "type": "object",
+                        "required": ["label"],
+                        "properties": {"label": {"enum": ["attentive", "lapse"]}},
+                    },
+                    uncertainty_schema={
+                        "type": "object",
+                        "properties": {"probability": {"type": "number"}},
+                    },
+                ),
             ),
-            latency_budget_ms=50.0,
-            adaptation_permissions=("calibration",),
+            state=ModelStateContract(
+                behavior=ModelStateBehavior.SNAPSHOT_RESTORE,
+                state_schema_id="example.attention_state.v1",
+                adaptation_supported=True,
+                state_affects_predictions=True,
+            ),
+            metadata={"prediction_horizon_seconds": [0.0, 0.2]},
         )
 
-        self.assertEqual(ModelContract.from_payload(contract.payload()), contract)
+        self.assertEqual(ModelContract.from_payload(contract.to_payload()), contract)
 
     def test_fixture_manifest_is_complete_and_non_sensitive(self) -> None:
         manifest = json.loads(FIXTURE_MANIFEST.read_text(encoding="utf-8"))

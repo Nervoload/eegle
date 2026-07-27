@@ -1,10 +1,14 @@
 """Portable scientific, suite, and deployment specifications."""
 
 from eegle.specs.deployment import (
+    ActionParameterConstraint,
+    AuthorizationFailureDisposition,
+    AuthorizationProviderBindingSpec,
     ClockMappingStrategy,
     ClockMappingBinding,
     ComponentBindingSpec,
     DeploymentSpec,
+    ModelArtifactBindingSpec,
     PermissionGrant,
     Placement,
     ResourceSpec,
@@ -21,10 +25,19 @@ from eegle.specs.protocol import (
 )
 from eegle.specs.schemas import SchemaValidationError, validate_schema, validate_payload
 from eegle.specs.suite import (
+    AdaptationSpec,
     ArtifactSpec,
     BackpressureDisposition,
     ComponentSpec,
     LogicalStreamSpec,
+    ModelFailureDisposition,
+    ModelQueueDisposition,
+    ModelRolePermissionsSpec,
+    ModelRoleProfile,
+    ModelRoleSpec,
+    ModelUseSpec,
+    OutcomeExpectationSpec,
+    OutcomeOverflowDisposition,
     PhaseSpec,
     PhaseTransition,
     ResumePolicy,
@@ -43,8 +56,12 @@ from eegle.specs.suite import (
 
 __all__ = [
     "AcceptanceCriterion",
+    "ActionParameterConstraint",
+    "AdaptationSpec",
     "ArtifactSpec",
     "BackpressureDisposition",
+    "AuthorizationFailureDisposition",
+    "AuthorizationProviderBindingSpec",
     "ClaimSpec",
     "ClockMappingBinding",
     "ClockMappingStrategy",
@@ -53,6 +70,15 @@ __all__ = [
     "ComponentSpec",
     "DeploymentSpec",
     "LogicalStreamSpec",
+    "ModelArtifactBindingSpec",
+    "ModelFailureDisposition",
+    "ModelQueueDisposition",
+    "ModelRolePermissionsSpec",
+    "ModelRoleProfile",
+    "ModelRoleSpec",
+    "ModelUseSpec",
+    "OutcomeExpectationSpec",
+    "OutcomeOverflowDisposition",
     "MetricSpec",
     "PermissionGrant",
     "PhaseSpec",

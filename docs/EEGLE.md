@@ -1,7 +1,7 @@
 # EEGle Architecture and Product Vision
 
 **Status:** Normative source of truth for EEGle's intended product and architecture  
-**Last updated:** 2026-07-23
+**Last updated:** 2026-07-26
 **Related documents:** [Migration plan](MIGRATION.md) · [Migration status](MIGRATION_STATUS.md)
 
 This document defines what EEGle is intended to become. It is the authority for
@@ -696,15 +696,52 @@ transport recovery remain separable deployment responsibilities.
 
 ### 9.1 Model contract
 
-A model bundle should declare:
+Phase 6 separates model-system authorities deliberately:
 
-- model identity, version, implementation, and content hashes;
+| Authority | Responsibility |
+|---|---|
+| `PluginDescriptor` | Executable factory, typed ports, configuration schema, implementation capabilities, version and provenance |
+| `ModelManifest` | Portable scientific model identity, contract and content-addressed artifact references |
+| `ModelContract` | Scientific input/output, preprocessing ownership, uncertainty and state requirements |
+| `SuiteSpec` | Logical scientific use, routes, phases and role intent |
+| `DeploymentSpec` | Local artifact resolution, placement, resources, secrets and authorization binding |
+| `PlannedModelBinding` | Exact compiled join of implementation, artifact, contract, role, state and deployment |
+| `Prediction` | Runtime-created evidence for one validated result with plan-owned identity, lineage, state and timing |
+
+These declarations may narrow one another but must not duplicate or silently
+override authority. In particular, placement and deadlines remain deployment
+and plan concerns, while executable capabilities remain plugin concerns.
+
+A model manifest should declare:
+
+- model identity, version, contract digest, and content-addressed artifacts;
 - input ports, channel and unit expectations, rate and window requirements;
 - preprocessing ownership and compatible transform lineage;
-- output schema, labels or targets, calibration, and confidence semantics;
-- statefulness, snapshot behavior, determinism, and replay level;
-- supported execution modes and hardware requirements;
-- training and evaluation provenance when available.
+- output, uncertainty, abstention, and validity schemas;
+- statefulness, initial-state, adaptation, snapshot, and replay requirements;
+- compatible executable plugin identities and version constraints;
+- training and evaluation provenance, license, and annotations when available.
+
+Determinism and executable capabilities belong to the selected plugin;
+placement, resources, deadlines, and local materialization belong to deployment
+and the compiled plan. The compiler intersects those declarations rather than
+copying them into the scientific manifest.
+
+The portable semantic object is a canonical `ModelManifest`. A physical model
+bundle may materialize that manifest and its artifacts, but it must not become a
+factory, package manager, local cache, training workflow, or environment probe.
+Artifact identity is content-addressed; deployment resolves local materialization.
+The compiled binding records the exact site-local URI and expected digest
+without accessing or downloading content. Materialization changes are
+operational plan differences; manifest, contract, role, lineage, and digest
+changes are scientific differences.
+
+A model plugin returns contract-bound result data. EEGle validates it and creates
+the canonical prediction envelope using locked component, plugin, manifest,
+contract, role, admitted-input, state, and timing information. A plugin cannot
+self-assert those evidence identities. Output and uncertainty semantics use
+explicit schemas rather than assuming one learning-problem taxonomy or one
+scalar confidence.
 
 Inference metadata must remain label-blind. Stimulus condition, response
 correctness, trial label, or later outcome must not be included in model inputs
@@ -712,7 +749,7 @@ unless the protocol explicitly declares a non-causal research mode.
 
 ### 9.2 Roles
 
-EEGle supports named model roles rather than task-specific branches:
+EEGle supports named model-role profiles rather than task-specific branches:
 
 - `primary`: supplies predictions to the active policy;
 - `shadow`: receives equivalent admitted inputs but cannot control actions;
@@ -720,8 +757,11 @@ EEGle supports named model roles rather than task-specific branches:
 - `observer`: produces metrics or annotations without participating in policy;
 - custom roles whose permissions are resolved by the compiler.
 
-Role permissions, scheduling priority, accepted inputs, and action authority are
-part of the locked plan and evidence.
+Compilation expands profiles into explicit scheduling, comparison, policy,
+outcome, adaptation, failure, and queue permissions. Runtime consumes those
+permissions rather than role-name string branches. Roles never grant actuator
+authority: a role may allow a prediction to reach a policy, while deployment
+authorization remains independently required.
 
 ### 9.3 Outcomes and delayed labels
 
@@ -730,8 +770,11 @@ refers to, when it occurred, when it became available, its source, and whether i
 may be used for metrics, calibration, adaptation, or policy.
 
 The engine must support delayed and missing outcomes without inventing labels.
-Pending, matched, expired, duplicated, and rejected outcomes are explicitly
-accounted for.
+Only predictions enrolled in an explicit outcome expectation enter the bounded
+matcher. Pending, matched, expired, overflowed, duplicated, disputed, rejected,
+cancelled, and end-of-run pending states are explicitly accounted for on both
+prediction and outcome sides. Core matching uses stable direct references;
+heuristic temporal or task-specific matching is an explicit plugin.
 
 ### 9.4 Adaptation
 
@@ -756,15 +799,23 @@ An action path separates:
 
 1. model output;
 2. policy decision;
-3. requested command;
+3. action request;
 4. site authorization and interlock decision;
-5. device adapter submission;
-6. acknowledgement or measured receipt.
+5. authorized command construction;
+6. device adapter submission;
+7. acknowledgement or measured receipt.
 
 A suite can request an action capability. It cannot grant itself permission to
 stimulate. Authorization is supplied by the deployment and an independent local
 policy or interlock. Observe-only should be a normal authorization policy, not a
 special-case implementation.
+
+The authorization provider is a deployment-owned service, never a suite graph
+node. No provider means observe-only. Simulation may use a simulation-only
+provider; other providers operate only within locked capability, parameter,
+timing, expiry, and failure bounds. Operator confirmation is an explicitly
+configured provider mechanism rather than an implicit fallback, and it must not
+block the semantic coordinator.
 
 Core evidence records:
 
@@ -1071,9 +1122,11 @@ eegle/
 │   └── quality.py        # quality decisions and reasons
 ├── models/
 │   ├── contracts.py      # modality-neutral model contracts
-│   ├── bundles.py        # content-addressed bundles
+│   ├── manifests.py      # canonical path-free model manifests
+│   ├── results.py        # untrusted contract-bound plugin results
+│   ├── callable.py       # dependency-light plain callable adapter
 │   ├── calibration.py    # calibration contracts and methods
-│   ├── predictions.py    # framework-neutral prediction records
+│   ├── predictions.py    # plan-owned canonical prediction evidence
 │   ├── builtins.py       # dependency-light reference models
 │   └── roles.py          # primary, shadow, candidate, observer semantics
 ├── runtime/
@@ -1083,6 +1136,7 @@ eegle/
 │   ├── admission.py      # source ordering, monotonicity, watermarks
 │   ├── queueing.py       # bounded deterministic event queue
 │   ├── routing.py        # typed component dispatch and graph values
+│   ├── model_runtime.py  # result validation and canonical prediction boundary
 │   ├── work.py           # deadlines and terminal work accounting
 │   ├── triggers.py       # compiled scheduled/state-triggered work
 │   ├── restoration.py    # persisted mid-phase restoration

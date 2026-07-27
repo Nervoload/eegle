@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from eegle._domain import ComponentKind
 from eegle.compiler.plan import ExecutionPlan
 from eegle.plugins.registry import PluginRegistry
 from eegle.replay.compare import EquivalencePolicy, EquivalenceReport, compare_runs
@@ -17,6 +18,71 @@ class ReplayExecution:
     mode: ReplayMode
     result: EngineRunResult
     equivalence: EquivalenceReport
+
+
+class ReplayActionSafetyError(RuntimeError):
+    """Raised before replay could construct a non-simulated action service."""
+
+
+def require_simulation_only_actions(
+    plan: ExecutionPlan,
+    registry: PluginRegistry,
+) -> None:
+    """Fail closed before constructing physical or operator-facing services.
+
+    A replay may reproduce simulated action traces. It must never instantiate a
+    physical actuator or an authorization provider that could contact an
+    operator or external interlock. A later trace-only replay mode may supply
+    inert replacements explicitly; it must not weaken this default boundary.
+    """
+
+    unsafe: list[str] = []
+    for provider in plan.authorization_providers:
+        try:
+            descriptor = registry.resolve(
+                provider.plugin_id,
+                f"=={provider.plugin_version}",
+                mode=plan.execution_mode,
+            )
+        except (KeyError, ValueError) as exc:
+            raise ReplayActionSafetyError(
+                f"cannot verify replay authorization provider {provider.provider_id}: {exc}"
+            ) from exc
+        if descriptor.descriptor_hash != provider.descriptor_hash:
+            raise ReplayActionSafetyError(
+                f"replay authorization provider {provider.provider_id} differs from its lock"
+            )
+        if not provider.simulation_only or not descriptor.capabilities.simulation_only:
+            unsafe.append(f"authorization provider {provider.provider_id}")
+
+    locked_by_identity = {
+        (value.plugin_id, value.version): value for value in plan.plugins
+    }
+    for component in plan.components:
+        locked = locked_by_identity[(component.plugin_id, component.plugin_version)]
+        if locked.kind != ComponentKind.ACTUATOR:
+            continue
+        try:
+            descriptor = registry.resolve(
+                component.plugin_id,
+                f"=={component.plugin_version}",
+                mode=plan.execution_mode,
+            )
+        except (KeyError, ValueError) as exc:
+            raise ReplayActionSafetyError(
+                f"cannot verify replay actuator {component.component_id}: {exc}"
+            ) from exc
+        if descriptor.descriptor_hash != locked.descriptor_hash:
+            raise ReplayActionSafetyError(
+                f"replay actuator {component.component_id} differs from its lock"
+            )
+        if not descriptor.capabilities.simulation_only:
+            unsafe.append(f"actuator {component.component_id}")
+
+    if unsafe:
+        raise ReplayActionSafetyError(
+            "replay refuses non-simulation action services: " + ", ".join(unsafe)
+        )
 
 
 class ReplayRunner:
@@ -42,6 +108,7 @@ class ReplayRunner:
         operator: OperatorController | None = None,
     ) -> ReplayExecution:
         normalized_mode = ReplayMode(mode)
+        require_simulation_only_actions(self.plan, self.registry)
         overrides = build_replay_source_overrides(
             self.plan,
             self.streams,

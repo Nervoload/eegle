@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from eegle._domain import Lineage
-from eegle.models.predictions import Prediction
+from eegle.models.predictions import LegacyPrediction
 from eegle.processing.windows import DenseWindow
 from eegle.streams.clocks import TimePoint
 
@@ -46,7 +46,7 @@ class MeanThresholdModel:
         if not self.negative_label or not self.positive_label:
             raise ValueError("model labels cannot be empty")
 
-    def predict(self, item: Any, context: "ExecutionContext") -> Prediction:
+    def predict(self, item: Any, context: "ExecutionContext") -> LegacyPrediction:
         if not isinstance(item, DenseWindow):
             raise TypeError("mean threshold model requires DenseWindow input")
         if context.current_time.clock_id != item.available_time.clock_id:
@@ -72,7 +72,7 @@ class MeanThresholdModel:
             clock_mapping_revisions=item.lineage.clock_mapping_revisions,
             stream_revisions=item.lineage.stream_revisions,
         )
-        return Prediction(
+        return LegacyPrediction(
             prediction_id=context.next_id("prediction"),
             model_id=self.model_id,
             role=self.role,

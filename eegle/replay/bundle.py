@@ -13,7 +13,7 @@ from eegle.recording.bundles import EvidenceReader
 from eegle.recording.evidence import EvidenceRecord
 from eegle.recording.stores import FRAMED_SAMPLE_MEDIA_TYPE, read_framed_sample_store
 from eegle.replay.compare import EquivalencePolicy, compare_runs
-from eegle.replay.runner import ReplayExecution
+from eegle.replay.runner import ReplayExecution, require_simulation_only_actions
 from eegle.replay.source import ReplayMode, build_replay_source_overrides
 from eegle.runtime.phases import EngineRunResult, EngineStatus, ExecutionEngine, OperatorController
 from eegle.runtime.plan_runtime import ComponentProxyFactory
@@ -126,6 +126,7 @@ class BundleReplayRunner:
     ) -> ReplayExecution:
         recorded = load_recorded_execution(reader)
         normalized_mode = ReplayMode(mode)
+        require_simulation_only_actions(recorded.plan, self.registry)
         overrides = build_replay_source_overrides(
             recorded.plan,
             recorded.streams,

@@ -45,11 +45,63 @@ class SignalContract:
     maximum_rate_hz: float | None = None
     window_samples: int | None = None
     minimum_window_samples: int | None = None
+    content_kind: str | None = None
+    rate_model: str | None = None
+    channel_ids: tuple[str, ...] = ()
+    required_channel_ids: tuple[str, ...] = ()
+    feature_ids: tuple[str, ...] = ()
+    required_feature_ids: tuple[str, ...] = ()
+    units: Mapping[str, str] = None  # type: ignore[assignment]
+    event_kinds: tuple[str, ...] = ()
+    required_event_kinds: tuple[str, ...] = ()
+    missing_data_policy: str | None = None
+    layout: str | None = None
+    window_duration_seconds: float | None = None
+    minimum_duration_seconds: float | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "type_id", require_identifier(self.type_id, "type_id"))
         if self.unit is not None and not self.unit.strip():
             raise ValueError("signal unit cannot be empty")
+        for field in ("content_kind", "rate_model", "missing_data_policy", "layout"):
+            value = getattr(self, field)
+            if value is not None:
+                object.__setattr__(self, field, require_identifier(value, field))
+        for field in (
+            "channel_ids",
+            "required_channel_ids",
+            "feature_ids",
+            "required_feature_ids",
+            "event_kinds",
+            "required_event_kinds",
+        ):
+            values = tuple(require_identifier(value, field) for value in getattr(self, field))
+            if len(values) != len(set(values)):
+                raise ValueError(f"{field} entries must be unique")
+            object.__setattr__(self, field, values)
+        units = {
+            require_identifier(str(key), "units key"): str(value)
+            for key, value in (self.units or {}).items()
+        }
+        if any(not value.strip() for value in units.values()):
+            raise ValueError("per-channel or per-feature units cannot be empty")
+        object.__setattr__(self, "units", freeze_json(units))
+        if self.channel_ids and self.channel_count is None:
+            object.__setattr__(self, "channel_count", len(self.channel_ids))
+        if self.channel_ids and self.channel_count != len(self.channel_ids):
+            raise ValueError("channel_count must equal the number of channel_ids")
+        if self.required_channel_ids and self.channel_ids:
+            missing = set(self.required_channel_ids) - set(self.channel_ids)
+            if missing:
+                raise ValueError("required_channel_ids must be contained in channel_ids")
+        if self.required_feature_ids and self.feature_ids:
+            missing = set(self.required_feature_ids) - set(self.feature_ids)
+            if missing:
+                raise ValueError("required_feature_ids must be contained in feature_ids")
+        if self.required_event_kinds and self.event_kinds:
+            missing = set(self.required_event_kinds) - set(self.event_kinds)
+            if missing:
+                raise ValueError("required_event_kinds must be contained in event_kinds")
         for field in (
             "channel_count",
             "minimum_channels",
@@ -64,6 +116,13 @@ class SignalContract:
                     raise ValueError(f"{field} must be positive")
                 object.__setattr__(self, field, normalized)
         for field in ("nominal_rate_hz", "minimum_rate_hz", "maximum_rate_hz"):
+            value = getattr(self, field)
+            if value is not None:
+                normalized = require_finite(value, field)
+                if normalized <= 0:
+                    raise ValueError(f"{field} must be positive")
+                object.__setattr__(self, field, normalized)
+        for field in ("window_duration_seconds", "minimum_duration_seconds"):
             value = getattr(self, field)
             if value is not None:
                 normalized = require_finite(value, field)
@@ -97,6 +156,12 @@ class SignalContract:
         if self.window_samples is not None and self.minimum_window_samples is not None:
             if self.window_samples < self.minimum_window_samples:
                 raise ValueError("window_samples cannot be below minimum_window_samples")
+        if (
+            self.window_duration_seconds is not None
+            and self.minimum_duration_seconds is not None
+            and self.window_duration_seconds < self.minimum_duration_seconds
+        ):
+            raise ValueError("window_duration_seconds cannot be below minimum_duration_seconds")
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -112,13 +177,315 @@ class SignalContract:
                 "maximum_rate_hz": self.maximum_rate_hz,
                 "window_samples": self.window_samples,
                 "minimum_window_samples": self.minimum_window_samples,
+                "content_kind": self.content_kind,
+                "rate_model": self.rate_model,
+                "channel_ids": list(self.channel_ids) if self.channel_ids else None,
+                "required_channel_ids": list(self.required_channel_ids)
+                if self.required_channel_ids
+                else None,
+                "feature_ids": list(self.feature_ids) if self.feature_ids else None,
+                "required_feature_ids": list(self.required_feature_ids)
+                if self.required_feature_ids
+                else None,
+                "units": thaw_json(self.units) if self.units else None,
+                "event_kinds": list(self.event_kinds) if self.event_kinds else None,
+                "required_event_kinds": list(self.required_event_kinds)
+                if self.required_event_kinds
+                else None,
+                "missing_data_policy": self.missing_data_policy,
+                "layout": self.layout,
+                "window_duration_seconds": self.window_duration_seconds,
+                "minimum_duration_seconds": self.minimum_duration_seconds,
             }.items()
             if value is not None
         }
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "SignalContract":
-        return cls(**dict(payload))
+        value = dict(payload)
+        for field in (
+            "channel_ids",
+            "required_channel_ids",
+            "feature_ids",
+            "required_feature_ids",
+            "event_kinds",
+            "required_event_kinds",
+        ):
+            value[field] = tuple(str(item) for item in payload.get(field, ()))
+        value["units"] = {
+            str(key): str(item) for key, item in dict(payload.get("units") or {}).items()
+        }
+        return cls(**value)
+
+
+class ModelRoleProfile(str, Enum):
+    PRIMARY = "primary"
+    SHADOW = "shadow"
+    CANDIDATE = "candidate"
+    OBSERVER = "observer"
+    CUSTOM = "custom"
+
+
+class ModelFailureDisposition(str, Enum):
+    FAIL_RUN = "fail_run"
+    REJECT_RESULT = "reject_result"
+
+
+class ModelQueueDisposition(str, Enum):
+    FAIL_RUN = "fail_run"
+    REJECT_NEWEST = "reject_newest"
+    SHED_OLDEST = "shed_oldest"
+
+
+@dataclass(frozen=True, slots=True)
+class ModelRolePermissionsSpec:
+    scheduling_priority: int
+    requires_equivalent_inputs: bool
+    may_feed_policy: bool
+    may_receive_outcomes: bool
+    may_adapt: bool
+    failure_disposition: ModelFailureDisposition
+    queue_disposition: ModelQueueDisposition
+    queue_limit: int | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "scheduling_priority", int(self.scheduling_priority))
+        if self.scheduling_priority < 0:
+            raise ValueError("model role scheduling_priority cannot be negative")
+        object.__setattr__(
+            self,
+            "failure_disposition",
+            ModelFailureDisposition(self.failure_disposition),
+        )
+        object.__setattr__(
+            self,
+            "queue_disposition",
+            ModelQueueDisposition(self.queue_disposition),
+        )
+        if self.queue_limit is not None:
+            object.__setattr__(self, "queue_limit", int(self.queue_limit))
+            if self.queue_limit < 0:
+                raise ValueError("model role queue_limit cannot be negative")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "scheduling_priority": self.scheduling_priority,
+            "requires_equivalent_inputs": self.requires_equivalent_inputs,
+            "may_feed_policy": self.may_feed_policy,
+            "may_receive_outcomes": self.may_receive_outcomes,
+            "may_adapt": self.may_adapt,
+            "failure_disposition": self.failure_disposition.value,
+            "queue_disposition": self.queue_disposition.value,
+            "queue_limit": self.queue_limit,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "ModelRolePermissionsSpec":
+        return cls(
+            scheduling_priority=int(payload["scheduling_priority"]),
+            requires_equivalent_inputs=bool(payload["requires_equivalent_inputs"]),
+            may_feed_policy=bool(payload["may_feed_policy"]),
+            may_receive_outcomes=bool(payload["may_receive_outcomes"]),
+            may_adapt=bool(payload["may_adapt"]),
+            failure_disposition=ModelFailureDisposition(str(payload["failure_disposition"])),
+            queue_disposition=ModelQueueDisposition(str(payload["queue_disposition"])),
+            queue_limit=None
+            if payload.get("queue_limit") is None
+            else int(payload["queue_limit"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ModelRoleSpec:
+    role_id: str
+    profile: ModelRoleProfile
+    permissions: ModelRolePermissionsSpec | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "role_id", require_identifier(self.role_id, "role_id"))
+        object.__setattr__(self, "profile", ModelRoleProfile(self.profile))
+        reserved = {value.value for value in ModelRoleProfile}
+        if self.role_id in reserved and self.role_id != self.profile.value:
+            raise ValueError("reserved model role identities must use their matching profile")
+        if self.role_id == ModelRoleProfile.CUSTOM.value:
+            raise ValueError("custom is a profile name, not a concrete role identity")
+        if self.profile == ModelRoleProfile.CUSTOM and self.permissions is None:
+            raise ValueError("custom model roles require explicit permissions")
+        if self.profile != ModelRoleProfile.CUSTOM and self.permissions is not None:
+            raise ValueError("built-in model role profiles cannot override their permissions")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "role_id": self.role_id,
+            "profile": self.profile.value,
+            "permissions": None if self.permissions is None else self.permissions.to_payload(),
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "ModelRoleSpec":
+        permissions = payload.get("permissions")
+        return cls(
+            role_id=str(payload["role_id"]),
+            profile=ModelRoleProfile(str(payload["profile"])),
+            permissions=None
+            if permissions is None
+            else ModelRolePermissionsSpec.from_payload(permissions),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ModelUseSpec:
+    component_id: str
+    manifest_digest: str
+    role_id: str
+    comparison_group: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "component_id", require_identifier(self.component_id, "component_id")
+        )
+        object.__setattr__(
+            self,
+            "manifest_digest",
+            require_digest(self.manifest_digest, "manifest_digest"),
+        )
+        object.__setattr__(self, "role_id", require_identifier(self.role_id, "role_id"))
+        if self.comparison_group is not None:
+            object.__setattr__(
+                self,
+                "comparison_group",
+                require_identifier(self.comparison_group, "comparison_group"),
+            )
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "component_id": self.component_id,
+            "manifest_digest": self.manifest_digest,
+            "role_id": self.role_id,
+            "comparison_group": self.comparison_group,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "ModelUseSpec":
+        return cls(
+            component_id=str(payload["component_id"]),
+            manifest_digest=str(payload["manifest_digest"]),
+            role_id=str(payload["role_id"]),
+            comparison_group=None
+            if payload.get("comparison_group") is None
+            else str(payload["comparison_group"]),
+        )
+
+
+class OutcomeOverflowDisposition(str, Enum):
+    EXPIRE_OLDEST = "expire_oldest"
+    REJECT_NEWEST = "reject_newest"
+
+
+@dataclass(frozen=True, slots=True)
+class OutcomeExpectationSpec:
+    expectation_id: str
+    model_component_id: str
+    outcome_component_ids: tuple[str, ...]
+    permitted_uses: tuple[str, ...]
+    max_pending_predictions: int = 128
+    prediction_ttl_seconds: float = 300.0
+    overflow_disposition: OutcomeOverflowDisposition = (
+        OutcomeOverflowDisposition.EXPIRE_OLDEST
+    )
+
+    def __post_init__(self) -> None:
+        for field in ("expectation_id", "model_component_id"):
+            object.__setattr__(
+                self, field, require_identifier(getattr(self, field), field)
+            )
+        sources = tuple(
+            require_identifier(value, "outcome_component_id")
+            for value in self.outcome_component_ids
+        )
+        if not sources or len(sources) != len(set(sources)):
+            raise ValueError("outcome expectation sources must be non-empty and unique")
+        object.__setattr__(self, "outcome_component_ids", sources)
+        uses = tuple(require_identifier(value, "outcome use") for value in self.permitted_uses)
+        if not uses or len(uses) != len(set(uses)):
+            raise ValueError("outcome expectation uses must be non-empty and unique")
+        object.__setattr__(self, "permitted_uses", uses)
+        object.__setattr__(self, "max_pending_predictions", int(self.max_pending_predictions))
+        if self.max_pending_predictions <= 0:
+            raise ValueError("max_pending_predictions must be positive")
+        ttl = require_finite(self.prediction_ttl_seconds, "prediction_ttl_seconds")
+        if ttl < 0:
+            raise ValueError("prediction_ttl_seconds cannot be negative")
+        object.__setattr__(self, "prediction_ttl_seconds", ttl)
+        object.__setattr__(
+            self,
+            "overflow_disposition",
+            OutcomeOverflowDisposition(self.overflow_disposition),
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "expectation_id": self.expectation_id,
+            "model_component_id": self.model_component_id,
+            "outcome_component_ids": list(self.outcome_component_ids),
+            "permitted_uses": list(self.permitted_uses),
+            "max_pending_predictions": self.max_pending_predictions,
+            "prediction_ttl_seconds": self.prediction_ttl_seconds,
+            "overflow_disposition": self.overflow_disposition.value,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "OutcomeExpectationSpec":
+        return cls(
+            expectation_id=str(payload["expectation_id"]),
+            model_component_id=str(payload["model_component_id"]),
+            outcome_component_ids=tuple(
+                str(value) for value in payload["outcome_component_ids"]
+            ),
+            permitted_uses=tuple(str(value) for value in payload["permitted_uses"]),
+            max_pending_predictions=int(payload.get("max_pending_predictions", 128)),
+            prediction_ttl_seconds=float(payload.get("prediction_ttl_seconds", 300.0)),
+            overflow_disposition=OutcomeOverflowDisposition(
+                str(payload.get("overflow_disposition", "expire_oldest"))
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AdaptationSpec:
+    adaptation_id: str
+    expectation_id: str
+    model_component_id: str
+    enabled_phases: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        for field in ("adaptation_id", "expectation_id", "model_component_id"):
+            object.__setattr__(
+                self, field, require_identifier(getattr(self, field), field)
+            )
+        phases = tuple(
+            require_identifier(value, "adaptation phase") for value in self.enabled_phases
+        )
+        if not phases or len(phases) != len(set(phases)):
+            raise ValueError("adaptation enabled phases must be non-empty and unique")
+        object.__setattr__(self, "enabled_phases", phases)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "adaptation_id": self.adaptation_id,
+            "expectation_id": self.expectation_id,
+            "model_component_id": self.model_component_id,
+            "enabled_phases": list(self.enabled_phases),
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "AdaptationSpec":
+        return cls(
+            adaptation_id=str(payload["adaptation_id"]),
+            expectation_id=str(payload["expectation_id"]),
+            model_component_id=str(payload["model_component_id"]),
+            enabled_phases=tuple(str(value) for value in payload["enabled_phases"]),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -684,6 +1051,10 @@ class SuiteSpec:
     recording: Mapping[str, Any]
     validation: Mapping[str, Any]
     artifacts: tuple[ArtifactSpec, ...] = ()
+    model_roles: tuple[ModelRoleSpec, ...] = ()
+    model_uses: tuple[ModelUseSpec, ...] = ()
+    outcome_expectations: tuple[OutcomeExpectationSpec, ...] = ()
+    adaptations: tuple[AdaptationSpec, ...] = ()
     scheduling: SchedulingSpec = SchedulingSpec()
     scheduled_triggers: tuple[ScheduledTriggerSpec, ...] = ()
     state_triggers: tuple[StateTriggerSpec, ...] = ()
@@ -701,6 +1072,17 @@ class SuiteSpec:
         _require_unique((value.route_id for value in self.routes), "route")
         _require_unique((value.phase_id for value in self.phases), "phase")
         _require_unique((value.artifact_id for value in self.artifacts), "artifact")
+        _require_unique((value.role_id for value in self.model_roles), "model role")
+        _require_unique((value.component_id for value in self.model_uses), "model use component")
+        _require_unique(
+            (value.expectation_id for value in self.outcome_expectations),
+            "outcome expectation",
+        )
+        _require_unique((value.adaptation_id for value in self.adaptations), "adaptation")
+        _require_unique(
+            (value.expectation_id for value in self.adaptations),
+            "adaptation expectation",
+        )
         _require_unique(
             (value.trigger_id for value in self.scheduled_triggers),
             "scheduled trigger",
@@ -730,6 +1112,12 @@ class SuiteSpec:
             "phases": [value.to_payload() for value in self.phases],
             "initial_phase": self.initial_phase,
             "artifacts": [value.to_payload() for value in self.artifacts],
+            "model_roles": [value.to_payload() for value in self.model_roles],
+            "model_uses": [value.to_payload() for value in self.model_uses],
+            "outcome_expectations": [
+                value.to_payload() for value in self.outcome_expectations
+            ],
+            "adaptations": [value.to_payload() for value in self.adaptations],
             "scheduling": self.scheduling.to_payload(),
             "scheduled_triggers": [
                 value.to_payload() for value in self.scheduled_triggers
@@ -756,6 +1144,21 @@ class SuiteSpec:
             initial_phase=str(payload["initial_phase"]),
             artifacts=tuple(
                 ArtifactSpec.from_payload(value) for value in payload.get("artifacts", ())
+            ),
+            model_roles=tuple(
+                ModelRoleSpec.from_payload(value)
+                for value in payload.get("model_roles", ())
+            ),
+            model_uses=tuple(
+                ModelUseSpec.from_payload(value) for value in payload.get("model_uses", ())
+            ),
+            outcome_expectations=tuple(
+                OutcomeExpectationSpec.from_payload(value)
+                for value in payload.get("outcome_expectations", ())
+            ),
+            adaptations=tuple(
+                AdaptationSpec.from_payload(value)
+                for value in payload.get("adaptations", ())
             ),
             scheduling=SchedulingSpec.from_payload(payload.get("scheduling") or {}),
             scheduled_triggers=tuple(
@@ -902,6 +1305,46 @@ _SIGNAL_CONTRACT_SCHEMA: Mapping[str, Any] = {
         "maximum_rate_hz": {"type": "number", "exclusiveMinimum": 0},
         "window_samples": {"type": "integer", "minimum": 1},
         "minimum_window_samples": {"type": "integer", "minimum": 1},
+        "content_kind": {"type": "string", "minLength": 1},
+        "rate_model": {"type": "string", "minLength": 1},
+        "channel_ids": {
+            "type": "array",
+            "uniqueItems": True,
+            "items": {"type": "string", "minLength": 1},
+        },
+        "required_channel_ids": {
+            "type": "array",
+            "uniqueItems": True,
+            "items": {"type": "string", "minLength": 1},
+        },
+        "feature_ids": {
+            "type": "array",
+            "uniqueItems": True,
+            "items": {"type": "string", "minLength": 1},
+        },
+        "required_feature_ids": {
+            "type": "array",
+            "uniqueItems": True,
+            "items": {"type": "string", "minLength": 1},
+        },
+        "units": {
+            "type": "object",
+            "additionalProperties": {"type": "string", "minLength": 1},
+        },
+        "event_kinds": {
+            "type": "array",
+            "uniqueItems": True,
+            "items": {"type": "string", "minLength": 1},
+        },
+        "required_event_kinds": {
+            "type": "array",
+            "uniqueItems": True,
+            "items": {"type": "string", "minLength": 1},
+        },
+        "missing_data_policy": {"type": "string", "minLength": 1},
+        "layout": {"type": "string", "minLength": 1},
+        "window_duration_seconds": {"type": "number", "exclusiveMinimum": 0},
+        "minimum_duration_seconds": {"type": "number", "exclusiveMinimum": 0},
     },
     "additionalProperties": False,
 }
@@ -928,6 +1371,110 @@ _COMPONENT_SCHEMA: Mapping[str, Any] = {
         "outcome_uses": {"type": "array", "items": {"type": "string"}},
         "required_outcome_use": {"type": ["string", "null"], "minLength": 1},
         "action_capabilities": {"type": "array", "items": {"type": "string"}},
+    },
+    "additionalProperties": False,
+}
+_MODEL_ROLE_PERMISSIONS_SCHEMA: Mapping[str, Any] = {
+    "type": "object",
+    "required": [
+        "scheduling_priority",
+        "requires_equivalent_inputs",
+        "may_feed_policy",
+        "may_receive_outcomes",
+        "may_adapt",
+        "failure_disposition",
+        "queue_disposition",
+    ],
+    "properties": {
+        "scheduling_priority": {"type": "integer", "minimum": 0},
+        "requires_equivalent_inputs": {"type": "boolean"},
+        "may_feed_policy": {"type": "boolean"},
+        "may_receive_outcomes": {"type": "boolean"},
+        "may_adapt": {"type": "boolean"},
+        "failure_disposition": {
+            "enum": [value.value for value in ModelFailureDisposition]
+        },
+        "queue_disposition": {
+            "enum": [value.value for value in ModelQueueDisposition]
+        },
+        "queue_limit": {"type": ["integer", "null"], "minimum": 0},
+    },
+    "additionalProperties": False,
+}
+_MODEL_ROLE_SCHEMA: Mapping[str, Any] = {
+    "type": "object",
+    "required": ["role_id", "profile"],
+    "properties": {
+        "role_id": {"type": "string", "minLength": 1},
+        "profile": {"enum": [value.value for value in ModelRoleProfile]},
+        "permissions": {
+            "anyOf": [_MODEL_ROLE_PERMISSIONS_SCHEMA, {"type": "null"}]
+        },
+    },
+    "additionalProperties": False,
+}
+_MODEL_USE_SCHEMA: Mapping[str, Any] = {
+    "type": "object",
+    "required": ["component_id", "manifest_digest", "role_id"],
+    "properties": {
+        "component_id": {"type": "string", "minLength": 1},
+        "manifest_digest": {"type": "string", "minLength": 1},
+        "role_id": {"type": "string", "minLength": 1},
+        "comparison_group": {"type": ["string", "null"], "minLength": 1},
+    },
+    "additionalProperties": False,
+}
+_OUTCOME_EXPECTATION_SCHEMA: Mapping[str, Any] = {
+    "type": "object",
+    "required": [
+        "expectation_id",
+        "model_component_id",
+        "outcome_component_ids",
+        "permitted_uses",
+    ],
+    "properties": {
+        "expectation_id": {"type": "string", "minLength": 1},
+        "model_component_id": {"type": "string", "minLength": 1},
+        "outcome_component_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": True,
+            "items": {"type": "string", "minLength": 1},
+        },
+        "permitted_uses": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": True,
+            "items": {
+                "enum": ["metrics", "calibration", "adaptation", "policy"]
+            },
+        },
+        "max_pending_predictions": {"type": "integer", "minimum": 1},
+        "prediction_ttl_seconds": {"type": "number", "minimum": 0},
+        "overflow_disposition": {
+            "enum": [value.value for value in OutcomeOverflowDisposition]
+        },
+    },
+    "additionalProperties": False,
+}
+_ADAPTATION_SCHEMA: Mapping[str, Any] = {
+    "type": "object",
+    "required": [
+        "adaptation_id",
+        "expectation_id",
+        "model_component_id",
+        "enabled_phases",
+    ],
+    "properties": {
+        "adaptation_id": {"type": "string", "minLength": 1},
+        "expectation_id": {"type": "string", "minLength": 1},
+        "model_component_id": {"type": "string", "minLength": 1},
+        "enabled_phases": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": True,
+            "items": {"type": "string", "minLength": 1},
+        },
     },
     "additionalProperties": False,
 }
@@ -1046,6 +1593,13 @@ SUITE_JSON_SCHEMA: Mapping[str, Any] = {
                 "additionalProperties": False,
             },
         },
+        "model_roles": {"type": "array", "items": _MODEL_ROLE_SCHEMA},
+        "model_uses": {"type": "array", "items": _MODEL_USE_SCHEMA},
+        "outcome_expectations": {
+            "type": "array",
+            "items": _OUTCOME_EXPECTATION_SCHEMA,
+        },
+        "adaptations": {"type": "array", "items": _ADAPTATION_SCHEMA},
         "scheduling": {
             "type": "object",
             "properties": {
@@ -1101,7 +1655,14 @@ SUITE_JSON_SCHEMA: Mapping[str, Any] = {
                         "type": "array",
                         "minItems": 1,
                         "items": {
-                            "enum": ["applied", "rejected", "no_op", "rolled_back", "failed"]
+                            "enum": [
+                                "requested",
+                                "applied",
+                                "rejected",
+                                "no_op",
+                                "rolled_back",
+                                "failed",
+                            ]
                         },
                     },
                     "delay_seconds": {"type": "number", "minimum": 0},

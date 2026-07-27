@@ -12,7 +12,12 @@ from eegle.replay.compare import (
     EquivalenceReport,
     compare_runs,
 )
-from eegle.replay.runner import ReplayExecution, ReplayRunner
+from eegle.replay.runner import (
+    ReplayActionSafetyError,
+    ReplayExecution,
+    ReplayRunner,
+    require_simulation_only_actions,
+)
 from eegle.replay.source import ReplayMode, ReplaySource, build_replay_source_overrides
 
 
@@ -22,6 +27,7 @@ __all__ = [
     "EquivalencePolicy",
     "EquivalenceReport",
     "ReplayExecution",
+    "ReplayActionSafetyError",
     "ReplayMode",
     "ReplayRunner",
     "ReplaySource",
@@ -30,4 +36,5 @@ __all__ = [
     "build_replay_source_overrides",
     "compare_runs",
     "load_recorded_execution",
+    "require_simulation_only_actions",
 ]

@@ -10,6 +10,7 @@ from eegle.compiler.diagnostics import (
     CompilationDiagnostic,
     DiagnosticSeverity,
 )
+from eegle.compiler.plan import PlannedModelBinding
 from eegle.plugins.registry import PluginDescriptor
 from eegle.specs.deployment import DeploymentSpec
 from eegle.specs.protocol import ProtocolSpec
@@ -269,10 +270,16 @@ def validate_roles_and_actions(
     suite: SuiteSpec,
     deployment: DeploymentSpec,
     diagnostics: list[CompilationDiagnostic],
+    model_bindings: tuple[PlannedModelBinding, ...] = (),
 ) -> None:
     models = [value for value in suite.components if value.kind == ComponentKind.MODEL]
+    bound_models = {value.component_id: value for value in model_bindings}
     if models:
-        missing = [value.component_id for value in models if value.role is None]
+        missing = [
+            value.component_id
+            for value in models
+            if value.role is None and value.component_id not in bound_models
+        ]
         if missing:
             diagnostics.append(
                 _error(
@@ -307,6 +314,25 @@ def validate_roles_and_actions(
                 if component_id in active
             ]
             if not routed_models:
+                continue
+            bound_routed = [
+                bound_models[value.component_id]
+                for value in routed_models
+                if value.component_id in bound_models
+            ]
+            if bound_routed:
+                authorized = [
+                    value for value in bound_routed if value.role.may_feed_policy
+                ]
+                if len(authorized) != 1 or len(bound_routed) != len(authorized):
+                    diagnostics.append(
+                        _error(
+                            "role.policy_feeder",
+                            f"$.suite.phases[{phase_index}].components",
+                            f"policy {policy.component_id} requires exactly one routed model "
+                            "whose compiled role may feed policy",
+                        )
+                    )
                 continue
             primary = [value for value in routed_models if value.role == "primary"]
             if len(primary) != 1:
@@ -496,17 +522,6 @@ def validate_triggers_and_permissions(
                         "actuator must declare at least one action capability",
                     )
                 )
-            for capability in component.action_capabilities:
-                if (component.component_id, capability) not in grants:
-                    diagnostics.append(
-                        _error(
-                            "action.authorization",
-                            path,
-                            f"actuator lacks deployment permission for {capability}",
-                            component_id=component.component_id,
-                            capability=capability,
-                        )
-                    )
         elif component.action_capabilities:
             diagnostics.append(
                 _error(
@@ -515,28 +530,6 @@ def validate_triggers_and_permissions(
                     "only actuator components may declare action capabilities",
                 )
             )
-
-    for permission_index, permission in enumerate(deployment.permissions):
-        if not permission.operator_confirmation:
-            continue
-        for component_id in permission.component_ids:
-            component = components.get(component_id)
-            if component is None or component.kind != ComponentKind.ACTUATOR:
-                continue
-            active_phases = [
-                phase for phase in suite.phases if component_id in phase.components
-            ]
-            for phase in active_phases:
-                if not phase.operator_confirmation:
-                    diagnostics.append(
-                        _error(
-                            "action.operator_confirmation",
-                            f"$.deployment.permissions[{permission_index}].operator_confirmation",
-                            f"permission {permission.permission_id} requires operator confirmation "
-                            f"but phase {phase.phase_id} is not confirmation-gated",
-                        )
-                    )
-
 
 def _validate_trigger_target(
     path: str,

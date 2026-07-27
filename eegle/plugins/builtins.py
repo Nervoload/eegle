@@ -8,6 +8,7 @@ import numpy as np
 
 from eegle._domain import ComponentKind, Determinism, EquivalenceLevel, ExecutionMode
 from eegle.actions.policies import LabelActionPolicy, ObserveOnlyPolicy
+from eegle.actions.providers import SimulationAuthorizationProvider
 from eegle.actions.simulated import SimulatedActuator
 from eegle.models.builtins import MeanThresholdModel
 from eegle.plugins.registry import (
@@ -36,9 +37,9 @@ _SPARSE_PACKET = "eegle.sparse_event_batch.v1"
 _QUALITY_DECISION = "eegle.quality_decision.v1"
 _DENSE_WINDOW = "eegle.dense_window.v1"
 _PREDICTION = "eegle.prediction.v1"
-_OUTCOME = "eegle.outcome.v1"
+_OUTCOME = "eegle.outcome.v2"
 _STATE_TRANSITION = "eegle.state_transition.v1"
-_ACTION_COMMAND = "eegle.action_command.v1"
+_ACTION_REQUEST = "eegle.action_request.v1"
 _ACTION_RECEIPT = "eegle.action_receipt.v1"
 _ARTIFACT_PUBLICATION = "eegle.artifact_publication.v1"
 _SCHEMA_BASE = "https://json-schema.org/draft/2020-12/schema"
@@ -378,12 +379,20 @@ def builtin_plugin_descriptors() -> tuple[PluginDescriptor, ...]:
                     "matching_label": {"type": "string", "minLength": 1},
                     "output_key": {"type": "string", "minLength": 1},
                     "parameters": {"type": "object"},
+                    "intended_delivery_delay_seconds": {
+                        "type": ["number", "null"],
+                        "minimum": 0,
+                    },
+                    "expires_after_seconds": {
+                        "type": ["number", "null"],
+                        "minimum": 0,
+                    },
                 },
                 "required": ["capability", "matching_label"],
                 "additionalProperties": False,
             },
             input_ports=(PortSpec("prediction", _PREDICTION),),
-            output_ports=(PortSpec("command", _ACTION_COMMAND),),
+            output_ports=(PortSpec("request", _ACTION_REQUEST),),
             capabilities=PluginCapabilities(
                 supported_modes=frozenset(ExecutionMode),
                 determinism=Determinism.DETERMINISTIC,
@@ -395,17 +404,57 @@ def builtin_plugin_descriptors() -> tuple[PluginDescriptor, ...]:
             distribution="eegle",
         ),
         PluginDescriptor(
+            plugin_id="eegle.authorization.simulation",
+            version="0.1.0",
+            kind=ComponentKind.AUTHORIZATION,
+            config_schema={
+                "$schema": _SCHEMA_BASE,
+                "type": "object",
+                "properties": {
+                    "decision": {
+                        "type": "string",
+                        "enum": [
+                            "authorized",
+                            "denied",
+                            "observe_only",
+                            "interlocked",
+                            "failed",
+                        ],
+                    },
+                    "decision_delay_seconds": {"type": "number", "minimum": 0},
+                    "valid_for_seconds": {
+                        "type": ["number", "null"],
+                        "minimum": 0,
+                    },
+                },
+                "additionalProperties": False,
+            },
+            input_ports=(),
+            output_ports=(),
+            capabilities=PluginCapabilities(
+                supported_modes=frozenset(ExecutionMode),
+                determinism=Determinism.DETERMINISTIC,
+                equivalence=EquivalenceLevel.BITWISE,
+                state_behavior=StateBehavior.STATELESS,
+                simulation_only=True,
+            ),
+            factory=lambda config: SimulationAuthorizationProvider(**dict(config)),
+            implementation="eegle.actions.providers:SimulationAuthorizationProvider",
+            distribution="eegle",
+        ),
+        PluginDescriptor(
             plugin_id="eegle.actions.simulated_actuator",
             version="0.1.0",
             kind=ComponentKind.ACTUATOR,
             config_schema=_empty_schema(),
-            input_ports=(PortSpec("command", _ACTION_COMMAND),),
+            input_ports=(PortSpec("request", _ACTION_REQUEST),),
             output_ports=(PortSpec("receipt", _ACTION_RECEIPT),),
             capabilities=PluginCapabilities(
                 supported_modes=frozenset(ExecutionMode),
                 determinism=Determinism.DETERMINISTIC,
                 equivalence=EquivalenceLevel.BITWISE,
                 state_behavior=StateBehavior.STATELESS,
+                simulation_only=True,
             ),
             factory=lambda config: SimulatedActuator(),
             implementation="eegle.actions.simulated:SimulatedActuator",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from packaging.specifiers import InvalidSpecifier
 
@@ -26,13 +26,18 @@ from eegle.compiler.graph import (
 )
 from eegle.compiler.lock import canonical_hash
 from eegle.compiler.lockfile import ExecutionLock
+from eegle.compiler.model_bindings import compile_model_bindings
 from eegle.compiler.plan import (
     ExecutionPlan,
     LockedPlugin,
     PlannedArtifact,
+    PlannedActionGrant,
+    PlannedAdaptation,
+    PlannedAuthorizationProvider,
     PlannedComponent,
     PlannedPhase,
     PlannedPlacement,
+    PlannedOutcomeExpectation,
     PlannedScheduledTrigger,
     PlannedStateTrigger,
     PlannedTransition,
@@ -46,6 +51,7 @@ from eegle.compiler.semantic_passes import (
 )
 from eegle.plugins.registry import PluginDescriptor, PluginRegistry, PortSpec
 from eegle.specs.deployment import (
+    AuthorizationProviderBindingSpec,
     ClockMappingStrategy,
     ComponentBindingSpec,
     DeploymentSpec,
@@ -60,6 +66,9 @@ from eegle.specs.suite import (
     SuiteSpec,
 )
 from eegle.specs.deployment import DEPLOYMENT_JSON_SCHEMA
+
+if TYPE_CHECKING:
+    from eegle.models.manifests import ModelManifest
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +100,8 @@ def compile_suite(
     suite: SuiteSpec,
     deployment: DeploymentSpec,
     registry: PluginRegistry,
+    *,
+    model_manifests: Mapping[str, ModelManifest] | None = None,
 ) -> CompilationResult:
     """Compile without constructing plugins or contacting site resources."""
 
@@ -166,6 +177,25 @@ def compile_suite(
             )
             continue
         resolved[component.component_id] = descriptor
+        if component.kind == ComponentKind.AUTHORIZATION:
+            diagnostics.append(
+                _error(
+                    "authorization.deployment_service",
+                    f"{path}.kind",
+                    "authorization providers are deployment services, not suite graph components",
+                )
+            )
+        if any(
+            port.type_id == "eegle.authorized_command.v1"
+            for port in descriptor.output_ports
+        ):
+            diagnostics.append(
+                _error(
+                    "authorization.command_authority",
+                    f"{path}.plugin_id",
+                    "suite plugins cannot emit actuator-ready authorized commands",
+                )
+            )
         if descriptor.kind != component.kind:
             diagnostics.append(
                 _error(
@@ -219,9 +249,39 @@ def compile_suite(
         )
 
     graph = _compile_graph(suite, resolved, streams_by_id, diagnostics)
+    planned_model_bindings, compiled_model_roles = compile_model_bindings(
+        protocol,
+        suite,
+        deployment,
+        resolved,
+        graph,
+        model_manifests or {},
+        diagnostics,
+    )
+    planned_expectations, planned_adaptations = _compile_outcome_adaptation(
+        suite,
+        deployment,
+        resolved,
+        planned_model_bindings,
+        diagnostics,
+    )
+    planned_providers, planned_action_grants, provider_descriptors = (
+        _compile_action_authorization(
+            protocol,
+            suite,
+            deployment,
+            registry,
+            diagnostics,
+        )
+    )
     validate_phases(suite, components_by_id, resolved, diagnostics)
     validate_artifacts(suite, resolved, diagnostics)
-    validate_roles_and_actions(suite, deployment, diagnostics)
+    validate_roles_and_actions(
+        suite,
+        deployment,
+        diagnostics,
+        planned_model_bindings,
+    )
     validate_runtime_policy(suite, diagnostics)
     validate_triggers_and_permissions(
         protocol, suite, deployment, resolved, diagnostics
@@ -233,7 +293,11 @@ def compile_suite(
     if errors or graph is None:
         raise CompilationError(diagnostics or (_error("graph.invalid", "$.suite.routes", "graph could not compile"),))
 
-    locked_plugins = _locked_plugins(resolved)
+    lock_sources = dict(resolved)
+    lock_sources.update(
+        {f"authorization:{key}": value for key, value in provider_descriptors.items()}
+    )
+    locked_plugins = _locked_plugins(lock_sources)
     input_bindings, output_bindings = _plan_bindings(graph)
     planned_components = tuple(
         PlannedComponent(
@@ -243,7 +307,7 @@ def compile_suite(
             config=merged_configs[component.component_id],
             input_bindings=input_bindings.get(component.component_id, {}),
             output_bindings=output_bindings.get(component.component_id, {}),
-            role=component.role,
+            role=compiled_model_roles.get(component.component_id, component.role),
             stream_id=component.stream_id,
             required_capabilities=component.required_capabilities,
             outcome_uses=component.outcome_uses,
@@ -328,6 +392,11 @@ def compile_suite(
         initial_phase=suite.initial_phase,
         placements=placements,
         artifacts=artifacts,
+        model_bindings=planned_model_bindings,
+        outcome_expectations=planned_expectations,
+        adaptations=planned_adaptations,
+        authorization_providers=planned_providers,
+        action_grants=planned_action_grants,
         scheduling_policy=suite.scheduling.to_payload(),
         scheduled_triggers=tuple(
             PlannedScheduledTrigger(**value.to_payload())
@@ -358,6 +427,10 @@ def compile_suite(
             for value in artifacts
             if value.expected_digest is not None
         },
+        model_hashes={
+            value.component_id: value.manifest_digest
+            for value in planned_model_bindings
+        },
     )
     lock.verify_plan(plan)
     return CompilationResult(
@@ -366,6 +439,332 @@ def compile_suite(
         graph=graph,
         diagnostics=sort_diagnostics(diagnostics),
     )
+
+
+def _compile_outcome_adaptation(
+    suite: SuiteSpec,
+    deployment: DeploymentSpec,
+    resolved: Mapping[str, PluginDescriptor],
+    model_bindings: tuple[Any, ...],
+    diagnostics: list[CompilationDiagnostic],
+) -> tuple[tuple[PlannedOutcomeExpectation, ...], tuple[PlannedAdaptation, ...]]:
+    components = {value.component_id: value for value in suite.components}
+    phases = {value.phase_id: value for value in suite.phases}
+    bindings = {value.component_id: value for value in model_bindings}
+    expectations: list[PlannedOutcomeExpectation] = []
+    for index, value in enumerate(suite.outcome_expectations):
+        path = f"$.suite.outcome_expectations[{index}]"
+        binding = bindings.get(value.model_component_id)
+        if binding is None:
+            diagnostics.append(
+                _error(
+                    "outcome.expectation_model",
+                    f"{path}.model_component_id",
+                    "outcome expectations require a compiled model binding",
+                )
+            )
+            continue
+        if not binding.role.may_receive_outcomes:
+            diagnostics.append(
+                _error(
+                    "outcome.role_permission",
+                    f"{path}.model_component_id",
+                    f"model role {binding.role.role_id} may not receive outcomes",
+                )
+            )
+        for source in value.outcome_component_ids:
+            component = components.get(source)
+            if component is None or component.kind != ComponentKind.OUTCOME:
+                diagnostics.append(
+                    _error(
+                        "outcome.source_component",
+                        f"{path}.outcome_component_ids",
+                        f"outcome source {source} is not an outcome component",
+                    )
+                )
+        expectations.append(PlannedOutcomeExpectation(**value.to_payload()))
+
+    by_expectation = {value.expectation_id: value for value in expectations}
+    grants = {
+        (component_id, permission.capability)
+        for permission in deployment.permissions
+        for component_id in permission.component_ids
+    }
+    adaptations: list[PlannedAdaptation] = []
+    for index, value in enumerate(suite.adaptations):
+        path = f"$.suite.adaptations[{index}]"
+        expectation = by_expectation.get(value.expectation_id)
+        binding = bindings.get(value.model_component_id)
+        valid = True
+        if expectation is None:
+            diagnostics.append(
+                _error(
+                    "adaptation.expectation",
+                    f"{path}.expectation_id",
+                    "adaptation references an unknown compiled outcome expectation",
+                )
+            )
+            valid = False
+        elif expectation.model_component_id != value.model_component_id:
+            diagnostics.append(
+                _error(
+                    "adaptation.model_mismatch",
+                    f"{path}.model_component_id",
+                    "adaptation and outcome expectation must name the same state-owning model",
+                )
+            )
+            valid = False
+        elif "adaptation" not in expectation.permitted_uses:
+            diagnostics.append(
+                _error(
+                    "adaptation.outcome_use",
+                    f"{path}.expectation_id",
+                    "adaptation expectation does not permit adaptation use",
+                )
+            )
+            valid = False
+        if binding is None:
+            diagnostics.append(
+                _error(
+                    "adaptation.model_binding",
+                    f"{path}.model_component_id",
+                    "adaptation requires a compiled model binding",
+                )
+            )
+            valid = False
+        else:
+            descriptor = resolved.get(value.model_component_id)
+            if not binding.role.may_adapt:
+                diagnostics.append(
+                    _error(
+                        "adaptation.role_permission",
+                        f"{path}.model_component_id",
+                        f"model role {binding.role.role_id} may not adapt",
+                    )
+                )
+                valid = False
+            if not binding.manifest.contract.state.adaptation_supported:
+                diagnostics.append(
+                    _error(
+                        "adaptation.model_contract",
+                        f"{path}.model_component_id",
+                        "model contract does not support adaptation",
+                    )
+                )
+                valid = False
+            if descriptor is None or descriptor.capabilities.state_behavior.value != "snapshot_restore":
+                diagnostics.append(
+                    _error(
+                        "adaptation.state_capability",
+                        f"{path}.model_component_id",
+                        "adaptive model plugin must support snapshot and restore",
+                    )
+                )
+                valid = False
+        if (value.model_component_id, "adaptation") not in grants:
+            diagnostics.append(
+                _error(
+                    "adaptation.authorization",
+                    path,
+                    "adaptive model requires an independent adaptation permission grant",
+                )
+            )
+            valid = False
+        for phase_id in value.enabled_phases:
+            phase = phases.get(phase_id)
+            if phase is None:
+                diagnostics.append(
+                    _error(
+                        "adaptation.phase",
+                        f"{path}.enabled_phases",
+                        f"unknown adaptation phase {phase_id}",
+                    )
+                )
+                valid = False
+                continue
+            if value.model_component_id not in phase.components:
+                diagnostics.append(
+                    _error(
+                        "adaptation.phase_model",
+                        f"{path}.enabled_phases",
+                        f"adaptive model is inactive in phase {phase_id}",
+                    )
+                )
+                valid = False
+            if expectation is not None and not set(expectation.outcome_component_ids).intersection(
+                phase.components
+            ):
+                diagnostics.append(
+                    _error(
+                        "adaptation.phase_outcome",
+                        f"{path}.enabled_phases",
+                        f"no declared outcome source is active in phase {phase_id}",
+                    )
+                )
+                valid = False
+        if valid:
+            adaptations.append(PlannedAdaptation(**value.to_payload()))
+    return tuple(expectations), tuple(adaptations)
+
+
+def _compile_action_authorization(
+    protocol: ProtocolSpec,
+    suite: SuiteSpec,
+    deployment: DeploymentSpec,
+    registry: PluginRegistry,
+    diagnostics: list[CompilationDiagnostic],
+) -> tuple[
+    tuple[PlannedAuthorizationProvider, ...],
+    tuple[PlannedActionGrant, ...],
+    Mapping[str, PluginDescriptor],
+]:
+    providers: list[PlannedAuthorizationProvider] = []
+    provider_descriptors: dict[str, PluginDescriptor] = {}
+    provider_bindings = {
+        value.provider_id: value for value in deployment.authorization_providers
+    }
+    provider_indices = {
+        value.provider_id: index
+        for index, value in enumerate(deployment.authorization_providers)
+    }
+    for binding in deployment.authorization_providers:
+        path = (
+            f"$.deployment.authorization_providers["
+            f"{provider_indices[binding.provider_id]}]"
+        )
+        try:
+            descriptor = registry.resolve(
+                binding.plugin_id,
+                binding.version_spec,
+                mode=protocol.execution_mode,
+            )
+        except (KeyError, ValueError, InvalidSpecifier) as exc:
+            diagnostics.append(
+                _error(
+                    "authorization.provider_resolve",
+                    f"{path}.plugin_id",
+                    str(exc),
+                )
+            )
+            continue
+        provider_descriptors[binding.provider_id] = descriptor
+        if descriptor.kind != ComponentKind.AUTHORIZATION:
+            diagnostics.append(
+                _error(
+                    "authorization.provider_kind",
+                    f"{path}.plugin_id",
+                    "authorization provider binding must resolve to an authorization plugin",
+                )
+            )
+            continue
+        try:
+            validate_payload(thaw_json(binding.config), descriptor.config_schema)
+        except SchemaValidationError as exc:
+            diagnostics.append(
+                _error(
+                    "authorization.provider_config",
+                    f"{path}.config",
+                    str(exc).split(": ", 1)[-1],
+                )
+            )
+            continue
+        providers.append(
+            PlannedAuthorizationProvider(
+                provider_id=binding.provider_id,
+                plugin_id=descriptor.plugin_id,
+                plugin_version=descriptor.version,
+                descriptor_hash=descriptor.descriptor_hash,
+                config=thaw_json(binding.config),
+                failure_disposition=binding.failure_disposition.value,
+                simulation_only=descriptor.capabilities.simulation_only,
+            )
+        )
+
+    components = {value.component_id: value for value in suite.components}
+    valid_provider_ids = {value.provider_id for value in providers}
+    grants: list[PlannedActionGrant] = []
+    grant_keys: set[tuple[str, str]] = set()
+    for index, permission in enumerate(deployment.permissions):
+        actuator_ids = tuple(
+            component_id
+            for component_id in permission.component_ids
+            if component_id in components
+            and components[component_id].kind == ComponentKind.ACTUATOR
+        )
+        if not actuator_ids:
+            continue
+        path = f"$.deployment.permissions[{index}]"
+        provider = provider_bindings.get(permission.authorization_ref)
+        if provider is None or permission.authorization_ref not in valid_provider_ids:
+            diagnostics.append(
+                _error(
+                    "authorization.provider_reference",
+                    f"{path}.authorization_ref",
+                    "action permission must reference a resolved deployment authorization provider",
+                )
+            )
+            continue
+        if permission.operator_confirmation:
+            diagnostics.append(
+                _error(
+                    "authorization.operator_provider",
+                    f"{path}.operator_confirmation",
+                    "operator confirmation requires an explicit provider mechanism; the permission flag cannot authorize it",
+                )
+            )
+        descriptor = provider_descriptors[provider.provider_id]
+        for actuator_id in actuator_ids:
+            component = components[actuator_id]
+            if permission.capability not in component.action_capabilities:
+                diagnostics.append(
+                    _error(
+                        "authorization.capability",
+                        f"{path}.capability",
+                        f"actuator {actuator_id} does not declare {permission.capability}",
+                    )
+                )
+            key = (actuator_id, permission.capability)
+            if key in grant_keys:
+                diagnostics.append(
+                    _error(
+                        "authorization.duplicate_grant",
+                        path,
+                        f"multiple providers grant {permission.capability} to {actuator_id}",
+                    )
+                )
+            grant_keys.add(key)
+        if (
+            descriptor.capabilities.simulation_only
+            and not permission.capability.startswith("simulated.")
+        ):
+            diagnostics.append(
+                _error(
+                    "authorization.simulation_scope",
+                    f"{path}.capability",
+                    "simulation-only provider cannot authorize a non-simulated capability",
+                )
+            )
+        grants.append(
+            PlannedActionGrant(
+                permission_id=permission.permission_id,
+                capability=permission.capability,
+                actuator_ids=actuator_ids,
+                provider_id=permission.authorization_ref,
+                parameter_constraints={
+                    key: value.to_payload()
+                    for key, value in permission.parameter_constraints.items()
+                },
+                allow_unlisted_parameters=permission.allow_unlisted_parameters,
+                maximum_decision_delay_seconds=(
+                    permission.maximum_decision_delay_seconds
+                ),
+                maximum_delivery_delay_seconds=(
+                    permission.maximum_delivery_delay_seconds
+                ),
+                maximum_request_ttl_seconds=permission.maximum_request_ttl_seconds,
+            )
+        )
+    return tuple(providers), tuple(grants), provider_descriptors
 
 
 def _validate_references(
@@ -826,6 +1225,7 @@ def _capability_tokens(descriptor: PluginDescriptor) -> set[str]:
         f"equivalence:{capabilities.equivalence.value}",
         f"state:{capabilities.state_behavior.value}",
         *(f"resource:{value}" for value in capabilities.resources),
+        *(f"processing:{value}" for value in capabilities.processing_operations),
     }
     if capabilities.requires_future:
         values.add("requires_future")

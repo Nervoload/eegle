@@ -29,8 +29,8 @@ class ActionReceipt:
     actuator_id: str
     status: ReceiptStatus
     observed_time: TimePoint
+    authorization_decision_id: str
     delivered_time: TimePoint | None = None
-    authorization_decision_id: str | None = None
     details: Mapping[str, Any] = None  # type: ignore[assignment]
     schema: str = ACTION_RECEIPT_SCHEMA
 
@@ -39,12 +39,11 @@ class ActionReceipt:
             raise ValueError(f"unsupported action receipt schema: {self.schema}")
         for field in ("receipt_id", "command_id", "actuator_id"):
             object.__setattr__(self, field, require_identifier(getattr(self, field), field))
-        if self.authorization_decision_id is not None:
-            object.__setattr__(
-                self,
-                "authorization_decision_id",
-                require_identifier(self.authorization_decision_id, "authorization_decision_id"),
-            )
+        object.__setattr__(
+            self,
+            "authorization_decision_id",
+            require_identifier(self.authorization_decision_id, "authorization_decision_id"),
+        )
         object.__setattr__(self, "status", ReceiptStatus(self.status))
         object.__setattr__(self, "details", freeze_json(self.details or {}))
 
@@ -74,8 +73,6 @@ class ActionReceipt:
             status=ReceiptStatus(str(payload["status"])),
             observed_time=TimePoint.from_payload(payload["observed_time"]),
             delivered_time=None if delivered is None else TimePoint.from_payload(delivered),
-            authorization_decision_id=None
-            if payload.get("authorization_decision_id") is None
-            else str(payload["authorization_decision_id"]),
+            authorization_decision_id=str(payload["authorization_decision_id"]),
             details=dict(payload.get("details") or {}),
         )

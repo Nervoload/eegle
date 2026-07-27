@@ -13,6 +13,8 @@ from eegle.compiler.plan import (
     ExecutionPlan,
     LockedPlugin,
     PlannedComponent,
+    PlannedAuthorizationProvider,
+    PlannedModelBinding,
     PlannedPlacement,
 )
 from eegle.plugins.registry import (
@@ -48,10 +50,23 @@ class RuntimeNode:
     descriptor: PluginDescriptor
     placement: PlannedPlacement
     component: Any
+    model_binding: PlannedModelBinding | None = None
 
     @property
     def component_id(self) -> str:
         return self.planned.component_id
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeAuthorizationProvider:
+    planned: PlannedAuthorizationProvider
+    plugin: LockedPlugin
+    descriptor: PluginDescriptor
+    provider: Any
+
+    @property
+    def provider_id(self) -> str:
+        return self.planned.provider_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,7 +116,12 @@ class PlanRuntimeSnapshot:
 class PlanRuntime:
     """Constructed, exact component set for one immutable plan."""
 
-    def __init__(self, plan: ExecutionPlan, nodes: tuple[RuntimeNode, ...]) -> None:
+    def __init__(
+        self,
+        plan: ExecutionPlan,
+        nodes: tuple[RuntimeNode, ...],
+        authorization_providers: tuple[RuntimeAuthorizationProvider, ...] = (),
+    ) -> None:
         if plan.schema != EXECUTION_PLAN_SCHEMA:
             raise PlanConstructionError("graph execution requires execution plan v1")
         if plan.graph is None:
@@ -110,12 +130,46 @@ class PlanRuntime:
             raise PlanConstructionError("compiled graph hash differs from plan validation lock")
         self.plan = plan
         self.nodes = nodes
+        self.authorization_providers = authorization_providers
+        self._authorization_by_id = {
+            value.provider_id: value for value in authorization_providers
+        }
+        if len(self._authorization_by_id) != len(authorization_providers):
+            raise PlanConstructionError("runtime authorization provider identities must be unique")
+        if set(self._authorization_by_id) != {
+            value.provider_id for value in plan.authorization_providers
+        }:
+            raise PlanConstructionError(
+                "runtime authorization providers do not match the immutable plan"
+            )
         self._by_id = {value.component_id: value for value in nodes}
         if len(self._by_id) != len(nodes):
             raise PlanConstructionError("runtime component identities must be unique")
         planned_ids = {value.component_id for value in plan.components}
         if set(self._by_id) != planned_ids:
             raise PlanConstructionError("runtime nodes do not exactly match planned components")
+        planned_model_bindings = {
+            value.component_id: value for value in plan.model_bindings
+        }
+        observed_model_bindings = {
+            value.component_id: value.model_binding
+            for value in nodes
+            if value.model_binding is not None
+        }
+        if observed_model_bindings != planned_model_bindings:
+            raise PlanConstructionError(
+                "runtime model bindings do not exactly match the immutable plan"
+            )
+        if planned_model_bindings:
+            model_components = {
+                value.component_id
+                for value in nodes
+                if value.plugin.kind == ComponentKind.MODEL
+            }
+            if set(planned_model_bindings) != model_components:
+                raise PlanConstructionError(
+                    "every model component requires exactly one planned model binding"
+                )
         self._verify_graph_ports()
         self._closed = False
 
@@ -167,6 +221,12 @@ class PlanRuntime:
         except KeyError as exc:
             raise KeyError(f"unknown runtime component: {component_id}") from exc
 
+    def authorization_provider(self, provider_id: str) -> RuntimeAuthorizationProvider:
+        try:
+            return self._authorization_by_id[provider_id]
+        except KeyError as exc:
+            raise KeyError(f"unknown runtime authorization provider: {provider_id}") from exc
+
     @property
     def equivalence_ceiling(self) -> EquivalenceLevel:
         rank = {
@@ -177,7 +237,10 @@ class PlanRuntime:
             EquivalenceLevel.NON_REPLAYABLE: 4,
         }
         return max(
-            (value.descriptor.capabilities.equivalence for value in self.nodes),
+            (
+                value.descriptor.capabilities.equivalence
+                for value in (*self.nodes, *self.authorization_providers)
+            ),
             key=lambda value: rank[value],
             default=EquivalenceLevel.BITWISE,
         )
@@ -193,6 +256,15 @@ class PlanRuntime:
                 )
             if callable(snapshot):
                 states[node.component_id] = snapshot()
+        for provider in self.authorization_providers:
+            snapshot = getattr(provider.provider, "snapshot_state", None)
+            restore = getattr(provider.provider, "restore_state", None)
+            if callable(snapshot) != callable(restore):
+                raise PlanConstructionError(
+                    f"authorization provider {provider.provider_id} must expose snapshot and restore together"
+                )
+            if callable(snapshot):
+                states[f"authorization:{provider.provider_id}"] = snapshot()
         return PlanRuntimeSnapshot(self.plan.plan_hash, states)
 
     def restore_state(self, snapshot: PlanRuntimeSnapshot) -> None:
@@ -204,6 +276,12 @@ class PlanRuntime:
             if node.descriptor.capabilities.state_behavior
             == StateBehavior.SNAPSHOT_RESTORE
         }
+        expected.update(
+            f"authorization:{value.provider_id}"
+            for value in self.authorization_providers
+            if value.descriptor.capabilities.state_behavior
+            == StateBehavior.SNAPSHOT_RESTORE
+        )
         observed = set(snapshot.component_states)
         if observed != expected:
             missing = sorted(expected - observed)
@@ -213,10 +291,18 @@ class PlanRuntime:
                 f"(missing={missing}, unexpected={unexpected})"
             )
         for component_id, state in snapshot.component_states.items():
-            restore = getattr(self.node(component_id).component, "restore_state", None)
+            if component_id.startswith("authorization:"):
+                provider_id = component_id.split(":", 1)[1]
+                restore = getattr(
+                    self.authorization_provider(provider_id).provider,
+                    "restore_state",
+                    None,
+                )
+            else:
+                restore = getattr(self.node(component_id).component, "restore_state", None)
             if not callable(restore):
                 raise PlanConstructionError(
-                    f"component {component_id} cannot restore locked runtime state"
+                    f"runtime authority {component_id} cannot restore locked state"
                 )
             restore(thaw_json(state))
 
@@ -261,6 +347,7 @@ def construct_plan_runtime(
             f"component overrides reference unknown components: {sorted(unknown_overrides)}"
         )
     nodes: list[RuntimeNode] = []
+    model_bindings = {value.component_id: value for value in plan.model_bindings}
     for component in plan.components:
         key = (component.plugin_id, component.plugin_version)
         plugin = locked.get(key)
@@ -313,10 +400,51 @@ def construct_plan_runtime(
                 placement,
             )
             validate_component_instance(descriptor, instance)
-        nodes.append(RuntimeNode(component, plugin, descriptor, placement, instance))
+        nodes.append(
+            RuntimeNode(
+                component,
+                plugin,
+                descriptor,
+                placement,
+                instance,
+                model_bindings.get(component.component_id),
+            )
+        )
     if overrides:  # pragma: no cover - guarded above, retained defensively
         raise PlanConstructionError(f"unused component overrides: {sorted(overrides)}")
-    return PlanRuntime(plan, tuple(nodes))
+    authorization_providers: list[RuntimeAuthorizationProvider] = []
+    for planned in plan.authorization_providers:
+        key = (planned.plugin_id, planned.plugin_version)
+        plugin = locked.get(key)
+        if plugin is None:
+            raise PlanConstructionError(
+                f"authorization provider {planned.provider_id} references an unlocked plugin"
+            )
+        try:
+            descriptor = registry.resolve(
+                planned.plugin_id,
+                f"=={planned.plugin_version}",
+                mode=plan.execution_mode,
+            )
+        except (KeyError, ValueError) as exc:
+            raise PlanConstructionError(
+                f"cannot resolve authorization provider {planned.provider_id}: {exc}"
+            ) from exc
+        _verify_descriptor(plugin, descriptor, planned.provider_id)
+        if descriptor.descriptor_hash != planned.descriptor_hash:
+            raise PlanConstructionError(
+                f"authorization provider descriptor drift for {planned.provider_id}"
+            )
+        instance = registry.create(
+            planned.plugin_id,
+            planned.config,
+            f"=={planned.plugin_version}",
+            mode=plan.execution_mode,
+        )
+        authorization_providers.append(
+            RuntimeAuthorizationProvider(planned, plugin, descriptor, instance)
+        )
+    return PlanRuntime(plan, tuple(nodes), tuple(authorization_providers))
 
 
 def _verify_descriptor(

@@ -8,6 +8,7 @@ from eegle._domain import ComponentKind
 from eegle._validation import freeze_json, require_identifier, thaw_json
 from eegle.compiler.lock import canonical_hash
 from eegle.runtime.context import RuntimeExecutionContext
+from eegle.runtime.model_runtime import execute_bound_model
 from eegle.runtime.plan_runtime import RuntimeNode
 from eegle.streams.clocks import TimePoint
 from eegle.streams.packets import DenseSampleBatch, MetadataEvent, SparseEventBatch
@@ -20,8 +21,23 @@ def dispatch_component(
     value: Any,
     context: RuntimeExecutionContext,
     component_state: MutableMapping[str, dict[str, Any]],
+    *,
+    input_id: str | None = None,
+    admitted_input_ids: tuple[str, ...] = (),
 ) -> Mapping[str, tuple[Any, ...]]:
     validate_input_port(node, input_port, value)
+    if node.plugin.kind == ComponentKind.MODEL and node.model_binding is not None:
+        if input_id is None:
+            raise ValueError("bound model dispatch requires the exact graph input identity")
+        return execute_bound_model(
+            node,
+            input_port,
+            value,
+            context,
+            input_id=input_id,
+            admitted_input_ids=admitted_input_ids,
+            input_available_time=available_time(value, context.current_time),
+        )
     process = getattr(node.component, "process", None)
     if callable(process):
         raw = process(input_port, value, context)
@@ -59,12 +75,7 @@ def dispatch_component(
         state = component_state.setdefault(node.component_id, {})
         result = node.component.decide(value, state, context)
     elif kind == ComponentKind.ACTUATOR:
-        capability = getattr(value, "capability", None)
-        if capability not in node.planned.action_capabilities:
-            raise PermissionError(
-                f"actuator {node.component_id} is not authorized for {capability}"
-            )
-        result = node.component.submit(value, context)
+        raise RuntimeError("actuator ingress must pass through the action broker")
     elif kind == ComponentKind.ARTIFACT:
         result = node.component.produce(value, context)
     elif kind == ComponentKind.SINK:
@@ -170,6 +181,9 @@ def value_id(value: Any) -> str:
         "batch_id",
         "event_id",
         "window_id",
+        "request_id",
+        "authorization_request_id",
+        "cancellation_id",
         "decision_id",
         "prediction_id",
         "outcome_id",

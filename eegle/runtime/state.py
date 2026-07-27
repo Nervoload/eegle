@@ -13,6 +13,8 @@ from eegle.streams.clocks import TimePoint
 
 REJECTION_SCHEMA = "eegle.rejection.v1"
 STATE_TRANSITION_SCHEMA = "eegle.state_transition.v1"
+ADAPTATION_ELIGIBILITY_SCHEMA = "eegle.adaptation_eligibility.v1"
+ADAPTATION_RESULT_SCHEMA = "eegle.adaptation_result.v1"
 WORK_RECORD_SCHEMA = "eegle.work_record.v1"
 
 
@@ -156,11 +158,125 @@ class Rejection:
 
 
 class TransitionStatus(str, Enum):
+    REQUESTED = "requested"
     APPLIED = "applied"
     REJECTED = "rejected"
     NO_OP = "no_op"
     ROLLED_BACK = "rolled_back"
     FAILED = "failed"
+
+
+class AdaptationEligibilityStatus(str, Enum):
+    ELIGIBLE = "eligible"
+    REJECTED = "rejected"
+
+
+@dataclass(frozen=True, slots=True)
+class AdaptationEligibilityDecision:
+    decision_id: str
+    adaptation_id: str
+    model_component_id: str
+    prediction_id: str
+    outcome_id: str
+    status: AdaptationEligibilityStatus
+    decided_time: TimePoint
+    reason_code: str | None = None
+    schema: str = ADAPTATION_ELIGIBILITY_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.schema != ADAPTATION_ELIGIBILITY_SCHEMA:
+            raise ValueError(f"unsupported adaptation eligibility schema: {self.schema}")
+        for field in (
+            "decision_id",
+            "adaptation_id",
+            "model_component_id",
+            "prediction_id",
+            "outcome_id",
+        ):
+            object.__setattr__(
+                self, field, require_identifier(getattr(self, field), field)
+            )
+        object.__setattr__(self, "status", AdaptationEligibilityStatus(self.status))
+        if self.status == AdaptationEligibilityStatus.REJECTED:
+            if self.reason_code is None:
+                raise ValueError("rejected adaptation eligibility requires a reason")
+            object.__setattr__(
+                self,
+                "reason_code",
+                require_identifier(self.reason_code, "reason_code"),
+            )
+        elif self.reason_code is not None:
+            raise ValueError("eligible adaptation cannot declare a rejection reason")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "decision_id": self.decision_id,
+            "adaptation_id": self.adaptation_id,
+            "model_component_id": self.model_component_id,
+            "prediction_id": self.prediction_id,
+            "outcome_id": self.outcome_id,
+            "status": self.status.value,
+            "decided_time": self.decided_time.to_payload(),
+            "reason_code": self.reason_code,
+        }
+
+    @classmethod
+    def from_payload(
+        cls, payload: Mapping[str, Any]
+    ) -> "AdaptationEligibilityDecision":
+        return cls(
+            schema=str(payload.get("schema", ADAPTATION_ELIGIBILITY_SCHEMA)),
+            decision_id=str(payload["decision_id"]),
+            adaptation_id=str(payload["adaptation_id"]),
+            model_component_id=str(payload["model_component_id"]),
+            prediction_id=str(payload["prediction_id"]),
+            outcome_id=str(payload["outcome_id"]),
+            status=AdaptationEligibilityStatus(str(payload["status"])),
+            decided_time=TimePoint.from_payload(payload["decided_time"]),
+            reason_code=None
+            if payload.get("reason_code") is None
+            else str(payload["reason_code"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AdaptationResult:
+    status: TransitionStatus
+    reason: str | None = None
+    metadata: Mapping[str, Any] = None  # type: ignore[assignment]
+    schema: str = ADAPTATION_RESULT_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.schema != ADAPTATION_RESULT_SCHEMA:
+            raise ValueError(f"unsupported adaptation result schema: {self.schema}")
+        object.__setattr__(self, "status", TransitionStatus(self.status))
+        if self.status not in {
+            TransitionStatus.APPLIED,
+            TransitionStatus.REJECTED,
+            TransitionStatus.NO_OP,
+        }:
+            raise ValueError("model adaptation result must be applied, rejected, or no_op")
+        if self.status != TransitionStatus.APPLIED and not self.reason:
+            raise ValueError("non-applied adaptation result requires a reason")
+        object.__setattr__(self, "metadata", freeze_json(self.metadata or {}))
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "status": self.status.value,
+            "reason": self.reason,
+            "metadata": thaw_json(self.metadata),
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "AdaptationResult":
+        return cls(
+            schema=str(payload.get("schema", ADAPTATION_RESULT_SCHEMA)),
+            status=TransitionStatus(str(payload["status"])),
+            reason=None if payload.get("reason") is None else str(payload["reason"]),
+            metadata=dict(payload.get("metadata") or {}),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +289,7 @@ class StateTransition:
     prior_state_hash: str
     resulting_state_hash: str
     trigger_ids: tuple[str, ...]
+    requested_time: TimePoint | None = None
     reason: str | None = None
     metadata: Mapping[str, Any] = None  # type: ignore[assignment]
     schema: str = STATE_TRANSITION_SCHEMA
@@ -196,6 +313,17 @@ class StateTransition:
             raise ValueError("state transition must reference at least one trigger")
         object.__setattr__(self, "trigger_ids", triggers)
         object.__setattr__(self, "metadata", freeze_json(self.metadata or {}))
+        requested = self.transition_time if self.requested_time is None else self.requested_time
+        if requested.clock_id != self.transition_time.clock_id:
+            raise ValueError("state transition request and completion must share a clock")
+        if self.transition_time.seconds < requested.seconds:
+            raise ValueError("state transition cannot complete before it was requested")
+        object.__setattr__(self, "requested_time", requested)
+        if self.status == TransitionStatus.APPLIED:
+            if self.prior_state_hash == self.resulting_state_hash:
+                raise ValueError("applied transition must change state")
+        elif self.prior_state_hash != self.resulting_state_hash:
+            raise ValueError("non-applied transition must preserve or restore prior state")
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -205,6 +333,7 @@ class StateTransition:
             "status": self.status.value,
             "transition_kind": self.transition_kind,
             "transition_time": self.transition_time.to_payload(),
+            "requested_time": self.requested_time.to_payload(),
             "prior_state_hash": self.prior_state_hash,
             "resulting_state_hash": self.resulting_state_hash,
             "trigger_ids": list(self.trigger_ids),
@@ -221,6 +350,9 @@ class StateTransition:
             status=TransitionStatus(str(payload["status"])),
             transition_kind=str(payload["transition_kind"]),
             transition_time=TimePoint.from_payload(payload["transition_time"]),
+            requested_time=None
+            if payload.get("requested_time") is None
+            else TimePoint.from_payload(payload["requested_time"]),
             prior_state_hash=str(payload["prior_state_hash"]),
             resulting_state_hash=str(payload["resulting_state_hash"]),
             trigger_ids=tuple(str(value) for value in payload["trigger_ids"]),

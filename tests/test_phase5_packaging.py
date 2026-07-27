@@ -57,7 +57,6 @@ class Phase5PackagingTests(unittest.TestCase):
                     "wheel",
                     ".",
                     "--no-deps",
-                    "--no-build-isolation",
                     "--wheel-dir",
                     str(wheel_dir),
                 ],

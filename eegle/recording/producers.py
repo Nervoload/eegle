@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from eegle.compiler.lock import canonical_json_bytes, content_hash
-from eegle.models.predictions import Prediction
+from eegle.models.predictions import LegacyPrediction, Prediction
 from eegle.recording.artifacts import ArtifactReference, Sensitivity
 from eegle.recording.publications import ArtifactPublication
 
@@ -25,7 +25,7 @@ class PredictionArtifactProducer:
         self.sensitivity = Sensitivity(sensitivity)
 
     def produce(self, value: Any, context: Any) -> ArtifactPublication:
-        if not isinstance(value, Prediction):
+        if not isinstance(value, (Prediction, LegacyPrediction)):
             raise TypeError("prediction artifact producer requires a Prediction")
         payload: Mapping[str, Any] = {
             "schema": "eegle.prediction_artifact.v1",

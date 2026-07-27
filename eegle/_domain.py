@@ -42,6 +42,7 @@ class ComponentKind(str, Enum):
     OUTCOME = "outcome"
     ADAPTER = "adapter"
     POLICY = "policy"
+    AUTHORIZATION = "authorization"
     ACTUATOR = "actuator"
     ARTIFACT = "artifact"
     SINK = "sink"

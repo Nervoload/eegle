@@ -1,139 +1,339 @@
-"""Public model-contract types for reproducible EEG inference."""
+"""Modality-neutral scientific contracts for model artifacts.
+
+These records describe what a model artifact consumes, produces, and owns.
+Executable construction and runtime capabilities belong to ``PluginDescriptor``;
+placement and local resources belong to deployment; exact joins belong to the
+compiled plan.  Keeping those authorities separate prevents model manifests
+from becoming another plugin or deployment configuration system.
+"""
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
-from typing import Any, Literal
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Mapping
 
-from eegle.ml.contracts import (
-    contract_hash,
-    normalize_input_contract,
-    resampling_mode,
-    select_contract_channels,
-    validate_supported_resampling,
-)
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 
-
-MODEL_CONTRACT_SCHEMA = "eegle.model_contract.v2"
+from eegle._domain import EquivalenceLevel, ExecutionMode
+from eegle._validation import freeze_json, require_identifier, thaw_json
+from eegle.compiler.lock import canonical_hash
 
 
-@dataclass(frozen=True)
-class PreprocessingContract:
-    """Preprocessing assumptions that must be satisfied before inference."""
-
-    reference: str = "none"
-    filters: tuple[dict[str, Any], ...] = ()
-    baseline_seconds: tuple[float, float] | None = None
-    artifact_policy: str = "declared_upstream"
+MODEL_CONTRACT_SCHEMA = "eegle.model_contract.v1"
+MODEL_INPUT_CONTRACT_SCHEMA = "eegle.model_input_contract.v1"
+MODEL_OUTPUT_CONTRACT_SCHEMA = "eegle.model_output_contract.v1"
+MODEL_STATE_CONTRACT_SCHEMA = "eegle.model_state_contract.v1"
+PREPROCESSING_REQUIREMENT_SCHEMA = "eegle.preprocessing_requirement.v1"
 
 
-@dataclass(frozen=True)
-class TargetContract:
-    """Target semantics for model predictions and operating thresholds."""
-
-    name: str = "condition"
-    positive_label: str = "no_go"
-    label_mapping: dict[str, int] = field(default_factory=lambda: {"go": 0, "no_go": 1})
-    learning_problem: str = "binary_classification"
+def _validate_json_schema(schema: Mapping[str, Any], field_name: str) -> None:
+    try:
+        Draft202012Validator.check_schema(thaw_json(schema))
+    except SchemaError as exc:
+        raise ValueError(f"invalid {field_name}: {exc.message}") from exc
 
 
-@dataclass(frozen=True)
-class ModelContract:
-    """Versioned, typed declaration of model input and runtime constraints."""
+class PreprocessingOwnership(str, Enum):
+    """The sole owner of one preprocessing operation or prohibition."""
 
-    schema: str = MODEL_CONTRACT_SCHEMA
-    input_kind: Literal["epoch", "rolling_window", "sequence"] = "epoch"
-    channel_names: tuple[str, ...] = ()
-    required_channels: tuple[str, ...] = ()
-    optional_channels: tuple[str, ...] = ()
-    missing_channel_policy: Literal["error", "drop", "zero_fill"] = "error"
-    sample_rate_hz: float | None = None
-    sample_rate_tolerance_hz: float = 0.01
-    input_units: Literal["microvolts", "volts"] = "microvolts"
-    epoch_window_seconds: tuple[float, float] | None = None
-    prediction_horizon_seconds: tuple[float, float] | None = None
-    preprocessing: PreprocessingContract = field(default_factory=PreprocessingContract)
-    tensor_layout: str = "batch_1_channels_samples"
-    target: TargetContract = field(default_factory=TargetContract)
-    causal: bool = True
-    latency_budget_ms: float | None = None
-    adaptation_permissions: tuple[str, ...] = ()
+    UPSTREAM = "upstream"
+    MODEL_INTERNAL = "model_internal"
+    ARTIFACT_PREPARED = "artifact_prepared"
+    FORBIDDEN = "forbidden"
+
+
+class ModelStateBehavior(str, Enum):
+    STATELESS = "stateless"
+    SNAPSHOT_RESTORE = "snapshot_restore"
+    EXTERNAL = "external"
+
+
+@dataclass(frozen=True, slots=True)
+class PreprocessingRequirement:
+    requirement_id: str
+    operation: str
+    ownership: PreprocessingOwnership
+    parameters: Mapping[str, Any] = field(default_factory=dict)
+    required_lineage: tuple[str, ...] = ()
+    schema: str = PREPROCESSING_REQUIREMENT_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.schema != PREPROCESSING_REQUIREMENT_SCHEMA:
+            raise ValueError(f"unsupported preprocessing requirement schema: {self.schema}")
+        object.__setattr__(
+            self,
+            "requirement_id",
+            require_identifier(self.requirement_id, "requirement_id"),
+        )
+        object.__setattr__(self, "operation", require_identifier(self.operation, "operation"))
+        object.__setattr__(self, "ownership", PreprocessingOwnership(self.ownership))
+        lineage = tuple(
+            require_identifier(value, "required_lineage") for value in self.required_lineage
+        )
+        if len(lineage) != len(set(lineage)):
+            raise ValueError("preprocessing required_lineage entries must be unique")
+        object.__setattr__(self, "required_lineage", lineage)
+        object.__setattr__(self, "parameters", freeze_json(self.parameters or {}))
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "requirement_id": self.requirement_id,
+            "operation": self.operation,
+            "ownership": self.ownership.value,
+            "parameters": thaw_json(self.parameters),
+            "required_lineage": list(self.required_lineage),
+        }
 
     @classmethod
-    def from_payload(cls, payload: dict[str, Any]) -> "ModelContract":
-        """Build a v2 contract from a new or legacy bundle payload."""
-        normalized = normalize_input_contract(payload, fallback_channel_names=payload.get("channel_names", ()))
-        preprocessing = dict(payload.get("preprocessing") or {})
-        raw_target = payload.get("target")
-        target = dict(payload.get("target_contract") or payload.get("target_spec") or {})
-        if isinstance(raw_target, dict):
-            target.update(raw_target)
-        target_name = raw_target if isinstance(raw_target, str) else target.get("name", target.get("target", "condition"))
-        label_mapping = payload.get("label_mapping") or target.get("label_mapping") or {"go": 0, "no_go": 1}
-        epoch_window = _optional_pair(normalized.get("epoch_window_seconds"))
-        horizon = _optional_pair(payload.get("prediction_horizon_seconds"))
+    def from_payload(cls, payload: Mapping[str, Any]) -> "PreprocessingRequirement":
         return cls(
-            schema=str(payload.get("schema", MODEL_CONTRACT_SCHEMA)),
-            input_kind=str(payload.get("input_kind", "epoch")),  # type: ignore[arg-type]
-            channel_names=tuple(str(value) for value in (payload.get("channel_names") or normalized.get("channel_names", ()))),
-            required_channels=tuple(str(value) for value in normalized.get("required_channels", ())),
-            optional_channels=tuple(str(value) for value in normalized.get("optional_channels", ())),
-            missing_channel_policy=str(normalized.get("missing_channel_policy", "error")),  # type: ignore[arg-type]
-            sample_rate_hz=None if normalized.get("sample_rate_hz") is None else float(normalized["sample_rate_hz"]),
-            sample_rate_tolerance_hz=float(normalized.get("sample_rate_tolerance_hz", 0.01)),
-            input_units=str(normalized.get("input_units", "microvolts")),  # type: ignore[arg-type]
-            epoch_window_seconds=epoch_window,
-            prediction_horizon_seconds=horizon,
-            preprocessing=PreprocessingContract(
-                reference=str(preprocessing.get("reference", payload.get("reference", "none"))),
-                filters=tuple(dict(item) for item in preprocessing.get("filters", ())),
-                baseline_seconds=_optional_pair(preprocessing.get("baseline_seconds", normalized.get("baseline_seconds"))),
-                artifact_policy=str(preprocessing.get("artifact_policy", "declared_upstream")),
-            ),
-            tensor_layout=str(normalized.get("tensor_layout", "batch_1_channels_samples")),
-            target=TargetContract(
-                name=str(target_name),
-                positive_label=str(target.get("positive_label", "no_go")),
-                label_mapping={str(key): int(value) for key, value in dict(label_mapping).items()},
-                learning_problem=str(target.get("learning_problem", "binary_classification")),
-            ),
-            causal=bool(payload.get("causal", True)),
-            latency_budget_ms=None if payload.get("latency_budget_ms") is None else float(payload["latency_budget_ms"]),
-            adaptation_permissions=tuple(str(value) for value in payload.get("adaptation_permissions", ())),
+            schema=str(payload.get("schema", PREPROCESSING_REQUIREMENT_SCHEMA)),
+            requirement_id=str(payload["requirement_id"]),
+            operation=str(payload["operation"]),
+            ownership=PreprocessingOwnership(str(payload["ownership"])),
+            parameters=dict(payload.get("parameters") or {}),
+            required_lineage=tuple(str(value) for value in payload.get("required_lineage", ())),
         )
 
-    def payload(self) -> dict[str, Any]:
-        data = asdict(self)
-        data["channel_names"] = list(self.channel_names)
-        data["required_channels"] = list(self.required_channels)
-        data["optional_channels"] = list(self.optional_channels)
-        data["adaptation_permissions"] = list(self.adaptation_permissions)
-        if self.epoch_window_seconds is not None:
-            data["epoch_window_seconds"] = list(self.epoch_window_seconds)
-        if self.prediction_horizon_seconds is not None:
-            data["prediction_horizon_seconds"] = list(self.prediction_horizon_seconds)
-        if self.preprocessing.baseline_seconds is not None:
-            data["preprocessing"]["baseline_seconds"] = list(self.preprocessing.baseline_seconds)
-        data["preprocessing"]["filters"] = list(self.preprocessing.filters)
-        return data
 
-    def validate(self) -> None:
-        if self.input_kind not in {"epoch", "rolling_window", "sequence"}:
-            raise ValueError(f"unsupported input_kind '{self.input_kind}'")
-        if self.missing_channel_policy not in {"error", "drop", "zero_fill"}:
-            raise ValueError(f"unsupported missing_channel_policy '{self.missing_channel_policy}'")
-        if self.sample_rate_hz is not None and self.sample_rate_hz <= 0:
-            raise ValueError("sample_rate_hz must be positive")
-        if self.epoch_window_seconds is not None and self.epoch_window_seconds[1] <= self.epoch_window_seconds[0]:
-            raise ValueError("epoch_window_seconds must be increasing")
-        if self.latency_budget_ms is not None and self.latency_budget_ms <= 0:
-            raise ValueError("latency_budget_ms must be positive")
+@dataclass(frozen=True, slots=True)
+class ModelInputContract:
+    """Scientific requirements for one declared plugin input port.
+
+    ``requirements`` is canonical structured data interpreted by compiler
+    semantic passes. It can describe channel or feature identities, units, rate
+    models, window support, missingness, or other schema-specific constraints
+    without assuming that every input is a dense EEG epoch.
+    """
+
+    port_name: str
+    type_id: str
+    requirements: Mapping[str, Any] = field(default_factory=dict)
+    preprocessing: tuple[PreprocessingRequirement, ...] = ()
+    schema: str = MODEL_INPUT_CONTRACT_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.schema != MODEL_INPUT_CONTRACT_SCHEMA:
+            raise ValueError(f"unsupported model input contract schema: {self.schema}")
+        object.__setattr__(self, "port_name", require_identifier(self.port_name, "port_name"))
+        object.__setattr__(self, "type_id", require_identifier(self.type_id, "type_id"))
+        requirement_ids = tuple(value.requirement_id for value in self.preprocessing)
+        if len(requirement_ids) != len(set(requirement_ids)):
+            raise ValueError("preprocessing requirement identities must be unique per input")
+        object.__setattr__(self, "requirements", freeze_json(self.requirements or {}))
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "port_name": self.port_name,
+            "type_id": self.type_id,
+            "requirements": thaw_json(self.requirements),
+            "preprocessing": [value.to_payload() for value in self.preprocessing],
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "ModelInputContract":
+        return cls(
+            schema=str(payload.get("schema", MODEL_INPUT_CONTRACT_SCHEMA)),
+            port_name=str(payload["port_name"]),
+            type_id=str(payload["type_id"]),
+            requirements=dict(payload.get("requirements") or {}),
+            preprocessing=tuple(
+                PreprocessingRequirement.from_payload(value)
+                for value in payload.get("preprocessing", ())
+            ),
+        )
 
 
-def _optional_pair(value: Any) -> tuple[float, float] | None:
-    if value is None:
-        return None
-    values = list(value)
-    if len(values) != 2:
-        raise ValueError("expected a two-value range")
-    return (float(values[0]), float(values[1]))
+@dataclass(frozen=True, slots=True)
+class ModelOutputContract:
+    """Schema-bound model output without assuming a learning-problem taxonomy."""
+
+    port_name: str
+    type_id: str
+    value_schema: Mapping[str, Any]
+    uncertainty_schema: Mapping[str, Any] | None = None
+    validity_schema: Mapping[str, Any] | None = None
+    abstention_supported: bool = False
+    schema: str = MODEL_OUTPUT_CONTRACT_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.schema != MODEL_OUTPUT_CONTRACT_SCHEMA:
+            raise ValueError(f"unsupported model output contract schema: {self.schema}")
+        object.__setattr__(self, "port_name", require_identifier(self.port_name, "port_name"))
+        object.__setattr__(self, "type_id", require_identifier(self.type_id, "type_id"))
+        value_schema = freeze_json(self.value_schema)
+        _validate_json_schema(value_schema, "model value schema")
+        object.__setattr__(self, "value_schema", value_schema)
+        if self.uncertainty_schema is not None:
+            uncertainty_schema = freeze_json(self.uncertainty_schema)
+            _validate_json_schema(uncertainty_schema, "model uncertainty schema")
+            object.__setattr__(
+                self,
+                "uncertainty_schema",
+                uncertainty_schema,
+            )
+        if self.validity_schema is not None:
+            validity_schema = freeze_json(self.validity_schema)
+            _validate_json_schema(validity_schema, "model validity schema")
+            object.__setattr__(self, "validity_schema", validity_schema)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "port_name": self.port_name,
+            "type_id": self.type_id,
+            "value_schema": thaw_json(self.value_schema),
+            "uncertainty_schema": None
+            if self.uncertainty_schema is None
+            else thaw_json(self.uncertainty_schema),
+            "validity_schema": None
+            if self.validity_schema is None
+            else thaw_json(self.validity_schema),
+            "abstention_supported": self.abstention_supported,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "ModelOutputContract":
+        uncertainty = payload.get("uncertainty_schema")
+        validity = payload.get("validity_schema")
+        return cls(
+            schema=str(payload.get("schema", MODEL_OUTPUT_CONTRACT_SCHEMA)),
+            port_name=str(payload["port_name"]),
+            type_id=str(payload["type_id"]),
+            value_schema=dict(payload.get("value_schema") or {}),
+            uncertainty_schema=None if uncertainty is None else dict(uncertainty),
+            validity_schema=None if validity is None else dict(validity),
+            abstention_supported=bool(payload.get("abstention_supported", False)),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ModelStateContract:
+    behavior: ModelStateBehavior = ModelStateBehavior.STATELESS
+    state_schema_id: str | None = None
+    initial_state_required: bool = False
+    adaptation_supported: bool = False
+    state_affects_predictions: bool = False
+    replay_equivalence: EquivalenceLevel = EquivalenceLevel.BITWISE
+    schema: str = MODEL_STATE_CONTRACT_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.schema != MODEL_STATE_CONTRACT_SCHEMA:
+            raise ValueError(f"unsupported model state contract schema: {self.schema}")
+        object.__setattr__(self, "behavior", ModelStateBehavior(self.behavior))
+        object.__setattr__(
+            self,
+            "replay_equivalence",
+            EquivalenceLevel(self.replay_equivalence),
+        )
+        if self.state_schema_id is not None:
+            object.__setattr__(
+                self,
+                "state_schema_id",
+                require_identifier(self.state_schema_id, "state_schema_id"),
+            )
+        if self.behavior == ModelStateBehavior.STATELESS:
+            if self.state_schema_id is not None:
+                raise ValueError("stateless model state cannot declare state_schema_id")
+            if self.initial_state_required or self.adaptation_supported or self.state_affects_predictions:
+                raise ValueError("stateless model state cannot require or mutate prediction state")
+        elif self.state_schema_id is None:
+            raise ValueError("stateful model state requires state_schema_id")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "behavior": self.behavior.value,
+            "state_schema_id": self.state_schema_id,
+            "initial_state_required": self.initial_state_required,
+            "adaptation_supported": self.adaptation_supported,
+            "state_affects_predictions": self.state_affects_predictions,
+            "replay_equivalence": self.replay_equivalence.value,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "ModelStateContract":
+        return cls(
+            schema=str(payload.get("schema", MODEL_STATE_CONTRACT_SCHEMA)),
+            behavior=ModelStateBehavior(str(payload.get("behavior", "stateless"))),
+            state_schema_id=None
+            if payload.get("state_schema_id") is None
+            else str(payload["state_schema_id"]),
+            initial_state_required=bool(payload.get("initial_state_required", False)),
+            adaptation_supported=bool(payload.get("adaptation_supported", False)),
+            state_affects_predictions=bool(payload.get("state_affects_predictions", False)),
+            replay_equivalence=EquivalenceLevel(
+                str(payload.get("replay_equivalence", EquivalenceLevel.BITWISE.value))
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ModelContract:
+    inputs: tuple[ModelInputContract, ...]
+    outputs: tuple[ModelOutputContract, ...]
+    state: ModelStateContract = ModelStateContract()
+    supported_modes: frozenset[ExecutionMode] = frozenset({ExecutionMode.CAUSAL})
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    schema: str = MODEL_CONTRACT_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.schema != MODEL_CONTRACT_SCHEMA:
+            raise ValueError(f"unsupported model contract schema: {self.schema}")
+        if not self.inputs:
+            raise ValueError("model contract requires at least one input")
+        if not self.outputs:
+            raise ValueError("model contract requires at least one output")
+        for values, label in ((self.inputs, "input"), (self.outputs, "output")):
+            names = tuple(value.port_name for value in values)
+            if len(names) != len(set(names)):
+                raise ValueError(f"model {label} port names must be unique")
+        modes = frozenset(ExecutionMode(value) for value in self.supported_modes)
+        if not modes:
+            raise ValueError("model contract requires at least one execution mode")
+        object.__setattr__(self, "supported_modes", modes)
+        object.__setattr__(self, "metadata", freeze_json(self.metadata or {}))
+
+    @property
+    def contract_digest(self) -> str:
+        return canonical_hash(self.content_payload())
+
+    def content_payload(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "inputs": [value.to_payload() for value in self.inputs],
+            "outputs": [value.to_payload() for value in self.outputs],
+            "state": self.state.to_payload(),
+            "supported_modes": sorted(value.value for value in self.supported_modes),
+            "metadata": thaw_json(self.metadata),
+        }
+
+    def to_payload(self) -> dict[str, Any]:
+        payload = self.content_payload()
+        payload["contract_digest"] = self.contract_digest
+        return payload
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "ModelContract":
+        value = cls(
+            schema=str(payload.get("schema", MODEL_CONTRACT_SCHEMA)),
+            inputs=tuple(ModelInputContract.from_payload(item) for item in payload["inputs"]),
+            outputs=tuple(
+                ModelOutputContract.from_payload(item) for item in payload["outputs"]
+            ),
+            state=ModelStateContract.from_payload(payload.get("state") or {}),
+            supported_modes=frozenset(
+                ExecutionMode(str(item)) for item in payload.get("supported_modes", ("causal",))
+            ),
+            metadata=dict(payload.get("metadata") or {}),
+        )
+        expected = payload.get("contract_digest")
+        if expected is None:
+            raise ValueError("model contract payload requires contract_digest")
+        if expected != value.contract_digest:
+            raise ValueError("model contract digest mismatch")
+        return value

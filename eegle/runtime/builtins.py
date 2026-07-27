@@ -5,7 +5,12 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from eegle.compiler.lock import canonical_hash
-from eegle.runtime.outcomes import Outcome, OutcomeUse
+from eegle.runtime.outcomes import (
+    Outcome,
+    OutcomeReference,
+    OutcomeReferenceKind,
+    OutcomeUse,
+)
 from eegle.runtime.scheduling import ScheduledTrigger, TriggerResult
 from eegle.runtime.state import StateTransition, TransitionStatus
 from eegle.streams.packets import SparseEventBatch
@@ -40,8 +45,12 @@ class SparseEventOutcomeResolver:
                     event_time=event.event_time,
                     available_time=event.available_time,
                     permitted_uses=self.permitted_uses,
-                    prediction_ids=tuple(
-                        str(value) for value in payload.get("prediction_ids", ())
+                    references=tuple(
+                        OutcomeReference(
+                            OutcomeReferenceKind.PREDICTION,
+                            str(value),
+                        )
+                        for value in payload.get("prediction_ids", ())
                     ),
                 )
             )

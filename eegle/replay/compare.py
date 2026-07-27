@@ -47,7 +47,9 @@ _COMPARABLE_RECORDS = frozenset(
         "outcome_duplicate",
         "outcome_rejected",
         "outcome_use",
+        "outcome_disposition",
         "adaptation_eligibility",
+        "model_comparison",
         "trigger_fired",
         "trigger_cancelled",
         "trigger_timed_out",
@@ -57,7 +59,12 @@ _COMPARABLE_RECORDS = frozenset(
         "state_transition",
         "work",
         "component_state",
-        "action_command",
+        "action_request",
+        "authorization_request",
+        "authorization_decision",
+        "authorized_command",
+        "action_disposition",
+        "action_cancellation",
         "action_receipt",
         "graph_emission",
         "phase_started",
@@ -280,7 +287,9 @@ def _trace_projection(record: EvidenceRecord) -> Mapping[str, Any]:
         projected.update(
             {
                 "outcome_id": outcome.get("outcome_id"),
-                "prediction_ids": outcome.get("prediction_ids", ()),
+                "references": outcome.get("references", ()),
+                "status": payload.get("status"),
+                "reason_code": payload.get("reason_code"),
             }
         )
     elif record.record_type.startswith("prediction_"):
@@ -300,7 +309,7 @@ def _trace_projection(record: EvidenceRecord) -> Mapping[str, Any]:
             }
         )
     elif record.record_type == "state_transition":
-        transition = payload["transition"]
+        transition = payload.get("transition", payload)
         projected.update(
             {
                 "component_id": transition["component_id"],
@@ -324,6 +333,60 @@ def _trace_projection(record: EvidenceRecord) -> Mapping[str, Any]:
                 "command_id": receipt["command_id"],
                 "actuator_id": receipt["actuator_id"],
                 "status": receipt["status"],
+            }
+        )
+    elif record.record_type == "action_request":
+        request = payload["request"]
+        projected.update(
+            {
+                "request_id": request["request_id"],
+                "capability": request["capability"],
+                "requested_by": request["requested_by"],
+            }
+        )
+    elif record.record_type == "authorization_request":
+        projected.update(
+            {
+                "authorization_request_id": payload["authorization_request_id"],
+                "action_request_id": payload["action_request_id"],
+                "provider_id": payload["provider_id"],
+                "permission_id": payload["permission_id"],
+            }
+        )
+    elif record.record_type == "authorization_decision":
+        projected.update(
+            {
+                "action_request_id": payload["action_request_id"],
+                "provider_id": payload["provider_id"],
+                "status": payload["status"],
+                "reason": payload.get("reason"),
+            }
+        )
+    elif record.record_type == "authorized_command":
+        projected.update(
+            {
+                "command_id": payload["command_id"],
+                "request_id": payload["request_id"],
+                "authorization_decision_id": payload["authorization_decision_id"],
+                "actuator_id": payload["actuator_id"],
+            }
+        )
+    elif record.record_type == "action_disposition":
+        projected.update(
+            {
+                "action_request_id": payload["action_request_id"],
+                "actuator_id": payload["actuator_id"],
+                "status": payload["status"],
+                "terminal": payload["terminal"],
+                "reason": payload.get("reason"),
+            }
+        )
+    elif record.record_type == "action_cancellation":
+        projected.update(
+            {
+                "action_request_id": payload["action_request_id"],
+                "actuator_id": payload["actuator_id"],
+                "reason": payload["reason"],
             }
         )
     else:
@@ -364,14 +427,25 @@ def _semantic_projection(record: EvidenceRecord) -> Any:
                 "state_hash": state.get("state_hash") if isinstance(state, Mapping) else None,
             }
         )
-    elif record.record_type == "action_command":
-        command = payload["command"]
+    elif record.record_type == "action_request":
+        command = payload["request"]
         trace.update(
             {
                 "capability": command["capability"],
                 "parameters": command["parameters"],
             }
         )
+    elif record.record_type == "authorized_command":
+        trace.update(
+            {
+                "capability": payload["capability"],
+                "parameters": payload["parameters"],
+                "permission_id": payload["permission_id"],
+                "provider_id": payload["provider_id"],
+            }
+        )
+    elif record.record_type == "authorization_decision":
+        trace["evidence"] = _nonnumeric_structure(payload.get("evidence", {}))
     elif record.record_type == "outcome_received":
         outcome = payload["outcome"]
         trace.update(
@@ -383,6 +457,7 @@ def _semantic_projection(record: EvidenceRecord) -> Any:
     elif record.record_type in {"outcome_use", "adaptation_eligibility"}:
         trace.update(
             {
+                "status": payload.get("status"),
                 "eligible": payload.get("eligible"),
                 "applied": payload.get(
                     "applied", payload.get("adaptation_applied")
@@ -392,7 +467,7 @@ def _semantic_projection(record: EvidenceRecord) -> Any:
             }
         )
     elif record.record_type == "state_transition":
-        transition = payload["transition"]
+        transition = payload.get("transition", payload)
         trace.update(
             {
                 "prior_state_hash": transition["prior_state_hash"],

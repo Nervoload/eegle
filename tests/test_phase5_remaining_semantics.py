@@ -376,7 +376,7 @@ class Phase5RemainingSemanticTests(unittest.TestCase):
         self.assertEqual(len(skipped), 1)
         self.assertEqual(skipped[0].reason_code, "queue_full")
 
-    def test_compiler_rejects_unpermissioned_adaptation_and_actions(self) -> None:
+    def test_compiler_rejects_unpermissioned_adaptation_and_defaults_actions_to_observe_only(self) -> None:
         delayed = _load("phase5_delayed_adaptation", "deployment.json")
         delayed["permissions"] = []
         with self.assertRaisesRegex(Exception, "adaptation permission"):
@@ -384,8 +384,8 @@ class Phase5RemainingSemanticTests(unittest.TestCase):
 
         actions = _load("phase5_event_window_actions", "deployment.json")
         actions["permissions"] = []
-        with self.assertRaisesRegex(Exception, "simulated.feedback"):
-            _compile_reference("phase5_event_window_actions", actions)
+        compiled, _ = _compile_reference("phase5_event_window_actions", actions)
+        self.assertEqual(compiled.plan.action_grants, ())
 
         invalid_suite = _load("phase5_event_window_actions", "suite.json")
         invalid_suite["components"][4]["action_capabilities"] = [

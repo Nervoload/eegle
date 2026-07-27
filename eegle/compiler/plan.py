@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from enum import Enum
+from typing import TYPE_CHECKING, Any, Mapping
 
 from eegle._domain import ComponentKind, ExecutionMode
 from eegle._validation import (
@@ -15,6 +16,9 @@ from eegle._validation import (
 )
 from eegle.compiler.graph import CompiledGraph
 from eegle.compiler.lock import canonical_hash
+
+if TYPE_CHECKING:
+    from eegle.models.manifests import ModelManifest
 
 
 EXECUTION_PLAN_SCHEMA = "eegle.execution_plan.v1"
@@ -160,6 +164,222 @@ class PlannedComponent:
             action_capabilities=tuple(
                 str(value) for value in payload.get("action_capabilities", ())
             ),
+        )
+
+
+class PlannedModelFailureDisposition(str, Enum):
+    FAIL_RUN = "fail_run"
+    REJECT_RESULT = "reject_result"
+
+
+class PlannedModelQueueDisposition(str, Enum):
+    FAIL_RUN = "fail_run"
+    REJECT_NEWEST = "reject_newest"
+    SHED_OLDEST = "shed_oldest"
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedModelRole:
+    role_id: str
+    profile: str
+    scheduling_priority: int
+    requires_equivalent_inputs: bool
+    may_feed_policy: bool
+    may_receive_outcomes: bool
+    may_adapt: bool
+    failure_disposition: PlannedModelFailureDisposition
+    queue_disposition: PlannedModelQueueDisposition
+    queue_limit: int | None = None
+
+    def __post_init__(self) -> None:
+        for field in ("role_id", "profile"):
+            object.__setattr__(self, field, require_identifier(getattr(self, field), field))
+        object.__setattr__(
+            self,
+            "failure_disposition",
+            PlannedModelFailureDisposition(self.failure_disposition),
+        )
+        object.__setattr__(
+            self,
+            "queue_disposition",
+            PlannedModelQueueDisposition(self.queue_disposition),
+        )
+        object.__setattr__(self, "scheduling_priority", int(self.scheduling_priority))
+        if self.scheduling_priority < 0:
+            raise ValueError("planned model role priority cannot be negative")
+        if self.queue_limit is not None:
+            object.__setattr__(self, "queue_limit", int(self.queue_limit))
+            if self.queue_limit < 0:
+                raise ValueError("planned model role queue_limit cannot be negative")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "role_id": self.role_id,
+            "profile": self.profile,
+            "scheduling_priority": self.scheduling_priority,
+            "requires_equivalent_inputs": self.requires_equivalent_inputs,
+            "may_feed_policy": self.may_feed_policy,
+            "may_receive_outcomes": self.may_receive_outcomes,
+            "may_adapt": self.may_adapt,
+            "failure_disposition": self.failure_disposition.value,
+            "queue_disposition": self.queue_disposition.value,
+            "queue_limit": self.queue_limit,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "PlannedModelRole":
+        return cls(
+            role_id=str(payload["role_id"]),
+            profile=str(payload["profile"]),
+            scheduling_priority=int(payload["scheduling_priority"]),
+            requires_equivalent_inputs=bool(payload["requires_equivalent_inputs"]),
+            may_feed_policy=bool(payload["may_feed_policy"]),
+            may_receive_outcomes=bool(payload["may_receive_outcomes"]),
+            may_adapt=bool(payload["may_adapt"]),
+            failure_disposition=PlannedModelFailureDisposition(
+                str(payload["failure_disposition"])
+            ),
+            queue_disposition=PlannedModelQueueDisposition(
+                str(payload["queue_disposition"])
+            ),
+            queue_limit=None
+            if payload.get("queue_limit") is None
+            else int(payload["queue_limit"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedModelArtifactBinding:
+    artifact_id: str
+    digest: str
+    media_type: str
+    size_bytes: int
+    uri: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "artifact_id", require_identifier(self.artifact_id, "artifact_id"))
+        object.__setattr__(self, "digest", require_digest(self.digest))
+        object.__setattr__(self, "size_bytes", int(self.size_bytes))
+        if self.size_bytes < 0:
+            raise ValueError("planned model artifact size cannot be negative")
+        if not self.media_type.strip() or not self.uri.strip():
+            raise ValueError("planned model artifact media_type and uri cannot be empty")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "artifact_id": self.artifact_id,
+            "digest": self.digest,
+            "media_type": self.media_type,
+            "size_bytes": self.size_bytes,
+            "uri": self.uri,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "PlannedModelArtifactBinding":
+        return cls(
+            artifact_id=str(payload["artifact_id"]),
+            digest=str(payload["digest"]),
+            media_type=str(payload["media_type"]),
+            size_bytes=int(payload["size_bytes"]),
+            uri=str(payload["uri"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedModelBinding:
+    component_id: str
+    plugin_id: str
+    plugin_version: str
+    manifest: "ModelManifest"
+    role: PlannedModelRole
+    artifacts: tuple[PlannedModelArtifactBinding, ...] = ()
+    comparison_group: str | None = None
+    preprocessing_lineage: Mapping[str, tuple[str, ...]] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "component_id", require_identifier(self.component_id, "component_id")
+        )
+        object.__setattr__(self, "plugin_id", require_identifier(self.plugin_id, "plugin_id"))
+        if not self.plugin_version.strip():
+            raise ValueError("planned model plugin_version cannot be empty")
+        if self.comparison_group is not None:
+            object.__setattr__(
+                self,
+                "comparison_group",
+                require_identifier(self.comparison_group, "comparison_group"),
+            )
+        if self.role.requires_equivalent_inputs and self.comparison_group is None:
+            raise ValueError("equivalence-bearing model roles require a comparison_group")
+        artifact_ids = tuple(value.artifact_id for value in self.artifacts)
+        if len(artifact_ids) != len(set(artifact_ids)):
+            raise ValueError("planned model artifact identities must be unique")
+        expected = {value.artifact_id: value for value in self.manifest.artifacts}
+        if set(artifact_ids) != set(expected):
+            raise ValueError("planned model artifacts must resolve the complete manifest")
+        for artifact in self.artifacts:
+            if artifact.digest != expected[artifact.artifact_id].digest:
+                raise ValueError("planned model artifact digest differs from the manifest")
+        lineage: dict[str, tuple[str, ...]] = {}
+        for port_name, component_ids in (self.preprocessing_lineage or {}).items():
+            port = require_identifier(str(port_name), "model input port")
+            values = tuple(
+                require_identifier(str(value), "preprocessing lineage component")
+                for value in component_ids
+            )
+            if len(values) != len(set(values)):
+                raise ValueError("preprocessing lineage components must be unique")
+            lineage[port] = values
+        object.__setattr__(self, "preprocessing_lineage", freeze_json(lineage))
+
+    @property
+    def manifest_digest(self) -> str:
+        return self.manifest.manifest_digest
+
+    @property
+    def contract_digest(self) -> str:
+        return self.manifest.contract.contract_digest
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "component_id": self.component_id,
+            "plugin_id": self.plugin_id,
+            "plugin_version": self.plugin_version,
+            "manifest": self.manifest.to_payload(),
+            "manifest_digest": self.manifest_digest,
+            "contract_digest": self.contract_digest,
+            "role": self.role.to_payload(),
+            "comparison_group": self.comparison_group,
+            "artifacts": [value.to_payload() for value in self.artifacts],
+            "preprocessing_lineage": thaw_json(self.preprocessing_lineage),
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "PlannedModelBinding":
+        from eegle.models.manifests import ModelManifest
+
+        manifest = ModelManifest.from_payload(payload["manifest"])
+        if payload.get("manifest_digest") != manifest.manifest_digest:
+            raise ValueError("planned model manifest digest mismatch")
+        if payload.get("contract_digest") != manifest.contract.contract_digest:
+            raise ValueError("planned model contract digest mismatch")
+        return cls(
+            component_id=str(payload["component_id"]),
+            plugin_id=str(payload["plugin_id"]),
+            plugin_version=str(payload["plugin_version"]),
+            manifest=manifest,
+            role=PlannedModelRole.from_payload(payload["role"]),
+            comparison_group=None
+            if payload.get("comparison_group") is None
+            else str(payload["comparison_group"]),
+            artifacts=tuple(
+                PlannedModelArtifactBinding.from_payload(value)
+                for value in payload.get("artifacts", ())
+            ),
+            preprocessing_lineage={
+                str(key): tuple(str(item) for item in value)
+                for key, value in dict(payload.get("preprocessing_lineage") or {}).items()
+            },
         )
 
 
@@ -502,6 +722,227 @@ class PlannedArtifact:
 
 
 @dataclass(frozen=True, slots=True)
+class PlannedOutcomeExpectation:
+    expectation_id: str
+    model_component_id: str
+    outcome_component_ids: tuple[str, ...]
+    permitted_uses: tuple[str, ...]
+    max_pending_predictions: int
+    prediction_ttl_seconds: float
+    overflow_disposition: str
+
+    def __post_init__(self) -> None:
+        for field in ("expectation_id", "model_component_id", "overflow_disposition"):
+            object.__setattr__(
+                self, field, require_identifier(getattr(self, field), field)
+            )
+        sources = tuple(
+            require_identifier(value, "outcome_component_id")
+            for value in self.outcome_component_ids
+        )
+        uses = tuple(require_identifier(value, "outcome use") for value in self.permitted_uses)
+        if not sources or len(sources) != len(set(sources)):
+            raise ValueError("planned outcome sources must be non-empty and unique")
+        if not uses or len(uses) != len(set(uses)):
+            raise ValueError("planned outcome uses must be non-empty and unique")
+        object.__setattr__(self, "outcome_component_ids", sources)
+        object.__setattr__(self, "permitted_uses", uses)
+        object.__setattr__(self, "max_pending_predictions", int(self.max_pending_predictions))
+        if self.max_pending_predictions <= 0:
+            raise ValueError("planned max_pending_predictions must be positive")
+        ttl = require_finite(self.prediction_ttl_seconds, "prediction_ttl_seconds")
+        if ttl < 0:
+            raise ValueError("planned prediction TTL cannot be negative")
+        object.__setattr__(self, "prediction_ttl_seconds", ttl)
+        if self.overflow_disposition not in {"expire_oldest", "reject_newest"}:
+            raise ValueError("unknown planned outcome overflow disposition")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "expectation_id": self.expectation_id,
+            "model_component_id": self.model_component_id,
+            "outcome_component_ids": list(self.outcome_component_ids),
+            "permitted_uses": list(self.permitted_uses),
+            "max_pending_predictions": self.max_pending_predictions,
+            "prediction_ttl_seconds": self.prediction_ttl_seconds,
+            "overflow_disposition": self.overflow_disposition,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "PlannedOutcomeExpectation":
+        return cls(
+            expectation_id=str(payload["expectation_id"]),
+            model_component_id=str(payload["model_component_id"]),
+            outcome_component_ids=tuple(
+                str(value) for value in payload["outcome_component_ids"]
+            ),
+            permitted_uses=tuple(str(value) for value in payload["permitted_uses"]),
+            max_pending_predictions=int(payload["max_pending_predictions"]),
+            prediction_ttl_seconds=float(payload["prediction_ttl_seconds"]),
+            overflow_disposition=str(payload["overflow_disposition"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedAdaptation:
+    adaptation_id: str
+    expectation_id: str
+    model_component_id: str
+    enabled_phases: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        for field in ("adaptation_id", "expectation_id", "model_component_id"):
+            object.__setattr__(
+                self, field, require_identifier(getattr(self, field), field)
+            )
+        phases = tuple(
+            require_identifier(value, "adaptation phase") for value in self.enabled_phases
+        )
+        if not phases or len(phases) != len(set(phases)):
+            raise ValueError("planned adaptation phases must be non-empty and unique")
+        object.__setattr__(self, "enabled_phases", phases)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "adaptation_id": self.adaptation_id,
+            "expectation_id": self.expectation_id,
+            "model_component_id": self.model_component_id,
+            "enabled_phases": list(self.enabled_phases),
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "PlannedAdaptation":
+        return cls(
+            adaptation_id=str(payload["adaptation_id"]),
+            expectation_id=str(payload["expectation_id"]),
+            model_component_id=str(payload["model_component_id"]),
+            enabled_phases=tuple(str(value) for value in payload["enabled_phases"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedAuthorizationProvider:
+    provider_id: str
+    plugin_id: str
+    plugin_version: str
+    descriptor_hash: str
+    config: Mapping[str, Any]
+    failure_disposition: str
+    simulation_only: bool = False
+
+    def __post_init__(self) -> None:
+        for field in ("provider_id", "plugin_id", "failure_disposition"):
+            object.__setattr__(
+                self, field, require_identifier(getattr(self, field), field)
+            )
+        if not self.plugin_version.strip():
+            raise ValueError("authorization provider plugin_version cannot be empty")
+        object.__setattr__(
+            self,
+            "descriptor_hash",
+            require_digest(self.descriptor_hash, "descriptor_hash"),
+        )
+        if self.failure_disposition not in {"observe_only", "denied"}:
+            raise ValueError("unknown authorization provider failure disposition")
+        object.__setattr__(self, "config", freeze_json(self.config))
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "provider_id": self.provider_id,
+            "plugin_id": self.plugin_id,
+            "plugin_version": self.plugin_version,
+            "descriptor_hash": self.descriptor_hash,
+            "config": thaw_json(self.config),
+            "failure_disposition": self.failure_disposition,
+            "simulation_only": self.simulation_only,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "PlannedAuthorizationProvider":
+        return cls(
+            provider_id=str(payload["provider_id"]),
+            plugin_id=str(payload["plugin_id"]),
+            plugin_version=str(payload["plugin_version"]),
+            descriptor_hash=str(payload["descriptor_hash"]),
+            config=dict(payload.get("config") or {}),
+            failure_disposition=str(payload["failure_disposition"]),
+            simulation_only=bool(payload.get("simulation_only", False)),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedActionGrant:
+    permission_id: str
+    capability: str
+    actuator_ids: tuple[str, ...]
+    provider_id: str
+    parameter_constraints: Mapping[str, Any]
+    allow_unlisted_parameters: bool
+    maximum_decision_delay_seconds: float | None = None
+    maximum_delivery_delay_seconds: float | None = None
+    maximum_request_ttl_seconds: float | None = None
+
+    def __post_init__(self) -> None:
+        for field in ("permission_id", "capability", "provider_id"):
+            object.__setattr__(
+                self, field, require_identifier(getattr(self, field), field)
+            )
+        actuators = tuple(
+            require_identifier(value, "actuator_id") for value in self.actuator_ids
+        )
+        if not actuators or len(actuators) != len(set(actuators)):
+            raise ValueError("planned action grant actuators must be non-empty and unique")
+        object.__setattr__(self, "actuator_ids", actuators)
+        object.__setattr__(
+            self, "parameter_constraints", freeze_json(self.parameter_constraints)
+        )
+        for field in (
+            "maximum_decision_delay_seconds",
+            "maximum_delivery_delay_seconds",
+            "maximum_request_ttl_seconds",
+        ):
+            value = getattr(self, field)
+            if value is not None:
+                normalized = require_finite(value, field)
+                if normalized < 0:
+                    raise ValueError(f"{field} cannot be negative")
+                object.__setattr__(self, field, normalized)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "permission_id": self.permission_id,
+            "capability": self.capability,
+            "actuator_ids": list(self.actuator_ids),
+            "provider_id": self.provider_id,
+            "parameter_constraints": thaw_json(self.parameter_constraints),
+            "allow_unlisted_parameters": self.allow_unlisted_parameters,
+            "maximum_decision_delay_seconds": self.maximum_decision_delay_seconds,
+            "maximum_delivery_delay_seconds": self.maximum_delivery_delay_seconds,
+            "maximum_request_ttl_seconds": self.maximum_request_ttl_seconds,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "PlannedActionGrant":
+        return cls(
+            permission_id=str(payload["permission_id"]),
+            capability=str(payload["capability"]),
+            actuator_ids=tuple(str(value) for value in payload["actuator_ids"]),
+            provider_id=str(payload["provider_id"]),
+            parameter_constraints=dict(payload.get("parameter_constraints") or {}),
+            allow_unlisted_parameters=bool(payload.get("allow_unlisted_parameters", False)),
+            maximum_decision_delay_seconds=None
+            if payload.get("maximum_decision_delay_seconds") is None
+            else float(payload["maximum_decision_delay_seconds"]),
+            maximum_delivery_delay_seconds=None
+            if payload.get("maximum_delivery_delay_seconds") is None
+            else float(payload["maximum_delivery_delay_seconds"]),
+            maximum_request_ttl_seconds=None
+            if payload.get("maximum_request_ttl_seconds") is None
+            else float(payload["maximum_request_ttl_seconds"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionPlan:
     plan_id: str
     execution_mode: ExecutionMode
@@ -516,6 +957,11 @@ class ExecutionPlan:
     initial_phase: str | None = None
     placements: tuple[PlannedPlacement, ...] = ()
     artifacts: tuple[PlannedArtifact, ...] = ()
+    model_bindings: tuple[PlannedModelBinding, ...] = ()
+    outcome_expectations: tuple[PlannedOutcomeExpectation, ...] = ()
+    adaptations: tuple[PlannedAdaptation, ...] = ()
+    authorization_providers: tuple[PlannedAuthorizationProvider, ...] = ()
+    action_grants: tuple[PlannedActionGrant, ...] = ()
     scheduling_policy: Mapping[str, Any] = None  # type: ignore[assignment]
     scheduled_triggers: tuple[PlannedScheduledTrigger, ...] = ()
     state_triggers: tuple[PlannedStateTrigger, ...] = ()
@@ -580,6 +1026,104 @@ class ExecutionPlan:
                 raise ValueError("planned artifact producer phase is unknown")
             if artifact.producer_component is not None and artifact.producer_component not in component_set:
                 raise ValueError("planned artifact producer component is unknown")
+        model_component_ids = tuple(value.component_id for value in self.model_bindings)
+        if len(model_component_ids) != len(set(model_component_ids)):
+            raise ValueError("execution plan model bindings must be unique per component")
+        locked_by_component = {
+            value.component_id: (value.plugin_id, value.plugin_version)
+            for value in self.components
+        }
+        plugin_kinds = {(value.plugin_id, value.version): value.kind for value in self.plugins}
+        component_kinds = {
+            value.component_id: plugin_kinds[(value.plugin_id, value.plugin_version)]
+            for value in self.components
+        }
+        for binding in self.model_bindings:
+            if binding.component_id not in component_set:
+                raise ValueError("planned model binding references an unknown component")
+            plugin_key = (binding.plugin_id, binding.plugin_version)
+            if locked_by_component[binding.component_id] != plugin_key:
+                raise ValueError("planned model binding differs from its component plugin")
+            if plugin_kinds.get(plugin_key) != ComponentKind.MODEL:
+                raise ValueError("planned model binding must reference a model plugin")
+            unknown_lineage = {
+                component_id
+                for values in binding.preprocessing_lineage.values()
+                for component_id in values
+                if component_id not in component_set
+            }
+            if unknown_lineage:
+                raise ValueError("planned model preprocessing lineage references unknown components")
+        binding_ids = set(model_component_ids)
+        expectation_ids = tuple(
+            value.expectation_id for value in self.outcome_expectations
+        )
+        if len(expectation_ids) != len(set(expectation_ids)):
+            raise ValueError("planned outcome expectation identities must be unique")
+        for expectation in self.outcome_expectations:
+            if expectation.model_component_id not in binding_ids:
+                raise ValueError("planned outcome expectation requires a model binding")
+            if set(expectation.outcome_component_ids) - component_set:
+                raise ValueError("planned outcome expectation source is unknown")
+            if any(
+                component_kinds[value] != ComponentKind.OUTCOME
+                for value in expectation.outcome_component_ids
+            ):
+                raise ValueError("planned outcome expectation source must be an outcome plugin")
+        adaptation_ids = tuple(value.adaptation_id for value in self.adaptations)
+        if len(adaptation_ids) != len(set(adaptation_ids)):
+            raise ValueError("planned adaptation identities must be unique")
+        for adaptation in self.adaptations:
+            if adaptation.expectation_id not in set(expectation_ids):
+                raise ValueError("planned adaptation expectation is unknown")
+            if adaptation.model_component_id not in binding_ids:
+                raise ValueError("planned adaptation requires a model binding")
+            expectation = next(
+                value
+                for value in self.outcome_expectations
+                if value.expectation_id == adaptation.expectation_id
+            )
+            if expectation.model_component_id != adaptation.model_component_id:
+                raise ValueError("planned adaptation model differs from its expectation")
+            if "adaptation" not in expectation.permitted_uses:
+                raise ValueError("planned adaptation expectation does not permit adaptation")
+            if set(adaptation.enabled_phases) - set(phase_ids):
+                raise ValueError("planned adaptation phase is unknown")
+        provider_ids = tuple(
+            value.provider_id for value in self.authorization_providers
+        )
+        if len(provider_ids) != len(set(provider_ids)):
+            raise ValueError("planned authorization provider identities must be unique")
+        for provider in self.authorization_providers:
+            plugin_key = (provider.plugin_id, provider.plugin_version)
+            if plugin_key not in locked:
+                raise ValueError("authorization provider references an unlocked plugin")
+            if plugin_kinds.get(plugin_key) != ComponentKind.AUTHORIZATION:
+                raise ValueError("authorization provider must reference an authorization plugin")
+            plugin = next(
+                value
+                for value in self.plugins
+                if (value.plugin_id, value.version) == plugin_key
+            )
+            if plugin.descriptor_hash != provider.descriptor_hash:
+                raise ValueError("authorization provider descriptor hash differs from plugin lock")
+        grant_keys: list[tuple[str, str]] = []
+        for grant in self.action_grants:
+            if grant.provider_id not in set(provider_ids):
+                raise ValueError("planned action grant references an unknown provider")
+            for actuator_id in grant.actuator_ids:
+                if actuator_id not in component_set:
+                    raise ValueError("planned action grant references an unknown actuator")
+                if component_kinds[actuator_id] != ComponentKind.ACTUATOR:
+                    raise ValueError("planned action grant target must be an actuator")
+                component = next(
+                    value for value in self.components if value.component_id == actuator_id
+                )
+                if grant.capability not in component.action_capabilities:
+                    raise ValueError("planned action grant capability is not declared by actuator")
+                grant_keys.append((actuator_id, grant.capability))
+        if len(grant_keys) != len(set(grant_keys)):
+            raise ValueError("actuator capability may have at most one planned action grant")
         trigger_ids = tuple(value.trigger_id for value in self.scheduled_triggers)
         if len(trigger_ids) != len(set(trigger_ids)):
             raise ValueError("planned scheduled trigger identities must be unique")
@@ -628,6 +1172,17 @@ class ExecutionPlan:
         payload["initial_phase"] = self.initial_phase
         payload["placements"] = [value.to_payload() for value in self.placements]
         payload["artifacts"] = [value.to_payload() for value in self.artifacts]
+        payload["model_bindings"] = [
+            value.to_payload() for value in self.model_bindings
+        ]
+        payload["outcome_expectations"] = [
+            value.to_payload() for value in self.outcome_expectations
+        ]
+        payload["adaptations"] = [value.to_payload() for value in self.adaptations]
+        payload["authorization_providers"] = [
+            value.to_payload() for value in self.authorization_providers
+        ]
+        payload["action_grants"] = [value.to_payload() for value in self.action_grants]
         payload["scheduling_policy"] = thaw_json(self.scheduling_policy)
         payload["scheduled_triggers"] = [
             value.to_payload() for value in self.scheduled_triggers
@@ -668,6 +1223,26 @@ class ExecutionPlan:
             artifacts=tuple(
                 PlannedArtifact.from_payload(value)
                 for value in payload.get("artifacts", ())
+            ),
+            model_bindings=tuple(
+                PlannedModelBinding.from_payload(value)
+                for value in payload.get("model_bindings", ())
+            ),
+            outcome_expectations=tuple(
+                PlannedOutcomeExpectation.from_payload(value)
+                for value in payload.get("outcome_expectations", ())
+            ),
+            adaptations=tuple(
+                PlannedAdaptation.from_payload(value)
+                for value in payload.get("adaptations", ())
+            ),
+            authorization_providers=tuple(
+                PlannedAuthorizationProvider.from_payload(value)
+                for value in payload.get("authorization_providers", ())
+            ),
+            action_grants=tuple(
+                PlannedActionGrant.from_payload(value)
+                for value in payload.get("action_grants", ())
             ),
             scheduling_policy=dict(payload.get("scheduling_policy") or {}),
             scheduled_triggers=tuple(

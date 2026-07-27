@@ -14,7 +14,8 @@ evidence. It is not a public compatibility surface.
 
 ## Current status
 
-Phases 0 through 5 are complete. The verified v1 foundation provides:
+Phases 0 through 5 are complete and Phase 6 is active. The verified v1
+foundation provides:
 
 - versioned `ProtocolSpec`, `SuiteSpec`, and `DeploymentSpec` contracts;
 - a typed compiler with structured diagnostics and semantic passes;
@@ -25,11 +26,41 @@ Phases 0 through 5 are complete. The verified v1 foundation provides:
   semantic component deadlines;
 - compiled scheduled/state triggers, semantic phase timeouts, protocol
   acceptance decisions, and integrity-checked mid-phase restoration;
-- primary-first model scheduling, explicit shadow disposition, and nonfatal
-  backpressure policy;
+- permission-driven model scheduling, role-local queue/failure dispositions,
+  and nonfatal backpressure policy;
 - compiler-checked outcome, adaptation, and action-capability permissions;
 - generic sessions, evidence bundles, artifact stores, and execution capture;
 - bundle-driven replay through the same locked graph with graded equivalence.
+
+Phase 6 has fixed model-system authority, introduced modality-neutral model
+contracts and path-free manifests, and joined suite model intent plus local
+artifact materialization into immutable `PlannedModelBinding` values. Bound
+model plugins now return contract-validated `ModelResult` values; the sole
+runtime creates canonical predictions with plan-owned identity, exact graph
+input lineage, model-state digests, timing, and terminal result dispositions.
+Compiled primary, candidate, shadow, observer, and custom-role permissions now
+govern priority, queueing, failure isolation, and policy influence. Exact
+complete/incomplete comparison evidence is produced for locked comparison
+groups. Enrolled direct-reference outcome expectations now provide bounded,
+checkpointable delayed-label lifecycles with explicit terminal dispositions.
+Calibration artifacts are content-addressed, and permissioned online adaptation
+is recorded as eligibility plus requested/applied/rejected/no-op/failed/rollback
+state transitions that restore and replay exactly. Policies now emit action
+requests into a deployment-owned authorization broker. Exact provider and grant
+locks enforce capability, parameter, timing, expiry, and failure bounds before
+the runtime can construct an actuator-ready command; missing authorization is
+observe-only. Pending decisions, cancellations, simulated receipts, and every
+terminal disposition are durable evidence. Replay accepts simulation-only
+action services and fails before constructing a physical or operator-facing
+service. Four representational suites now run dense EEG-like, irregular
+fNIRS-like, sparse spike plus dense LFP, and multi-rate auxiliary/behavior data
+through the same compiler, runtime, evidence, and replay path. Minimal
+estimator-shaped and tensor-callable fixtures confirm that optional framework
+adapters need only be ordinary external model plugins returning `ModelResult`;
+EEGle does not need a framework-specific runtime. These are compatibility
+proofs, not claims of validated modality or sklearn/Torch support. P6-009 legacy
+authority removal is the next active slice. The classifier-shaped built-in
+remains transitional evidence rather than the final model API.
 
 The public command-line interface is intentionally absent during the migration.
 Phase 7 will add `compile`, `run`, `record`, `replay`, `compare`, `inspect`, and
@@ -117,7 +148,7 @@ any component is constructed.
 | `eegle.plugins` | Component descriptors, discovery, capabilities, factories |
 | `eegle.streams` | Modality-neutral stream metadata, clocks, dense/sparse packets |
 | `eegle.processing` | Causal transforms, windows, and quality components |
-| `eegle.models` | Model contracts, bundles, roles, and dependency-light reference models |
+| `eegle.models` | Model contracts, manifests, results, roles, and dependency-light adapters |
 | `eegle.runtime` | Exact construction, admission, routing, queueing, phases, and work evidence |
 | `eegle.recording` | Sessions, evidence bundles, artifacts, captures, integrity |
 | `eegle.replay` | Capture-backed sources, locked-plan replay, equivalence comparison |
@@ -133,6 +164,18 @@ python -m unittest tests.test_phase5_plan_execution
 python -m unittest tests.test_phase5_execution_semantics
 python -m unittest tests.test_phase5_remaining_semantics
 python -m unittest tests.test_phase5_packaging
+```
+
+Focused Phase 6 model-system checks:
+
+```bash
+python -m unittest tests.test_phase6_model_authority
+python -m unittest tests.test_phase6_compiler_bindings
+python -m unittest tests.test_phase6_model_runtime
+python -m unittest tests.test_phase6_role_semantics
+python -m unittest tests.test_phase6_outcomes_adaptation
+python -m unittest tests.test_phase6_action_authorization
+python -m unittest tests.test_phase6_generality
 ```
 
 Complete local verification:
@@ -151,6 +194,8 @@ git diff --check
   risks, completed work, and next tasks.
 - [docs/PHASE5_COMPILER.md](docs/PHASE5_COMPILER.md) records the current compiler
   and runtime boundary.
+- [docs/PHASE6_MODEL_SYSTEMS.md](docs/PHASE6_MODEL_SYSTEMS.md) records the active
+  model, role, outcome, adaptation, and authorization boundary.
 - [docs/PHASE3_ENGINE.md](docs/PHASE3_ENGINE.md) preserves accepted execution
   semantics and their mapping into the sole plan-owned engine.
 

@@ -9,8 +9,19 @@ from typing import Any, Mapping
 
 from eegle._domain import ComponentKind, WorkStatus
 from eegle._validation import freeze_json, require_digest, require_identifier, thaw_json
+from eegle.actions.authorization import (
+    ActionDisposition,
+    ActionDispositionStatus,
+)
+from eegle.actions.commands import ActionRequest, AuthorizedCommand
+from eegle.actions.receipts import ActionReceipt
 from eegle.compiler.lock import canonical_hash
-from eegle.compiler.plan import PlannedPhase
+from eegle.compiler.plan import (
+    PlannedModelFailureDisposition,
+    PlannedModelQueueDisposition,
+    PlannedPhase,
+)
+from eegle.models.predictions import Prediction
 from eegle.recording.evidence import EvidenceRecord
 from eegle.recording.publications import ArtifactPublication
 from eegle.runtime.admission import (
@@ -18,8 +29,22 @@ from eegle.runtime.admission import (
     poll_source,
     watermark_blockers,
 )
+from eegle.runtime.action_broker import (
+    ActionBroker,
+    BrokerOutcome,
+    PendingAuthorization,
+)
 from eegle.runtime.context import DeterministicIdSource, RuntimeExecutionContext
 from eegle.runtime.checkpoints import EngineCheckpoint
+from eegle.runtime.model_runtime import (
+    ModelComparison,
+    ModelComparisonStatus,
+    ModelResultDisposition,
+    ModelResultDispositionStatus,
+    ModelResultRejected,
+)
+from eegle.runtime.outcome_coordinator import OutcomeCoordinator, OutcomeMatch
+from eegle.runtime.outcomes import Outcome, OutcomeDisposition, OutcomeUse
 from eegle.runtime.plan_runtime import (
     PlanRuntime,
     PlanRuntimeSnapshot,
@@ -36,7 +61,14 @@ from eegle.runtime.routing import (
     value_type,
 )
 from eegle.runtime.scheduling import ScheduledTrigger, TriggerResult
-from eegle.runtime.state import StateTransition, WorkRecord
+from eegle.runtime.state import (
+    AdaptationEligibilityDecision,
+    AdaptationEligibilityStatus,
+    AdaptationResult,
+    StateTransition,
+    TransitionStatus,
+    WorkRecord,
+)
 from eegle.runtime.work import (
     PendingWork,
     completed_work,
@@ -70,6 +102,12 @@ class GraphInput:
         object.__setattr__(
             self, "target_port", require_identifier(self.target_port, "target_port")
         )
+
+
+@dataclass(frozen=True, slots=True)
+class WorkSchedulingDisposition:
+    rejected_reason: str | None = None
+    evicted_event: QueuedEvent | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,15 +224,19 @@ class PlanGraphExecutor:
         self.max_idle_cycles = int(validation.get("max_idle_cycles", 1))
         scheduling = self.plan.scheduling_policy
         self.backpressure = str(scheduling.get("backpressure", "fail_run"))
-        self.primary_first = bool(scheduling.get("primary_first", True))
+        # These suite-wide role knobs exist only for unbound Phase 5 extraction
+        # fixtures. Compiled Phase 6 model bindings use PlannedModelRole.
+        self.legacy_primary_first = bool(scheduling.get("primary_first", True))
         raw_shadow_limit = scheduling.get("shadow_queue_limit")
-        self.shadow_queue_limit = (
+        self.legacy_shadow_queue_limit = (
             None if raw_shadow_limit is None else int(raw_shadow_limit)
         )
-        self.shadow_failure = str(scheduling.get("shadow_failure", "fail_run"))
+        self.legacy_shadow_failure = str(
+            scheduling.get("shadow_failure", "fail_run")
+        )
         if self.backpressure not in {"fail_run", "reject_newest"}:
             raise ValueError("unknown graph backpressure policy")
-        if self.shadow_failure not in {"fail_run", "continue"}:
+        if self.legacy_shadow_failure not in {"fail_run", "continue"}:
             raise ValueError("unknown shadow failure policy")
         if (
             self.max_events <= 0
@@ -219,10 +261,33 @@ class PlanGraphExecutor:
                 raise ValueError("component deadlines must be finite and non-negative")
             self.component_deadlines[str(component_id)] = value
         self._ids = DeterministicIdSource()
+        self._action_broker = ActionBroker(runtime, self._ids.next)
         self._evidence_sequence = 0
         self._event_sequence = 0
         self._current_time = TimePoint(0.0, self.execution_clock_id)
         self._component_state: dict[str, dict[str, Any]] = {}
+        self._admitted_input_lineage: dict[str, tuple[str, ...]] = {}
+        self._emitted_predictions: dict[str, Prediction] = {}
+        comparison_members: dict[str, list[str]] = {}
+        for binding in self.plan.model_bindings:
+            if binding.comparison_group is not None:
+                comparison_members.setdefault(binding.comparison_group, []).append(
+                    binding.component_id
+                )
+        self._comparison_members = {
+            key: tuple(sorted(values))
+            for key, values in comparison_members.items()
+        }
+        self._pending_model_comparisons: dict[
+            str, dict[str, Prediction]
+        ] = {}
+        self._outcomes = OutcomeCoordinator(
+            self.plan.outcome_expectations,
+            self._ids.next,
+        )
+        self._adaptations = {
+            value.expectation_id: value for value in self.plan.adaptations
+        }
         self._clock_mapping_revisions = {
             str(key): int(value)
             for key, value in self.plan.clock_policy.get(
@@ -293,6 +358,26 @@ class PlanGraphExecutor:
             require_identifier(str(value), "state trigger rule")
             for value in executor.get("fired_state_rules", ())
         }
+        self._admitted_input_lineage = {
+            require_identifier(str(key), "lineage value_id"): tuple(
+                require_identifier(str(item), "admitted input_id") for item in value
+            )
+            for key, value in dict(
+                executor.get("admitted_input_lineage") or {}
+            ).items()
+        }
+        self._pending_model_comparisons = {
+            str(key): {
+                require_identifier(str(component_id), "comparison component"): (
+                    Prediction.from_payload(prediction)
+                )
+                for component_id, prediction in dict(value).items()
+            }
+            for key, value in dict(
+                executor.get("pending_model_comparisons") or {}
+            ).items()
+        }
+        self._outcomes.restore(executor.get("outcome_lifecycle") or {})
         self._evidence_prefix_digest = checkpoint.evidence_prefix_digest
         self._resumed_phase_id = phase_id
         self._resumed_phase_started_time = TimePoint.from_payload(
@@ -372,19 +457,28 @@ class PlanGraphExecutor:
                     )
                 node = self.runtime.node(graph_input.target_component)
                 validate_input_port(node, graph_input.target_port, graph_input.value)
-                rejected = self._schedule_work(
+                graph_value_id = value_id(graph_input.value)
+                self._admitted_input_lineage[graph_value_id] = (graph_value_id,)
+                scheduling = self._schedule_work(
                     queue,
                     graph_input.target_component,
                     graph_input.target_port,
                     graph_input.value,
                     source_endpoint="external.input",
-                    input_id=value_id(graph_input.value),
+                    input_id=graph_value_id,
                 )
-                if rejected is not None:
+                self._record_scheduling_disposition(
+                    scheduling,
+                    graph_input.target_component,
+                    graph_value_id,
+                    evidence,
+                    work,
+                )
+                if scheduling.rejected_reason is not None:
                     self._record_skipped_work(
                         graph_input.target_component,
-                        value_id(graph_input.value),
-                        rejected,
+                        graph_value_id,
+                        scheduling.rejected_reason,
                         evidence,
                         work,
                     )
@@ -479,6 +573,9 @@ class PlanGraphExecutor:
                         f"phase exceeded max_graph_events={self.max_events}"
                     )
                 self._advance_time(event.scheduled_time)
+                self._record_outcome_dispositions(
+                    self._outcomes.expire(self._current_time), evidence
+                )
                 node = self.runtime.node(event.component_id)
                 if event.kind == "trigger":
                     self._handle_trigger(
@@ -561,12 +658,45 @@ class PlanGraphExecutor:
                     continue
                 started = self._current_time
                 try:
+                    if event.kind == "authorization":
+                        if not isinstance(event.value, PendingAuthorization):
+                            raise TypeError("invalid queued authorization state")
+                        self._handle_pending_authorization(
+                            node,
+                            event.value,
+                            active,
+                            queue,
+                            evidence,
+                            emissions,
+                            work,
+                            planned_phase.phase_id,
+                        )
+                        continue
+                    if node.plugin.kind == ComponentKind.ACTUATOR:
+                        self._handle_action_request(
+                            node,
+                            event.port,
+                            event.value,
+                            event.source_endpoint,
+                            event.input_id,
+                            active,
+                            queue,
+                            evidence,
+                            emissions,
+                            work,
+                            planned_phase.phase_id,
+                            started,
+                        )
+                        continue
+                    self._validate_model_role_input(node, event.value)
                     outputs = dispatch_component(
                         node,
                         event.port,
                         event.value,
                         self._context(node),
                         self._component_state,
+                        input_id=event.input_id,
+                        admitted_input_ids=self._root_input_ids(event.input_id),
                     )
                     output_time = started
                     input_ids = (
@@ -594,6 +724,16 @@ class PlanGraphExecutor:
                         deadline_time is not None
                         and output_time.seconds > deadline_time.seconds
                     ):
+                        for output_port, value, _ in pending_outputs:
+                            if isinstance(value, Prediction):
+                                self._record_model_result_disposition(
+                                    node,
+                                    output_port,
+                                    value,
+                                    ModelResultDispositionStatus.LATE,
+                                    evidence,
+                                    reason_code="deadline_exceeded",
+                                )
                         self._schedule_work_completion(
                             queue,
                             node,
@@ -650,6 +790,8 @@ class PlanGraphExecutor:
                         work.append(completed)
                         self._emit(evidence, "work", completed.to_payload())
                 except Exception as exc:
+                    if isinstance(exc, ModelResultRejected):
+                        self._record_rejected_model_result(node, exc, evidence)
                     failed = failed_work(
                         self._ids,
                         node,
@@ -660,10 +802,31 @@ class PlanGraphExecutor:
                     )
                     work.append(failed)
                     self._emit(evidence, "work", failed.to_payload())
-                    if node.planned.role == "shadow" and self.shadow_failure == "continue":
+                    role = None if node.model_binding is None else node.model_binding.role
+                    if (
+                        role is not None
+                        and role.failure_disposition
+                        == PlannedModelFailureDisposition.REJECT_RESULT
+                    ):
                         self._emit(
                             evidence,
-                            "shadow_failure_continued",
+                            "model_role_failure_disposition",
+                            {
+                                "component_id": node.component_id,
+                                "role_id": role.role_id,
+                                "disposition": role.failure_disposition.value,
+                                "failure": f"{type(exc).__name__}: {exc}",
+                            },
+                        )
+                        continue
+                    if (
+                        role is None
+                        and node.planned.role == "shadow"
+                        and self.legacy_shadow_failure == "continue"
+                    ):
+                        self._emit(
+                            evidence,
+                            "legacy_shadow_failure_continued",
                             {
                                 "component_id": node.component_id,
                                 "failure": f"{type(exc).__name__}: {exc}",
@@ -680,6 +843,16 @@ class PlanGraphExecutor:
                 {"phase_id": planned_phase.phase_id, "failure": failure},
             )
         finally:
+            if status in {
+                GraphRunStatus.CANCELLED,
+                GraphRunStatus.TIMED_OUT,
+                GraphRunStatus.FAILED,
+                GraphRunStatus.PARTIAL,
+            }:
+                self._cancel_pending_actions(queue, status, evidence, work)
+                self._record_cancelled_model_results(queue, status, evidence)
+            if status != GraphRunStatus.CHECKPOINTED:
+                self._finalize_model_comparisons(status, evidence)
             stop_failures: list[str] = []
             for node in reversed(lifecycle_started):
                 stop = getattr(node.component, "stop", None)
@@ -814,6 +987,10 @@ class PlanGraphExecutor:
         )
         if port is None:
             raise ValueError(f"component {node.component_id} has no output port {output_port}")
+        if isinstance(value, AuthorizedCommand):
+            raise PermissionError(
+                "authorized commands cannot be emitted by suite graph components"
+            )
         observed_type = value_type(value)
         if observed_type != port.type_id:
             raise TypeError(
@@ -827,6 +1004,15 @@ class PlanGraphExecutor:
                 f"component {node.component_id} emitted output before its input was available"
             )
         emitted_value_id = value_id(value)
+        if input_ids:
+            roots: list[str] = []
+            for input_id in input_ids:
+                roots.extend(self._root_input_ids(input_id))
+            self._admitted_input_lineage[emitted_value_id] = tuple(
+                dict.fromkeys(roots)
+            )
+        else:
+            self._admitted_input_lineage[emitted_value_id] = (emitted_value_id,)
         emission = GraphEmission(
             emission_id=self._ids.next("emission"),
             component_id=node.component_id,
@@ -839,7 +1025,66 @@ class PlanGraphExecutor:
             value=value,
         )
         emissions.append(emission)
+        if isinstance(value, Prediction) and node.model_binding is not None:
+            self._emitted_predictions[value.prediction_id] = value
+            self._record_model_result_disposition(
+                node,
+                output_port,
+                value,
+                ModelResultDispositionStatus.EMITTED,
+                evidence,
+            )
         self._emit(evidence, "graph_emission", emission.to_payload())
+        if isinstance(value, Prediction) and node.model_binding is not None:
+            self._record_outcome_dispositions(
+                self._outcomes.enroll(value, self._current_time), evidence
+            )
+            self._record_model_comparison(value, evidence)
+        if isinstance(value, ActionRequest):
+            if node.plugin.kind != ComponentKind.POLICY:
+                raise PermissionError("only policy components may emit action requests")
+            if value.requested_by != node.component_id:
+                raise PermissionError("action request identity differs from emitting policy")
+            if value.prediction_id is not None and value.prediction_id not in input_ids:
+                raise PermissionError(
+                    "action request prediction identity differs from policy inputs"
+                )
+            if value.policy_state_hash is not None:
+                expected_state_hash = canonical_hash(
+                    self._component_state.get(node.component_id, {})
+                )
+                if value.policy_state_hash != expected_state_hash:
+                    raise PermissionError(
+                        "action request policy state differs from runtime-owned state"
+                    )
+            self._emit(
+                evidence,
+                "action_request",
+                {"policy_component_id": node.component_id, "request": value.to_payload()},
+            )
+        if isinstance(value, Outcome):
+            self._emit(
+                evidence,
+                "outcome_received",
+                {
+                    "component_id": node.component_id,
+                    "outcome": value.to_payload(),
+                },
+            )
+            dispositions, matches = self._outcomes.receive(
+                node.component_id,
+                value,
+                self._current_time,
+            )
+            self._record_outcome_dispositions(dispositions, evidence)
+            for match in matches:
+                self._apply_adaptation(
+                    match,
+                    phase_id,
+                    active,
+                    queue,
+                    evidence,
+                )
         if isinstance(value, StateTransition):
             self._schedule_state_triggers(phase_id, value, active, queue, evidence)
         targets = self._targets.get((node.component_id, output_port), ())
@@ -848,7 +1093,7 @@ class PlanGraphExecutor:
         for component_id, input_port in targets:
             if component_id not in active:
                 continue
-            rejected = self._schedule_work(
+            scheduling = self._schedule_work(
                 queue,
                 component_id,
                 input_port,
@@ -856,15 +1101,655 @@ class PlanGraphExecutor:
                 source_endpoint=emission.endpoint,
                 input_id=emitted_value_id,
             )
-            if rejected is not None:
+            self._record_scheduling_disposition(
+                scheduling,
+                component_id,
+                emitted_value_id,
+                evidence,
+                work,
+            )
+            if scheduling.rejected_reason is not None:
                 self._record_skipped_work(
                     component_id,
                     emitted_value_id,
-                    rejected,
+                    scheduling.rejected_reason,
                     evidence,
                     work,
                 )
         return available
+
+    def _handle_action_request(
+        self,
+        node: RuntimeNode,
+        input_port: str,
+        value: Any,
+        source_endpoint: str | None,
+        input_id: str | None,
+        active: set[str],
+        queue: EventQueue,
+        evidence: list[EvidenceRecord],
+        emissions: list[GraphEmission],
+        work: list[WorkRecord],
+        phase_id: str,
+        started: TimePoint,
+    ) -> None:
+        validate_input_port(node, input_port, value)
+        if not isinstance(value, ActionRequest):
+            raise TypeError("actuator graph ingress requires an ActionRequest")
+        if input_id != value.request_id:
+            raise PermissionError("actuator input identity differs from action request")
+        if source_endpoint is None or "." not in source_endpoint:
+            raise PermissionError("action request must arrive from a routed policy")
+        source_component = source_endpoint.rsplit(".", 1)[0]
+        source = self.runtime.node(source_component)
+        if source.plugin.kind != ComponentKind.POLICY:
+            raise PermissionError("actuator action request source is not a policy")
+        if value.requested_by != source_component:
+            raise PermissionError("action request requested_by differs from routed policy")
+        outcome = self._action_broker.begin(
+            value,
+            node.component_id,
+            self._current_time,
+            self._context(node),
+            input_ids=(value.request_id,),
+        )
+        self._record_broker_outcome(outcome, evidence, include_request=True)
+        if outcome.pending is not None:
+            self._schedule_pending_authorization(queue, node, outcome.pending)
+            return
+        if outcome.command is None:
+            self._finish_action_work(
+                node,
+                work,
+                evidence,
+                started,
+                (value.request_id,),
+                WorkStatus.SKIPPED,
+                outcome.disposition.status.value,
+            )
+            return
+        self._submit_authorized_action(
+            node,
+            value,
+            outcome.command,
+            active,
+            queue,
+            evidence,
+            emissions,
+            work,
+            phase_id,
+            started,
+            (value.request_id,),
+        )
+
+    def _handle_pending_authorization(
+        self,
+        node: RuntimeNode,
+        pending: PendingAuthorization,
+        active: set[str],
+        queue: EventQueue,
+        evidence: list[EvidenceRecord],
+        emissions: list[GraphEmission],
+        work: list[WorkRecord],
+        phase_id: str,
+    ) -> None:
+        outcome = self._action_broker.resolve(
+            pending,
+            self._current_time,
+            self._context(node),
+        )
+        self._record_broker_outcome(outcome, evidence, include_request=False)
+        if outcome.command is None:
+            self._finish_action_work(
+                node,
+                work,
+                evidence,
+                pending.started_time,
+                pending.input_ids,
+                WorkStatus.SKIPPED,
+                outcome.disposition.status.value,
+            )
+            return
+        self._submit_authorized_action(
+            node,
+            pending.action_request,
+            outcome.command,
+            active,
+            queue,
+            evidence,
+            emissions,
+            work,
+            phase_id,
+            pending.started_time,
+            pending.input_ids,
+        )
+
+    def _submit_authorized_action(
+        self,
+        node: RuntimeNode,
+        request: ActionRequest,
+        command: AuthorizedCommand,
+        active: set[str],
+        queue: EventQueue,
+        evidence: list[EvidenceRecord],
+        emissions: list[GraphEmission],
+        work: list[WorkRecord],
+        phase_id: str,
+        started: TimePoint,
+        input_ids: tuple[str, ...],
+    ) -> None:
+        submitted = self._action_broker.submitted(
+            request, command, self._current_time
+        )
+        self._emit(evidence, "action_disposition", submitted.to_payload())
+        try:
+            receipt = node.component.submit(command, self._context(node))
+            if not isinstance(receipt, ActionReceipt):
+                raise TypeError("actuator must return ActionReceipt")
+            self._require_execution_time(receipt.observed_time)
+            if receipt.observed_time != self._current_time:
+                raise ValueError(
+                    "in-process actuator receipt must be available at submission time"
+                )
+            self._emit(
+                evidence,
+                "action_receipt",
+                {"component_id": node.component_id, "receipt": receipt.to_payload()},
+            )
+            self._record_emission(
+                node,
+                node.descriptor.output_ports[0].name,
+                receipt,
+                input_ids,
+                active,
+                queue,
+                evidence,
+                emissions,
+                work,
+                phase_id,
+            )
+            receipt_disposition = self._action_broker.receipt_disposition(
+                request, command, receipt
+            )
+            self._emit(
+                evidence,
+                "action_disposition",
+                receipt_disposition.to_payload(),
+            )
+            self._finish_action_work(
+                node,
+                work,
+                evidence,
+                started,
+                input_ids,
+                WorkStatus.COMPLETED,
+                None,
+            )
+        except Exception as exc:
+            failed = ActionDisposition(
+                disposition_id=self._ids.next("action_disposition"),
+                action_request_id=request.request_id,
+                actuator_id=node.component_id,
+                status=ActionDispositionStatus.FAILED,
+                decided_time=self._current_time,
+                authorization_request_id=command.authorization_request_id,
+                authorization_decision_id=command.authorization_decision_id,
+                command_id=command.command_id,
+                reason=f"{type(exc).__name__}: {exc}",
+                terminal=True,
+            )
+            self._emit(evidence, "action_disposition", failed.to_payload())
+            raise
+
+    def _record_broker_outcome(
+        self,
+        outcome: BrokerOutcome,
+        evidence: list[EvidenceRecord],
+        *,
+        include_request: bool,
+    ) -> None:
+        if include_request:
+            self._emit(
+                evidence,
+                "authorization_request",
+                outcome.authorization_request.to_payload(),
+            )
+        for decision in outcome.decisions:
+            self._emit(evidence, "authorization_decision", decision.to_payload())
+        if outcome.cancellation is not None:
+            self._emit(
+                evidence,
+                "action_cancellation",
+                outcome.cancellation.to_payload(),
+            )
+        if outcome.command is not None:
+            self._emit(evidence, "authorized_command", outcome.command.to_payload())
+        self._emit(evidence, "action_disposition", outcome.disposition.to_payload())
+
+    def _schedule_pending_authorization(
+        self,
+        queue: EventQueue,
+        node: RuntimeNode,
+        pending: PendingAuthorization,
+    ) -> None:
+        self._event_sequence += 1
+        queue.push(
+            QueuedEvent(
+                (
+                    pending.ready_time.seconds,
+                    3,
+                    node.component_id,
+                    pending.action_request.request_id,
+                    self._event_sequence,
+                ),
+                "authorization",
+                node.component_id,
+                "request",
+                pending,
+                pending.ready_time,
+                "eegle.action_broker",
+                pending.action_request.request_id,
+            ),
+            rejectable=False,
+        )
+
+    def _finish_action_work(
+        self,
+        node: RuntimeNode,
+        work: list[WorkRecord],
+        evidence: list[EvidenceRecord],
+        started: TimePoint,
+        input_ids: tuple[str, ...],
+        status: WorkStatus,
+        reason_code: str | None,
+    ) -> None:
+        record = WorkRecord(
+            work_id=self._ids.next("work"),
+            component_id=node.component_id,
+            stage="actuator",
+            status=status,
+            started_time=started,
+            completed_time=self._current_time,
+            input_ids=input_ids,
+            role=node.planned.role,
+            reason_code=reason_code,
+        )
+        work.append(record)
+        self._emit(evidence, "work", record.to_payload())
+
+    def _cancel_pending_actions(
+        self,
+        queue: EventQueue,
+        status: GraphRunStatus,
+        evidence: list[EvidenceRecord],
+        work: list[WorkRecord],
+    ) -> None:
+        seen: set[str] = set()
+        for event in queue.events():
+            if event.kind != "authorization" or not isinstance(
+                event.value, PendingAuthorization
+            ):
+                continue
+            pending = event.value
+            if pending.action_request.request_id in seen:
+                continue
+            seen.add(pending.action_request.request_id)
+            outcome = self._action_broker.cancel(
+                pending,
+                self._current_time,
+                reason=f"phase_{status.value}",
+            )
+            self._record_broker_outcome(outcome, evidence, include_request=False)
+            self._finish_action_work(
+                self.runtime.node(pending.actuator_id),
+                work,
+                evidence,
+                pending.started_time,
+                pending.input_ids,
+                WorkStatus.CANCELLED,
+                f"phase_{status.value}",
+            )
+
+    def finalize_outcomes(self, *, cancelled: bool) -> tuple[EvidenceRecord, ...]:
+        """Close enrolled predictions exactly once at execution termination."""
+
+        records: list[EvidenceRecord] = []
+        self._record_outcome_dispositions(
+            self._outcomes.close(self._current_time, cancelled=cancelled),
+            records,
+        )
+        return tuple(records)
+
+    def _record_outcome_dispositions(
+        self,
+        dispositions: tuple[OutcomeDisposition, ...],
+        evidence: list[EvidenceRecord],
+    ) -> None:
+        for disposition in dispositions:
+            self._emit(evidence, "outcome_disposition", disposition.to_payload())
+
+    def _apply_adaptation(
+        self,
+        match: OutcomeMatch,
+        phase_id: str,
+        active: set[str],
+        queue: EventQueue,
+        evidence: list[EvidenceRecord],
+    ) -> None:
+        planned = self._adaptations.get(match.expectation_id)
+        if planned is None:
+            return
+        node = self.runtime.node(planned.model_component_id)
+        reason: str | None = None
+        if OutcomeUse.ADAPTATION not in match.uses_granted:
+            reason = "adaptation_use_not_granted"
+        elif phase_id not in planned.enabled_phases:
+            reason = "adaptation_phase_not_enabled"
+        elif planned.model_component_id not in active:
+            reason = "adaptive_model_inactive"
+        adapt = getattr(node.component, "adapt", None)
+        snapshot = getattr(node.component, "snapshot_state", None)
+        restore = getattr(node.component, "restore_state", None)
+        if reason is None and (
+            not callable(adapt) or not callable(snapshot) or not callable(restore)
+        ):
+            reason = "adaptive_model_protocol_missing"
+        eligibility = AdaptationEligibilityDecision(
+            decision_id=self._ids.next("adaptation_eligibility"),
+            adaptation_id=planned.adaptation_id,
+            model_component_id=planned.model_component_id,
+            prediction_id=match.prediction.prediction_id,
+            outcome_id=match.outcome.outcome_id,
+            status=(
+                AdaptationEligibilityStatus.ELIGIBLE
+                if reason is None
+                else AdaptationEligibilityStatus.REJECTED
+            ),
+            decided_time=self._current_time,
+            reason_code=reason,
+        )
+        self._emit(evidence, "adaptation_eligibility", eligibility.to_payload())
+        if reason is not None:
+            return
+        assert callable(adapt) and callable(snapshot) and callable(restore)
+        prior_state = snapshot()
+        prior_hash = canonical_hash(prior_state)
+        trigger_ids = (match.prediction.prediction_id, match.outcome.outcome_id)
+        requested = StateTransition(
+            transition_id=self._ids.next("transition"),
+            component_id=planned.model_component_id,
+            status=TransitionStatus.REQUESTED,
+            transition_kind="adaptation",
+            transition_time=self._current_time,
+            requested_time=self._current_time,
+            prior_state_hash=prior_hash,
+            resulting_state_hash=prior_hash,
+            trigger_ids=trigger_ids,
+            metadata={"adaptation_id": planned.adaptation_id},
+        )
+        self._emit(evidence, "state_transition", requested.to_payload())
+        try:
+            result = adapt(match.prediction, match.outcome, self._context(node))
+            if not isinstance(result, AdaptationResult):
+                raise TypeError("adaptive model must return AdaptationResult")
+            resulting_state = snapshot()
+            resulting_hash = canonical_hash(resulting_state)
+            if result.status == TransitionStatus.APPLIED and resulting_hash == prior_hash:
+                raise ValueError("applied adaptation did not change model state")
+            if result.status != TransitionStatus.APPLIED and resulting_hash != prior_hash:
+                raise ValueError("non-applied adaptation changed model state")
+            transition = StateTransition(
+                transition_id=self._ids.next("transition"),
+                component_id=planned.model_component_id,
+                status=result.status,
+                transition_kind="adaptation",
+                transition_time=self._current_time,
+                requested_time=requested.transition_time,
+                prior_state_hash=prior_hash,
+                resulting_state_hash=resulting_hash,
+                trigger_ids=trigger_ids,
+                reason=result.reason,
+                metadata={
+                    "adaptation_id": planned.adaptation_id,
+                    **thaw_json(result.metadata),
+                },
+            )
+            self._emit(evidence, "state_transition", transition.to_payload())
+            self._schedule_state_triggers(
+                phase_id, transition, active, queue, evidence
+            )
+        except Exception as exc:
+            changed_hash = canonical_hash(snapshot())
+            restore(prior_state)
+            restored_hash = canonical_hash(snapshot())
+            if restored_hash != prior_hash:
+                raise RuntimeError("adaptive model rollback did not restore prior state") from exc
+            failed = StateTransition(
+                transition_id=self._ids.next("transition"),
+                component_id=planned.model_component_id,
+                status=TransitionStatus.FAILED,
+                transition_kind="adaptation",
+                transition_time=self._current_time,
+                requested_time=requested.transition_time,
+                prior_state_hash=prior_hash,
+                resulting_state_hash=prior_hash,
+                trigger_ids=trigger_ids,
+                reason=f"{type(exc).__name__}: {exc}",
+                metadata={"adaptation_id": planned.adaptation_id},
+            )
+            self._emit(evidence, "state_transition", failed.to_payload())
+            if changed_hash != prior_hash:
+                rolled_back = StateTransition(
+                    transition_id=self._ids.next("transition"),
+                    component_id=planned.model_component_id,
+                    status=TransitionStatus.ROLLED_BACK,
+                    transition_kind="adaptation",
+                    transition_time=self._current_time,
+                    requested_time=requested.transition_time,
+                    prior_state_hash=prior_hash,
+                    resulting_state_hash=prior_hash,
+                    trigger_ids=trigger_ids,
+                    reason="failed_update_restored",
+                    metadata={"adaptation_id": planned.adaptation_id},
+                )
+                self._emit(evidence, "state_transition", rolled_back.to_payload())
+
+    def _record_model_comparison(
+        self,
+        prediction: Prediction,
+        evidence: list[EvidenceRecord],
+    ) -> None:
+        group_id = prediction.comparison_group
+        if group_id is None:
+            return
+        members = self._comparison_members.get(group_id)
+        if members is None or prediction.component_id not in members:
+            raise RuntimeError("prediction comparison group differs from the locked plan")
+        key = canonical_hash(
+            {
+                "group_id": group_id,
+                "output_port": prediction.output_port,
+                "input_ids": list(prediction.input_ids),
+                "admitted_input_ids": list(prediction.admitted_input_ids),
+            }
+        )
+        pending = self._pending_model_comparisons.setdefault(key, {})
+        if prediction.component_id in pending:
+            raise RuntimeError(
+                f"comparison group {group_id} emitted duplicate member "
+                f"{prediction.component_id} for one input"
+            )
+        pending[prediction.component_id] = prediction
+        if set(pending) != set(members):
+            return
+        ordered = tuple(pending[value] for value in members)
+        outputs_equal = len(
+            {
+                canonical_hash(
+                    {
+                        "value": value.value,
+                        "uncertainty": value.uncertainty,
+                        "validity": value.validity,
+                        "abstained": value.abstained,
+                        "abstention_reason": value.abstention_reason,
+                    }
+                )
+                for value in ordered
+            }
+        ) == 1
+        comparison = ModelComparison(
+            comparison_id=self._ids.next("model_comparison"),
+            group_id=group_id,
+            output_port=prediction.output_port,
+            status=ModelComparisonStatus.COMPLETE,
+            compared_time=self._current_time,
+            member_components=members,
+            prediction_ids={value.component_id: value.prediction_id for value in ordered},
+            result_digests={value.component_id: value.result_digest for value in ordered},
+            input_ids=prediction.input_ids,
+            admitted_input_ids=prediction.admitted_input_ids,
+            outputs_equal=outputs_equal,
+        )
+        self._emit(evidence, "model_comparison", comparison.to_payload())
+        del self._pending_model_comparisons[key]
+
+    def _finalize_model_comparisons(
+        self,
+        status: GraphRunStatus,
+        evidence: list[EvidenceRecord],
+    ) -> None:
+        for key in sorted(self._pending_model_comparisons):
+            pending = self._pending_model_comparisons[key]
+            first = next(iter(pending.values()))
+            group_id = first.comparison_group
+            if group_id is None:  # pragma: no cover - guarded on admission
+                continue
+            members = self._comparison_members[group_id]
+            missing = tuple(value for value in members if value not in pending)
+            comparison = ModelComparison(
+                comparison_id=self._ids.next("model_comparison"),
+                group_id=group_id,
+                output_port=first.output_port,
+                status=ModelComparisonStatus.INCOMPLETE,
+                compared_time=self._current_time,
+                member_components=members,
+                prediction_ids={
+                    value.component_id: value.prediction_id
+                    for value in pending.values()
+                },
+                result_digests={
+                    value.component_id: value.result_digest
+                    for value in pending.values()
+                },
+                input_ids=first.input_ids,
+                admitted_input_ids=first.admitted_input_ids,
+                missing_members=missing,
+                reason_code=f"phase_{status.value}",
+            )
+            self._emit(evidence, "model_comparison", comparison.to_payload())
+        self._pending_model_comparisons.clear()
+
+    def _validate_model_role_input(self, node: RuntimeNode, value: Any) -> None:
+        if node.plugin.kind != ComponentKind.POLICY or not isinstance(value, Prediction):
+            return
+        emitted = self._emitted_predictions.get(value.prediction_id)
+        if emitted is None or emitted != value:
+            raise PermissionError(
+                "policy inputs must be canonical predictions emitted by this execution"
+            )
+        try:
+            source = self.runtime.node(value.component_id)
+        except KeyError as exc:
+            raise PermissionError("prediction component is not part of the locked plan") from exc
+        binding = source.model_binding
+        if binding is None:
+            raise PermissionError("prediction does not have a planned model binding")
+        if (
+            value.plugin_id != binding.plugin_id
+            or value.plugin_version != binding.plugin_version
+            or value.manifest_digest != binding.manifest_digest
+            or value.contract_digest != binding.contract_digest
+            or value.role_id != binding.role.role_id
+        ):
+            raise PermissionError("prediction identity differs from its planned model binding")
+        if not binding.role.may_feed_policy:
+            raise PermissionError(
+                f"model role {binding.role.role_id} may not feed policy"
+            )
+
+    def _root_input_ids(self, input_id: str | None) -> tuple[str, ...]:
+        if input_id is None:
+            return ()
+        normalized = require_identifier(input_id, "input_id")
+        return self._admitted_input_lineage.get(normalized, (normalized,))
+
+    def _record_model_result_disposition(
+        self,
+        node: RuntimeNode,
+        output_port: str,
+        prediction: Prediction,
+        status: ModelResultDispositionStatus,
+        evidence: list[EvidenceRecord],
+        *,
+        reason_code: str | None = None,
+    ) -> None:
+        disposition = ModelResultDisposition(
+            disposition_id=self._ids.next("model_result_disposition"),
+            component_id=node.component_id,
+            output_port=output_port,
+            status=status,
+            decided_time=self._current_time,
+            result_digest=prediction.result_digest,
+            prediction_id=prediction.prediction_id,
+            reason_code=reason_code,
+        )
+        self._emit(evidence, "model_result_disposition", disposition.to_payload())
+
+    def _record_rejected_model_result(
+        self,
+        node: RuntimeNode,
+        error: ModelResultRejected,
+        evidence: list[EvidenceRecord],
+    ) -> None:
+        disposition = ModelResultDisposition(
+            disposition_id=self._ids.next("model_result_disposition"),
+            component_id=node.component_id,
+            output_port=error.output_port,
+            status=ModelResultDispositionStatus.REJECTED,
+            decided_time=self._current_time,
+            result_digest=error.result_digest,
+            reason_code=error.reason_code,
+        )
+        self._emit(evidence, "model_result_disposition", disposition.to_payload())
+
+    def _record_cancelled_model_results(
+        self,
+        queue: EventQueue,
+        status: GraphRunStatus,
+        evidence: list[EvidenceRecord],
+    ) -> None:
+        reason_code = f"phase_{status.value}"
+        seen: set[str] = set()
+        for event in queue.events():
+            if event.kind != "emission" or not isinstance(event.value, PendingEmission):
+                continue
+            prediction = event.value.value
+            if not isinstance(prediction, Prediction):
+                continue
+            if prediction.prediction_id in seen:
+                continue
+            seen.add(prediction.prediction_id)
+            node = self.runtime.node(event.component_id)
+            if node.model_binding is None:
+                continue
+            self._record_model_result_disposition(
+                node,
+                event.value.output_port,
+                prediction,
+                ModelResultDispositionStatus.CANCELLED,
+                evidence,
+                reason_code=reason_code,
+            )
 
     def _schedule_work(
         self,
@@ -875,26 +1760,47 @@ class PlanGraphExecutor:
         *,
         source_endpoint: str,
         input_id: str,
-    ) -> str | None:
+    ) -> WorkSchedulingDisposition:
         available = available_time(value, self._current_time)
         self._require_execution_time(available)
-        planned = self.runtime.node(component_id).planned
-        if (
-            planned.role == "shadow"
-            and self.shadow_queue_limit is not None
-            and queue.count_component(component_id) >= self.shadow_queue_limit
+        node = self.runtime.node(component_id)
+        planned = node.planned
+        role = None if node.model_binding is None else node.model_binding.role
+        evicted: QueuedEvent | None = None
+        if role is not None and role.queue_limit is not None:
+            queued = queue.count_component(component_id, kind="work")
+            if queued >= role.queue_limit:
+                if role.queue_disposition == PlannedModelQueueDisposition.FAIL_RUN:
+                    raise RuntimeError(
+                        f"model role {role.role_id} exceeded queue_limit={role.queue_limit}"
+                    )
+                if role.queue_disposition == PlannedModelQueueDisposition.REJECT_NEWEST:
+                    return WorkSchedulingDisposition("model_role_queue_limit")
+                if role.queue_disposition == PlannedModelQueueDisposition.SHED_OLDEST:
+                    evicted = queue.pop_oldest_component(component_id, kind="work")
+                    if evicted is None or role.queue_limit == 0:
+                        return WorkSchedulingDisposition("model_role_queue_limit")
+        elif (
+            role is None
+            and planned.role == "shadow"
+            and self.legacy_shadow_queue_limit is not None
+            and queue.count_component(component_id, kind="work")
+            >= self.legacy_shadow_queue_limit
         ):
-            return "shadow_queue_limit"
-        priority = 4
-        if self.primary_first and planned.role == "primary":
-            priority = 3
-        elif self.primary_first and planned.role == "shadow":
-            priority = 5
+            return WorkSchedulingDisposition("shadow_queue_limit")
+        priority = 25
+        if role is not None:
+            priority = role.scheduling_priority
+        elif self.legacy_primary_first and planned.role == "primary":
+            priority = 0
+        elif self.legacy_primary_first and planned.role == "shadow":
+            priority = 100
         self._event_sequence += 1
         accepted = queue.push(
             QueuedEvent(
                 (
                     available.seconds,
+                    4,
                     priority,
                     component_id,
                     input_port,
@@ -910,7 +1816,32 @@ class PlanGraphExecutor:
                 input_id,
             ),
         )
-        return None if accepted else "queue_full"
+        return WorkSchedulingDisposition(
+            None if accepted else "queue_full",
+            evicted,
+        )
+
+    def _record_scheduling_disposition(
+        self,
+        scheduling: WorkSchedulingDisposition,
+        component_id: str,
+        input_id: str,
+        evidence: list[EvidenceRecord],
+        work: list[WorkRecord],
+    ) -> None:
+        evicted = scheduling.evicted_event
+        if evicted is None:
+            return
+        evicted_input = evicted.input_id
+        if evicted_input is None:
+            raise RuntimeError("evicted model work lacks an input identity")
+        self._record_skipped_work(
+            component_id,
+            evicted_input,
+            "model_role_shed_oldest",
+            evidence,
+            work,
+        )
 
     def _record_skipped_work(
         self,
@@ -1127,6 +2058,22 @@ class PlanGraphExecutor:
                     "event_sequence": self._event_sequence,
                     "clock_mapping_revisions": dict(self._clock_mapping_revisions),
                     "fired_state_rules": sorted(self._fired_state_rules),
+                    "admitted_input_lineage": {
+                        key: list(value)
+                        for key, value in sorted(
+                            self._admitted_input_lineage.items()
+                        )
+                    },
+                    "pending_model_comparisons": {
+                        key: {
+                            component_id: prediction.to_payload()
+                            for component_id, prediction in sorted(value.items())
+                        }
+                        for key, value in sorted(
+                            self._pending_model_comparisons.items()
+                        )
+                    },
+                    "outcome_lifecycle": thaw_json(self._outcomes.snapshot()),
                 },
             },
         )

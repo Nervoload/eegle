@@ -68,6 +68,11 @@ class PlanExplanation:
     phases: tuple[Mapping[str, Any], ...]
     placements: tuple[Mapping[str, Any], ...]
     artifacts: tuple[Mapping[str, Any], ...]
+    model_bindings: tuple[Mapping[str, Any], ...]
+    outcome_expectations: tuple[Mapping[str, Any], ...]
+    adaptations: tuple[Mapping[str, Any], ...]
+    authorization_providers: tuple[Mapping[str, Any], ...]
+    action_grants: tuple[Mapping[str, Any], ...]
     claims: tuple[Mapping[str, Any], ...]
 
     def __post_init__(self) -> None:
@@ -76,6 +81,31 @@ class PlanExplanation:
         object.__setattr__(self, "phases", tuple(freeze_json(value) for value in self.phases))
         object.__setattr__(self, "placements", tuple(freeze_json(value) for value in self.placements))
         object.__setattr__(self, "artifacts", tuple(freeze_json(value) for value in self.artifacts))
+        object.__setattr__(
+            self,
+            "model_bindings",
+            tuple(freeze_json(value) for value in self.model_bindings),
+        )
+        object.__setattr__(
+            self,
+            "outcome_expectations",
+            tuple(freeze_json(value) for value in self.outcome_expectations),
+        )
+        object.__setattr__(
+            self,
+            "adaptations",
+            tuple(freeze_json(value) for value in self.adaptations),
+        )
+        object.__setattr__(
+            self,
+            "authorization_providers",
+            tuple(freeze_json(value) for value in self.authorization_providers),
+        )
+        object.__setattr__(
+            self,
+            "action_grants",
+            tuple(freeze_json(value) for value in self.action_grants),
+        )
         object.__setattr__(self, "claims", tuple(freeze_json(value) for value in self.claims))
 
     def to_payload(self) -> dict[str, Any]:
@@ -89,6 +119,15 @@ class PlanExplanation:
             "phases": [thaw_json(value) for value in self.phases],
             "placements": [thaw_json(value) for value in self.placements],
             "artifacts": [thaw_json(value) for value in self.artifacts],
+            "model_bindings": [thaw_json(value) for value in self.model_bindings],
+            "outcome_expectations": [
+                thaw_json(value) for value in self.outcome_expectations
+            ],
+            "adaptations": [thaw_json(value) for value in self.adaptations],
+            "authorization_providers": [
+                thaw_json(value) for value in self.authorization_providers
+            ],
+            "action_grants": [thaw_json(value) for value in self.action_grants],
             "claims": [thaw_json(value) for value in self.claims],
         }
 
@@ -137,6 +176,15 @@ def explain_plan(plan: ExecutionPlan) -> PlanExplanation:
         phases=tuple(value.to_payload() for value in plan.phases),
         placements=tuple(value.to_payload() for value in plan.placements),
         artifacts=tuple(value.to_payload() for value in plan.artifacts),
+        model_bindings=tuple(value.to_payload() for value in plan.model_bindings),
+        outcome_expectations=tuple(
+            value.to_payload() for value in plan.outcome_expectations
+        ),
+        adaptations=tuple(value.to_payload() for value in plan.adaptations),
+        authorization_providers=tuple(
+            value.to_payload() for value in plan.authorization_providers
+        ),
+        action_grants=tuple(value.to_payload() for value in plan.action_grants),
         claims=claims,
     )
 
@@ -199,6 +247,54 @@ def diff_plans(before: ExecutionPlan, after: ExecutionPlan) -> PlanDiff:
         ChangeMateriality.SCIENTIFIC,
         changes,
     )
+    _diff_identity_records(
+        "authorization_providers",
+        {
+            value.provider_id: value.to_payload()
+            for value in before.authorization_providers
+        },
+        {
+            value.provider_id: value.to_payload()
+            for value in after.authorization_providers
+        },
+        ChangeMateriality.OPERATIONAL,
+        changes,
+    )
+    _diff_identity_records(
+        "action_grants",
+        {value.permission_id: value.to_payload() for value in before.action_grants},
+        {value.permission_id: value.to_payload() for value in after.action_grants},
+        ChangeMateriality.OPERATIONAL,
+        changes,
+    )
+    _diff_identity_records(
+        "model_bindings",
+        {value.component_id: _scientific_model_binding(value) for value in before.model_bindings},
+        {value.component_id: _scientific_model_binding(value) for value in after.model_bindings},
+        ChangeMateriality.SCIENTIFIC,
+        changes,
+    )
+    _diff_identity_records(
+        "model_materializations",
+        {value.component_id: _model_materializations(value) for value in before.model_bindings},
+        {value.component_id: _model_materializations(value) for value in after.model_bindings},
+        ChangeMateriality.OPERATIONAL,
+        changes,
+    )
+    _diff_identity_records(
+        "outcome_expectations",
+        {value.expectation_id: value.to_payload() for value in before.outcome_expectations},
+        {value.expectation_id: value.to_payload() for value in after.outcome_expectations},
+        ChangeMateriality.SCIENTIFIC,
+        changes,
+    )
+    _diff_identity_records(
+        "adaptations",
+        {value.adaptation_id: value.to_payload() for value in before.adaptations},
+        {value.adaptation_id: value.to_payload() for value in after.adaptations},
+        ChangeMateriality.SCIENTIFIC,
+        changes,
+    )
     for field, materiality in (
         ("clock_policy", ChangeMateriality.OPERATIONAL),
         ("recording_policy", ChangeMateriality.OPERATIONAL),
@@ -234,3 +330,16 @@ def _config_hash(value: Any) -> str:
     from eegle.compiler.lock import canonical_hash
 
     return canonical_hash(value)
+
+
+def _scientific_model_binding(value: Any) -> Mapping[str, Any]:
+    payload = value.to_payload()
+    payload["artifacts"] = [
+        {key: item for key, item in artifact.items() if key != "uri"}
+        for artifact in payload["artifacts"]
+    ]
+    return payload
+
+
+def _model_materializations(value: Any) -> Mapping[str, str]:
+    return {artifact.artifact_id: artifact.uri for artifact in value.artifacts}

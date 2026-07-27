@@ -6,10 +6,17 @@ from dataclasses import dataclass
 from enum import Enum
 import json
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
-from eegle._validation import freeze_json, require_finite, require_identifier, thaw_json
+from eegle._validation import (
+    freeze_json,
+    require_digest,
+    require_finite,
+    require_identifier,
+    thaw_json,
+)
 from eegle.compiler.lock import canonical_hash
 from eegle.specs.schemas import validate_payload
 from eegle.specs.suite import SignalContract
@@ -41,6 +48,11 @@ class ClockMappingStrategy(str, Enum):
     ONLINE_ESTIMATED = "online_estimated"
     RECORDED_REPLAY = "recorded_replay"
     POSTHOC = "posthoc"
+
+
+class AuthorizationFailureDisposition(str, Enum):
+    OBSERVE_ONLY = "observe_only"
+    DENIED = "denied"
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,6 +204,45 @@ class ComponentBindingSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelArtifactBindingSpec:
+    """Site-local materialization of one manifest-declared logical artifact."""
+
+    manifest_digest: str
+    artifact_id: str
+    uri: str
+    digest: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "manifest_digest",
+            require_digest(self.manifest_digest, "manifest_digest"),
+        )
+        object.__setattr__(
+            self, "artifact_id", require_identifier(self.artifact_id, "artifact_id")
+        )
+        object.__setattr__(self, "digest", require_digest(self.digest))
+        _validate_site_uri(self.uri, "model artifact uri")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "manifest_digest": self.manifest_digest,
+            "artifact_id": self.artifact_id,
+            "uri": self.uri,
+            "digest": self.digest,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "ModelArtifactBindingSpec":
+        return cls(
+            manifest_digest=str(payload["manifest_digest"]),
+            artifact_id=str(payload["artifact_id"]),
+            uri=str(payload["uri"]),
+            digest=str(payload["digest"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class StorageBinding:
     storage_id: str
     kind: str
@@ -200,13 +251,7 @@ class StorageBinding:
     def __post_init__(self) -> None:
         object.__setattr__(self, "storage_id", require_identifier(self.storage_id, "storage_id"))
         object.__setattr__(self, "kind", require_identifier(self.kind, "storage kind"))
-        parsed = urlsplit(self.uri)
-        if not parsed.scheme:
-            raise ValueError("storage uri must be explicit and include a URI scheme")
-        if len(parsed.scheme) == 1 and len(self.uri) >= 3 and self.uri[1] == ":":
-            raise ValueError("storage uri cannot be an implicit Windows drive path")
-        if parsed.username is not None or parsed.password is not None:
-            raise ValueError("storage uri cannot contain credentials")
+        _validate_site_uri(self.uri, "storage uri")
 
     def to_payload(self) -> dict[str, Any]:
         return {"storage_id": self.storage_id, "kind": self.kind, "uri": self.uri}
@@ -245,12 +290,102 @@ class SecretReference:
 
 
 @dataclass(frozen=True, slots=True)
+class ActionParameterConstraint:
+    minimum: float | None = None
+    maximum: float | None = None
+    allowed_values: tuple[Any, ...] = ()
+
+    def __post_init__(self) -> None:
+        minimum = (
+            None if self.minimum is None else require_finite(self.minimum, "minimum")
+        )
+        maximum = (
+            None if self.maximum is None else require_finite(self.maximum, "maximum")
+        )
+        if minimum is not None and maximum is not None and minimum > maximum:
+            raise ValueError("action parameter minimum cannot exceed maximum")
+        values = tuple(freeze_json(value) for value in self.allowed_values)
+        value_hashes = tuple(canonical_hash(value) for value in values)
+        if len(value_hashes) != len(set(value_hashes)):
+            raise ValueError("allowed action parameter values must be unique")
+        object.__setattr__(self, "minimum", minimum)
+        object.__setattr__(self, "maximum", maximum)
+        object.__setattr__(self, "allowed_values", values)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "minimum": self.minimum,
+            "maximum": self.maximum,
+            "allowed_values": [thaw_json(value) for value in self.allowed_values],
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "ActionParameterConstraint":
+        return cls(
+            minimum=None if payload.get("minimum") is None else float(payload["minimum"]),
+            maximum=None if payload.get("maximum") is None else float(payload["maximum"]),
+            allowed_values=tuple(payload.get("allowed_values", ())),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AuthorizationProviderBindingSpec:
+    provider_id: str
+    plugin_id: str
+    version_spec: str | None = None
+    config: Mapping[str, Any] = None  # type: ignore[assignment]
+    failure_disposition: AuthorizationFailureDisposition = (
+        AuthorizationFailureDisposition.OBSERVE_ONLY
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "provider_id", require_identifier(self.provider_id, "provider_id"))
+        object.__setattr__(self, "plugin_id", require_identifier(self.plugin_id, "plugin_id"))
+        if self.version_spec is not None and not self.version_spec.strip():
+            raise ValueError("authorization provider version_spec cannot be empty")
+        object.__setattr__(self, "config", freeze_json(self.config or {}))
+        object.__setattr__(
+            self,
+            "failure_disposition",
+            AuthorizationFailureDisposition(self.failure_disposition),
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "provider_id": self.provider_id,
+            "plugin_id": self.plugin_id,
+            "version_spec": self.version_spec,
+            "config": thaw_json(self.config),
+            "failure_disposition": self.failure_disposition.value,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "AuthorizationProviderBindingSpec":
+        return cls(
+            provider_id=str(payload["provider_id"]),
+            plugin_id=str(payload["plugin_id"]),
+            version_spec=None
+            if payload.get("version_spec") is None
+            else str(payload["version_spec"]),
+            config=dict(payload.get("config") or {}),
+            failure_disposition=AuthorizationFailureDisposition(
+                str(payload.get("failure_disposition", "observe_only"))
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class PermissionGrant:
     permission_id: str
     capability: str
     component_ids: tuple[str, ...]
     authorization_ref: str
-    operator_confirmation: bool = True
+    operator_confirmation: bool = False
+    parameter_constraints: Mapping[str, ActionParameterConstraint] = None  # type: ignore[assignment]
+    allow_unlisted_parameters: bool = False
+    maximum_decision_delay_seconds: float | None = None
+    maximum_delivery_delay_seconds: float | None = None
+    maximum_request_ttl_seconds: float | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -272,6 +407,26 @@ class PermissionGrant:
             "authorization_ref",
             require_identifier(self.authorization_ref, "authorization_ref"),
         )
+        constraints = {
+            require_identifier(str(key), "action parameter"): (
+                value
+                if isinstance(value, ActionParameterConstraint)
+                else ActionParameterConstraint.from_payload(value)
+            )
+            for key, value in (self.parameter_constraints or {}).items()
+        }
+        object.__setattr__(self, "parameter_constraints", MappingProxyType(constraints))
+        for field in (
+            "maximum_decision_delay_seconds",
+            "maximum_delivery_delay_seconds",
+            "maximum_request_ttl_seconds",
+        ):
+            value = getattr(self, field)
+            if value is not None:
+                normalized = require_finite(value, field)
+                if normalized < 0:
+                    raise ValueError(f"{field} cannot be negative")
+                object.__setattr__(self, field, normalized)
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -280,6 +435,14 @@ class PermissionGrant:
             "component_ids": list(self.component_ids),
             "authorization_ref": self.authorization_ref,
             "operator_confirmation": self.operator_confirmation,
+            "parameter_constraints": {
+                key: value.to_payload()
+                for key, value in self.parameter_constraints.items()
+            },
+            "allow_unlisted_parameters": self.allow_unlisted_parameters,
+            "maximum_decision_delay_seconds": self.maximum_decision_delay_seconds,
+            "maximum_delivery_delay_seconds": self.maximum_delivery_delay_seconds,
+            "maximum_request_ttl_seconds": self.maximum_request_ttl_seconds,
         }
 
     @classmethod
@@ -289,7 +452,21 @@ class PermissionGrant:
             capability=str(payload["capability"]),
             component_ids=tuple(str(value) for value in payload["component_ids"]),
             authorization_ref=str(payload["authorization_ref"]),
-            operator_confirmation=bool(payload.get("operator_confirmation", True)),
+            operator_confirmation=bool(payload.get("operator_confirmation", False)),
+            parameter_constraints={
+                str(key): ActionParameterConstraint.from_payload(value)
+                for key, value in dict(payload.get("parameter_constraints") or {}).items()
+            },
+            allow_unlisted_parameters=bool(payload.get("allow_unlisted_parameters", False)),
+            maximum_decision_delay_seconds=None
+            if payload.get("maximum_decision_delay_seconds") is None
+            else float(payload["maximum_decision_delay_seconds"]),
+            maximum_delivery_delay_seconds=None
+            if payload.get("maximum_delivery_delay_seconds") is None
+            else float(payload["maximum_delivery_delay_seconds"]),
+            maximum_request_ttl_seconds=None
+            if payload.get("maximum_request_ttl_seconds") is None
+            else float(payload["maximum_request_ttl_seconds"]),
         )
 
 
@@ -342,8 +519,10 @@ class DeploymentSpec:
     stream_bindings: tuple[StreamBinding, ...] = ()
     storage: tuple[StorageBinding, ...] = ()
     permissions: tuple[PermissionGrant, ...] = ()
+    authorization_providers: tuple[AuthorizationProviderBindingSpec, ...] = ()
     secrets: tuple[SecretReference, ...] = ()
     clock_mappings: tuple[ClockMappingBinding, ...] = ()
+    model_artifacts: tuple[ModelArtifactBindingSpec, ...] = ()
     schema: str = DEPLOYMENT_SPEC_SCHEMA
 
     def __post_init__(self) -> None:
@@ -360,7 +539,18 @@ class DeploymentSpec:
         _require_unique((value.stream_id for value in self.stream_bindings), "stream binding")
         _require_unique((value.storage_id for value in self.storage), "storage")
         _require_unique((value.permission_id for value in self.permissions), "permission")
+        _require_unique(
+            (value.provider_id for value in self.authorization_providers),
+            "authorization provider",
+        )
         _require_unique((value.secret_id for value in self.secrets), "secret reference")
+        _require_unique(
+            (
+                (value.manifest_digest, value.artifact_id)
+                for value in self.model_artifacts
+            ),
+            "model artifact binding",
+        )
         _require_unique(
             (
                 (value.source_clock, value.target_clock)
@@ -385,8 +575,12 @@ class DeploymentSpec:
             "stream_bindings": [value.to_payload() for value in self.stream_bindings],
             "storage": [value.to_payload() for value in self.storage],
             "permissions": [value.to_payload() for value in self.permissions],
+            "authorization_providers": [
+                value.to_payload() for value in self.authorization_providers
+            ],
             "secrets": [value.to_payload() for value in self.secrets],
             "clock_mappings": [value.to_payload() for value in self.clock_mappings],
+            "model_artifacts": [value.to_payload() for value in self.model_artifacts],
         }
 
     @classmethod
@@ -409,12 +603,20 @@ class DeploymentSpec:
             permissions=tuple(
                 PermissionGrant.from_payload(value) for value in payload.get("permissions", ())
             ),
+            authorization_providers=tuple(
+                AuthorizationProviderBindingSpec.from_payload(value)
+                for value in payload.get("authorization_providers", ())
+            ),
             secrets=tuple(
                 SecretReference.from_payload(value) for value in payload.get("secrets", ())
             ),
             clock_mappings=tuple(
                 ClockMappingBinding.from_payload(value)
                 for value in payload.get("clock_mappings", ())
+            ),
+            model_artifacts=tuple(
+                ModelArtifactBindingSpec.from_payload(value)
+                for value in payload.get("model_artifacts", ())
             ),
         )
 
@@ -437,6 +639,16 @@ def _reject_secret_literals(value: Any, *, path: str) -> None:
     elif isinstance(value, (list, tuple)):
         for index, item in enumerate(value):
             _reject_secret_literals(item, path=f"{path}[{index}]")
+
+
+def _validate_site_uri(uri: str, field: str) -> None:
+    parsed = urlsplit(uri)
+    if not parsed.scheme:
+        raise ValueError(f"{field} must be explicit and include a URI scheme")
+    if len(parsed.scheme) == 1 and len(uri) >= 3 and uri[1] == ":":
+        raise ValueError(f"{field} cannot be an implicit Windows drive path")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError(f"{field} cannot contain credentials")
 
 
 def _require_unique(values: Any, label: str) -> None:
@@ -466,6 +678,52 @@ _RESOURCE_SCHEMA: Mapping[str, Any] = {
                 "maximum_rate_hz": {"type": "number", "exclusiveMinimum": 0},
                 "window_samples": {"type": "integer", "minimum": 1},
                 "minimum_window_samples": {"type": "integer", "minimum": 1},
+                "content_kind": {"type": "string", "minLength": 1},
+                "rate_model": {"type": "string", "minLength": 1},
+                "channel_ids": {
+                    "type": "array",
+                    "uniqueItems": True,
+                    "items": {"type": "string", "minLength": 1},
+                },
+                "required_channel_ids": {
+                    "type": "array",
+                    "uniqueItems": True,
+                    "items": {"type": "string", "minLength": 1},
+                },
+                "feature_ids": {
+                    "type": "array",
+                    "uniqueItems": True,
+                    "items": {"type": "string", "minLength": 1},
+                },
+                "required_feature_ids": {
+                    "type": "array",
+                    "uniqueItems": True,
+                    "items": {"type": "string", "minLength": 1},
+                },
+                "units": {
+                    "type": "object",
+                    "additionalProperties": {"type": "string", "minLength": 1},
+                },
+                "event_kinds": {
+                    "type": "array",
+                    "uniqueItems": True,
+                    "items": {"type": "string", "minLength": 1},
+                },
+                "required_event_kinds": {
+                    "type": "array",
+                    "uniqueItems": True,
+                    "items": {"type": "string", "minLength": 1},
+                },
+                "missing_data_policy": {"type": "string", "minLength": 1},
+                "layout": {"type": "string", "minLength": 1},
+                "window_duration_seconds": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                },
+                "minimum_duration_seconds": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                },
             },
             "required": ["type_id"],
             "additionalProperties": False,
@@ -485,6 +743,29 @@ _COMPONENT_BINDING_SCHEMA: Mapping[str, Any] = {
         "endpoint_id": {"type": ["string", "null"]},
         "resource_ids": {"type": "array", "items": {"type": "string"}},
         "secret_refs": {"type": "object", "additionalProperties": {"type": "string"}},
+    },
+    "additionalProperties": False,
+}
+_ACTION_PARAMETER_CONSTRAINT_SCHEMA: Mapping[str, Any] = {
+    "type": "object",
+    "properties": {
+        "minimum": {"type": ["number", "null"]},
+        "maximum": {"type": ["number", "null"]},
+        "allowed_values": {"type": "array"},
+    },
+    "additionalProperties": False,
+}
+_AUTHORIZATION_PROVIDER_SCHEMA: Mapping[str, Any] = {
+    "type": "object",
+    "required": ["provider_id", "plugin_id"],
+    "properties": {
+        "provider_id": {"type": "string", "minLength": 1},
+        "plugin_id": {"type": "string", "minLength": 1},
+        "version_spec": {"type": ["string", "null"]},
+        "config": {"type": "object"},
+        "failure_disposition": {
+            "enum": [value.value for value in AuthorizationFailureDisposition]
+        },
     },
     "additionalProperties": False,
 }
@@ -535,9 +816,30 @@ DEPLOYMENT_JSON_SCHEMA: Mapping[str, Any] = {
                     "component_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}},
                     "authorization_ref": {"type": "string"},
                     "operator_confirmation": {"type": "boolean"},
+                    "parameter_constraints": {
+                        "type": "object",
+                        "additionalProperties": _ACTION_PARAMETER_CONSTRAINT_SCHEMA,
+                    },
+                    "allow_unlisted_parameters": {"type": "boolean"},
+                    "maximum_decision_delay_seconds": {
+                        "type": ["number", "null"],
+                        "minimum": 0,
+                    },
+                    "maximum_delivery_delay_seconds": {
+                        "type": ["number", "null"],
+                        "minimum": 0,
+                    },
+                    "maximum_request_ttl_seconds": {
+                        "type": ["number", "null"],
+                        "minimum": 0,
+                    },
                 },
                 "additionalProperties": False,
             },
+        },
+        "authorization_providers": {
+            "type": "array",
+            "items": _AUTHORIZATION_PROVIDER_SCHEMA,
         },
         "secrets": {
             "type": "array",
@@ -562,6 +864,20 @@ DEPLOYMENT_JSON_SCHEMA: Mapping[str, Any] = {
                     "target_clock": {"type": "string"},
                     "strategy": {"enum": [value.value for value in ClockMappingStrategy]},
                     "maximum_uncertainty_seconds": {"type": "number", "minimum": 0},
+                },
+                "additionalProperties": False,
+            },
+        },
+        "model_artifacts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["manifest_digest", "artifact_id", "uri", "digest"],
+                "properties": {
+                    "manifest_digest": {"type": "string", "minLength": 1},
+                    "artifact_id": {"type": "string", "minLength": 1},
+                    "uri": {"type": "string", "minLength": 1},
+                    "digest": {"type": "string", "minLength": 1},
                 },
                 "additionalProperties": False,
             },

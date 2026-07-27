@@ -109,7 +109,7 @@
     {"route_id": "route.window_primary", "source": {"component": "window.event", "port": "windows"}, "target": {"component": "model.primary", "port": "window"}},
     {"route_id": "route.window_shadow", "source": {"component": "window.event", "port": "windows"}, "target": {"component": "model.shadow", "port": "window"}},
     {"route_id": "route.primary_policy", "source": {"component": "model.primary", "port": "prediction"}, "target": {"component": "policy.action", "port": "prediction"}},
-    {"route_id": "route.policy_actuator", "source": {"component": "policy.action", "port": "command"}, "target": {"component": "actuator.simulated", "port": "command"}},
+    {"route_id": "route.policy_actuator", "source": {"component": "policy.action", "port": "request"}, "target": {"component": "actuator.simulated", "port": "request"}},
     {"route_id": "route.aux_sink", "source": {"component": "source.aux", "port": "samples"}, "target": {"component": "sink.aux", "port": "records"}}
   ],
   "phases": [

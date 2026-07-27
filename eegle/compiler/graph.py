@@ -142,6 +142,19 @@ def contract_issues(source: SignalContract, target: SignalContract) -> tuple[str
     issues: list[str] = []
     if source.type_id != target.type_id:
         issues.append(f"type {source.type_id} does not match required {target.type_id}")
+    for field, label in (
+        ("content_kind", "content kind"),
+        ("rate_model", "rate model"),
+        ("missing_data_policy", "missing-data policy"),
+        ("layout", "layout"),
+    ):
+        required = getattr(target, field)
+        observed = getattr(source, field)
+        if required is not None:
+            if observed is None:
+                issues.append(f"source does not declare required {label} {required}")
+            elif observed != required:
+                issues.append(f"{label} {observed} does not match required {required}")
     if target.unit is not None:
         if source.unit is None:
             issues.append(f"source does not declare required unit {target.unit}")
@@ -168,6 +181,43 @@ def contract_issues(source: SignalContract, target: SignalContract) -> tuple[str
         if source_channels > target.maximum_channels:
             issues.append(
                 f"channel count {source_channels} exceeds maximum {target.maximum_channels}"
+            )
+    if target.channel_ids:
+        if not source.channel_ids:
+            issues.append("source does not declare required ordered channel identities")
+        elif source.channel_ids != target.channel_ids:
+            issues.append("source channel identities or order do not match the model contract")
+    missing_channels = set(target.required_channel_ids) - set(source.channel_ids)
+    if missing_channels:
+        issues.append(
+            "source is missing required channel identities: "
+            + ", ".join(sorted(missing_channels))
+        )
+    if target.feature_ids:
+        if not source.feature_ids:
+            issues.append("source does not declare required ordered feature identities")
+        elif source.feature_ids != target.feature_ids:
+            issues.append("source feature identities or order do not match the model contract")
+    missing_features = set(target.required_feature_ids) - set(source.feature_ids)
+    if missing_features:
+        issues.append(
+            "source is missing required feature identities: "
+            + ", ".join(sorted(missing_features))
+        )
+    missing_events = set(target.required_event_kinds) - set(source.event_kinds)
+    if target.event_kinds:
+        missing_events |= set(target.event_kinds) - set(source.event_kinds)
+    if missing_events:
+        issues.append(
+            "source is missing required event kinds: " + ", ".join(sorted(missing_events))
+        )
+    for identity, unit in target.units.items():
+        observed = source.units.get(identity)
+        if observed is None:
+            issues.append(f"source does not declare required unit for {identity}: {unit}")
+        elif observed != unit:
+            issues.append(
+                f"unit {observed} for {identity} does not match required {unit}"
             )
     source_rate = source.nominal_rate_hz
     if target.nominal_rate_hz is not None:
@@ -209,6 +259,29 @@ def contract_issues(source: SignalContract, target: SignalContract) -> tuple[str
             issues.append(
                 f"window length {source_window} is below minimum "
                 f"{target.minimum_window_samples}"
+            )
+    source_duration = source.window_duration_seconds
+    if target.window_duration_seconds is not None:
+        if source_duration is None:
+            issues.append(
+                "source window duration is unknown; required "
+                f"{target.window_duration_seconds} seconds"
+            )
+        elif source_duration != target.window_duration_seconds:
+            issues.append(
+                f"window duration {source_duration} does not match required "
+                f"{target.window_duration_seconds} seconds"
+            )
+    if target.minimum_duration_seconds is not None:
+        if source_duration is None:
+            issues.append(
+                "source window duration is unknown; minimum is "
+                f"{target.minimum_duration_seconds} seconds"
+            )
+        elif source_duration < target.minimum_duration_seconds:
+            issues.append(
+                f"window duration {source_duration} is below minimum "
+                f"{target.minimum_duration_seconds} seconds"
             )
     return tuple(issues)
 

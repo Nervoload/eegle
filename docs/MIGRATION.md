@@ -658,15 +658,28 @@ semantics without coupling them to one classifier, label schedule, or device.
 
 ### Work
 
+Begin with a semantic-authority pass before adding classes. Lock the ownership
+of executable plugin metadata, portable model manifests, scientific contracts,
+suite intent, deployment materialization, compiled model bindings, runtime
+prediction envelopes, state transitions, and deployment authorization. The
+detailed implementation decisions are recorded in
+[PHASE6_MODEL_SYSTEMS.md](PHASE6_MODEL_SYSTEMS.md).
+
 #### Models
 
 - Finalize modality-neutral model contracts, bundle manifests, calibration,
   uncertainty, and state declarations.
 - Implement a plain callable adapter in the base package.
-- Implement optional sklearn and Torch adapters outside base imports.
+- Prove that estimator-style and tensor-callable adapters can remain ordinary
+  external model plugins with no framework imports or framework-specific
+  runtime in the base package. Dependency-backed sklearn/Torch distributions,
+  artifact loaders, and public installation extras mature in Phase 7 rather
+  than becoming another Phase 6 model authority.
 - Support primary, shadow, candidate, observer, and permission-defined custom
   roles.
 - Make preprocessing ownership and feature lineage explicit.
+- Let plugins return contract-bound model results and let the runtime construct
+  canonical predictions from plan-owned identity, inputs, state, and timing.
 
 #### Outcomes and adaptation
 
@@ -675,6 +688,8 @@ semantics without coupling them to one classifier, label schedule, or device.
 - Implement generic calibration and adaptation state transitions.
 - Support missing, delayed, retrospective-only, and disputed outcomes.
 - Restore and replay state under the plan's declared policy.
+- Enroll only predictions with explicit outcome expectations in the bounded
+  matcher; keep heuristic matching in plugins.
 
 #### Actions
 
@@ -684,6 +699,8 @@ semantics without coupling them to one classifier, label schedule, or device.
 - Implement an independent deployment authorization/interlock protocol.
 - Prove that a suite cannot self-authorize a restricted action.
 - Record requested versus observed device timing and clock mapping.
+- Route policy requests through a deployment-owned authorization service; suites
+  cannot construct actuator-ready commands.
 
 #### Generality fixtures
 
@@ -695,6 +712,13 @@ semantics without coupling them to one classifier, label schedule, or device.
 
 These are representational and engine tests; they do not by themselves claim
 validated modality or hardware support.
+
+For Phase 6, “framework plugin” means a normal external `PluginDescriptor` and
+factory that owns its optional dependency, input conversion, and framework
+object, then returns the existing framework-neutral `ModelResult`. It does not
+mean a second registry, tensor API, trainer, artifact downloader, or execution
+loop inside EEGle. Interface fixtures are sufficient to prove this boundary;
+real dependency/version and artifact-loading integration belongs to Phase 7.
 
 ### Exit gate
 

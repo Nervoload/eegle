@@ -3,6 +3,8 @@
 from eegle._domain import ComponentKind, Determinism, EquivalenceLevel, ExecutionMode
 from eegle.plugins.contracts import (
     Actuator,
+    AuthorizationProvider,
+    AdaptiveModel,
     Adapter,
     ArtifactProducer,
     ExecutionContext,
@@ -30,6 +32,8 @@ from eegle.plugins.registry import (
 
 __all__ = [
     "Actuator",
+    "AuthorizationProvider",
+    "AdaptiveModel",
     "Adapter",
     "ArtifactProducer",
     "ComponentKind",

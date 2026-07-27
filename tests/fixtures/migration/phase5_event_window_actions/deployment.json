@@ -76,7 +76,20 @@
       "capability": "simulated.feedback",
       "component_ids": ["actuator.simulated"],
       "authorization_ref": "authorization.simulation",
-      "operator_confirmation": false
+      "operator_confirmation": false,
+      "parameter_constraints": {
+        "intensity": {"minimum": 0.0, "maximum": 1.0, "allowed_values": []}
+      },
+      "allow_unlisted_parameters": false
+    }
+  ],
+  "authorization_providers": [
+    {
+      "provider_id": "authorization.simulation",
+      "plugin_id": "eegle.authorization.simulation",
+      "version_spec": "~=0.1.0",
+      "config": {"decision": "authorized"},
+      "failure_disposition": "observe_only"
     }
   ],
   "secrets": [],

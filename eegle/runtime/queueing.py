@@ -54,8 +54,40 @@ class EventQueue:
             raise IndexError("cannot pop an empty graph event queue")
         return heapq.heappop(self._events)
 
-    def count_component(self, component_id: str) -> int:
-        return sum(value.component_id == component_id for value in self._events)
+    def count_component(self, component_id: str, *, kind: str | None = None) -> int:
+        return sum(
+            value.component_id == component_id
+            and (kind is None or value.kind == kind)
+            for value in self._events
+        )
+
+    def pop_oldest_component(
+        self,
+        component_id: str,
+        *,
+        kind: str | None = None,
+    ) -> QueuedEvent | None:
+        """Remove the earliest matching event while preserving heap semantics."""
+
+        matches = [
+            (index, value)
+            for index, value in enumerate(self._events)
+            if value.component_id == component_id
+            and (kind is None or value.kind == kind)
+        ]
+        if not matches:
+            return None
+        index, selected = min(matches, key=lambda item: item[1].sort_key)
+        last = self._events.pop()
+        if index < len(self._events):
+            self._events[index] = last
+            heapq.heapify(self._events)
+        return selected
+
+    def events(self) -> tuple[QueuedEvent, ...]:
+        """Return a stable inspection view without mutating scheduling order."""
+
+        return tuple(sorted(self._events))
 
     def push(self, event: QueuedEvent, *, rejectable: bool = True) -> bool:
         if len(self._events) >= self.max_pending_events:

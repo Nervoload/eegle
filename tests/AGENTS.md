@@ -29,6 +29,29 @@ broader discovery when touching shared orchestration.
   outcome/action permissions, and the final durable Phase 5 suites.
 - `test_phase5_packaging.py`: clean-wheel root-module exclusions and the inert
   dependency-free `python -m eegle` boundary before the Phase 7 CLI exists.
+- `test_phase6_model_authority.py`: modality-neutral model contracts, path-free
+  model manifests, canonical hashes, and semantic tamper rejection.
+- `test_phase6_compiler_bindings.py`: suite model uses, deployment artifact
+  materialization, compiled role permissions, model/plugin/state/input
+  compatibility, preprocessing lineage, exact locks, and plan diff materiality.
+- `test_phase6_model_runtime.py`: callable and independently installed stateful
+  model plugins, contract-bound results, runtime-owned canonical predictions,
+  exact input/state lineage, terminal result dispositions, and restoration.
+- `test_phase6_role_semantics.py`: compiled built-in/custom role priorities,
+  queue and failure dispositions, complete/incomplete comparison evidence,
+  policy-input provenance, and rejection of legacy target-role scheduling.
+- `test_phase6_outcomes_adaptation.py`: enrolled direct-reference outcome
+  matching, bounded/terminal dispositions, checkpoint restoration, canonical
+  calibration artifacts, permissioned adaptation transitions, rollback, and
+  bundle replay of delayed state updates.
+- `test_phase6_action_authorization.py`: deployment-owned provider and grant
+  locks, observe-only defaults, bounded and pending decisions, cancellations,
+  canonical command/receipt lineage, provider failure, self-authorization
+  rejection, and fail-closed replay of non-simulated action services.
+- `test_phase6_generality.py`: compile/run/evidence/replay proof for dense
+  EEG-like, irregular slow-signal, sparse spike plus dense LFP, and multi-rate
+  streams; contract rejection of false modality claims; and dependency-free
+  estimator/tensor adapter boundaries without framework support overclaims.
 - `test_source_boundaries.py`: target packages may not import legacy
   application, recipe, worker, task, or analysis modules.
 - `eegle.plugins.testing`: reusable behavioral assertions for independently
