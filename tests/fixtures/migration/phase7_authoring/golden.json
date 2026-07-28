@@ -1,0 +1,19 @@
+{
+  "schema": "eegle.migration.phase7_authoring_golden.v1",
+  "cases": {
+    "comparison": {
+      "source": "comparison.yaml",
+      "protocol_hash": "sha256:fed01ad83f026b3f1e9422e6e9d3c0803cf3e88abbd89d490f7894265cf47ae3",
+      "suite_hash": "sha256:9eee6689d6d26d7fdb09dfa9ffd99199297d34cd3b6e2c9f49f1e983f936c7e6",
+      "deployment_requirements_hash": "sha256:b6982d96719b4682c1eb05469ca11a6284af636a02bc1716f336a195173fbb75",
+      "expansion_digest": "sha256:6e3a3d8ba2d99415fca109d23d3a35437236dec08d2d73b3a7372a84c8b86b3d"
+    },
+    "recording": {
+      "source": "recording.yaml",
+      "protocol_hash": "sha256:33de07f18f1d4aee5faef1f9253d48b881da0af62255da69c67a801acf8bbfd6",
+      "suite_hash": "sha256:352e9356a85086b4b1dea7e5c3ff24a6d34cba9c8dbbba78b0412f24259191e4",
+      "deployment_requirements_hash": "sha256:7c5f951244a0acea4ee079570f3578504ee650ab67d328d3be6a0af69f4a2011",
+      "expansion_digest": "sha256:38ce07d932acd0d7a83cb6aeb2909be0ccccf13af37b57f00625c8c3640ad96a"
+    }
+  }
+}

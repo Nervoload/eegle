@@ -1,7 +1,7 @@
 # EEGle Architecture and Product Vision
 
 **Status:** Normative source of truth for EEGle's intended product and architecture  
-**Last updated:** 2026-07-26
+**Last updated:** 2026-07-28
 **Related documents:** [Migration plan](MIGRATION.md) · [Migration status](MIGRATION_STATUS.md)
 
 This document defines what EEGle is intended to become. It is the authority for
@@ -351,6 +351,8 @@ or plugins.
 The core product flow is:
 
 ```text
+optional authoring clients and templates
+                  ↓
 ProtocolSpec + SuiteSpec + DeploymentSpec
                   ↓
                Compiler
@@ -365,6 +367,15 @@ ProtocolSpec + SuiteSpec + DeploymentSpec
                   ↓
        replay, compare, validate, export
 ```
+
+High-level Python, restricted declarative authoring, templates, project tools,
+and future graphical or assisted interfaces may make the canonical
+specifications easier to create. They are non-executable clients of one
+authoring-to-canonical boundary: they must emit inspectable `ProtocolSpec`,
+`SuiteSpec`, and `DeploymentSpec` values before compilation. Authoring source
+locations and default origins may live in a separate provenance sidecar so
+equivalent canonical specifications retain identical hashes. Neither that
+sidecar nor an incomplete authoring draft is a compiler or runtime authority.
 
 ```mermaid
 flowchart LR
@@ -1011,6 +1022,15 @@ Retention policies return reviewable decisions and never delete data as a side
 effect. Direct participant identifiers, credentials, and local deployment
 secrets are not portable evidence fields.
 
+The public session-experience safe default is deliberately narrower than the
+generic portable-export policy: it admits only `public` artifacts and excludes
+semantic evidence logs, execution captures and plans, component state,
+interrupted ledgers, raw recordings, and deployment bindings. Session
+inspection, replay comparison, and export are observers, not lifecycle
+controllers. Evidence defects yield structured partial/unavailable results by
+default; these services never signal another process or resume, recover,
+truncate, finalize, overwrite, or delete source data.
+
 ## 12. Replay and equivalence
 
 ### 12.1 Replay modes
@@ -1132,6 +1152,19 @@ constraints set without redefining the kernel.
 
 ```text
 eegle/
+├── authoring/
+│   ├── contracts.py      # source, origin, materiality, confirmation vocabulary
+│   ├── schemas.py        # versioned authoring and export envelopes
+│   ├── drafts.py         # bounded incomplete intent and canonical lowering
+│   ├── templates.py      # deterministic non-executable template expansion
+│   ├── builders.py       # persistent typed Python authoring and project export
+│   └── yaml.py           # optional restricted YAML 1.2 adapter
+├── operations/
+│   ├── contracts.py      # shared diagnostic and process-exit meanings
+│   ├── diagnostics.py    # canonical-to-authoring source remapping
+│   ├── explanations.py   # read-only joined views, diffs, and repair proposals
+│   ├── projects.py       # project creation and artifact selection services
+│   └── sessions.py       # inspect, replay/compare, and safe export facades
 ├── specs/
 │   ├── protocol.py       # scientific claims and acceptance criteria
 │   ├── suite.py          # portable system and phase definitions
@@ -1223,6 +1256,13 @@ This is a responsibility map, not a mandate for one file per concept. It should
 remain possible to understand the kernel without importing tasks, dashboards,
 hardware SDKs, or machine-learning frameworks.
 
+Package-level exports in the established target packages are the stable-alpha
+low-level surface. Phase 7's `eegle.authoring` and `eegle.operations` exports
+are provisional until the Phase 7 gate closes. Implementation submodules are
+not public merely because Python permits importing them. The detailed boundary
+and machine-readable inventory are recorded in
+[PHASE7_PUBLIC_BOUNDARIES.md](PHASE7_PUBLIC_BOUNDARIES.md).
+
 ## 16. Intended user experience
 
 ### 16.1 Command line
@@ -1292,6 +1332,9 @@ deliberately revised:
 17. Reference recipes consume public EEGle contracts and do not define them.
 18. Historical compatibility is selected only when scientifically or
     operationally justified; it is not a default architecture goal.
+19. High-level authoring surfaces lower into the canonical specifications and
+    cannot bypass compilation, create an alternate semantic graph, or supply
+    unresolved values to the runtime.
 
 ## 18. Success criteria
 

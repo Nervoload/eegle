@@ -22,6 +22,7 @@ LEGACY_ROOT_MODULES = frozenset(
         "telemetry",
     }
 )
+LEGACY_INTEGRATION_MODULES = frozenset({"legacy_sessions", "task_environment"})
 
 
 class V1BuildPy(build_py):
@@ -29,9 +30,14 @@ class V1BuildPy(build_py):
 
     def find_package_modules(self, package: str, package_dir: str):
         modules = super().find_package_modules(package, package_dir)
-        if package != "eegle":
-            return modules
-        return [value for value in modules if value[1] not in LEGACY_ROOT_MODULES]
+        excluded = (
+            LEGACY_ROOT_MODULES
+            if package == "eegle"
+            else LEGACY_INTEGRATION_MODULES
+            if package == "eegle.integrations"
+            else ()
+        )
+        return [value for value in modules if value[1] not in excluded]
 
 
 setup(cmdclass={"build_py": V1BuildPy})

@@ -1,0 +1,10 @@
+schema: eegle.template_authoring.v1
+draft_id: golden.recording
+revision: 1
+template:
+  template_id: eegle.template.continuous_recording
+  version: 1.0.0
+  parameters:
+    unit: uV
+    channel_count: 8
+    sample_rate_hz: 250.0

@@ -1,0 +1,274 @@
+{
+  "schema": "eegle.migration.phase7_public_surface.v1",
+  "snapshot_date": "2026-07-28",
+  "decisions": [
+    "D-014",
+    "D-033",
+    "D-034",
+    "D-035"
+  ],
+  "export_rule": "Only package-level __all__ names are public unless this inventory explicitly names a submodule.",
+  "stable_alpha": [
+    {"module": "eegle", "exports": "__all__"},
+    {"module": "eegle.actions", "exports": "__all__"},
+    {"module": "eegle.compiler", "exports": "__all__"},
+    {"module": "eegle.models", "exports": "__all__"},
+    {"module": "eegle.plugins", "exports": "__all__"},
+    {"module": "eegle.processing", "exports": "__all__"},
+    {"module": "eegle.recording", "exports": "__all__"},
+    {"module": "eegle.replay", "exports": "__all__"},
+    {"module": "eegle.runtime", "exports": "__all__"},
+    {"module": "eegle.specs", "exports": "__all__"},
+    {"module": "eegle.streams", "exports": "__all__"}
+  ],
+  "provisional_public": [
+    {
+      "module": "eegle.authoring",
+      "exports": "__all__",
+      "review_gate": "P7-014"
+    },
+    {
+      "module": "eegle.operations",
+      "exports": "__all__",
+      "review_gate": "P7-014"
+    },
+    {
+      "module": "eegle.integrations.lsl",
+      "exports": "__all__",
+      "review_gate": "P7-014"
+    }
+  ],
+  "internal_patterns": [
+    "eegle._*",
+    "package implementation submodules not explicitly named by this inventory",
+    "tests.*"
+  ],
+  "source_only_legacy": [
+    "eegle.analysis",
+    "eegle.calibration",
+    "eegle.cli",
+    "eegle.config",
+    "eegle.devices",
+    "eegle.eeg_csv",
+    "eegle.experiment",
+    "eegle.factory",
+    "eegle.feedback_manager",
+    "eegle.hardware",
+    "eegle.integrations.legacy_sessions",
+    "eegle.integrations.task_environment",
+    "eegle.io",
+    "eegle.lsl",
+    "eegle.ml",
+    "eegle.preflight",
+    "eegle.psychopy_input",
+    "eegle.realtime",
+    "eegle.recording_health",
+    "eegle.session",
+    "eegle.tasks",
+    "eegle.telemetry",
+    "eegle.workers"
+  ],
+  "authoring_schemas": [
+    "eegle.experiment_draft.v1",
+    "eegle.authoring_provenance.v1",
+    "eegle.deployment_requirements.v1",
+    "eegle.template_definition.v1",
+    "eegle.template_expansion_lock.v1",
+    "eegle.template_authoring.v1",
+    "eegle.authored_experiment.v1",
+    "eegle.authoring_project.v1"
+  ],
+  "authoring_lowering": {
+    "service": "eegle.authoring.lower_experiment_draft",
+    "profile": "recording_and_builtin_templates_v1",
+    "compiler_inputs": ["ProtocolSpec", "SuiteSpec"],
+    "site_output": "DeploymentRequirements",
+    "runtime_input": false
+  },
+  "templates": {
+    "catalog": "eegle.authoring.BUILTIN_TEMPLATE_CATALOG",
+    "exact_version_required": true,
+    "implicit_latest": false,
+    "migration_policy": "explicit_reexpansion",
+    "runtime_input": false,
+    "profiles": [
+      "calibration_validation",
+      "continuous_observer",
+      "continuous_recording",
+      "delayed_outcome_adaptation",
+      "eeg_events_recording",
+      "event_locked_model",
+      "primary_shadow_comparison",
+      "simulated_closed_loop"
+    ]
+  },
+  "authoring_surfaces": {
+    "python_builder": "eegle.authoring.ExperimentBuilder",
+    "authored_result": "eegle.authoring.AuthoredExperiment",
+    "yaml_adapter": "eegle.authoring.load_yaml_experiment",
+    "shared_source_schema": "eegle.template_authoring.v1",
+    "compiler_service": "eegle.compiler.compile_suite",
+    "runtime_input": false
+  },
+  "operation_schemas": [
+    "eegle.operation_error.v1",
+    "eegle.operation_result.v1",
+    "eegle.experiment_explanation.v1",
+    "eegle.experiment_diff.v1",
+    "eegle.project.v1",
+    "eegle.project_graph.v1",
+    "eegle.project_result.v1",
+    "eegle.session_inspection.v1",
+    "eegle.replay_inspection.v1",
+    "eegle.model_replacement_comparison.v1",
+    "eegle.session_export.v1",
+    "eegle.detection_report.v1",
+    "eegle.deployment_proposal.v1",
+    "eegle.preflight_report.v1",
+    "eegle.rehearsal_report.v1"
+  ],
+  "operation_error_schema": "eegle.operation_error.v1",
+  "explanations": {
+    "service": "eegle.operations.explain_authored_experiment",
+    "diff_service": "eegle.operations.diff_authored_experiments",
+    "compilation_guidance": "eegle.operations.guide_compilation_diagnostics",
+    "authoring_guidance": "eegle.operations.diagnose_authoring_failure",
+    "views": [
+      "action_influence",
+      "causality",
+      "dataflow",
+      "defaults_provenance",
+      "model_comparison",
+      "scientific_intent"
+    ],
+    "difference_impacts": [
+      "operational",
+      "presentational",
+      "replay_affecting",
+      "scientific"
+    ],
+    "repair_proposals_mutate_input": false,
+    "runtime_input": false
+  },
+  "exit_codes": {
+    "SUCCESS": 0,
+    "USAGE_ERROR": 2,
+    "INVALID_INPUT": 3,
+    "REJECTED": 4,
+    "UNAVAILABLE": 5,
+    "EXECUTION_FAILED": 6,
+    "INTEGRITY_FAILED": 7,
+    "INSUFFICIENT_EVIDENCE": 8,
+    "INTERNAL_ERROR": 70
+  },
+  "yaml": {
+    "distribution": "optional_extra",
+    "extra": "yaml",
+    "dependency": "ruamel.yaml>=0.18.10,<0.19",
+    "base_dependency": false,
+    "implementation_task": "P7-005",
+    "adapter": "eegle.authoring.load_yaml_experiment",
+    "safe_loader": "YAML(typ='safe', pure=True)",
+    "yaml_version": "1.2"
+  },
+  "cli": {
+    "installed": true,
+    "entry_point": "eegle=eegle.__main__:main",
+    "implementation_tasks": ["P7-007", "P7-008", "P7-009", "P7-010", "P7-011", "P7-012"],
+    "service_package": "eegle.operations",
+    "base_commands": [
+      "new",
+      "detect",
+      "compile",
+      "explain",
+      "diff",
+      "graph",
+      "preflight",
+      "rehearse",
+      "run",
+      "inspect",
+      "replay",
+      "compare",
+      "export",
+      "model"
+    ],
+    "runtime_input": "verified_execution_plan_and_lock",
+    "machine_envelope": "eegle.operation_result.v1"
+  },
+  "project_operations": {
+    "manifest_schema": "eegle.project.v1",
+    "create_service": "eegle.operations.create_project",
+    "compile_service": "eegle.operations.compile_project",
+    "explain_service": "eegle.operations.explain_project",
+    "rehearse_service": "eegle.operations.rehearse_project",
+    "preflight_service": "eegle.operations.preflight_project",
+    "run_service": "eegle.operations.run_project",
+    "plan_only_run_service": "eegle.operations.run_locked_plan",
+    "inspect_service": "eegle.operations.inspect_session",
+    "replay_service": "eegle.operations.replay_session",
+    "simulation_scope": "locked_simulation_deployment_with_fault_evidence"
+  },
+  "session_operations": {
+    "inspection_service": "eegle.operations.inspect_session",
+    "replay_service": "eegle.operations.replay_session",
+    "replacement_comparison_service": "eegle.operations.compare_session_models",
+    "safe_export_service": "eegle.operations.export_session",
+    "structured_sections": [
+      "actions",
+      "adaptation",
+      "integrity",
+      "latency",
+      "models",
+      "phase_timeline",
+      "replay",
+      "source_health",
+      "work"
+    ],
+    "default_failure_mode": "structured_partial_or_unavailable_result",
+    "strict_cli_mode": "explicit_opt_in",
+    "unfinished_writers_mutated": false,
+    "source_data_deleted": false,
+    "external_process_signalled": false,
+    "safe_export_allowed_sensitivities": ["public"],
+    "safe_export_overwrites_destination": false,
+    "raw_participant_values_exported_by_default": false,
+    "protected_deployment_details_exported_by_default": false
+  },
+  "discovery_operations": {
+    "detect_service": "eegle.operations.detect_capabilities",
+    "proposal_service": "eegle.operations.propose_deployment",
+    "project_proposal_service": "eegle.operations.propose_project_deployment",
+    "model_manifest_entry_point_group": "eegle.models",
+    "detection_schema": "eegle.detection_report.v1",
+    "proposal_schema": "eegle.deployment_proposal.v1",
+    "proposal_compiler_input": false,
+    "portable_suite_mutated": false,
+    "ambiguity_requires_selection": true,
+    "secret_literals_allowed": false,
+    "authorization_inferred": false
+  },
+  "lsl_integration": {
+    "module": "eegle.integrations.lsl",
+    "extra": "live",
+    "dependency": "pylsl>=1.18,<2",
+    "base_import_safe": true,
+    "plugin_entry_point": "eegle.plugins:lsl",
+    "support_level": "simulated_validated",
+    "real_observe_only_acceptance": "pending",
+    "portable_suite_mutated": false
+  },
+  "model_packaging": {
+    "schemas": [
+      "eegle.model_package.v1",
+      "eegle.model_package_check.v1",
+      "eegle.packed_model.v1",
+      "eegle.synthetic_model_test_vector.v1",
+      "eegle.synthetic_model_test_vectors.v1"
+    ],
+    "media_type": "application/vnd.eegle.model-package+zip",
+    "adapter_boundary": "independent_plugin_wheel",
+    "framework_runtime": false,
+    "training": false,
+    "implicit_download": false
+  }
+}

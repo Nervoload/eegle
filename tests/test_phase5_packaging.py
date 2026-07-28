@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -43,7 +44,7 @@ P6_REMOVED_WHEEL_PATHS = {
 
 
 class Phase5PackagingTests(unittest.TestCase):
-    def test_wheel_excludes_legacy_root_modules_and_module_cli_is_inert(self) -> None:
+    def test_wheel_excludes_legacy_roots_and_completes_the_base_cli_journey(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             project = root / "project"
@@ -82,6 +83,27 @@ class Phase5PackagingTests(unittest.TestCase):
             self.assertFalse(LEGACY_ROOT_WHEEL_PATHS & names)
             self.assertFalse(P6_REMOVED_WHEEL_PATHS & names)
             self.assertFalse(any(name.startswith("eegle/ml/") for name in names))
+            self.assertIn("eegle/authoring/__init__.py", names)
+            self.assertIn("eegle/authoring/drafts.py", names)
+            self.assertIn("eegle/authoring/_template_profiles.py", names)
+            self.assertIn("eegle/authoring/builders.py", names)
+            self.assertIn("eegle/authoring/provenance.py", names)
+            self.assertIn("eegle/authoring/schemas.py", names)
+            self.assertIn("eegle/authoring/templates.py", names)
+            self.assertIn("eegle/authoring/yaml.py", names)
+            self.assertIn("eegle/operations/__init__.py", names)
+            self.assertIn("eegle/operations/contracts.py", names)
+            self.assertIn("eegle/operations/diagnostics.py", names)
+            self.assertIn("eegle/operations/explanations.py", names)
+            self.assertIn("eegle/operations/preflight.py", names)
+            self.assertIn("eegle/operations/projects.py", names)
+            self.assertIn("eegle/operations/sessions.py", names)
+            self.assertIn("eegle/operations/cli.py", names)
+            self.assertIn("eegle/models/packaging.py", names)
+            self.assertIn("eegle/integrations/__init__.py", names)
+            self.assertIn("eegle/integrations/lsl/__init__.py", names)
+            self.assertNotIn("eegle/integrations/legacy_sessions.py", names)
+            self.assertNotIn("eegle/integrations/task_environment.py", names)
             root_modules = {
                 name
                 for name in names
@@ -90,21 +112,73 @@ class Phase5PackagingTests(unittest.TestCase):
                 and name.count("/") == 1
             }
             self.assertEqual(root_modules, V1_ROOT_WHEEL_PATHS)
-            self.assertFalse(any(name.endswith("entry_points.txt") for name in names))
+            entry_points = [name for name in names if name.endswith("entry_points.txt")]
+            self.assertEqual(len(entry_points), 1)
+            with zipfile.ZipFile(wheels[0]) as archive:
+                entry_point_text = archive.read(entry_points[0]).decode("utf-8")
+            self.assertIn("eegle = eegle.__main__:main", entry_point_text)
+            self.assertIn("lsl = eegle.integrations.lsl:lsl_plugin_descriptors", entry_point_text)
 
             environment = os.environ.copy()
             environment["PYTHONPATH"] = str(wheels[0])
             invoked = subprocess.run(
-                [sys.executable, "-m", "eegle"],
+                [sys.executable, "-m", "eegle", "--help"],
                 cwd=root,
                 env=environment,
                 capture_output=True,
                 text=True,
                 check=False,
             )
-            self.assertEqual(invoked.returncode, 2)
-            self.assertIn("command-line interface is not available yet", invoked.stderr)
+            self.assertEqual(invoked.returncode, 0, invoked.stdout + invoked.stderr)
+            self.assertIn(
+                "{new,compile,detect,explain,diff,graph,rehearse,preflight,run,inspect,replay,compare,export,model}",
+                invoked.stdout,
+            )
             self.assertNotIn("check-setup", invoked.stdout + invoked.stderr)
+
+            project_root = root / "first-simulation"
+            commands = (
+                ("new", str(project_root), "--id", "clean-wheel"),
+                ("detect", "--no-entry-points"),
+                ("detect", "--lsl", "--lsl-wait", "0"),
+                ("compile", str(project_root)),
+                ("explain", str(project_root)),
+                ("diff", str(project_root), str(project_root)),
+                ("graph", str(project_root)),
+                ("preflight", str(project_root)),
+                (
+                    "rehearse",
+                    str(project_root),
+                    "--session-id",
+                    "session.clean.rehearsal",
+                ),
+                (
+                    "run",
+                    str(project_root),
+                    "--session-id",
+                    "session.clean.run",
+                ),
+                ("inspect", str(project_root)),
+                ("replay", str(project_root)),
+            )
+            for command in commands:
+                with self.subTest(command=command[0]):
+                    completed = subprocess.run(
+                        [sys.executable, "-m", "eegle", "--json", *command],
+                        cwd=root,
+                        env=environment,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertEqual(
+                        completed.returncode,
+                        0,
+                        completed.stdout + completed.stderr,
+                    )
+                    payload = json.loads(completed.stdout)
+                    self.assertTrue(payload["ok"])
+                    self.assertEqual(payload["operation"], command[0])
 
 
 if __name__ == "__main__":

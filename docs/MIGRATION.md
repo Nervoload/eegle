@@ -105,7 +105,7 @@ flowchart LR
     P4["4. Adaptive sessions and evidence"]
     P5["5. Specs and compiler"]
     P6["6. General model, outcome, and action semantics"]
-    P7["7. New CLI and integrations"]
+    P7["7. Authoring, operations, and integrations"]
     P8["8. Validation depth and public alpha"]
 
     P0 --> P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7 --> P8
@@ -734,37 +734,98 @@ real dependency/version and artifact-loading integration belongs to Phase 7.
   configuration alone.
 - Core records contain no EEG-only assumptions.
 
-## 12. Phase 7 — New CLI, packaging, and first-party integrations
+## 12. Phase 7 — Experiment authoring, operations, packaging, and integrations
 
 ### Objective
 
-Expose the new product directly, remove recipe-shaped public interfaces, and
-prove that integrations remain optional.
+Transform the Phase 0–6 compiler/runtime foundation into an approachable
+experimental product. Add progressive authoring, actionable compilation,
+project and deployment operations, rehearsal, and public inspection workflows;
+remove recipe-shaped public interfaces; and prove that integrations remain
+optional. Every authoring surface must lower into the canonical specifications
+and the existing compiler rather than becoming another specification or
+execution authority.
+
+The active implementation design, reviewed task order, and scope controls are
+recorded in [PHASE7_AUTHORING_OPERATIONS.md](PHASE7_AUTHORING_OPERATIONS.md).
+The resolved P7-001 public, service, schema, diagnostic, exit-code, and YAML
+distribution boundaries, plus the P7-002 recording lowering and provenance
+implementation, P7-003 exact-version template registry, P7-004 typed Python
+builder, P7-005 restricted YAML adapter, and P7-006 joined explanation/diff and
+guided-diagnostic services. P7-007 adds the separated project manifest,
+content-addressed compiled artifacts, shared base simulation operations, and
+public CLI. P7-008 adds canonical capability detection and review-only,
+content-addressed deployment proposals with explicit selection, secret
+references, and no inferred authorization, as recorded in
+[PHASE7_PUBLIC_BOUNDARIES.md](PHASE7_PUBLIC_BOUNDARIES.md).
+P7-009 adds exact capability preflight and fault-evidenced rehearsal; P7-010's
+simulated optional LSL path remains pending real EEG acceptance. P7-011 adds
+deterministic, verified model packages, a dependency-backed independent adapter
+proof, and guarded same-engine model replacement replay as recorded in
+[MODEL_PACKAGING.md](MODEL_PACKAGING.md).
 
 ### Work
 
+#### Authoring and explanation
+
+- Introduce a versioned, non-executable experiment draft above
+  `ProtocolSpec`, `SuiteSpec`, and `DeploymentSpec`.
+- Preserve authoring provenance and source locations in a sidecar that does not
+  alter canonical specification hashes. Authoring-origin evidence and
+  compiler-resolved default evidence must remain distinguishable.
+- Add deterministic, versioned templates for recording-only, event-locked,
+  comparison, adaptation, and simulated-action journeys.
+- Provide a typed high-level Python builder and a deliberately restricted YAML
+  surface that lower through the same service. Resolve the YAML parser and
+  distribution boundary before changing the base dependency policy.
+- Extend compiler explanation and diagnostics with scientific, dataflow,
+  causality, model-comparison, action-influence, defaults/provenance, and
+  scientific-versus-operational difference views.
+- Keep canonical specifications exportable, directly authorable, and the sole
+  compiler inputs. The runtime never consumes drafts, templates, YAML, or
+  mutable project state.
+
 #### CLI
 
-Implement the artifact-oriented command set:
+Implement an artifact-oriented project and operations command set:
 
 ```text
+eegle new
+eegle detect
 eegle compile
-eegle validate
+eegle explain
+eegle diff
+eegle graph
+eegle rehearse
+eegle preflight
 eegle run
+eegle inspect
 eegle replay
 eegle compare
-eegle inspect
+eegle validate
 eegle export
+eegle model
+eegle plugin
 ```
 
-Commands operate on specs, lock manifests, sessions, evidence bundles, models,
-and structured results. Do not port old recipe commands into the base CLI.
+Commands operate on authoring sources, canonical specs, detection proposals,
+lock manifests, sessions, evidence bundles, models, plugins, and structured
+results. `run` executes only a locked plan. Discovery and automatic repair
+produce reviewable proposals and never silently mutate scientific intent or
+infer authorization. Do not port old recipe commands into the base CLI.
 
-The legacy command boundary was neutralized early during Phase 5: console
-scripts are absent, `python -m eegle` emits only a dependency-free Phase 7
-notice, and built wheels exclude migration-only root orchestration modules.
-Phase 7 still owns implementation of the new command set and deletion of the
-remaining source-checkout evidence.
+The legacy command boundary was neutralized early during Phase 5. P7-007 now
+installs the new `eegle` console script and makes `python -m eegle` the same
+thin adapter over shared operations services. The implemented base slice is
+`new`, `compile`, `explain`, `diff`, `graph`, `rehearse`, `run`, `inspect`, and
+`replay`. P7-008 adds independently runnable `detect`; a project report may
+remain evidence-only or may produce a separate immutable deployment proposal,
+and `compile --deployment deployment_proposal` selects it explicitly. Later
+P7-009/P7-010 operations extend preflight/rehearsal and optional LSL detection;
+P7-011 makes `model pack` and `model check` available. Remaining families
+remain with their owning Phase 7 tasks. Built wheels still exclude
+migration-only root orchestration modules, including the historical
+`eegle.cli`, whose eventual source-checkout deletion remains C-003/P7-013 work.
 
 #### Packaging
 
@@ -781,9 +842,19 @@ remaining source-checkout evidence.
 
 - Implement LSL source/event/outlet adapters against the general stream
   contracts.
-- Add a live preflight based on capabilities rather than vendor branches.
+- Add discovery, deployment generation, and live preflight based on capabilities
+  rather than vendor branches.
+- Add rehearsal through a separately locked simulation deployment using the
+  same portable protocol/suite, compiler, engine, and evidence semantics. Do
+  not claim that a hardware-bound plan and a simulation plan are identical.
 - Add export integrations selected for real use cases.
-- Create new reference examples from the minimal suites in Phase 5.
+- Add model-manifest/artifact packaging and conformance helpers without
+  arbitrary import paths, embedded Python source, a trainer, or a second model
+  runtime. Prove at least one real optional framework adapter as an independent
+  plugin distribution.
+- Create complete reference projects from the minimal suites in Phase 5. They
+  must cover recording-only, event-locked observation, model comparison,
+  adaptation, simulated closed-loop action, and LSL observe-only operation.
 - If PsychoPy or current tasks are retained, publish them as separate recipe
   clients of the public library.
 - Delete old recipe commands, facades, workers, and task-coupled modules once
@@ -794,16 +865,33 @@ remaining source-checkout evidence.
 Existing LSL matching, hardware profiles, preflight checks, and operator flows
 provide useful real-lab requirements. Their vendor and recipe branches should be
 converted into adapter capabilities or external recipes, not copied into the
-kernel.
+kernel. Existing analysis and reporting code remains Phase 8 evidence; Phase 7
+may expose integrity, replay, comparison, and already-structured validation but
+must not absorb scientific evaluation depth, performance qualification, or
+public-alpha support claims.
 
 ### Exit gate
 
-- A clean base environment completes compile, simulated run, record, replay, and
-  structured validation.
+- A clean base environment can create a project, generate canonical specs,
+  compile and explain them, rehearse and run a simulation, persist and inspect
+  evidence, and replay the result.
+- A researcher can author the reference workflows without manually declaring
+  component ports or graph routes; Python and restricted YAML sources lower
+  deterministically into the same canonical specifications.
+- Every value introduced by authoring and every material compiler-resolved
+  default has visible, correctly separated provenance; diagnostics map back to
+  the authoring source.
+- Recording-only and preprocessing-only journeys require no model, policy, or
+  actuator declarations.
 - `eegle[live]` or its companion distribution completes an LSL simulation and a
-  documented hardware acceptance run.
+  documented observe-only hardware acceptance run using the same portable suite
+  as its simulation deployment.
 - Optional integrations do not import from base workflows unless selected.
 - An independent package can supply a plugin through standard discovery.
+- A plain callable model works in base and at least one dependency-backed model
+  integration remains an ordinary optional plugin.
+- Rehearsal and live execution use the same compiler, engine, and evidence
+  semantics while retaining distinct deployment-specific plan identities.
 - The public CLI contains no study-specific recipe commands.
 - Old facades and superseded runtime paths are removed.
 - Documentation describes only tested commands and current public imports.
@@ -997,7 +1085,7 @@ the intended gates.
 | 4 | Adaptive sessions and evidence | Complete | Versioned evidence bundles, stores, recovery, privacy |
 | 5 | Specifications and compiler | Complete | Protocol/Suite/Deployment to locked ExecutionPlan and sole graph engine |
 | 6 | General semantics | Complete | Modality-neutral models, outcomes, adaptation, actions |
-| 7 | CLI and integrations | Ready | New CLI, minimal wheel, LSL and optional adapters |
+| 7 | Authoring, operations, and integrations | Active | Progressive authoring, public workflows, minimal wheel, LSL and optional adapters |
 | 8 | Validation and public alpha | Not started | Layered validation, hardening, truthful support release |
 
 ## 19. Definition of migration complete

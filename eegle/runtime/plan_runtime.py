@@ -134,6 +134,8 @@ class PlanRuntime:
         nodes: tuple[RuntimeNode, ...],
         authorization_providers: tuple[RuntimeAuthorizationProvider, ...] = (),
     ) -> None:
+        if not isinstance(plan, ExecutionPlan):
+            raise TypeError("graph execution requires an ExecutionPlan")
         if plan.schema != EXECUTION_PLAN_SCHEMA:
             raise PlanConstructionError("graph execution requires execution plan v1")
         if plan.graph is None:
@@ -361,6 +363,8 @@ def construct_plan_runtime(
 ) -> PlanRuntime:
     """Construct exactly the implementations locked by a compiled plan."""
 
+    if not isinstance(plan, ExecutionPlan):
+        raise TypeError("runtime construction requires an ExecutionPlan")
     if plan.schema != EXECUTION_PLAN_SCHEMA:
         raise PlanConstructionError("compiled graph runtime requires execution plan v1")
     locked = {(value.plugin_id, value.version): value for value in plan.plugins}

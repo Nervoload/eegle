@@ -1,7 +1,7 @@
 # EEGle Migration Status
 
 **Status:** Living project and decision tracker  
-**Snapshot date:** 2026-07-27
+**Snapshot date:** 2026-07-28
 **Branch:** `split`
 **Architecture authority:** [EEGLE.md](EEGLE.md)  
 **Execution plan:** [MIGRATION.md](MIGRATION.md)
@@ -16,8 +16,8 @@ restate the full architecture or phase plan.
 
 | Field | Current value |
 |---|---|
-| Active phase | Phase 7 — CLI, packaging, and first-party integrations |
-| Phase status | Phase 6 closed; Phase 7 is ready to begin |
+| Active phase | Phase 7 — experiment authoring, operations, packaging, and first-party integrations |
+| Phase status | Active; P7-012 complete, P7-010 real EEG acceptance remains pending, and P7-013 is next |
 | Code migration started | Yes |
 | Product vision | Accepted and documented |
 | Migration model | Selective preservation and clean rebuild |
@@ -80,6 +80,142 @@ deep canonical copies. Every model now requires a manifest binding, model roles
 are permission-driven only, and v1 prediction plus suite-wide primary/shadow
 fallbacks are gone. The wheel excludes `eegle.ml`, old bundle/registry/model
 helpers, framework integrations, and every legacy application package.
+
+Phase 7 is now rechartered around the missing product boundary between
+researcher intent and the canonical specifications. Templates, typed Python,
+restricted YAML, and project commands will lower through one non-executable
+draft/provenance service into `ProtocolSpec`, `SuiteSpec`, and explicit
+deployment requirements before a reviewed `DeploymentSpec`; the existing
+compiler and runtime remain the only semantic authorities.
+[PHASE7_AUTHORING_OPERATIONS.md](PHASE7_AUTHORING_OPERATIONS.md) records the
+accepted task order, rehearsal/live plan distinction, YAML dependency decision
+point, user journeys, Phase 8 boundary, and closure evidence.
+
+P7-001 now locks the first product boundary. Existing target package `__all__`
+exports are stable-alpha; the new package-level `eegle.authoring` and
+`eegle.operations` exports are provisional through P7-014; implementation
+submodules and migration-only sources remain internal. Versioned draft,
+non-hashing provenance-sidecar, and operation-error envelopes are packaged in
+the base without lowering or execution behavior. The shared exit meanings are
+fixed, while restricted YAML is assigned to a later `eegle[yaml]` extra using a
+pinned `ruamel.yaml` series and remains absent from base imports. The boundary,
+machine-readable inventory, and exact constraints are recorded in
+[PHASE7_PUBLIC_BOUNDARIES.md](PHASE7_PUBLIC_BOUNDARIES.md).
+
+P7-001 verification adds six dedicated boundary tests. Together with the
+updated source-boundary and Phase 2 foundation suites, 27 focused tests pass;
+compile-all and diff checks pass. The complete Python 3.14.4 run executes 280
+tests: 274 pass, five environment-dependent tests skip, and the clean-wheel
+test cannot start because the temporary base environment lacks the pinned
+`setuptools`/`wheel` build backend, and installing those tools was unavailable
+in the current sandbox. This is recorded as an environmental verification gap,
+not a relaxed packaging gate; the unchanged clean-wheel test remains required
+before P7-013 closure.
+
+P7-002 implements the first bounded lowering profile. A typed
+`ExperimentDraft` may preserve incomplete intent and unresolved choices, but
+only complete recording intent lowers. The service deterministically produces
+ordinary protocol/suite objects, source/sink routes, a single recording phase,
+and typed source/clock/storage deployment requirements. Unsupported model,
+action, adaptation, arbitrary graph, and site-binding values fail rather than
+creating premature authorities. A separate typed sidecar binds draft and
+canonical digests, distinguishes explicit values from authoring defaults, and
+maps canonical schema/compiler paths back to the closest authoring source.
+Runtime construction now explicitly accepts `ExecutionPlan` only.
+
+P7-003 extends that same draft service with eight bounded, exact-version
+templates: continuous recording, EEG plus events, continuous observation,
+event-locked observation, primary/shadow comparison, calibration followed by
+locked validation, delayed-outcome adaptation, and simulated closed-loop
+action. Definitions declare finite parameter schemas, generated schema
+versions, capabilities, scientific defaults, portable deployment needs,
+machine fixtures, expected expansion digests, and explicit-reexpansion policy.
+Draft selections bind the exact template manifest; expansion locks separately
+bind explicit/effective parameters, the draft, and all generated outputs.
+There is no implicit latest lookup, same-version content replacement fails, and
+templates construct neither plugins nor runtime values. Every synthetic suite
+passes the unchanged compiler with reviewed deployment fixtures.
+
+P7-004 and P7-005 now expose two deliberately equivalent authoring clients.
+The immutable `ExperimentBuilder` supplies exact-template constructors plus
+typed signal/window/event/model/action edits, explicit defaults and portable
+requirements, canonical export, non-overwriting project writing, and a compile
+facade that delegates unchanged canonical values to `compile_suite()`. It has no
+run facade, and runtime construction still accepts an `ExecutionPlan` only.
+
+The optional `eegle[yaml]` adapter accepts one bounded
+`eegle.template_authoring.v1` YAML 1.2 document and lowers it through the same
+builder/template/draft path. It lazily imports `ruamel.yaml`, uses the pure safe
+loader, rejects aliases, anchors, merges, tags, directives, duplicate keys,
+implicit dates, non-string keys, non-finite values, multiple documents, and
+excessive resources, and preserves JSON-Pointer line/column locations. Shared
+recording and comparison fixtures prove that Python and YAML yield identical
+canonical specs, requirements, and expansion identities.
+
+P7-006 adds read-only joined explanation, difference, and guided-diagnostic
+services. Every built-in reference template produces scientific-intent,
+dataflow, causality, model-comparison, action-influence, and
+defaults/provenance views. A matching locked plan contributes only the existing
+safe compiler projection; mismatched spec hashes fail, and compiler-derived
+fields remain source-free rather than becoming authoring origins.
+
+Experiment differences label scientific, operational, presentational, and
+replay-affecting impacts using canonical hashes and the existing plan diff.
+Operation diagnostics add backward-compatible likely-cause, repair-description,
+and finite proposal fields. Guided unit, rate, channel, clock, plugin, model,
+and authorization failures preserve compiler identity, map to the closest
+authoring source, and emit review-only proposals with `applied: false`.
+
+P7-007 establishes the public operations path without adding another semantic
+authority. `eegle.project.v1` indexes separately stored authoring source,
+generated canonical values, a reviewed simulation deployment,
+content-addressed plan/lock/explanation artifacts, and sessions. Only immutable
+compiled artifacts are enforced as integrity authorities; editing mutable
+authoring cannot change an already compiled run. The plan-only service verifies
+the lock before session creation and delegates to the existing engine, evidence
+persistence, integrity reader, and bundle replay.
+
+The `eegle` console entry and `python -m eegle` now expose `new`, `compile`,
+`explain`, `diff`, `graph`, `preflight`, `rehearse`, `run`, `inspect`, `replay`,
+and `model` pack/check operations. Python
+callers use the same exported services. Machine success and failure use versioned
+`eegle.operation_result.v1` and `eegle.operation_error.v1` envelopes with the
+fixed exit meanings. The automatic deployment remains the bounded
+continuous-recording simulation. P7-008 subsequently added independent
+capability detection plus immutable review-only deployment proposals, and
+P7-009 added exact capability preflight plus fault-evidenced rehearsal. P7-011
+adds model package builders, integrity/conformance checks, and an ordinary
+optional-framework plugin proof without adding a framework runtime.
+
+P7-011 packages the canonical manifest, content-addressed artifact bytes,
+optional canonical initial state, and contract-validated synthetic vectors in
+a deterministic transport envelope. Verification rejects index/member/state or
+artifact tampering before content-addressed materialization. Static checks join
+only installed descriptor contracts; construction and prediction remain owned
+by the Phase 6 model-context and runtime boundaries. An independently built
+wheel uses real scikit-learn/joblib dependencies and returns `ModelResult`
+through the normal engine. Replacement replay admits a separately compiled
+contract-compatible model plan while preserving every non-target authority and
+reports the expected counterfactual divergence.
+
+Six dedicated P7-007 tests and 79 focused Phase 5/7/source-boundary tests pass;
+compile-all and diff checks pass. The 320-test aggregate Python 3.14.4 run has
+314 passes, five environment-dependent skips, and one setup failure because
+that interpreter still cannot import `setuptools.build_meta`. The unchanged
+source was therefore built independently as a clean 115-file wheel with the
+bundled Python 3.12 build runtime, then all nine commands completed from that
+wheel under the dependency-complete Python 3.14 environment. The wheel contains
+the console entry metadata and excludes historical `eegle.cli`.
+
+P7-002 adds eight dedicated tests. Fifty-one focused authoring, boundary,
+foundation, and compiler tests pass with compile-all and diff checks. The full
+288-test Python 3.14.4 run has 282 passes, five environment-dependent skips,
+and the same one environment-only wheel failure because its temporary
+interpreter lacks the pinned build backend. The expanded clean-wheel test passes
+independently while a pre-existing local pinned backend payload is available,
+so P7-002 wheel contents were verified without changing dependencies. Later
+temporary-directory cleanup removed that payload; the aggregate-environment
+gap remains recorded rather than hidden.
 
 ## 2. Verified baseline
 
@@ -455,7 +591,7 @@ These are target behaviors, not instructions to copy their present modules.
 | K-009 | **Partially resolved for target specifications:** portable protocol/suite objects contain no filesystem authority; deployment storage requires an explicit URI scheme and compiler artifacts use caller-supplied paths. Legacy recipe configuration still resolves project-root paths. | New compiled suites are independent of repository layout; legacy removal remains Phase 7 cleanup. | Phases 5 and 7 |
 | K-010 | **Resolved for the target compiler 2026-07-23:** causal and retrospective transforms declare incompatible capabilities and exact descriptor resolution enforces the protocol execution mode before construction. | Future-dependent components cannot compile into a causal target plan. | Phases 2 and 5 |
 | K-011 | **Resolved 2026-07-22:** pure epoch-array helpers now break the direct realtime classification/models cycle. | Retained legacy modules are acyclic at this boundary. | Phase 2 |
-| K-012 | **Partially resolved:** recipe console scripts are gone, `python -m eegle` is an inert dependency-free notice, and legacy root orchestration modules are rejected by a real wheel-content test. | The historical CLI remains only as source-checkout migration evidence; Phase 7 still must implement the new artifact-oriented CLI and then delete that evidence. | Phases 5 and 7 |
+| K-012 | **Partially resolved:** recipe console scripts are gone, P7-007 installs the artifact-oriented `eegle`/module CLI, and legacy root orchestration modules remain rejected by the wheel-content test. | The historical `eegle.cli` remains only as source-checkout evidence until its P7-013/C-003 deletion gate. Later command families remain with their owning Phase 7 tasks. | Phase 7 |
 | K-013 | **Resolved for the target branch 2026-07-22:** package metadata requires Python 3.11+ without an upper bound and declares the four base dependencies. | Initial supported-matrix enforcement remains release/CI work. | Phases 2 and 7 |
 | K-014 | **Partially resolved for the target runtime:** semantic execution now carries explicit in-process/subprocess/external proxy placement independent of task or device code. | Cross-process health transport and legacy supervisor removal remain before the separation is complete. | Phases 2–3 |
 
@@ -522,15 +658,19 @@ These are target behaviors, not instructions to copy their present modules.
 | D-031 | Preprocessing proof | Processing operations declare canonical fixed/config-projected parameter attestations. The compiler locks parameter evidence and checks runtime, model-internal, artifact-prepared, duplicated, and forbidden ownership across exact lineage. |
 | D-032 | Runtime authority values | Plugins return unprivileged results and providers evaluate immutable action parameters verified against durable digests. Required output omission is terminal evidence, and all checkpoint/rollback state is an independent canonical copy rather than a component-owned alias. |
 
+### Resolved in Phase 7
+
+| ID | Decision | Resolution |
+|---|---|---|
+| D-014 | Public stability boundary | Package-level `__all__` exports in `eegle`, `actions`, `compiler`, `models`, `plugins`, `processing`, `recording`, `replay`, `runtime`, `specs`, and `streams` are stable-alpha. Package-level `eegle.authoring`, `eegle.operations`, and optional `eegle.integrations.lsl` exports are provisional public through P7-014. Nested implementation modules, underscore names, retained legacy sources, CLI rendering, and tests are internal unless a later inventory explicitly promotes them. |
+| D-033 | Authoring authority | Templates, typed Python, restricted YAML, and project commands are non-executable clients of one versioned draft/lowering service. They emit canonical specifications plus a non-hashing provenance/source-map sidecar. Canonical specs remain the sole compiler inputs, `ExecutionPlan` remains the sole runtime input, and discovery/repair produces explicit proposals rather than mutation. |
+| D-034 | Restricted YAML distribution | Restricted YAML is an optional `eegle[yaml]` authoring extra using `ruamel.yaml>=0.18.10,<0.19`, lazily imported only inside the P7-005 adapter. The originally proposed `>=0.19.1,<0.20` range was amended before release because no such version was available. Base JSON/templates/Python authoring remains parser-free. The adapter uses the pure safe YAML 1.2 path and rejects multiple documents, aliases, anchors, merges, tags/directives, duplicate keys, implicit dates, excessive resources, and non-explicit JSON before normal draft validation. |
+| D-035 | Observer failure and export safety | Session inspection, replay, replacement comparison, and export are observers or derived executions, not lifecycle controllers. Evidence defects return structured partial/unavailable results by default; strict CLI exits are explicit opt-in. These services never signal another process or recover, truncate, finalize, overwrite, or delete source evidence. The P7 session-export default admits only public artifacts and explicitly excludes evidence/capture/plan/state/raw/deployment content and identity. |
+
 ### Remaining open decisions
 
-These decisions are intentionally not locked yet. Resolve them at or before the
-listed decision point and record the result here and in the relevant normative
-document.
-
-| ID | Decision | Options or questions | Decision point |
-|---|---|---|---|
-| D-014 | Public stability boundary | Decide which modules are public at alpha and how experimental interfaces are marked. | Phase 7 |
+No open architecture decision is currently blocking P7-013. New decisions must
+be added here before implementation relies on them.
 
 ## 7. Immediate action board
 
@@ -609,6 +749,21 @@ engine rather than recovered through compatibility code.
 | P6-008 | done | Add representational generality and prove the optional framework boundary without creating framework-specific core APIs. | Dense EEG-like, irregular slow-signal, sparse-event plus dense-LFP, and multi-rate suites compile/run/persist/verify/replay through one engine. Estimator and tensor-callable fixtures use ordinary external model contracts; P6-003 supplies the installed-wheel proof, while actual sklearn/Torch distributions remain Phase 7 integration work. No support overclaims. |
 | P6-009 | done | Delete replaced model/outcome/action authorities and inspect the minimal wheel. | `eegle.ml`, local bundle/model-family registries, classifier built-ins, legacy predictions, the obsolete registry-based foundation-model example, and framework extras are absent from the v1 product; source-only Phase 7/8 evidence is structurally outside target imports and tracked by C-003. The wheel rejects every removed target module. |
 | P6-010 | done | Close Phase 6 against every normative gate and the independent closure review. | One-engine compile/run/record/replay evidence, installed external plugin proof, causal-label rejection, exact artifact/state admission, parameterized preprocessing, output completeness, provider parameter evaluation, adversarial rollback restoration, safe action defaults, and modality-neutral fixtures pass. |
+| P7-000 | done | Recharter Phase 7 around experiment authoring, operationalization, and complete researcher journeys. | `PHASE7_AUTHORING_OPERATIONS.md`, amended Phase 7 objective/gates, D-033, and the Phase 8 scope boundary agree. |
+| P7-001 | done | Lock the public and authoring service boundary, resolve D-014/D-034, and inventory the intended CLI/Python surface before implementation. | `PHASE7_PUBLIC_BOUNDARIES.md`, machine-readable public inventory, packaged draft/provenance schemas, shared operation error/exit contract, clean import/package tests, and no CLI or YAML dependency. |
+| P7-002 | done | Implement deterministic `ExperimentDraft` lowering and a non-hashing authoring provenance/source-map sidecar. | Recording intent lowers identically across input ordering; unresolved/unsupported intent fails; typed source/clock/storage needs remain outside deployment bindings; compiler/schema diagnostics map to sources; runtime accepts plans only. |
+| P7-003 | done | Add versioned deterministic templates for the required recording, model, adaptation, and simulated-action journeys. | Eight exact-version fixtures expand deterministically with declared hashes and typed locks, compile normally, preserve old locked revisions across explicit upgrades, and contain no executable authority. |
+| P7-004 | done | Add the typed high-level Python authoring API over the shared lowering/compiler services. | Persistent typed recording/comparison workflows match shared canonical golden fixtures; expose defaults, requirements, export, and non-overwriting project writing; delegate compilation unchanged; and provide no execution bypass. |
+| P7-005 | done | Add the restricted YAML authoring surface after D-034. | A bounded safe JSON-compatible subset retains line/column diagnostics and canonical JSON export, matches Python hashes, and keeps the lazily imported parser in the declared optional extra. |
+| P7-006 | done | Add joined authoring/compiler explanations and guided diagnostics. | All eight reference templates expose six complete views; matching plans join without provenance leakage; four-impact diffs and common source-aware failures yield explicit, non-mutating proposals. |
+| P7-007 | done | Add project scaffolding and the public artifact-oriented CLI as thin services. | Separated artifact lanes, content-addressed plan/lock outputs, shared Python services, plan-only execution, base evidence/replay journey, versioned machine output, stable exits, and no recipe/root assumption. |
+| P7-008 | done | Add discovery and reviewable deployment generation. | Canonical hash-verified detection reports, installed plugin/model plus explicit-manifest discovery, typed site observations, exact compatibility matching, candidate-bearing ambiguity failures, secret references, immutable project proposals, explicit proposal compilation, unchanged portable suite, and no inferred authorization. |
+| P7-009 | done | Add capability-based preflight and simulation-deployment rehearsal. | Exact plan/lock/deployment capability checks are hash-verified; the project and independently packaged closed-loop reference paths use the normal engine/bundle writer; eight initial fault-disposition outcomes are evidence; physical action and live-plan impersonation fail closed. |
+| P7-010 | in progress | Implement the optional first-party LSL source/event/outlet and discovery path. | Dense/sparse/metadata sources and outlets, exact detection/selectors, clock sync, reconnect, loss evidence, blocked-import isolation, and simulated portability acceptance pass. Truthful support remains `simulated_validated` until the documented real EEG observe-only run is performed. |
+| P7-011 | done | Add model-manifest/artifact packaging and at least one dependency-backed external framework plugin. | Deterministic package/index/artifact/state hashes, synthetic vectors, pre-materialization tamper rejection, descriptor conformance, CLI pack/check, a real independently installed scikit-learn adapter returning `ModelResult`, and guarded same-engine replacement replay pass without framework-specific core runtime. |
+| P7-012 | done | Add public session, inspection, replay replacement, comparison, and safe export services. | Privacy-aware projections cover session/phase/source/work/model/latency/adaptation/action/integrity/replay state; unfinished and defective evidence degrades structurally without mutation; replacement replay locates the first bounded divergence; safe export is public-only, non-overwriting, and source-preserving; CLI strict exits are opt-in. |
+| P7-013 | todo | Publish six clean-install reference projects, finish packaging/docs, and remove only replaced Phase 7 legacy shells. | Public-only projects, matrix/wheel/import checks, truthful guides, C-003 Phase 7 release conditions, and preserved Phase 8 evidence. |
+| P7-014 | todo | Close Phase 7 against every user journey and normative exit gate. | Gate-to-test/evidence matrix with clean base, optional live, model research, external plugin, non-model, and simulated-action proofs. |
 | C-001 | done | Audit the source tree against the Phase 6–8 roadmap and establish a protected extraction boundary. | Target packages have no imports from legacy applications; model/outcome/action, integration/hardware, and validation/analysis evidence is explicitly protected in the Phase 0 inventory. |
 | C-002 | done | Remove the first isolated legacy batch and its recipe-shaped tests. | Deleted compatibility facades, every obsolete recipe family, launchers, the legacy Makefile, and recipe-only tests; mixed scientific tests now exercise contracts without pipeline or worker imports. |
 | C-003 | in_progress | Extract the remaining Phase 6–8 evidence and delete its application shells immediately after replacement tests exist. | Root orchestration, tasks/workers/configs, dashboards, and legacy analysis shells remain staged; no compatibility layer is authorized. |
@@ -634,12 +789,35 @@ Later phase detail belongs in `MIGRATION.md` until it becomes actionable.
 | R-012 | resolved | An in-progress Phase 3 outcome/checkpoint edit temporarily called a missing `_finalize_pending_predictions()` method and blocked integrated verification. | The method and full outcome lifecycle now pass the 27-test Phase 3 module and integrated 330-test full suite. |
 | R-013 | resolved | Two engine authorities could have diverged. The temporary Phase 3 implementation, `EngineComponents`, aliases, and API-shaped tests are deleted; replay now reconstructs the locked graph. | Keep Phase 6 extensions inside `PlanGraphExecutor`/`ExecutionEngine`; never restore a parallel classifier engine. |
 | R-014 | monitoring | `runtime/graph.py` remains a large semantic coordinator and could become difficult to change safely as integrations grow. | Keep `PlanGraphExecutor` as the sole ordering authority. Extract cohesive, stateless policies or state-owning coordinators behind typed records only when a change supplies focused acceptance tests; do not add another loop, scheduler, or classifier-shaped facade merely to reduce line count. |
+| R-015 | monitoring | A convenient draft, template, YAML, explanation, project, or discovery layer could become a second specification or graph authority. | P7-002 exposes one lowerer, rejects arbitrary routes/site bindings, sends only canonical specs to the compiler, and enforces `ExecutionPlan` at runtime construction. P7-003 templates and the P7-004/P7-005 builder/YAML clients dispatch only bounded internal profiles through that service. P7-006 explanation/diff is read-only. P7-007 makes the project a non-executable index, delegates compile unchanged, and verifies a plan/lock pair in a service that reads no mutable authoring before session creation. P7-008 produces a sidecar proposal plus an ordinary `DeploymentSpec`; only explicit selection sends that spec with unchanged portable inputs to the compiler. |
+| R-016 | monitoring | Provenance embedded in canonical values could make equivalent authoring surfaces produce different scientific hashes or misattribute compiler defaults. | P7-002 proves source-map changes leave canonical hashes unchanged and maps existing diagnostics without rewriting them. P7-004/P7-005 golden fixtures prove equivalent Python/YAML sources yield identical canonical and expansion hashes. P7-006 joins compiler fields only as source-free `compiler_derived` projections and classifies Python/YAML provenance-only changes as presentational. |
+| R-017 | open | Rehearsal could be misrepresented as execution of the hardware-bound plan or silently authorize a physical action. | Compile an explicit simulation deployment into its own lock, compare unchanged portable intent and material differences, and accept simulation-only authorization providers. |
+| R-018 | open | Phase 7 product work could absorb Phase 8 validation depth and delay a coherent usable workflow. | Gate Phase 7 on definition/preflight/integrity/replay/comparison exposure and complete journeys; retain scientific evaluation, benchmarks, fault qualification, reporting depth, and alpha hardening in Phase 8. |
 
-No migration blocker is currently recorded. Phases 2 through 6 now provide the
+No migration blocker is currently recorded. Phases 2 through 6 provide the
 typed foundations, one execution engine, evidence/replay boundary, compiler,
-and complete model-system semantics. Phase 7 is ready to expose those
-authorities through the new CLI, minimal public packaging, and selected
-first-party integrations without reopening the retired compatibility paths.
+and complete model-system semantics. Phase 7 is active. P7-001 fixes the public
+authoring/service and dependency boundaries; P7-002 adds the bounded recording
+lowerer, deployment requirements, typed non-hashing provenance, and diagnostic
+source join. P7-003 adds eight exact-version non-executable templates with
+fixture-locked expansion identities. P7-004 and P7-005 add equivalent typed
+Python and restricted-YAML clients, deterministic export/project artifacts, and
+cross-surface golden identities over that same service. P7-006 supplies
+read-only joined views, four-impact diffs, and source-aware repair proposals
+without adding an authority. P7-007 supplies separated project artifacts,
+shared base simulation services, immutable plan/lock execution, evidence
+inspection/replay, and the first public CLI slice. P7-008 adds canonical
+capability reports, exact matching, immutable proposal artifacts, and explicit
+proposal compilation without changing suite authority. P7-009 adds exact
+capability preflight and fault-evidenced, simulation-only rehearsal. P7-010's
+dependency-lazy LSL implementation passes simulated acceptance, while its real
+EEG observe-only support gate remains explicitly open. P7-011 adds deterministic
+model transport, a dependency-backed adapter proof, and counterfactual replay
+through separately compiled plans without adding a framework authority. P7-012
+adds privacy-aware evidence projections, nonfatal replay/replacement comparison,
+public-only non-overwriting export, and explicit guarantees that observer
+failure cannot mutate evidence or signal recording, processing, or training
+processes. P7-013 is next.
 
 ## 9. Completion log
 
@@ -687,6 +865,18 @@ first-party integrations without reopening the retired compatibility paths.
 | 2026-07-27 | P6-007 deployment-owned action authorization completed | Policies emit unprivileged requests; exact deployment providers and grants bound capabilities, parameters, timing, expiry, and failure behavior; the engine alone creates actuator-ready commands. Observe-only defaults, pending resolution, expiry, cancellation, simulated receipts, lineage-forgery rejection, and fail-closed physical replay pass. Eight dedicated tests and the 265-test Python 3.14.4 suite pass with five skips; compile-all, diff checks, and clean-wheel packaging pass. P6-008 is next. |
 | 2026-07-27 | P6-008 representational generality completed | Four modality-neutral suites prove regular/irregular dense, sparse plus dense, and multi-rate streams through compile, run, verified evidence, and equivalent replay. Estimator and tensor-callable fixtures prove the external framework boundary without adding a framework runtime; dependency-backed packages remain Phase 7. Three dedicated tests, 62 focused tests, and the 268-test Python 3.14.4 suite pass with five skips; compile-all, diff checks, and clean-wheel packaging pass. P6-009 is next. |
 | 2026-07-27 | Phase 6 closed | The five independent closure blockers are resolved: digest-verified artifact/state admission, parameterized preprocessing attestations, terminal required-output accounting, immutable provider parameter evaluation, and alias-safe state rollback. Every model now requires a manifest binding; v1 predictions, classifier built-ins, suite-wide role knobs, target metadata registries/local bundles, `eegle.ml` discovery, and framework extras are removed from the v1 package. Retained Phase 5 graphs use canonical Phase 6 model semantics. All 122 focused closure tests and the 274-test Python 3.14.4 suite pass with five skips; compile-all, diff checks, source boundaries, and clean-wheel inspection pass. Phase 7 is ready. |
+| 2026-07-27 | Phase 7 rechartered and started | The accepted handoff expands Phase 7 to experiment authoring and operations while retaining canonical specs, the compiler, and the locked engine as sole authorities. P7-000 adds the reviewed design, complete journeys, provenance sidecar, rehearsal/live lock distinction, D-033/D-034, detailed tasks, risks, and amended exit gate. P7-001 is next; no Phase 7 implementation is claimed yet. |
+| 2026-07-27 | P7-001 public and authoring boundary completed | D-014/D-034 fix stable-alpha, provisional, internal, and YAML-extra boundaries. `eegle.authoring` packages versioned non-executable draft/provenance contracts; `eegle.operations` packages shared structured diagnostic and exit semantics. A machine inventory and six dedicated tests prevent authority, dependency, and source-map drift. Twenty-seven focused tests, compile-all, and diff checks pass. The 280-test full run has 274 passes, five skips, and one environmental clean-wheel setup failure because the temporary interpreter lacks its pinned build backend; the packaging gate is unchanged. P7-002 is next. |
+| 2026-07-28 | P7-002 draft lowering and provenance completed | Typed incomplete drafts now deterministically lower bounded recording intent into canonical protocol/suite values plus portable source, clock, and storage requirements. A digest-bound sidecar distinguishes explicit/default origins and maps canonical diagnostics to source; unresolved or out-of-profile intent fails, a resolved deployment compiles normally, and runtime construction rejects non-plans. Eight dedicated and 51 focused tests pass. The 288-test aggregate run has 282 passes, five skips, and one missing-build-backend failure; the expanded clean-wheel test passed independently while a pre-existing local pinned backend payload remained available. P7-003 is next. |
+| 2026-07-28 | P7-003 versioned templates completed | An immutable exact-version catalog supplies eight bounded recording, observation, comparison, calibration/validation, adaptation, and simulated-action profiles. Manifest-locked draft selections, typed expansion locks, parameter/default provenance, declared synthetic digests, same-version replacement rejection, and explicit re-expansion preserve old locked output. Eight dedicated and 39 focused tests pass; all eight fixtures compile through the existing compiler. The 296-test aggregate run has 290 passes, five environment-dependent skips, and the unchanged clean-wheel build-backend failure because this temporary interpreter cannot import `setuptools.build_meta`; compile-all passes. P7-004 is next. |
+| 2026-07-28 | P7-004/P7-005 Python and YAML authoring completed | One persistent typed builder and one optional restricted-YAML adapter lower through the same exact-template/draft service. Shared golden recording/comparison fixtures prove identical canonical specs, requirements, and expansion identities; canonical/project export stays non-executable; compilation cannot bypass normal rejection; and YAML retains precise locations while rejecting unsafe constructs and resource excess. Ten dedicated and 53 focused tests pass. The 306-test aggregate run has 300 passes, five environment-dependent skips, and the unchanged clean-wheel build-backend failure because the temporary Python 3.14 interpreter cannot import `setuptools.build_meta`. P7-006 is next. |
+| 2026-07-28 | P7-006 explanation and guided diagnostics completed | Six complete views explain all eight reference templates and optionally join only a matching existing locked-plan projection. Four-impact experiment diffs distinguish provenance-only presentation from scientific, operational, and replay-affecting changes. Common authoring/compiler failures preserve their original identity while gaining likely cause, closest source, documentation, and inspectable `applied: false` proposals. Six dedicated and 60 focused tests pass; compile-all and diff checks pass. The 313-test aggregate run has 307 passes, five environment-dependent skips, and the unchanged clean-wheel build-backend failure because the temporary Python 3.14 interpreter cannot import `setuptools.build_meta`. P7-007 is next. |
+| 2026-07-28 | P7-007 project scaffolding and public CLI completed | A path-safe project index separates mutable authoring/deployment artifacts, generated canonical values, content-addressed immutable plan/lock/explanation artifacts, and sessions. Shared Python services and the installed `eegle`/module adapter complete create, compile, explain, diff, graph, base rehearsal, locked run, integrity inspection, and equivalent bundle replay with versioned machine envelopes and fixed exits. Removing mutable authoring after compile does not affect execution; a tampered lock fails before session creation. Six dedicated and 79 focused tests pass. The 320-test aggregate has 314 passes, five skips, and only the known Python 3.14 build-backend setup failure; an independently built 115-file clean wheel completes all nine commands and excludes the historical CLI. P7-008 is next. |
+| 2026-07-28 | P7-008 discovery and deployment generation completed | `eegle.detection_report.v1` deterministically records exact installed plugin descriptors, installed or explicitly supplied model manifests, and typed source/stream/channel/rate/unit/clock/storage/placement/endpoint/authorization-provider observations with provenance and hash verification. `eegle.deployment_proposal.v1` reuses compiler contract compatibility, rejects zero/ambiguous matches precisely, records automatic versus explicit decisions, admits only secret references, and never turns provider presence into a grant. Content-addressed project reports/specs/provenance remain separate from simulation; proposal compilation is explicit and rejoins the unchanged suite through the normal compiler. Seven dedicated and 90 focused tests pass. The 327-test aggregate has 321 passes, five skips, and only the known Python 3.14 build-backend setup failure. An independently built 127-file clean wheel includes discovery/console metadata, excludes historical `eegle.cli`, and runs detection plus the project path outside the repository. P7-009 is next. |
+| 2026-07-28 | P7-009 capability preflight and rehearsal completed | Canonical preflight binds the exact plan, lock, deployment, optional detection report, plugin/artifact/source/channel/unit/rate/clock/storage/endpoint/model/provider/gate/safe-state checks, and persists a hash-verified report. Simulation-only rehearsal rejects physical authority, executes through the normal engine/bundle path, and records all eight initial fault-disposition outcomes in semantic evidence plus a report that cannot impersonate a live plan. The simulated closed-loop template passes with independently supplied model plugins. |
+| 2026-07-28 | P7-010 automated LSL implementation completed; real gate open | The optional `live` extra and dependency-lazy LSL subpackage provide six source/outlet descriptors, exact discovery and selectors, dense/sparse/metadata conversion, explicit clock sync, bounded reconnect, and sequence-gap loss evidence. Exact live-capability preflight and simulation/live portable-suite separation pass, selector drift fails closed, and base imports remain pylsl-free. The complete 334-test repository suite passes with ten conditional skips, and the clean wheel completes dependency-absent LSL detection plus the base project journey. Support truthfully remains `simulated_validated`; `docs/LSL_INTEGRATION.md` records the unperformed real EEG observe-only acceptance, so P7-010 remains in progress. |
+| 2026-07-28 | P7-011 model packaging and framework integration completed | Deterministic manifest/artifact/state packaging, synthetic vectors, pre-materialization integrity rejection, content-addressed safe extraction, descriptor conformance, and CLI pack/check are public model services. A separately built wheel declares real scikit-learn/joblib dependencies, loads only a runtime-verified estimator, and returns `ModelResult`; separately compiled compatible model plans replay the original capture through the same engine and expose counterfactual divergence. Four dedicated tests, a 26-test focused run, the clean-wheel journey, and all 339 repository tests pass with five conditional skips; compile-all, Ruff, and diff checks pass. P7-012 is next. |
+| 2026-07-28 | P7-012 session, evidence, comparison, and safe export experience completed | Public privacy-aware projections cover session/phase/source/work/model/latency/adaptation/action/integrity/replay evidence. Replay and replacement failure degrade structurally, strict exits are opt-in, unfinished writers are observed without recovery, and public-only export neither overwrites nor mutates source data. Three dedicated tests plus actual replacement replay, a 69-test Phase 7 run, and all 342 repository tests pass with five conditional skips; compile-all, focused Ruff, and diff checks pass. P7-013 is next. |
 
 ## 10. Instructions for future Codex work
 

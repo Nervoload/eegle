@@ -1,0 +1,77 @@
+{
+  "schema": "eegle.migration.phase7_template_fixtures.v1",
+  "deployment_fixture": "phase5_event_window_actions/deployment.json",
+  "fixtures": [
+    {
+      "fixture_id": "phase7.fixture.continuous_recording.v1",
+      "template_id": "eegle.template.continuous_recording",
+      "version": "1.0.0",
+      "draft_id": "fixture.continuous_recording",
+      "parameters": {}
+    },
+    {
+      "fixture_id": "phase7.fixture.eeg_events_recording.v1",
+      "template_id": "eegle.template.eeg_events_recording",
+      "version": "1.0.0",
+      "draft_id": "fixture.eeg_events_recording",
+      "parameters": {}
+    },
+    {
+      "fixture_id": "phase7.fixture.continuous_observer.v1",
+      "template_id": "eegle.template.continuous_observer",
+      "version": "1.0.0",
+      "draft_id": "fixture.continuous_observer",
+      "parameters": {
+        "model_plugin_id": "fixture.phase5.mean_threshold",
+        "model_manifest_digest": "sha256:a4a26460063db4263a77414f9730dfa5f8e4a17685264f524d30edf363620f37"
+      }
+    },
+    {
+      "fixture_id": "phase7.fixture.event_locked_model.v1",
+      "template_id": "eegle.template.event_locked_model",
+      "version": "1.0.0",
+      "draft_id": "fixture.event_locked_model",
+      "parameters": {
+        "model_plugin_id": "fixture.phase5.mean_threshold",
+        "model_manifest_digest": "sha256:a4a26460063db4263a77414f9730dfa5f8e4a17685264f524d30edf363620f37"
+      }
+    },
+    {
+      "fixture_id": "phase7.fixture.primary_shadow_comparison.v1",
+      "template_id": "eegle.template.primary_shadow_comparison",
+      "version": "1.0.0",
+      "draft_id": "fixture.primary_shadow_comparison",
+      "parameters": {
+        "model_plugin_id": "fixture.phase5.mean_threshold",
+        "model_manifest_digest": "sha256:a4a26460063db4263a77414f9730dfa5f8e4a17685264f524d30edf363620f37"
+      }
+    },
+    {
+      "fixture_id": "phase7.fixture.calibration_validation.v1",
+      "template_id": "eegle.template.calibration_validation",
+      "version": "1.0.0",
+      "draft_id": "fixture.calibration_validation",
+      "parameters": {
+        "model_plugin_id": "fixture.phase5.mean_threshold",
+        "model_manifest_digest": "sha256:a4a26460063db4263a77414f9730dfa5f8e4a17685264f524d30edf363620f37"
+      }
+    },
+    {
+      "fixture_id": "phase7.fixture.delayed_outcome_adaptation.v1",
+      "template_id": "eegle.template.delayed_outcome_adaptation",
+      "version": "1.0.0",
+      "draft_id": "fixture.delayed_outcome_adaptation",
+      "parameters": {}
+    },
+    {
+      "fixture_id": "phase7.fixture.simulated_closed_loop.v1",
+      "template_id": "eegle.template.simulated_closed_loop",
+      "version": "1.0.0",
+      "draft_id": "fixture.simulated_closed_loop",
+      "parameters": {
+        "model_plugin_id": "fixture.phase5.mean_threshold",
+        "model_manifest_digest": "sha256:a4a26460063db4263a77414f9730dfa5f8e4a17685264f524d30edf363620f37"
+      }
+    }
+  ]
+}

@@ -35,6 +35,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+live = [
+  "pylsl>=1.18,<2",
+]
 runtime = [
   "pylsl>=1.18,<2",
   "psychopy>=2026.1,<2027",
@@ -49,6 +52,9 @@ docs = [
   "mkdocs>=1.6,<2",
   "mkdocstrings[python]>=0.26,<1",
 ]
+yaml = [
+  "ruamel.yaml>=0.18.10,<0.19",
+]
 dev = [
   "build>=1.2,<2",
   "joblib>=1.5,<2",
@@ -62,6 +68,7 @@ all = [
   "pandas>=2.3,<3",
   "pylsl>=1.18,<2",
   "psychopy>=2026.1,<2027",
+  "ruamel.yaml>=0.18.10,<0.19",
   "scipy>=1.14,<2",
   "specparam>=2.0.0rc6,<3",
 ]
@@ -72,12 +79,21 @@ Documentation = "https://github.com/johnsurette/closedloop/tree/main/docs"
 Issues = "https://github.com/johnsurette/closedloop/issues"
 Source = "https://github.com/johnsurette/closedloop"
 
+[project.scripts]
+eegle = "eegle.__main__:main"
+
+[project.entry-points."eegle.plugins"]
+lsl = "eegle.integrations.lsl:lsl_plugin_descriptors"
+
 [tool.setuptools.packages.find]
 include = [
   "eegle",
   "eegle.actions*",
+  "eegle.authoring*",
   "eegle.compiler*",
+  "eegle.integrations*",
   "eegle.models*",
+  "eegle.operations*",
   "eegle.plugins*",
   "eegle.processing*",
   "eegle.recording*",

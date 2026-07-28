@@ -795,7 +795,7 @@ class PackageBoundaryTests(unittest.TestCase):
 import importlib.abc
 import sys
 
-blocked = {"pylsl", "mne", "mne_lsl", "psychopy", "sklearn", "torch", "braindecode", "moabb", "matplotlib", "pandas", "pyriemann", "onnxruntime", "pyglet", "specparam"}
+blocked = {"pylsl", "mne", "mne_lsl", "psychopy", "sklearn", "joblib", "torch", "braindecode", "moabb", "matplotlib", "pandas", "pyriemann", "onnxruntime", "pyglet", "specparam", "ruamel"}
 class Blocker(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         if fullname.split(".", 1)[0] in blocked:
@@ -805,11 +805,16 @@ sys.meta_path.insert(0, Blocker())
 
 import eegle
 import eegle.actions
+import eegle.authoring
 import eegle.compiler
 import eegle.models
+import eegle.models.packaging
+import eegle.operations
+import eegle.operations.cli
 import eegle.plugins
 import eegle.processing
 import eegle.recording
+import eegle.replay
 import eegle.runtime
 import eegle.specs
 import eegle.streams

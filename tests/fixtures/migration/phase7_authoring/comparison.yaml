@@ -1,0 +1,15 @@
+schema: eegle.template_authoring.v1
+draft_id: golden.comparison
+revision: 1
+template:
+  template_id: eegle.template.primary_shadow_comparison
+  version: 1.0.0
+  parameters:
+    unit: uV
+    channel_count: 2
+    sample_rate_hz: 100.0
+    event_kind: stimulus.target
+    model_plugin_id: fixture.phase5.mean_threshold
+    model_manifest_digest: sha256:a4a26460063db4263a77414f9730dfa5f8e4a17685264f524d30edf363620f37
+    threshold: 0.25
+    shadow_threshold: 0.5

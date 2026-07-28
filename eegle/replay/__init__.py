@@ -2,6 +2,7 @@
 
 from eegle.replay.bundle import (
     BundleReplayRunner,
+    ModelReplacementReplay,
     RecordedExecution,
     RecordedRun,
     load_recorded_execution,
@@ -26,6 +27,7 @@ __all__ = [
     "Divergence",
     "EquivalencePolicy",
     "EquivalenceReport",
+    "ModelReplacementReplay",
     "ReplayExecution",
     "ReplayActionSafetyError",
     "ReplayMode",

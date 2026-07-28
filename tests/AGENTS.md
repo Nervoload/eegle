@@ -27,8 +27,8 @@ broader discovery when touching shared orchestration.
 - `test_phase5_remaining_semantics.py`: compiled triggers, mid-phase checkpoint
   restoration, timeout/acceptance decisions, outcome/action permissions, and
   the final durable Phase 5 suites using canonical Phase 6 model bindings.
-- `test_phase5_packaging.py`: clean-wheel root-module exclusions and the inert
-  dependency-free `python -m eegle` boundary before the Phase 7 CLI exists.
+- `test_phase5_packaging.py`: clean-wheel root-module exclusions, console entry
+  point metadata, and the base first-simulation CLI journey.
 - `test_phase6_model_authority.py`: modality-neutral model contracts, path-free
   model manifests, canonical hashes, and semantic tamper rejection.
 - `test_phase6_compiler_bindings.py`: suite model uses, deployment artifact
@@ -52,6 +52,45 @@ broader discovery when touching shared orchestration.
   EEG-like, irregular slow-signal, sparse spike plus dense LFP, and multi-rate
   streams; contract rejection of false modality claims; and dependency-free
   estimator/tensor adapter boundaries without framework support overclaims.
+- `test_phase7_public_boundaries.py`: P7-001 public/provisional/internal module
+  inventory, authoring/provenance envelope schemas, shared operation-error and
+  exit-code contracts, YAML distribution decision, and import/package boundary.
+- `test_phase7_draft_lowering.py`: P7-002 incomplete-draft rejection,
+  deterministic recording lowering, deployment requirements, non-hashing
+  provenance, canonical diagnostic source mapping, compiler handoff, and the
+  runtime plan-only boundary.
+- `test_phase7_templates.py`: P7-003 exact-version catalog metadata, eight
+  deterministic synthetic expansions, expansion locks, explicit/default
+  provenance, normal compiler handoff, manifest tamper rejection, and
+  non-mutating explicit template upgrades.
+- `test_phase7_authoring_surfaces.py`: P7-004/P7-005 persistent typed builders,
+  canonical/project export, compiler/runtime boundaries, shared Python/YAML
+  golden hashes, YAML source locations, unsafe-subset rejection, and parser
+  resource limits.
+- `test_phase7_explanations.py`: P7-006 complete authoring/locked-plan views,
+  provenance-safe compiler joins, scientific/operational/presentational/replay
+  diff impacts, common guided failures, and non-mutating repair proposals.
+- `test_phase7_project_cli.py`: P7-007 separated project artifacts,
+  content-addressed locks, shared Python/CLI services, stable machine exits,
+  plan-only execution, evidence inspection, and base bundle replay.
+- `test_phase7_discovery_deployment.py`: P7-008 canonical capability reports,
+  plugin/site discovery, compiler-compatible matching, exact ambiguity,
+  secret references, non-inferred authorization, immutable proposals, and
+  explicit deployment selection.
+- `test_phase7_preflight_rehearsal.py`: P7-009 exact lock/deployment preflight,
+  capability checks, hash-verified reports, fail-closed action rehearsal, all
+  eight fault outcomes in normal bundle evidence, and the closed-loop template.
+- `test_phase7_lsl_integration.py`: P7-010 dependency-lazy LSL descriptors,
+  exact discovery/selectors, dense/sparse/metadata conversion, clock sync,
+  reconnect, sequence-gap loss, outlets, and simulation/live plan separation.
+- `test_phase7_model_packaging.py`: P7-011 deterministic manifest/artifact/state
+  packages, synthetic vectors, pre-materialization tamper rejection, CLI
+  pack/check, a real independently installed scikit-learn adapter wheel, and
+  same-engine counterfactual model replacement replay.
+- `test_phase7_session_experience.py`: P7-012 privacy-aware evidence
+  projections, read-only unfinished-writer handling, graceful replay failure,
+  opt-in strict exits, public-only non-overwriting export, and byte-for-byte
+  source preservation.
 - `test_source_boundaries.py`: target packages may not import legacy
   application, recipe, worker, task, or analysis modules.
 - `eegle.plugins.testing`: reusable behavioral assertions for independently
