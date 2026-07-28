@@ -1,4 +1,4 @@
-"""Optional restricted YAML adapter for exact-template authoring sources."""
+"""Optional restricted YAML adapters for bounded authoring sources."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from typing import Any
 from eegle._validation import freeze_json, thaw_json
 from eegle.authoring.builders import AuthoredExperiment, ExperimentBuilder
 from eegle.authoring.contracts import SourceKind, SourceLocation
+from eegle.authoring.design import ComposedExperiment, ExperimentDesign
+from eegle.authoring.drafts import DraftLoweringError
 from eegle.authoring.provenance import DraftSourceMap
 from eegle.authoring.schemas import validate_template_authoring_payload
 from eegle.specs import SchemaValidationError
@@ -121,6 +123,79 @@ def read_yaml_experiment(
             source=SourceLocation(SourceKind.YAML, str(source), line=1, column=1),
         )
     return load_yaml_experiment(
+        source.read_text(encoding="utf-8"),
+        locator=str(source),
+        limits=effective_limits,
+    )
+
+
+def parse_yaml_design(
+    text: str,
+    *,
+    locator: str = "<string>",
+    limits: RestrictedYamlLimits | None = None,
+) -> ExperimentDesign:
+    """Parse one non-executable compositional design with source locations."""
+
+    payload, source_map = _load_explicit_yaml(
+        text,
+        locator=locator,
+        limits=limits or RestrictedYamlLimits(),
+    )
+    try:
+        design = ExperimentDesign.from_payload(payload, source_map=source_map)
+    except SchemaValidationError as exc:
+        path = _schema_path_to_pointer(exc.path)
+        raise RestrictedYamlError(
+            "yaml.design_schema",
+            str(exc),
+            source=source_map.source_for(path),
+            path=path,
+        ) from exc
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RestrictedYamlError(
+            "yaml.design",
+            str(exc),
+            source=source_map.fallback,
+        ) from exc
+    try:
+        design.build()
+    except DraftLoweringError as exc:
+        issue = exc.issues[0]
+        raise RestrictedYamlError(
+            issue.code,
+            issue.message,
+            source=issue.source,
+            path=issue.path,
+        ) from exc
+    return design
+
+
+def load_yaml_design(
+    text: str,
+    *,
+    locator: str = "<string>",
+    limits: RestrictedYamlLimits | None = None,
+) -> ComposedExperiment:
+    """Return the same canonical result as the typed compositional API."""
+
+    return parse_yaml_design(text, locator=locator, limits=limits).build()
+
+
+def read_yaml_design(
+    path: str | Path,
+    *,
+    limits: RestrictedYamlLimits | None = None,
+) -> ComposedExperiment:
+    source = Path(path)
+    effective_limits = limits or RestrictedYamlLimits()
+    if source.stat().st_size > effective_limits.max_bytes:
+        raise RestrictedYamlError(
+            "yaml.limit_bytes",
+            f"input exceeds {effective_limits.max_bytes} UTF-8 bytes",
+            source=SourceLocation(SourceKind.YAML, str(source), line=1, column=1),
+        )
+    return load_yaml_design(
         source.read_text(encoding="utf-8"),
         locator=str(source),
         limits=effective_limits,

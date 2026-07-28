@@ -1,6 +1,6 @@
 # Phase 7 Public and Authoring Boundaries
 
-**Status:** P7-001 through P7-009 and P7-011 implemented; P7-010 simulated boundary implemented with real acceptance pending
+**Status:** P7-001 through P7-009, P7-011/P7-012, and the P7-012A compositional core implemented; P7-010 real acceptance and P7-013 publication remain pending
 **Date:** 2026-07-28
 **Architecture authority:** [EEGLE.md](EEGLE.md)
 **Phase design:** [PHASE7_AUTHORING_OPERATIONS.md](PHASE7_AUTHORING_OPERATIONS.md)
@@ -125,12 +125,38 @@ locked engine. The `model` CLI family delegates directly to those owners.
 
 ## 3. Authoring payload contracts
 
-The provisional `eegle.authoring` package defines eight versioned payload
-contracts: draft, provenance, deployment requirements, template definition,
-expansion lock, concise template authoring, authored export, and project
-manifest. JSON Schema 2020-12 validators guard external source/envelope
-boundaries; immutable typed values validate definitions, locks, and generated
-exports.
+The provisional `eegle.authoring` package defines versioned payload contracts
+for draft, provenance, deployment requirements, exact templates, composed
+designs, generated exports, and project manifests. JSON Schema 2020-12
+validators guard external source/envelope boundaries; immutable typed values
+validate definitions, locks, and generated exports.
+
+### `eegle.experiment_design.v1`
+
+P7-012A adds the missing bounded middle layer between template parameters and
+direct canonical graph construction. `ExperimentDesign` contains immutable,
+stable named declarations for study intent, channel-aware dense signals,
+events, processing chains, continuous/event windows, quality gates,
+independently packaged models, comparison groups, outcomes, adaptation,
+calibration artifacts, policies, structured actions, phases, recording, and
+acceptance. It contains no component list, route list, runtime factory,
+deployment selector, permission grant, or executable code.
+
+`lower_experiment_design()` validates named references and deterministically
+derives the ordinary `ProtocolSpec`, `SuiteSpec`, portable deployment
+requirements, and provenance sidecar. `ExperimentDesign.to_draft()` marks the
+same design schema and dispatches through `lower_experiment_draft()`, so Python,
+restricted YAML, and draft clients share one lowering result. Time-based
+continuous windows lower to samples only when the declared input rate gives an
+exact positive whole-sample count. Missing or cyclic references fail before
+canonical lowering.
+
+`eegle.composed_experiment.v1` and
+`eegle.composed_authoring_project.v1` keep the normalized design, canonical
+outputs, requirements, and provenance separate. Compilation still delegates
+unchanged canonical values to `compile_suite()`. The project writer does not
+bind deployment resources or execute. Existing template `1.0.0` revisions are
+unchanged; future compositional preset revisions must be added alongside them.
 
 ### `eegle.experiment_draft.v1`
 
@@ -213,11 +239,11 @@ template-package discovery is intentionally not a P7-003 gate.
 
 ### P7-004/P7-005 source and export payloads
 
-`eegle.template_authoring.v1` is the only accepted restricted-YAML document
-shape: schema ID, draft ID, optional revision, and one exact template selection
-with finite JSON parameters. It maps directly to the same builder source
-payload used by typed Python, rather than defining a YAML-specific experiment
-language.
+`eegle.template_authoring.v1` remains the accepted exact-template YAML shape:
+schema ID, draft ID, optional revision, and one exact template selection with
+finite JSON parameters. P7-012A additionally admits the normalized
+`eegle.experiment_design.v1` shape through a separate typed entry point. Both
+use the same restricted parser and neither defines executable YAML behavior.
 
 `eegle.authored_experiment.v1` is the deterministic canonical export envelope
 for that source plus the exact template definition, expansion lock, canonical

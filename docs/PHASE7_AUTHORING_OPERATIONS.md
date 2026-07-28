@@ -51,7 +51,7 @@ The Phase 7 flow is:
 ```text
 Templates / typed Python / restricted YAML / project CLI
                          ↓
-                 ExperimentDraft
+        ExperimentDraft or named ExperimentDesign
                          +
           authoring provenance/source-map sidecar
                          ↓
@@ -73,6 +73,7 @@ Templates / typed Python / restricted YAML / project CLI
 | Authority | Owns | Must not own |
 |---|---|---|
 | `ExperimentDraft` | Incomplete researcher intent in the bounded EEGle domain vocabulary | Executable components, graph routes as a user programming language, runtime behavior, authorization |
+| `ExperimentDesign` | Complete immutable named composition of signals, processing, windows, models, phases, policies, and other bounded scientific concepts | Runtime objects, arbitrary code/graph nodes, deployment bindings, authorization, compiler semantics |
 | Authoring provenance sidecar | Source location, template/default origin, confirmation state, and mapping to generated canonical paths | Scientific values, canonical hashes, compiler defaults, runtime evidence |
 | Template | Versioned parameters, bounded scientific defaults, requirements, and deterministic expansion | Runtime construction, plugin installation, silent upgrade of a locked project |
 | Python/YAML/CLI surface | Creation and editing of a draft through one lowering service | Independent role, outcome, action, or execution semantics |
@@ -631,12 +632,82 @@ refusal. The 69-test Phase 7/public/source-boundary run passes with five
 environment-conditioned skips. The full Python 3.12 suite passes all 342 tests
 with those same five skips; compile-all, focused Ruff, and diff checks pass.
 
+### P7-012A — Bounded compositional experiment authoring
+
+**Status:** in progress — named composition, shared lowering, Python/YAML,
+distinct-model, structured-action, and explanation slices implemented;
+compositional template revisions and CLI project integration remain P7-013
+work
+
+The post-P7-012 review correctly identified a template cliff: the eight exact
+profiles make supported journeys concise, but structural changes still forced
+researchers into canonical component and route declarations. P7-012A fills
+that missing middle layer without replacing the existing draft, exact template
+revisions, canonical specifications, compiler, engine, evidence, or replay
+authorities.
+
+The provisional `ExperimentDesign` vocabulary now supplies immutable named
+declarations for:
+
+- study intent and acceptance;
+- dense signals with stable channel order and per-channel units;
+- sparse event streams;
+- ordered installed-plugin processing chains;
+- exact time-based continuous and event windows;
+- quality gates;
+- independently packaged models and explicit comparison groups;
+- outcomes, adaptation, and calibration artifacts;
+- installed policies and structured action capabilities;
+- phases and recording.
+
+Relationships use names such as `signal.eeg`, `processing.clean`,
+`window.prestimulus`, and `model.primary`, never canonical list indexes. The
+single `lower_experiment_design()` service validates names, detects missing or
+cyclic references, and derives ordinary components, routes, phases, model uses,
+outcome/adaptation records, action requirements, canonical specs, and a
+source-bound provenance sidecar. `ExperimentDesign.to_draft()` enters the same
+dispatch through `lower_experiment_draft()`; Python and restricted-YAML values
+therefore converge on identical canonical hashes while keeping source origins
+separate.
+
+The model helper is contract-oriented: every model declares its own plugin,
+manifest, role, input bindings, and configuration. Acceptance compiles two
+different manifest digests on the same admitted event window. The new bounded
+`eegle.actions.structured_action` policy maps named nested prediction values
+into finite structured request parameters. A three-dimensional simulated
+velocity design compiles while an absent deployment provider/grant remains
+observe-only; the policy cannot grant authority.
+
+`explain_composed_experiment()` reuses the six public scientific, dataflow,
+causality, comparison, action, and provenance views. Composed authoring can be
+written as separate normalized design, protocol, suite, requirements, and
+provenance files without overwriting existing targets.
+
+Remaining scope is deliberately bounded:
+
+- preserve every exact template `1.0.0` expansion unchanged, then add new
+  compositional preset revisions rather than silently replacing them;
+- make CLI/project scaffolding accept a normalized design source;
+- add clean-install compositional reference projects and richer text rendering
+  in P7-013.
+
+Acceptance implemented in `tests.test_phase7_compositional_authoring` covers
+named channel/window lowering, shared design/draft lowering, order-independent
+canonical output, early missing-reference failure, distinct-model compilation,
+structured vector parameters, observe-only authorization, composed
+explanations, and optional restricted-YAML equivalence.
+Eleven dedicated tests and the complete 353-test Python 3.12 repository suite pass
+with six explicitly environment-conditioned skips; compile-all, focused Ruff,
+and diff checks pass.
+
 ### P7-013 — Reference projects, packaging, documentation, and cleanup
 
 **Status:** todo
 
 Publish clean-install projects for recording, event-locked observation, model
 comparison, adaptation, simulated closed-loop action, and LSL observe-only.
+The recording, observation, comparison, and structured-action projects use the
+new compositional vocabulary rather than canonical graph declarations.
 Each contains authoring source, canonical outputs, simulation deployment,
 commands, expected explanation/evidence, replay, and relevant comparison.
 
@@ -667,7 +738,9 @@ evidence. Do not close the phase merely because individual commands exist.
 2. **Simulation product:** P7-003 through P7-007 and the base part of P7-012.
 3. **Live EEG:** P7-008 through P7-010.
 4. **Model research:** P7-011 and the replacement/comparison part of P7-012.
-5. **Proof and cleanup:** P7-013 and P7-014.
+5. **General authoring:** P7-012A after the operational review, preserving all
+   earlier exact revisions.
+6. **Proof and cleanup:** P7-013 and P7-014.
 
 The first implementation slice must establish the authoring-to-canonical
 boundary before expanding the command surface.

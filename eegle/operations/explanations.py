@@ -12,6 +12,7 @@ from eegle.authoring import (
     AuthoredExperiment,
     AuthoringOrigin,
     CanonicalArtifact,
+    ComposedExperiment,
     DraftLoweringError,
     ScientificMateriality,
     SourceLocation,
@@ -288,6 +289,51 @@ def explain_authored_experiment(
             "version": authored.expansion.template.version,
             "manifest_digest": authored.expansion.template.manifest_digest,
             "expansion_digest": authored.expansion.expansion_digest,
+        },
+        canonical_hashes={
+            "protocol": authored.protocol.spec_hash,
+            "suite": authored.suite.spec_hash,
+            "deployment_requirements": authored.requirements.requirements_hash,
+        },
+        views=views,
+        compiler_projection=projection,
+        diagnostics=tuple(diagnostics),
+    )
+
+
+def explain_composed_experiment(
+    authored: ComposedExperiment,
+    *,
+    plan: ExecutionPlan | None = None,
+    diagnostics: Iterable[OperationDiagnostic] = (),
+) -> ExperimentExplanation:
+    """Explain a named compositional design and optional matching plan."""
+
+    if not isinstance(authored, ComposedExperiment):
+        raise TypeError("composed explanation requires a ComposedExperiment")
+    projection: Mapping[str, Any] | None = None
+    if plan is not None:
+        if not isinstance(plan, ExecutionPlan):
+            raise TypeError("compiler explanation requires an ExecutionPlan")
+        _require_matching_plan(authored, plan)
+        projection = explain_plan(plan).to_payload()
+    protocol = authored.protocol.to_payload()
+    suite = authored.suite.to_payload()
+    views = (
+        _scientific_view(protocol, suite),
+        _dataflow_view(suite, projection),
+        _causality_view(protocol, suite),
+        _comparison_view(suite, authored.requirements.to_payload(), projection),
+        _action_view(suite, authored.requirements.to_payload(), projection),
+        _provenance_view(authored, projection),
+    )
+    return ExperimentExplanation(
+        draft_id=authored.design.experiment_id,
+        draft_revision=authored.design.revision,
+        template={
+            "kind": "composed_design",
+            "schema": authored.design.schema,
+            "design_digest": authored.design.design_digest,
         },
         canonical_hashes={
             "protocol": authored.protocol.spec_hash,
@@ -803,7 +849,7 @@ def _action_view(
 
 
 def _provenance_view(
-    authored: AuthoredExperiment,
+    authored: AuthoredExperiment | ComposedExperiment,
     projection: Mapping[str, Any] | None,
 ) -> ExplanationView:
     entries = authored.provenance.entries
@@ -871,7 +917,10 @@ def _portable_component_order(
     return ordered
 
 
-def _require_matching_plan(authored: AuthoredExperiment, plan: ExecutionPlan) -> None:
+def _require_matching_plan(
+    authored: AuthoredExperiment | ComposedExperiment,
+    plan: ExecutionPlan,
+) -> None:
     expected = {
         "protocol": authored.protocol.spec_hash,
         "suite": authored.suite.spec_hash,

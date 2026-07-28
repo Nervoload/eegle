@@ -91,6 +91,10 @@ broader discovery when touching shared orchestration.
   projections, read-only unfinished-writer handling, graceful replay failure,
   opt-in strict exits, public-only non-overwriting export, and byte-for-byte
   source preservation.
+- `test_phase7_compositional_authoring.py`: P7-012A named bounded composition,
+  channel-aware signals, processing/windows/quality, distinct model manifests,
+  shared design/draft/YAML lowering, structured vector actions, observe-only
+  defaults, and composed explanations.
 - `test_source_boundaries.py`: target packages may not import legacy
   application, recipe, worker, task, or analysis modules.
 - `eegle.plugins.testing`: reusable behavioral assertions for independently

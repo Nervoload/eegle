@@ -77,7 +77,15 @@ EXPERIMENT_DRAFT_JSON_SCHEMA: Mapping[str, Any] = freeze_json(
                         "type": "array",
                         "items": {"type": "object"},
                     },
+                    "quality_gates": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                    },
                     "models": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                    },
+                    "comparisons": {
                         "type": "array",
                         "items": {"type": "object"},
                     },
@@ -89,9 +97,25 @@ EXPERIMENT_DRAFT_JSON_SCHEMA: Mapping[str, Any] = freeze_json(
                         "type": "array",
                         "items": {"type": "object"},
                     },
+                    "adaptations": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                    },
+                    "calibrations": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                    },
+                    "policies": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                    },
                     "actions": {
                         "type": "array",
                         "items": {"type": "object"},
+                    },
+                    "initial_phase": {
+                        "type": ["string", "null"],
+                        "pattern": _IDENTIFIER,
                     },
                     "recording": {"type": "object"},
                     "acceptance": {
@@ -119,6 +143,10 @@ EXPERIMENT_DRAFT_JSON_SCHEMA: Mapping[str, Any] = freeze_json(
                     "parameters": {"type": "object"},
                 },
                 "additionalProperties": False,
+            },
+            "design_schema": {
+                "type": ["string", "null"],
+                "pattern": _IDENTIFIER,
             },
             "unresolved": {
                 "type": "array",

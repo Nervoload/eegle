@@ -11,7 +11,11 @@ from eegle.actions.authorization import (
     AuthorizationStatus,
 )
 from eegle.actions.commands import ActionRequest, AuthorizedCommand
-from eegle.actions.policies import LabelActionPolicy, ObserveOnlyPolicy
+from eegle.actions.policies import (
+    LabelActionPolicy,
+    ObserveOnlyPolicy,
+    StructuredActionPolicy,
+)
 from eegle.actions.providers import SimulationAuthorizationProvider
 from eegle.actions.receipts import ActionReceipt, ReceiptStatus
 from eegle.actions.simulated import SimulatedActuator
@@ -34,4 +38,5 @@ __all__ = [
     "ReceiptStatus",
     "SimulationAuthorizationProvider",
     "SimulatedActuator",
+    "StructuredActionPolicy",
 ]

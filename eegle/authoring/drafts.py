@@ -153,6 +153,7 @@ class ExperimentDraft:
     intent: Mapping[str, Any]
     unresolved: tuple[UnresolvedChoice, ...] = ()
     template: TemplateSelection | None = None
+    design_schema: str | None = None
     schema: str = EXPERIMENT_DRAFT_SCHEMA_ID
 
     def __post_init__(self) -> None:
@@ -175,6 +176,14 @@ class ExperimentDraft:
             TemplateSelection,
         ):
             raise TypeError("draft template must be a TemplateSelection")
+        if self.design_schema is not None:
+            object.__setattr__(
+                self,
+                "design_schema",
+                require_identifier(self.design_schema, "design_schema"),
+            )
+        if self.template is not None and self.design_schema is not None:
+            raise ValueError("a draft cannot select both a template and a design schema")
         validate_experiment_draft_payload(self.to_payload())
 
     @property
@@ -186,7 +195,7 @@ class ExperimentDraft:
         return canonical_hash(self.to_payload())
 
     def to_payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema": self.schema,
             "draft_id": self.draft_id,
             "revision": self.revision,
@@ -196,6 +205,9 @@ class ExperimentDraft:
             ),
             "unresolved": [value.to_payload() for value in self.unresolved],
         }
+        if self.design_schema is not None:
+            payload["design_schema"] = self.design_schema
+        return payload
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ExperimentDraft":
@@ -209,6 +221,11 @@ class ExperimentDraft:
                 None
                 if payload.get("template") is None
                 else TemplateSelection.from_payload(payload["template"])
+            ),
+            design_schema=(
+                None
+                if payload.get("design_schema") is None
+                else str(payload["design_schema"])
             ),
             unresolved=tuple(
                 UnresolvedChoice.from_payload(value)
@@ -434,6 +451,49 @@ def lower_experiment_draft(
         raise TypeError("lowering requires an ExperimentDraft")
     if source_map is not None and not isinstance(source_map, DraftSourceMap):
         raise TypeError("source_map must be a DraftSourceMap")
+    if draft.design_schema is not None:
+        sources = source_map or DraftSourceMap({})
+        if draft.unresolved:
+            raise DraftLoweringError(
+                tuple(
+                    DraftIssue(
+                        code=f"authoring.unresolved_{value.kind.value}",
+                        path=value.path,
+                        message=value.prompt,
+                        source=sources.source_for(value.path),
+                    )
+                    for value in draft.unresolved
+                )
+            )
+        if draft.design_schema != "eegle.experiment_design.v1":
+            raise DraftLoweringError(
+                (
+                    DraftIssue(
+                        code="authoring.design_schema",
+                        path="/design_schema",
+                        message=f"unsupported design schema: {draft.design_schema}",
+                        source=sources.source_for("/design_schema"),
+                    ),
+                )
+            )
+        from eegle.authoring.design import ExperimentDesign, lower_experiment_design
+
+        payload = {
+            "schema": draft.design_schema,
+            "experiment_id": draft.draft_id,
+            "revision": draft.revision,
+            **thaw_json(draft.intent),
+        }
+        design_sources = DraftSourceMap(
+            {
+                (path.removeprefix("/intent") or ""): location
+                for path, location in sources.locations.items()
+                if path == "/intent" or path.startswith("/intent/")
+            },
+            fallback=sources.fallback,
+        )
+        design = ExperimentDesign.from_payload(payload, source_map=design_sources)
+        return lower_experiment_design(design)
     try:
         return _lower_recording_draft(draft, source_map=source_map)
     except DraftLoweringError:

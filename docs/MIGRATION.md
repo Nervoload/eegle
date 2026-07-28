@@ -762,7 +762,10 @@ P7-009 adds exact capability preflight and fault-evidenced rehearsal; P7-010's
 simulated optional LSL path remains pending real EEG acceptance. P7-011 adds
 deterministic, verified model packages, a dependency-backed independent adapter
 proof, and guarded same-engine model replacement replay as recorded in
-[MODEL_PACKAGING.md](MODEL_PACKAGING.md).
+[MODEL_PACKAGING.md](MODEL_PACKAGING.md). The post-P7-012 review adds P7-012A:
+a bounded named `ExperimentDesign` fills the missing composition layer between
+fixed profiles and direct canonical graph authoring without changing compiler
+or runtime authority.
 
 ### Work
 
@@ -778,6 +781,15 @@ proof, and guarded same-engine model replacement replay as recorded in
 - Provide a typed high-level Python builder and a deliberately restricted YAML
   surface that lower through the same service. Resolve the YAML parser and
   distribution boundary before changing the base dependency policy.
+- Provide immutable named composition for channel-aware signals, installed
+  processing chains, configurable continuous/event windows, quality gates,
+  independent model manifests and comparison groups, outcomes/adaptation,
+  calibration artifacts, structured policies/actions, phases, recording, and
+  acceptance. Public authoring must not require positional component or route
+  declarations.
+- Keep exact historical template revisions byte-reproducible. New template
+  revisions become presets over the named composition vocabulary rather than
+  defining its limits.
 - Extend compiler explanation and diagnostics with scientific, dataflow,
   causality, model-comparison, action-influence, defaults/provenance, and
   scientific-versus-operational difference views.
@@ -878,6 +890,10 @@ public-alpha support claims.
 - A researcher can author the reference workflows without manually declaring
   component ports or graph routes; Python and restricted YAML sources lower
   deterministically into the same canonical specifications.
+- A custom bounded topology can be expressed with named scientific concepts;
+  two independently packaged models can share one admitted input and a
+  structured multidimensional action remains observe-only without deployment
+  authority.
 - Every value introduced by authoring and every material compiler-resolved
   default has visible, correctly separated provenance; diagnostics map back to
   the authoring source.

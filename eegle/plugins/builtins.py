@@ -7,7 +7,11 @@ from typing import Any, Mapping
 import numpy as np
 
 from eegle._domain import ComponentKind, Determinism, EquivalenceLevel, ExecutionMode
-from eegle.actions.policies import LabelActionPolicy, ObserveOnlyPolicy
+from eegle.actions.policies import (
+    LabelActionPolicy,
+    ObserveOnlyPolicy,
+    StructuredActionPolicy,
+)
 from eegle.actions.providers import SimulationAuthorizationProvider
 from eegle.actions.simulated import SimulatedActuator
 from eegle.models.predictions import PREDICTION_RECORD_SCHEMA
@@ -371,6 +375,46 @@ def builtin_plugin_descriptors() -> tuple[PluginDescriptor, ...]:
             ),
             factory=lambda config: LabelActionPolicy(**dict(config)),
             implementation="eegle.actions.policies:LabelActionPolicy",
+            distribution="eegle",
+        ),
+        PluginDescriptor(
+            plugin_id="eegle.actions.structured_action",
+            version="0.1.0",
+            kind=ComponentKind.POLICY,
+            config_schema={
+                "$schema": _SCHEMA_BASE,
+                "type": "object",
+                "properties": {
+                    "capability": {"type": "string", "minLength": 1},
+                    "output_parameters": {
+                        "type": "object",
+                        "minProperties": 1,
+                        "additionalProperties": {"type": "string", "minLength": 1},
+                    },
+                    "constant_parameters": {"type": "object"},
+                    "missing_output": {"enum": ["suppress", "fail"]},
+                    "intended_delivery_delay_seconds": {
+                        "type": ["number", "null"],
+                        "minimum": 0,
+                    },
+                    "expires_after_seconds": {
+                        "type": ["number", "null"],
+                        "minimum": 0,
+                    },
+                },
+                "required": ["capability", "output_parameters"],
+                "additionalProperties": False,
+            },
+            input_ports=(PortSpec("prediction", _PREDICTION),),
+            output_ports=(PortSpec("request", _ACTION_REQUEST),),
+            capabilities=PluginCapabilities(
+                supported_modes=frozenset(ExecutionMode),
+                determinism=Determinism.DETERMINISTIC,
+                equivalence=EquivalenceLevel.BITWISE,
+                state_behavior=StateBehavior.STATELESS,
+            ),
+            factory=lambda config: StructuredActionPolicy(**dict(config)),
+            implementation="eegle.actions.policies:StructuredActionPolicy",
             distribution="eegle",
         ),
         PluginDescriptor(

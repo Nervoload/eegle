@@ -5,7 +5,8 @@
     "D-014",
     "D-033",
     "D-034",
-    "D-035"
+    "D-035",
+    "D-036"
   ],
   "export_rule": "Only package-level __all__ names are public unless this inventory explicitly names a submodule.",
   "stable_alpha": [
@@ -76,11 +77,17 @@
     "eegle.template_expansion_lock.v1",
     "eegle.template_authoring.v1",
     "eegle.authored_experiment.v1",
-    "eegle.authoring_project.v1"
+    "eegle.authoring_project.v1",
+    "eegle.experiment_design.v1",
+    "eegle.composed_experiment.v1",
+    "eegle.composed_authoring_project.v1"
   ],
   "authoring_lowering": {
-    "service": "eegle.authoring.lower_experiment_draft",
-    "profile": "recording_and_builtin_templates_v1",
+    "service": [
+      "eegle.authoring.lower_experiment_draft",
+      "eegle.authoring.lower_experiment_design"
+    ],
+    "profile": "recording_builtin_templates_and_bounded_named_composition_v1",
     "compiler_inputs": ["ProtocolSpec", "SuiteSpec"],
     "site_output": "DeploymentRequirements",
     "runtime_input": false
@@ -104,8 +111,11 @@
   },
   "authoring_surfaces": {
     "python_builder": "eegle.authoring.ExperimentBuilder",
+    "python_composer": "eegle.authoring.ExperimentDesign",
     "authored_result": "eegle.authoring.AuthoredExperiment",
+    "composed_result": "eegle.authoring.ComposedExperiment",
     "yaml_adapter": "eegle.authoring.load_yaml_experiment",
+    "yaml_design_adapter": "eegle.authoring.load_yaml_design",
     "shared_source_schema": "eegle.template_authoring.v1",
     "compiler_service": "eegle.compiler.compile_suite",
     "runtime_input": false
@@ -129,7 +139,10 @@
   ],
   "operation_error_schema": "eegle.operation_error.v1",
   "explanations": {
-    "service": "eegle.operations.explain_authored_experiment",
+    "service": [
+      "eegle.operations.explain_authored_experiment",
+      "eegle.operations.explain_composed_experiment"
+    ],
     "diff_service": "eegle.operations.diff_authored_experiments",
     "compilation_guidance": "eegle.operations.guide_compilation_diagnostics",
     "authoring_guidance": "eegle.operations.diagnose_authoring_failure",
@@ -167,7 +180,10 @@
     "dependency": "ruamel.yaml>=0.18.10,<0.19",
     "base_dependency": false,
     "implementation_task": "P7-005",
-    "adapter": "eegle.authoring.load_yaml_experiment",
+    "adapter": [
+      "eegle.authoring.load_yaml_experiment",
+      "eegle.authoring.load_yaml_design"
+    ],
     "safe_loader": "YAML(typ='safe', pure=True)",
     "yaml_version": "1.2"
   },

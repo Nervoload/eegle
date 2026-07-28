@@ -17,10 +17,11 @@ acceptance evidence only as classified by the Phase 0 inventory.
 ## New Foundation Map
 
 - `actions/`: commands, authorization decisions, and observed receipts.
-- `authoring/`: provisional non-executable drafts, deterministic recording and
-  exact-version built-in template lowering, portable deployment requirements,
-  expansion locks, provenance/source maps, persistent typed Python builders,
-  deterministic project export, and an optional restricted-YAML adapter.
+- `authoring/`: provisional non-executable drafts, bounded named compositional
+  designs, deterministic recording and exact-version built-in template
+  lowering, portable deployment requirements, expansion locks,
+  provenance/source maps, persistent typed Python builders, deterministic
+  project export, and an optional restricted-YAML adapter.
 - `compiler/`: canonical JSON/hashing and immutable execution-plan drafts.
 - `operations/`: provisional project, compile, plan-only run, capability-based
   preflight, fail-closed fault-evidenced rehearsal,

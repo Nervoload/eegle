@@ -459,6 +459,19 @@ The suite may declare:
 - recording and retention requirements;
 - validation and acceptance criteria.
 
+Researcher-facing authoring uses a bounded, named `ExperimentDesign` above
+that canonical suite vocabulary. It declares stable semantic identities for
+signals and channels, event streams, installed processing steps, windows,
+quality gates, independently packaged models and comparison groups, outcomes,
+adaptation, calibration artifacts, policies, actions, phases, recording, and
+acceptance. Relationships refer to those names rather than component indexes
+or route records. Deterministic lowering alone derives canonical components,
+ports, routes, phases, and deployment requirements; the existing compiler
+remains responsible for plugin, contract, causality, role, artifact, and
+authorization validation. Exact templates are presets over this vocabulary;
+their locked historical revisions remain reproducible and cannot be silently
+reinterpreted.
+
 Custom algorithms are normal Python plugins with configuration schemas. JSON is
 for declarative intent, not executable source code.
 

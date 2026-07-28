@@ -54,6 +54,7 @@ from eegle.operations.explanations import (
     diagnose_compilation_failure,
     diff_authored_experiments,
     explain_authored_experiment,
+    explain_composed_experiment,
     guide_compilation_diagnostics,
 )
 from eegle.operations.projects import (
@@ -190,6 +191,7 @@ __all__ = [
     "diff_projects",
     "detect_capabilities",
     "explain_authored_experiment",
+    "explain_composed_experiment",
     "explain_project",
     "export_session",
     "guide_compilation_diagnostics",

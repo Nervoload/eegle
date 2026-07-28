@@ -293,6 +293,55 @@ print(authored.defaults)
 print(authored.requirements.to_payload())
 ```
 
+For a custom bounded topology, use named compositional authoring instead of
+declaring canonical component indexes and routes:
+
+```python
+from eegle.authoring import ExperimentDesign, ProcessingStep
+
+authored = (
+    ExperimentDesign.create(
+        "attention-observer",
+        "Observe causal prestimulus EEG.",
+    )
+    .dense_signal(
+        "eeg",
+        modality="eeg",
+        channels=("Fz", "Cz", "Pz"),
+        unit="uV",
+        rate_hz=500.0,
+    )
+    .event_stream("markers", kinds=("stimulus",))
+    .processing_chain(
+        "clean",
+        input="signal.eeg",
+        steps=(ProcessingStep("identity", "eegle.processing.identity"),),
+    )
+    .event_window(
+        "prestimulus",
+        input="processing.clean",
+        event_stream="event.markers",
+        event_kind="stimulus",
+        start_seconds=-2.0,
+        end_seconds=-0.05,
+    )
+    .record("signal.eeg", "event.markers")
+    .build()
+)
+
+print(authored.protocol.spec_hash)
+print(authored.suite.spec_hash)
+print(authored.requirements.to_payload())
+```
+
+`ExperimentDesign` is non-executable. It supports named channel-aware signals,
+installed-plugin processing chains, exact continuous/event windows, quality
+gates, independent models/comparisons, outcomes, adaptation/calibration,
+structured policies/actions, phases, recording, and acceptance. `build()`
+derives ordinary canonical specs; `compile()` still delegates them unchanged to
+the existing compiler. Declaring an action capability never creates a provider
+or permission grant, so missing deployment authority remains observe-only.
+
 With the optional extra installed, restricted YAML lowers through that same
 builder/template path:
 
@@ -306,6 +355,9 @@ print(authored.canonical_json())
 YAML input is one `eegle.template_authoring.v1` document. It supports only
 finite JSON-compatible values and rejects aliases, anchors, merges, tags,
 duplicate keys, implicit dates, untyped units, and excessive input resources.
+The same restricted parser accepts `eegle.experiment_design.v1` through
+`read_yaml_design()`. Typed Python and YAML produce identical canonical hashes;
+their source locations remain separate provenance.
 
 Authored values can be explained before deployment or joined to a matching
 locked plan after compilation:
@@ -327,7 +379,7 @@ never applied by explanation.
 
 | Package | Responsibility |
 |---|---|
-| `eegle.authoring` | Provisional non-executable drafts, exact-version templates, persistent Python/YAML authoring, deterministic lowering/export, deployment requirements, and provenance |
+| `eegle.authoring` | Provisional non-executable drafts, bounded named designs, exact-version templates, persistent Python/YAML authoring, deterministic lowering/export, deployment requirements, and provenance |
 | `eegle.operations` | Provisional project/run services, privacy-aware session projections, replay/replacement comparison, safe export, and shared Python/CLI diagnostics and envelopes |
 | `eegle.specs` | Portable protocol/suite intent and site-local deployment |
 | `eegle.compiler` | Diagnostics, typed graph, immutable plan, lock, explain/diff |

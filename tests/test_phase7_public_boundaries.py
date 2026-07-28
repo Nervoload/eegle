@@ -11,6 +11,9 @@ from eegle.authoring import (
     AUTHORING_PROJECT_SCHEMA_ID,
     AUTHORING_PROVENANCE_SCHEMA_ID,
     DEPLOYMENT_REQUIREMENTS_SCHEMA_ID,
+    COMPOSED_EXPERIMENT_SCHEMA_ID,
+    COMPOSED_PROJECT_SCHEMA_ID,
+    EXPERIMENT_DESIGN_SCHEMA_ID,
     EXPERIMENT_DRAFT_SCHEMA_ID,
     TEMPLATE_AUTHORING_SCHEMA_ID,
     TEMPLATE_DEFINITION_SCHEMA_ID,
@@ -176,6 +179,9 @@ class Phase7PublicBoundaryTests(unittest.TestCase):
                 TEMPLATE_AUTHORING_SCHEMA_ID,
                 AUTHORING_EXPORT_SCHEMA_ID,
                 AUTHORING_PROJECT_SCHEMA_ID,
+                EXPERIMENT_DESIGN_SCHEMA_ID,
+                COMPOSED_EXPERIMENT_SCHEMA_ID,
+                COMPOSED_PROJECT_SCHEMA_ID,
             },
         )
         self.assertFalse(self.surface["authoring_lowering"]["runtime_input"])
