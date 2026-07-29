@@ -1,0 +1,62 @@
+{
+  "artifacts": [
+    {
+      "digest": "sha256:2609a68449b11bd78c05417914759a86b979463bf0efbde33debd5bf229e9546",
+      "immutable": false,
+      "role": "authoring_explanation",
+      "uri": "explanations/authoring.json"
+    },
+    {
+      "digest": "sha256:77953520e7b3308f527f73648222443823bedf75a6b5a0081ec9c5fb5c325ad6",
+      "immutable": false,
+      "role": "authoring_project",
+      "uri": "generated/authoring-project.json"
+    },
+    {
+      "digest": "sha256:180b5547ca54c577184f41b267022c9eb38bf8928ebc9f2837c06b236794a462",
+      "immutable": false,
+      "role": "authoring_source",
+      "uri": "authoring/experiment.json"
+    },
+    {
+      "digest": "sha256:abc658f5f87da4751926165626cc314235b5a2155bcf15d3ee96fa687d73f97f",
+      "immutable": false,
+      "role": "deployment_requirements",
+      "uri": "generated/deployment-requirements.json"
+    },
+    {
+      "digest": "sha256:fdd251d0315fee45627dd1e450ea187fc1f7be8a337605f3d72610b730f00f83",
+      "immutable": true,
+      "role": "design_preset_lock",
+      "uri": "authoring/preset-lock.json"
+    },
+    {
+      "digest": "sha256:038c264cdbf9efa51eb5f8c23c12674fb12b1f432f915700703b9e129ae5805a",
+      "immutable": false,
+      "role": "model_manifests",
+      "uri": "authoring/model-manifests.json"
+    },
+    {
+      "digest": "sha256:c0ec3c275c9678f2b7f694eba976035098d40c627a9f8feb6240d95e206914c0",
+      "immutable": false,
+      "role": "protocol",
+      "uri": "generated/protocol.json"
+    },
+    {
+      "digest": "sha256:010ae324fd303c435958bccbea4765886477e7e7f820fb9699b7c49f7829eafb",
+      "immutable": false,
+      "role": "simulation_deployment",
+      "uri": "deployments/simulation.json"
+    },
+    {
+      "digest": "sha256:df6a0deeb2536e33b97e8aa496dc44e564bafa1b37f464b4a4d1768ac9ad4533",
+      "immutable": false,
+      "role": "suite",
+      "uri": "generated/suite.json"
+    }
+  ],
+  "manifest_hash": "sha256:eff3d2fb2975f2c4857b9e2c21c5f529777339181673d4a4ed245e7a75a509b3",
+  "project_id": "reference.adaptation",
+  "schema": "eegle.project.v1",
+  "session_uris": []
+}

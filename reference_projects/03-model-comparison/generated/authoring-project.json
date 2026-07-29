@@ -1,0 +1,28 @@
+{
+  "design_digest": "sha256:e1fa1ef727528deed82366b46fdd2a17478188e9e4ace0f67f58c0f2b8927d7b",
+  "experiment_id": "reference.model-comparison",
+  "files": {
+    "authoring-provenance.json": {
+      "canonical_digest": "sha256:4960844df87c4cef436b99f6f5d0d38c7304277944e32e49e7e23e79cc4c9d29",
+      "schema": "eegle.authoring_provenance.v1"
+    },
+    "deployment-requirements.json": {
+      "canonical_digest": "sha256:d2886ef4ca150912ce89a060fcad1d92b7332b00375b629704bde4b779578cd0",
+      "schema": "eegle.deployment_requirements.v1"
+    },
+    "experiment.design.json": {
+      "canonical_digest": "sha256:e1fa1ef727528deed82366b46fdd2a17478188e9e4ace0f67f58c0f2b8927d7b",
+      "schema": "eegle.experiment_design.v1"
+    },
+    "protocol.json": {
+      "canonical_digest": "sha256:65092df23df943b7ad64f2816db4e3f8b73aece77aa250930a227f760af01192",
+      "schema": "eegle.protocol_spec.v1"
+    },
+    "suite.json": {
+      "canonical_digest": "sha256:a7d6ce607fb022b2791bd489b7f81362c27b77b128072dedacaadf256429927a",
+      "schema": "eegle.suite_spec.v1"
+    }
+  },
+  "revision": 1,
+  "schema": "eegle.composed_authoring_project.v1"
+}

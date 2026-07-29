@@ -15,6 +15,7 @@ from eegle._validation import freeze_json, require_identifier, thaw_json
 from eegle.compiler.lock import canonical_hash
 from eegle.plugins.construction import ModelConstructionContext
 from eegle.specs.schemas import validate_payload, validate_schema
+from eegle.specs.suite import SignalContract
 
 
 PLUGIN_ENTRY_POINT_GROUP = "eegle.plugins"
@@ -72,6 +73,65 @@ class ProcessingOperationBinding:
         for parameter, pointer in self.config_projection.items():
             parameters[parameter] = _resolve_json_pointer(config, pointer)
         return freeze_json(parameters)
+
+
+@dataclass(frozen=True, slots=True)
+class ContractTransformSpec:
+    """Declarative plugin attestation for one deterministic port transformation."""
+
+    input_port: str
+    output_port: str
+    fixed_updates: Mapping[str, Any] = field(default_factory=dict)
+    config_projection: Mapping[str, str] = field(default_factory=dict)
+    drop_fields: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "input_port", require_identifier(self.input_port, "contract input port"))
+        object.__setattr__(self, "output_port", require_identifier(self.output_port, "contract output port"))
+        allowed = set(SignalContract.__dataclass_fields__)
+        fixed = {require_identifier(str(key), "contract field"): value for key, value in self.fixed_updates.items()}
+        projections: dict[str, str] = {}
+        for key, pointer in self.config_projection.items():
+            name = require_identifier(str(key), "contract field")
+            pointer = str(pointer)
+            if not pointer.startswith("/"):
+                raise ValueError("contract config projections must be JSON pointers")
+            projections[name] = pointer
+        drops = tuple(require_identifier(value, "contract drop field") for value in self.drop_fields)
+        unknown = (set(fixed) | set(projections) | set(drops)) - allowed
+        if unknown:
+            raise ValueError(f"unknown signal contract fields: {sorted(unknown)}")
+        if set(fixed) & set(projections):
+            raise ValueError("contract fields cannot be both fixed and projected")
+        if len(drops) != len(set(drops)):
+            raise ValueError("contract drop fields must be unique")
+        object.__setattr__(self, "fixed_updates", freeze_json(fixed))
+        object.__setattr__(self, "config_projection", freeze_json(projections))
+        object.__setattr__(self, "drop_fields", drops)
+
+    def resolve(
+        self,
+        input_contract: SignalContract,
+        config: Mapping[str, Any],
+    ) -> SignalContract:
+        payload = input_contract.to_payload()
+        for name in self.drop_fields:
+            payload.pop(name, None)
+        payload.update(thaw_json(self.fixed_updates))
+        for name, pointer in self.config_projection.items():
+            payload[name] = _resolve_json_pointer(config, pointer)
+        if "channel_ids" in self.fixed_updates or "channel_ids" in self.config_projection:
+            payload["channel_count"] = len(payload.get("channel_ids") or ())
+        return SignalContract.from_payload(payload)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "input_port": self.input_port,
+            "output_port": self.output_port,
+            "fixed_updates": thaw_json(self.fixed_updates),
+            "config_projection": thaw_json(self.config_projection),
+            "drop_fields": list(self.drop_fields),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +219,7 @@ class PluginDescriptor:
     implementation: str
     distribution: str | None = None
     construction_api: ConstructionAPI = ConstructionAPI.CONFIG_V1
+    contract_transform: ContractTransformSpec | None = None
     schema: str = PLUGIN_DESCRIPTOR_SCHEMA
 
     def __post_init__(self) -> None:
@@ -184,12 +245,19 @@ class PluginDescriptor:
         outputs = tuple(port.name for port in self.output_ports)
         if len(inputs) != len(set(inputs)) or len(outputs) != len(set(outputs)):
             raise ValueError("plugin port names must be unique within each direction")
+        if self.contract_transform is not None:
+            if not isinstance(self.contract_transform, ContractTransformSpec):
+                raise TypeError("contract_transform must be a ContractTransformSpec")
+            if self.contract_transform.input_port not in inputs:
+                raise ValueError("contract transform input_port is not a plugin input")
+            if self.contract_transform.output_port not in outputs:
+                raise ValueError("contract transform output_port is not a plugin output")
         schema_copy = thaw_json(freeze_json(self.config_schema))
         validate_schema(schema_copy)
         object.__setattr__(self, "config_schema", freeze_json(schema_copy))
 
     def to_payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema": self.schema,
             "plugin_id": self.plugin_id,
             "version": self.version,
@@ -202,6 +270,9 @@ class PluginDescriptor:
             "distribution": self.distribution,
             "construction_api": self.construction_api.value,
         }
+        if self.contract_transform is not None:
+            payload["contract_transform"] = self.contract_transform.to_payload()
+        return payload
 
     @property
     def descriptor_hash(self) -> str:

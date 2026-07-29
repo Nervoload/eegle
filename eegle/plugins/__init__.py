@@ -22,6 +22,7 @@ from eegle.plugins.contracts import (
 )
 from eegle.plugins.construction import MaterializedArtifact, ModelConstructionContext
 from eegle.plugins.registry import (
+    ContractTransformSpec,
     ConstructionAPI,
     PluginCapabilities,
     PluginDescriptor,
@@ -41,6 +42,7 @@ __all__ = [
     "ArtifactProducer",
     "ComponentKind",
     "ConstructionAPI",
+    "ContractTransformSpec",
     "Determinism",
     "EquivalenceLevel",
     "ExecutionContext",

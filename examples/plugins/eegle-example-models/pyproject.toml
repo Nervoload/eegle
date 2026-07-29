@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools==78.1.1", "wheel==0.47.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eegle-example-models"
+version = "1.0.0"
+description = "Independent example model plugins for EEGle reference projects."
+requires-python = ">=3.11"
+dependencies = ["eegle>=0.1.0", "numpy>=2,<3"]
+
+[project.entry-points."eegle.plugins"]
+example-models = "eegle_example_models:plugin_descriptors"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["eegle_example_models"]

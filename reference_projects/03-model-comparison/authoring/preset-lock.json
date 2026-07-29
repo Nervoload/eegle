@@ -1,0 +1,8 @@
+{
+  "design_digest": "sha256:e1fa1ef727528deed82366b46fdd2a17478188e9e4ace0f67f58c0f2b8927d7b",
+  "lock_digest": "sha256:fb04f1e860c065b23b6ce296ecfaa6b67f40462a853bdbdac8ad94f401d169ef",
+  "parameters": {},
+  "preset_id": "eegle.preset.model_comparison",
+  "schema": "eegle.design_preset_lock.v1",
+  "version": "2.0.0"
+}

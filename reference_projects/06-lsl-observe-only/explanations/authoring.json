@@ -1,0 +1,1096 @@
+{
+  "canonical_hashes": {
+    "deployment_requirements": "sha256:5ba84ef4614b36b011937e922b53bc18ecbe3cdf18168057f99a26ffd11498d7",
+    "protocol": "sha256:965ed0b9e2b923c74ef9f42d6773ca7f9c0aeaf7f3c43c12ca2eb55054769b16",
+    "suite": "sha256:090d7e5929f358e3b7ae3fb30ab029156ca62331445d2942b9fd4af32da8979c"
+  },
+  "compiler_projection": null,
+  "diagnostics": [],
+  "draft_id": "reference.lsl-observe-only",
+  "draft_revision": 1,
+  "schema": "eegle.experiment_explanation.v1",
+  "template": {
+    "design_digest": "sha256:3b4823513767e617d2deb017ac1608e9a18c3b0e2d08f32633ea37ea72cb72c5",
+    "kind": "composed_design",
+    "schema": "eegle.experiment_design.v1"
+  },
+  "views": [
+    {
+      "details": {
+        "action_grants": [],
+        "actuators": [],
+        "authorization_providers": [],
+        "authorization_requirements": [],
+        "observe_only": false,
+        "policies": []
+      },
+      "kind": "action_influence",
+      "summary": "No policy or actuator can influence the environment.",
+      "title": "Action influence"
+    },
+    {
+      "details": {
+        "clock_policy": {
+          "execution_clock_id": "boundary.clock",
+          "ordering": "availability_watermark"
+        },
+        "execution_mode": "causal",
+        "phase_transitions": [
+          {
+            "phase_id": "phase.record",
+            "timeout_seconds": null,
+            "transitions": []
+          }
+        ],
+        "scheduled_triggers": [],
+        "state_triggers": [],
+        "stream_clocks": [
+          {
+            "clock_id": "device.clock",
+            "stream_id": "stream.neural"
+          }
+        ]
+      },
+      "kind": "causality",
+      "summary": "Causal execution orders work by availability_watermark with 0 scheduled and 0 state trigger(s).",
+      "title": "Causality and time"
+    },
+    {
+      "details": {
+        "component_order": [
+          "source.neural",
+          "sink.signal.neural"
+        ],
+        "components": [
+          {
+            "action_capabilities": [],
+            "component_id": "sink.signal.neural",
+            "config": {},
+            "input_contracts": {},
+            "kind": "sink",
+            "outcome_uses": [],
+            "output_contracts": {},
+            "plugin_id": "eegle.recording.dense_sink",
+            "required_capabilities": [],
+            "required_outcome_use": null,
+            "stream_id": null,
+            "version_spec": "~=0.1.0"
+          },
+          {
+            "action_capabilities": [],
+            "component_id": "source.neural",
+            "config": {},
+            "input_contracts": {},
+            "kind": "source",
+            "outcome_uses": [],
+            "output_contracts": {},
+            "plugin_id": null,
+            "required_capabilities": [],
+            "required_outcome_use": null,
+            "stream_id": "stream.neural",
+            "version_spec": null
+          }
+        ],
+        "order_authority": "portable_suite",
+        "phases": [
+          {
+            "acceptance_criteria": [],
+            "components": [
+              "sink.signal.neural",
+              "source.neural"
+            ],
+            "operator_confirmation": false,
+            "phase_id": "phase.record",
+            "required_artifacts": [],
+            "resume_policy": "checkpoint",
+            "retry_limit": 0,
+            "timeout_seconds": null,
+            "transitions": []
+          }
+        ],
+        "routes": [
+          {
+            "route_id": "route.sink.signal.neural.records",
+            "source": {
+              "component": "source.neural",
+              "port": "samples"
+            },
+            "target": {
+              "component": "sink.signal.neural",
+              "port": "records"
+            }
+          }
+        ],
+        "streams": [
+          {
+            "clock_id": "device.clock",
+            "contract": {
+              "channel_count": 2,
+              "channel_ids": [
+                "C3",
+                "C4"
+              ],
+              "content_kind": "dense_samples",
+              "layout": "samples_by_channels",
+              "missing_data_policy": "explicit_validity",
+              "nominal_rate_hz": 250.0,
+              "rate_model": "regular",
+              "type_id": "eegle.dense_sample_batch.v1",
+              "unit": "uV",
+              "units": {
+                "C3": "uV",
+                "C4": "uV"
+              }
+            },
+            "modality": "eeg",
+            "stream_id": "stream.neural"
+          }
+        ]
+      },
+      "kind": "dataflow",
+      "summary": "1 stream(s) traverse 1 route(s) across 2 component(s) in 1 phase(s).",
+      "title": "Dataflow"
+    },
+    {
+      "details": {
+        "authoring_entries": [
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "protocol",
+            "target_path": "/acceptance"
+          },
+          {
+            "confirmation": "pending",
+            "materiality": "scientific",
+            "origin": "authoring_default",
+            "source": {
+              "kind": "generated",
+              "symbol": "study/annotations"
+            },
+            "target_artifact": "protocol",
+            "target_path": "/annotations"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "protocol",
+            "target_path": "/claims/0/claim_id"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "user_explicit",
+            "source": {
+              "kind": "python",
+              "symbol": "ExperimentDesign.create"
+            },
+            "target_artifact": "protocol",
+            "target_path": "/claims/0/statement"
+          },
+          {
+            "confirmation": "pending",
+            "materiality": "scientific",
+            "origin": "authoring_default",
+            "source": {
+              "kind": "generated",
+              "symbol": "study/execution_mode"
+            },
+            "target_artifact": "protocol",
+            "target_path": "/execution_mode"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "protocol",
+            "target_path": "/metrics"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "protocol",
+            "target_path": "/protocol_id"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "protocol",
+            "target_path": "/schema"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/adaptations"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/artifacts"
+          },
+          {
+            "confirmation": "pending",
+            "materiality": "scientific",
+            "origin": "authoring_default",
+            "source": {
+              "kind": "generated",
+              "symbol": "study/execution_clock_id"
+            },
+            "target_artifact": "suite",
+            "target_path": "/clock_policy/execution_clock_id"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/clock_policy/ordering"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/0/action_capabilities"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/0/component_id"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/0/config"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/0/input_contracts"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/0/kind"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/0/outcome_uses"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/0/output_contracts"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/0/plugin_id"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/0/required_capabilities"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/0/required_outcome_use"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/0/stream_id"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/0/version_spec"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/1/action_capabilities"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/1/component_id"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/1/config"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/1/input_contracts"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/1/kind"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/1/outcome_uses"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/1/output_contracts"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/1/plugin_id"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/1/required_capabilities"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/1/required_outcome_use"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/1/stream_id"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/components/1/version_spec"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "user_explicit",
+            "source": {
+              "kind": "python",
+              "symbol": "ExperimentDesign.phase"
+            },
+            "target_artifact": "suite",
+            "target_path": "/initial_phase"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/model_roles"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/model_uses"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/outcome_expectations"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/phases/0/acceptance_criteria"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/phases/0/components/0"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/phases/0/components/1"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_default",
+            "source": {
+              "kind": "generated",
+              "symbol": "phase.record/operator_confirmation"
+            },
+            "target_artifact": "suite",
+            "target_path": "/phases/0/operator_confirmation"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "user_explicit",
+            "source": {
+              "kind": "python",
+              "symbol": "ExperimentDesign.phase"
+            },
+            "target_artifact": "suite",
+            "target_path": "/phases/0/phase_id"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/phases/0/required_artifacts"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_default",
+            "source": {
+              "kind": "generated",
+              "symbol": "phase.record/resume_policy"
+            },
+            "target_artifact": "suite",
+            "target_path": "/phases/0/resume_policy"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_default",
+            "source": {
+              "kind": "generated",
+              "symbol": "phase.record/retry_limit"
+            },
+            "target_artifact": "suite",
+            "target_path": "/phases/0/retry_limit"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_default",
+            "source": {
+              "kind": "generated",
+              "symbol": "phase.record/timeout_seconds"
+            },
+            "target_artifact": "suite",
+            "target_path": "/phases/0/timeout_seconds"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/phases/0/transitions"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/protocol_id"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_default",
+            "source": {
+              "kind": "generated",
+              "symbol": "recording/execution_capture"
+            },
+            "target_artifact": "suite",
+            "target_path": "/recording/execution_capture"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_default",
+            "source": {
+              "kind": "generated",
+              "symbol": "recording/raw_recording"
+            },
+            "target_artifact": "suite",
+            "target_path": "/recording/raw_recording"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_default",
+            "source": {
+              "kind": "generated",
+              "symbol": "recording/semantic_evidence"
+            },
+            "target_artifact": "suite",
+            "target_path": "/recording/semantic_evidence"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/routes/0/route_id"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "user_explicit",
+            "source": {
+              "kind": "python",
+              "symbol": "ExperimentDesign.record"
+            },
+            "target_artifact": "suite",
+            "target_path": "/routes/0/source/component"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "user_explicit",
+            "source": {
+              "kind": "python",
+              "symbol": "ExperimentDesign.record"
+            },
+            "target_artifact": "suite",
+            "target_path": "/routes/0/source/port"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "user_explicit",
+            "source": {
+              "kind": "python",
+              "symbol": "ExperimentDesign.record"
+            },
+            "target_artifact": "suite",
+            "target_path": "/routes/0/target/component"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "user_explicit",
+            "source": {
+              "kind": "python",
+              "symbol": "ExperimentDesign.record"
+            },
+            "target_artifact": "suite",
+            "target_path": "/routes/0/target/port"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/scheduled_triggers"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/scheduling/backpressure"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/schema"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/state_triggers"
+          },
+          {
+            "confirmation": "pending",
+            "materiality": "scientific",
+            "origin": "authoring_default",
+            "source": {
+              "kind": "generated",
+              "symbol": "signal.neural/clock_id"
+            },
+            "target_artifact": "suite",
+            "target_path": "/streams/0/clock_id"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/streams/0/contract/channel_count"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "user_explicit",
+            "source": {
+              "kind": "python",
+              "symbol": "ExperimentDesign.dense_signal"
+            },
+            "target_artifact": "suite",
+            "target_path": "/streams/0/contract/channel_ids/0"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "user_explicit",
+            "source": {
+              "kind": "python",
+              "symbol": "ExperimentDesign.dense_signal"
+            },
+            "target_artifact": "suite",
+            "target_path": "/streams/0/contract/channel_ids/1"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/streams/0/contract/content_kind"
+          },
+          {
+            "confirmation": "pending",
+            "materiality": "scientific",
+            "origin": "authoring_default",
+            "source": {
+              "kind": "generated",
+              "symbol": "signal.neural/layout"
+            },
+            "target_artifact": "suite",
+            "target_path": "/streams/0/contract/layout"
+          },
+          {
+            "confirmation": "pending",
+            "materiality": "scientific",
+            "origin": "authoring_default",
+            "source": {
+              "kind": "generated",
+              "symbol": "signal.neural/missing_data_policy"
+            },
+            "target_artifact": "suite",
+            "target_path": "/streams/0/contract/missing_data_policy"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "user_explicit",
+            "source": {
+              "kind": "python",
+              "symbol": "ExperimentDesign.dense_signal"
+            },
+            "target_artifact": "suite",
+            "target_path": "/streams/0/contract/nominal_rate_hz"
+          },
+          {
+            "confirmation": "pending",
+            "materiality": "scientific",
+            "origin": "authoring_default",
+            "source": {
+              "kind": "generated",
+              "symbol": "signal.neural/rate_model"
+            },
+            "target_artifact": "suite",
+            "target_path": "/streams/0/contract/rate_model"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/streams/0/contract/type_id"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "user_explicit",
+            "source": {
+              "kind": "python",
+              "symbol": "ExperimentDesign.dense_signal"
+            },
+            "target_artifact": "suite",
+            "target_path": "/streams/0/contract/unit"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "user_explicit",
+            "source": {
+              "kind": "python",
+              "symbol": "ExperimentDesign.dense_signal"
+            },
+            "target_artifact": "suite",
+            "target_path": "/streams/0/contract/units/C3"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "user_explicit",
+            "source": {
+              "kind": "python",
+              "symbol": "ExperimentDesign.dense_signal"
+            },
+            "target_artifact": "suite",
+            "target_path": "/streams/0/contract/units/C4"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "user_explicit",
+            "source": {
+              "kind": "python",
+              "symbol": "ExperimentDesign.dense_signal"
+            },
+            "target_artifact": "suite",
+            "target_path": "/streams/0/modality"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/streams/0/stream_id"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "operational",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/suite_id"
+          },
+          {
+            "confirmation": "not_required",
+            "materiality": "scientific",
+            "origin": "authoring_derived",
+            "source": {
+              "kind": "generated",
+              "symbol": "reference.lsl-observe-only"
+            },
+            "target_artifact": "suite",
+            "target_path": "/validation/require_replay_equivalence"
+          }
+        ],
+        "compiler_derived": [],
+        "compiler_values_are_authoring_origins": false,
+        "confirmation_counts": {
+          "not_required": 73,
+          "pending": 7
+        },
+        "materiality_counts": {
+          "operational": 24,
+          "scientific": 56
+        },
+        "origin_counts": {
+          "authoring_default": 14,
+          "authoring_derived": 52,
+          "user_explicit": 14
+        },
+        "template_default_origin": "template_default"
+      },
+      "kind": "defaults_provenance",
+      "summary": "80 authoring attribution(s) remain separate from 0 compiler-derived projection field(s).",
+      "title": "Defaults and provenance"
+    },
+    {
+      "details": {
+        "groups": {},
+        "locked_model_bindings": [],
+        "model_artifact_requirements": [],
+        "roles": [],
+        "ungrouped_uses": []
+      },
+      "kind": "model_comparison",
+      "summary": "No equivalence-bearing model comparison is declared; 0 ungrouped model use(s) remain.",
+      "title": "Model comparison"
+    },
+    {
+      "details": {
+        "acceptance": [],
+        "claims": [
+          {
+            "claim_id": "claim.reference.lsl-observe-only",
+            "statement": "Run a bounded EEGle reference experiment."
+          }
+        ],
+        "execution_mode": "causal",
+        "metrics": [],
+        "recording": {
+          "execution_capture": true,
+          "raw_recording": "reference",
+          "semantic_evidence": true
+        },
+        "validation": {
+          "require_replay_equivalence": true
+        }
+      },
+      "kind": "scientific_intent",
+      "summary": "Causal protocol with 1 claim(s), 0 metric(s), and 0 acceptance criterion/criteria.",
+      "title": "Scientific intent"
+    }
+  ]
+}

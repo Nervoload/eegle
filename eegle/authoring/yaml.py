@@ -9,7 +9,8 @@ from typing import Any
 from eegle._validation import freeze_json, thaw_json
 from eegle.authoring.builders import AuthoredExperiment, ExperimentBuilder
 from eegle.authoring.contracts import SourceKind, SourceLocation
-from eegle.authoring.design import ComposedExperiment, ExperimentDesign
+from eegle.authoring.composed_projects import ComposedExperiment
+from eegle.authoring.composition import ExperimentDesign
 from eegle.authoring.drafts import DraftLoweringError
 from eegle.authoring.provenance import DraftSourceMap
 from eegle.authoring.schemas import validate_template_authoring_payload

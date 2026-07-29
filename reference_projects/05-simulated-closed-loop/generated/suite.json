@@ -1,0 +1,371 @@
+{
+  "adaptations": [],
+  "artifacts": [],
+  "clock_policy": {
+    "execution_clock_id": "boundary.clock",
+    "ordering": "availability_watermark"
+  },
+  "components": [
+    {
+      "action_capabilities": [
+        "feedback.vector"
+      ],
+      "component_id": "actuator.feedback",
+      "config": {},
+      "input_contracts": {},
+      "kind": "actuator",
+      "outcome_uses": [],
+      "output_contracts": {},
+      "plugin_id": "eegle.actions.simulated_actuator",
+      "required_capabilities": [],
+      "required_outcome_use": null,
+      "stream_id": null,
+      "version_spec": "~=0.1.0"
+    },
+    {
+      "action_capabilities": [],
+      "component_id": "model.primary",
+      "config": {
+        "threshold": 0.0
+      },
+      "input_contracts": {},
+      "kind": "model",
+      "outcome_uses": [],
+      "output_contracts": {},
+      "plugin_id": "eegle.example_models.mean_threshold",
+      "required_capabilities": [],
+      "required_outcome_use": null,
+      "stream_id": null,
+      "version_spec": "~=1.0"
+    },
+    {
+      "action_capabilities": [],
+      "component_id": "policy.feedback",
+      "config": {
+        "capability": "feedback.vector",
+        "constant_parameters": {
+          "mode": "simulation"
+        },
+        "output_parameters": {
+          "x": "score"
+        }
+      },
+      "input_contracts": {},
+      "kind": "policy",
+      "outcome_uses": [],
+      "output_contracts": {},
+      "plugin_id": "eegle.actions.structured_action",
+      "required_capabilities": [],
+      "required_outcome_use": null,
+      "stream_id": null,
+      "version_spec": "~=0.1.0"
+    },
+    {
+      "action_capabilities": [],
+      "component_id": "processing.clean.identity",
+      "config": {},
+      "input_contracts": {
+        "samples": {
+          "channel_count": 2,
+          "channel_ids": [
+            "C3",
+            "C4"
+          ],
+          "content_kind": "dense_samples",
+          "layout": "samples_by_channels",
+          "missing_data_policy": "explicit_validity",
+          "nominal_rate_hz": 250.0,
+          "rate_model": "regular",
+          "type_id": "eegle.dense_sample_batch.v1",
+          "unit": "uV",
+          "units": {
+            "C3": "uV",
+            "C4": "uV"
+          }
+        }
+      },
+      "kind": "transform",
+      "outcome_uses": [],
+      "output_contracts": {
+        "samples": {
+          "channel_count": 2,
+          "channel_ids": [
+            "C3",
+            "C4"
+          ],
+          "content_kind": "dense_samples",
+          "layout": "samples_by_channels",
+          "missing_data_policy": "explicit_validity",
+          "nominal_rate_hz": 250.0,
+          "rate_model": "regular",
+          "type_id": "eegle.dense_sample_batch.v1",
+          "unit": "uV",
+          "units": {
+            "C3": "uV",
+            "C4": "uV"
+          }
+        }
+      },
+      "plugin_id": "eegle.processing.identity",
+      "required_capabilities": [],
+      "required_outcome_use": null,
+      "stream_id": null,
+      "version_spec": "~=0.1.0"
+    },
+    {
+      "action_capabilities": [],
+      "component_id": "sink.event.markers",
+      "config": {},
+      "input_contracts": {},
+      "kind": "sink",
+      "outcome_uses": [],
+      "output_contracts": {},
+      "plugin_id": "eegle.recording.sparse_sink",
+      "required_capabilities": [],
+      "required_outcome_use": null,
+      "stream_id": null,
+      "version_spec": "~=0.1.0"
+    },
+    {
+      "action_capabilities": [],
+      "component_id": "sink.signal.neural",
+      "config": {},
+      "input_contracts": {},
+      "kind": "sink",
+      "outcome_uses": [],
+      "output_contracts": {},
+      "plugin_id": "eegle.recording.dense_sink",
+      "required_capabilities": [],
+      "required_outcome_use": null,
+      "stream_id": null,
+      "version_spec": "~=0.1.0"
+    },
+    {
+      "action_capabilities": [],
+      "component_id": "source.markers",
+      "config": {},
+      "input_contracts": {},
+      "kind": "source",
+      "outcome_uses": [],
+      "output_contracts": {},
+      "plugin_id": null,
+      "required_capabilities": [],
+      "required_outcome_use": null,
+      "stream_id": "stream.markers",
+      "version_spec": null
+    },
+    {
+      "action_capabilities": [],
+      "component_id": "source.neural",
+      "config": {},
+      "input_contracts": {},
+      "kind": "source",
+      "outcome_uses": [],
+      "output_contracts": {},
+      "plugin_id": null,
+      "required_capabilities": [],
+      "required_outcome_use": null,
+      "stream_id": "stream.neural",
+      "version_spec": null
+    },
+    {
+      "action_capabilities": [],
+      "component_id": "window.stimulus",
+      "config": {
+        "end_offset_seconds": 0.8,
+        "event_kinds": [
+          "stimulus"
+        ],
+        "max_buffer_samples": 100000,
+        "start_offset_seconds": -0.2
+      },
+      "input_contracts": {},
+      "kind": "window",
+      "outcome_uses": [],
+      "output_contracts": {},
+      "plugin_id": "eegle.processing.event_window",
+      "required_capabilities": [],
+      "required_outcome_use": null,
+      "stream_id": null,
+      "version_spec": "~=0.1.0"
+    }
+  ],
+  "initial_phase": "phase.closed-loop",
+  "model_roles": [],
+  "model_uses": [
+    {
+      "comparison_group": null,
+      "component_id": "model.primary",
+      "manifest_digest": "sha256:581fea7fcc1ec3109fb186c403d1214b054c95e0e8e2f04258c11ea9b91c9e9a",
+      "role_id": "primary"
+    }
+  ],
+  "outcome_expectations": [],
+  "phases": [
+    {
+      "acceptance_criteria": [],
+      "components": [
+        "actuator.feedback",
+        "model.primary",
+        "policy.feedback",
+        "processing.clean.identity",
+        "sink.event.markers",
+        "sink.signal.neural",
+        "source.markers",
+        "source.neural",
+        "window.stimulus"
+      ],
+      "operator_confirmation": false,
+      "phase_id": "phase.closed-loop",
+      "required_artifacts": [],
+      "resume_policy": "checkpoint",
+      "retry_limit": 0,
+      "timeout_seconds": null,
+      "transitions": []
+    }
+  ],
+  "protocol_id": "protocol.reference.closed-loop",
+  "recording": {
+    "execution_capture": true,
+    "raw_recording": "reference",
+    "semantic_evidence": true
+  },
+  "routes": [
+    {
+      "route_id": "route.actuator.feedback.request",
+      "source": {
+        "component": "policy.feedback",
+        "port": "request"
+      },
+      "target": {
+        "component": "actuator.feedback",
+        "port": "request"
+      }
+    },
+    {
+      "route_id": "route.model.primary.window",
+      "source": {
+        "component": "window.stimulus",
+        "port": "windows"
+      },
+      "target": {
+        "component": "model.primary",
+        "port": "window"
+      }
+    },
+    {
+      "route_id": "route.policy.feedback.prediction",
+      "source": {
+        "component": "model.primary",
+        "port": "prediction"
+      },
+      "target": {
+        "component": "policy.feedback",
+        "port": "prediction"
+      }
+    },
+    {
+      "route_id": "route.processing.clean.identity.samples",
+      "source": {
+        "component": "source.neural",
+        "port": "samples"
+      },
+      "target": {
+        "component": "processing.clean.identity",
+        "port": "samples"
+      }
+    },
+    {
+      "route_id": "route.sink.event.markers.records",
+      "source": {
+        "component": "source.markers",
+        "port": "events"
+      },
+      "target": {
+        "component": "sink.event.markers",
+        "port": "records"
+      }
+    },
+    {
+      "route_id": "route.sink.signal.neural.records",
+      "source": {
+        "component": "source.neural",
+        "port": "samples"
+      },
+      "target": {
+        "component": "sink.signal.neural",
+        "port": "records"
+      }
+    },
+    {
+      "route_id": "route.window.stimulus.events",
+      "source": {
+        "component": "source.markers",
+        "port": "events"
+      },
+      "target": {
+        "component": "window.stimulus",
+        "port": "events"
+      }
+    },
+    {
+      "route_id": "route.window.stimulus.samples",
+      "source": {
+        "component": "processing.clean.identity",
+        "port": "samples"
+      },
+      "target": {
+        "component": "window.stimulus",
+        "port": "samples"
+      }
+    }
+  ],
+  "scheduled_triggers": [],
+  "scheduling": {
+    "backpressure": "fail_run"
+  },
+  "schema": "eegle.suite_spec.v1",
+  "state_triggers": [],
+  "streams": [
+    {
+      "clock_id": "device.clock",
+      "contract": {
+        "content_kind": "sparse_events",
+        "event_kinds": [
+          "stimulus"
+        ],
+        "rate_model": "irregular",
+        "type_id": "eegle.sparse_event_batch.v1"
+      },
+      "modality": "markers",
+      "stream_id": "stream.markers"
+    },
+    {
+      "clock_id": "device.clock",
+      "contract": {
+        "channel_count": 2,
+        "channel_ids": [
+          "C3",
+          "C4"
+        ],
+        "content_kind": "dense_samples",
+        "layout": "samples_by_channels",
+        "missing_data_policy": "explicit_validity",
+        "nominal_rate_hz": 250.0,
+        "rate_model": "regular",
+        "type_id": "eegle.dense_sample_batch.v1",
+        "unit": "uV",
+        "units": {
+          "C3": "uV",
+          "C4": "uV"
+        }
+      },
+      "modality": "eeg",
+      "stream_id": "stream.neural"
+    }
+  ],
+  "suite_id": "suite.reference.closed-loop",
+  "validation": {
+    "require_replay_equivalence": true
+  }
+}

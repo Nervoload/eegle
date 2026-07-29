@@ -1,0 +1,14 @@
+{
+  "acceptance": [],
+  "annotations": {},
+  "claims": [
+    {
+      "claim_id": "claim.reference.closed-loop",
+      "statement": "Run a bounded EEGle reference experiment."
+    }
+  ],
+  "execution_mode": "causal",
+  "metrics": [],
+  "protocol_id": "protocol.reference.closed-loop",
+  "schema": "eegle.protocol_spec.v1"
+}

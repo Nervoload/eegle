@@ -16,6 +16,7 @@ from eegle.actions.providers import SimulationAuthorizationProvider
 from eegle.actions.simulated import SimulatedActuator
 from eegle.models.predictions import PREDICTION_RECORD_SCHEMA
 from eegle.plugins.registry import (
+    ContractTransformSpec,
     PluginCapabilities,
     PluginDescriptor,
     PortSpec,
@@ -112,6 +113,7 @@ def builtin_plugin_descriptors() -> tuple[PluginDescriptor, ...]:
             factory=lambda config: IdentityTransform(**_output_config(config)),
             implementation="eegle.processing.transforms:IdentityTransform",
             distribution="eegle",
+            contract_transform=ContractTransformSpec("samples", "samples"),
         ),
         PluginDescriptor(
             plugin_id="eegle.processing.causal_sos",
@@ -131,6 +133,7 @@ def builtin_plugin_descriptors() -> tuple[PluginDescriptor, ...]:
             factory=_causal_sos_factory,
             implementation="eegle.processing.transforms:CausalSosFilter",
             distribution="eegle",
+            contract_transform=ContractTransformSpec("samples", "samples"),
         ),
         PluginDescriptor(
             plugin_id="eegle.processing.retrospective_sos",
@@ -151,6 +154,7 @@ def builtin_plugin_descriptors() -> tuple[PluginDescriptor, ...]:
             factory=_retrospective_sos_factory,
             implementation="eegle.processing.transforms:RetrospectiveSosFilter",
             distribution="eegle",
+            contract_transform=ContractTransformSpec("samples", "samples"),
         ),
         PluginDescriptor(
             plugin_id="eegle.processing.finite_quality",

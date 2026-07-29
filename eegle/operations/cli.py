@@ -91,18 +91,32 @@ def build_parser() -> argparse.ArgumentParser:
     new = commands.add_parser("new", help="create a non-overwriting simulation project")
     new.add_argument("project", help="new project directory")
     new.add_argument("--id", dest="project_id", help="portable project/draft identity")
-    new.add_argument(
+    authoring_source = new.add_mutually_exclusive_group()
+    authoring_source.add_argument(
         "--template",
-        default="eegle.template.continuous_recording",
         help="exact template identity",
     )
     new.add_argument("--template-version", default="1.0.0")
+    authoring_source.add_argument(
+        "--preset",
+        help="exact compositional preset identity",
+    )
+    new.add_argument("--preset-version", default="2.0.0")
+    authoring_source.add_argument(
+        "--design",
+        help="normalized eegle.experiment_design.v1 JSON source",
+    )
     new.add_argument(
         "--set",
         action="append",
         default=[],
         metavar="NAME=JSON",
         help="set one explicit finite JSON template parameter",
+    )
+    new.add_argument(
+        "--grant-simulated-adaptation",
+        action="store_true",
+        help="explicitly authorize model adaptation in the generated simulation deployment",
     )
 
     compile_command = commands.add_parser(
@@ -427,9 +441,13 @@ def _dispatch(args: argparse.Namespace) -> Mapping[str, Any]:
         return create_project(
             project_path,
             project_id=project_id,
-            template_id=args.template,
+            template_id=args.template or "eegle.template.continuous_recording",
             template_version=args.template_version,
             parameters=parameters,
+            design=args.design,
+            preset_id=args.preset,
+            preset_version=args.preset_version,
+            grant_simulated_adaptation=args.grant_simulated_adaptation,
         ).to_payload()
     if args.command == "compile":
         return compile_project(

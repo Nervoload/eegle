@@ -1,0 +1,121 @@
+{
+  "requirements": [
+    {
+      "action_capability": null,
+      "component_id": null,
+      "contract": null,
+      "kind": "clock_mapping",
+      "manifest_digest": null,
+      "required_capabilities": [],
+      "requirement_id": "requirement.clock.markers",
+      "source_clock": "device.clock",
+      "storage_kind": null,
+      "stream_id": null,
+      "target_clock": "boundary.clock"
+    },
+    {
+      "action_capability": null,
+      "component_id": null,
+      "contract": null,
+      "kind": "clock_mapping",
+      "manifest_digest": null,
+      "required_capabilities": [],
+      "requirement_id": "requirement.clock.neural",
+      "source_clock": "device.clock",
+      "storage_kind": null,
+      "stream_id": null,
+      "target_clock": "boundary.clock"
+    },
+    {
+      "action_capability": null,
+      "component_id": "model.candidate",
+      "contract": null,
+      "kind": "model_artifact",
+      "manifest_digest": "sha256:118acf658ab6668084512913f09cf8dc136b8c51a21ead927b1e2c9dd80814bc",
+      "required_capabilities": [],
+      "requirement_id": "requirement.model.candidate",
+      "source_clock": null,
+      "storage_kind": null,
+      "stream_id": null,
+      "target_clock": null
+    },
+    {
+      "action_capability": null,
+      "component_id": "model.primary",
+      "contract": null,
+      "kind": "model_artifact",
+      "manifest_digest": "sha256:581fea7fcc1ec3109fb186c403d1214b054c95e0e8e2f04258c11ea9b91c9e9a",
+      "required_capabilities": [],
+      "requirement_id": "requirement.model.primary",
+      "source_clock": null,
+      "storage_kind": null,
+      "stream_id": null,
+      "target_clock": null
+    },
+    {
+      "action_capability": null,
+      "component_id": "source.markers",
+      "contract": {
+        "content_kind": "sparse_events",
+        "event_kinds": [
+          "stimulus"
+        ],
+        "rate_model": "irregular",
+        "type_id": "eegle.sparse_event_batch.v1"
+      },
+      "kind": "source_binding",
+      "manifest_digest": null,
+      "required_capabilities": [],
+      "requirement_id": "requirement.source.markers",
+      "source_clock": null,
+      "storage_kind": null,
+      "stream_id": "stream.markers",
+      "target_clock": null
+    },
+    {
+      "action_capability": null,
+      "component_id": "source.neural",
+      "contract": {
+        "channel_count": 2,
+        "channel_ids": [
+          "C3",
+          "C4"
+        ],
+        "content_kind": "dense_samples",
+        "layout": "samples_by_channels",
+        "missing_data_policy": "explicit_validity",
+        "nominal_rate_hz": 250.0,
+        "rate_model": "regular",
+        "type_id": "eegle.dense_sample_batch.v1",
+        "unit": "uV",
+        "units": {
+          "C3": "uV",
+          "C4": "uV"
+        }
+      },
+      "kind": "source_binding",
+      "manifest_digest": null,
+      "required_capabilities": [],
+      "requirement_id": "requirement.source.neural",
+      "source_clock": null,
+      "storage_kind": null,
+      "stream_id": "stream.neural",
+      "target_clock": null
+    },
+    {
+      "action_capability": null,
+      "component_id": null,
+      "contract": null,
+      "kind": "storage",
+      "manifest_digest": null,
+      "required_capabilities": [],
+      "requirement_id": "requirement.storage.evidence",
+      "source_clock": null,
+      "storage_kind": "evidence",
+      "stream_id": null,
+      "target_clock": null
+    }
+  ],
+  "schema": "eegle.deployment_requirements.v1",
+  "suite_id": "suite.reference.model-comparison"
+}

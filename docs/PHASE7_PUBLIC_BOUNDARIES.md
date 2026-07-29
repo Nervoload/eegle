@@ -1,7 +1,7 @@
 # Phase 7 Public and Authoring Boundaries
 
-**Status:** P7-001 through P7-009, P7-011/P7-012, and the P7-012A compositional core implemented; P7-010 real acceptance and P7-013 publication remain pending
-**Date:** 2026-07-28
+**Status:** P7-001 through P7-009 and P7-011 through P7-013 implemented; P7-010 real acceptance, P7-013A plugin tooling, and P7-014 closure remain pending
+**Date:** 2026-07-29
 **Architecture authority:** [EEGLE.md](EEGLE.md)
 **Phase design:** [PHASE7_AUTHORING_OPERATIONS.md](PHASE7_AUTHORING_OPERATIONS.md)
 **Machine-readable inventory:**
@@ -57,12 +57,16 @@ early use but provisional until P7-014:
 
 ```text
 eegle.authoring
+eegle.integrations
+eegle.integrations.lsl
 eegle.operations
 ```
 
 `eegle.authoring` owns non-executable authoring envelopes, provenance
-vocabulary, draft/template/builder services, and the optional restricted-YAML
-adapter. `eegle.operations` owns
+vocabulary, draft/template/composition services, exact compositional presets,
+and the optional restricted-YAML adapter. `eegle.integrations` owns
+dependency-lazy optional bridges; its LSL subpackage remains simulated-validated
+until the retained real acceptance gate passes. `eegle.operations` owns
 the application-service results, joined explanation/diff projections,
 diagnostics, and process-exit meanings shared by Python and the CLI.
 Provisional Python names may be refined during Phase 7,
@@ -122,6 +126,22 @@ replacement replay. The package is data plus canonical identity, never an
 executable import-path or environment envelope. Framework code remains an
 independently installed plugin, and replacement execution remains the existing
 locked engine. The `model` CLI family delegates directly to those owners.
+
+P7-012B keeps the package-level authoring import stable while separating its
+implementation responsibilities. Immutable declarations live in `design`,
+persistent editing in `composition`, named lowering in `lowering`, source
+mapping in `design_provenance`, composed exports in `composed_projects`, and
+the design JSON Schema in `schemas`. These implementation modules are not
+separate public APIs.
+
+P7-013 adds exact compositional preset revision `2.0.0` and normalized-design
+project input without changing template revision `1.0.0`. Six generated
+projects retain their source, canonical outputs, deployment requirements,
+simulation deployment, explanation, and project index. The separate example
+model distribution publishes mean, peak, and stateful adaptive algorithms
+through `eegle.plugins`; model code never enters authoring or a model package.
+The dependency-lazy MNE bridge is a one-way analysis export and retains EEGle
+timing identities in a sidecar rather than claiming MNE as a replay authority.
 
 ## 3. Authoring payload contracts
 
@@ -194,8 +214,10 @@ optional deployment canonical targets. Each entry records:
 - optional template identity and parameter path.
 
 The allowed origins are user explicit, template default, authoring default,
-detection proposal, and migration generated. Compiler-derived and plugin
-defaults are intentionally absent: they remain compiler/plan provenance.
+authoring derived, detection proposal, and migration generated. Derived means
+the authoring lowerer deterministically calculated the exact canonical leaf; it
+does not imply user confirmation. Compiler-derived and plugin defaults are
+intentionally absent: they remain compiler/plan provenance.
 
 The sidecar is never embedded in a canonical specification and never
 participates in its hash. Its own draft and target digest references bind it to

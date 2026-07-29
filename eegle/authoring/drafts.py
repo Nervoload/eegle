@@ -476,7 +476,8 @@ def lower_experiment_draft(
                     ),
                 )
             )
-        from eegle.authoring.design import ExperimentDesign, lower_experiment_design
+        from eegle.authoring.composition import ExperimentDesign
+        from eegle.authoring.lowering import lower_experiment_design
 
         payload = {
             "schema": draft.design_schema,

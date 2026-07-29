@@ -1,0 +1,14 @@
+{
+  "acceptance": [],
+  "annotations": {},
+  "claims": [
+    {
+      "claim_id": "claim.reference.adaptation",
+      "statement": "Run a bounded EEGle reference experiment."
+    }
+  ],
+  "execution_mode": "causal",
+  "metrics": [],
+  "protocol_id": "protocol.reference.adaptation",
+  "schema": "eegle.protocol_spec.v1"
+}

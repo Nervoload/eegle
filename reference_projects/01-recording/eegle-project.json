@@ -1,0 +1,56 @@
+{
+  "artifacts": [
+    {
+      "digest": "sha256:17dbf2d32273e04e643860ee795a5943dddf38bf85af1578eff007962c4d51f2",
+      "immutable": false,
+      "role": "authoring_explanation",
+      "uri": "explanations/authoring.json"
+    },
+    {
+      "digest": "sha256:c6803664b8a36eaa4e034d63acac92ce2b00c860bd935a9ad3771f8b2a1bcdcc",
+      "immutable": false,
+      "role": "authoring_project",
+      "uri": "generated/authoring-project.json"
+    },
+    {
+      "digest": "sha256:c9ba5ab66b84869129c36bee0dc3fd13d412808ffc71ddb155aa1de6f1387927",
+      "immutable": false,
+      "role": "authoring_source",
+      "uri": "authoring/experiment.json"
+    },
+    {
+      "digest": "sha256:eb3b9ff39262ff87f3939cba9e81560ad8bf97930b410e82c5c1225c91194604",
+      "immutable": false,
+      "role": "deployment_requirements",
+      "uri": "generated/deployment-requirements.json"
+    },
+    {
+      "digest": "sha256:a35c0e7fab4cd1e9ccd4b39c27bd62d2dcae711491208f8e0e3c4f51d905092b",
+      "immutable": true,
+      "role": "design_preset_lock",
+      "uri": "authoring/preset-lock.json"
+    },
+    {
+      "digest": "sha256:fc198216a60567096b544d1c0fb5913af2fc81debf76b56c93379c57b43732f0",
+      "immutable": false,
+      "role": "protocol",
+      "uri": "generated/protocol.json"
+    },
+    {
+      "digest": "sha256:e4ff8408784763102d98c17fcd0573b830aae68083fd3c81538bcd2137eb1be1",
+      "immutable": false,
+      "role": "simulation_deployment",
+      "uri": "deployments/simulation.json"
+    },
+    {
+      "digest": "sha256:9734794b71a23325c4da6124d6c05277faad686d89c5c3ef44d7c7f3fead063c",
+      "immutable": false,
+      "role": "suite",
+      "uri": "generated/suite.json"
+    }
+  ],
+  "manifest_hash": "sha256:532ef034c9099a0fd97472d82b2102532b8507af5a261464f634820b3890e31a",
+  "project_id": "reference.recording",
+  "schema": "eegle.project.v1",
+  "session_uris": []
+}

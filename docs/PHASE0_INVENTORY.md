@@ -68,7 +68,7 @@ new implementation behind a new contract.
 | Current module | Disposition and target |
 |---|---|
 | `eegle.__init__`, `eegle.__main__` | Rewrite the public alpha surface in Phase 7; no compatibility promise for present re-exports. |
-| `eegle.cli` | Replace with Reproduce/Record/Replay/Validate commands in Phase 7. |
+| `eegle.cli` | Deleted at C-003/P7-013 after the installed `eegle.operations.cli` replacement, portability coverage, clean-wheel command journey, and public project services passed. |
 | `eegle.components`, `eegle.factory` | Extract construction requirements; rewrite as executable plugin discovery and factories. |
 | `eegle.config` | Extract validation/path lessons; replace with compiled typed specs. Never retain repository-root path resolution. |
 | `eegle.eeg_csv` | Externalize as a legacy/CSV format adapter; do not make CSV the evidence store. |

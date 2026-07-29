@@ -1060,6 +1060,45 @@ def _compile_graph(
                 compiled = _compiled_port(component, descriptor_port, direction, contract)
                 ports.append(compiled)
                 port_lookup[(component.component_id, direction, descriptor_port.name)] = compiled
+        if (
+            component.kind == ComponentKind.TRANSFORM
+            and component.input_contracts
+            and component.output_contracts
+        ):
+            transform = descriptor.contract_transform
+            if transform is None:
+                diagnostics.append(
+                    _error(
+                        "processing.contract_unverified",
+                        f"$.suite.components[{index}].output_contracts",
+                        "transform output contract is authored but the plugin does not attest a contract transformation",
+                    )
+                )
+            else:
+                input_contract = component.input_contracts.get(transform.input_port)
+                output_contract = component.output_contracts.get(transform.output_port)
+                if input_contract is not None and output_contract is not None:
+                    try:
+                        expected = transform.resolve(input_contract, component.config)
+                    except (KeyError, TypeError, ValueError) as exc:
+                        diagnostics.append(
+                            _error(
+                                "processing.contract_transform",
+                                f"$.suite.components[{index}].config",
+                                f"plugin contract transformation could not be resolved: {exc}",
+                            )
+                        )
+                    else:
+                        if expected != output_contract:
+                            diagnostics.append(
+                                _error(
+                                    "processing.output_contract",
+                                    f"$.suite.components[{index}].output_contracts.{transform.output_port}",
+                                    "authored output contract does not match the plugin-attested transformation",
+                                    expected=expected.to_payload(),
+                                    authored=output_contract.to_payload(),
+                                )
+                            )
 
     routes: list[CompiledRoute] = []
     target_counts: dict[tuple[str, str], int] = {}

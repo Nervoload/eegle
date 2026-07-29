@@ -29,7 +29,7 @@ pre-vision documents are legacy implementation evidence, not design authority.
 
 ## Legacy Current-Implementation Map
 
-- `eegle/cli.py`: historical generic command implementation excluded from the wheel.
+- `eegle/operations/cli.py`: installed artifact-oriented command adapter over public services.
 - `eegle/experiment.py`: forward experiment orchestration.
 - `eegle/feedback_manager.py`: managed recorder, realtime, dashboard, and
   analyzer worker lifecycle.

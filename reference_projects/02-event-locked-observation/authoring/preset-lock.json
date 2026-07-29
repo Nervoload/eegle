@@ -1,0 +1,8 @@
+{
+  "design_digest": "sha256:b31994270ba7c2bb1e64dcfd596853dee845d9d13065ec2bee305f6ed74505e4",
+  "lock_digest": "sha256:8088bad3e63dbd5823aaa8163f893e003b88e6d96cb904cc8e4f6671ce63750c",
+  "parameters": {},
+  "preset_id": "eegle.preset.event_locked_observation",
+  "schema": "eegle.design_preset_lock.v1",
+  "version": "2.0.0"
+}

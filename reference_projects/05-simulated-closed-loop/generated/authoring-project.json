@@ -1,0 +1,28 @@
+{
+  "design_digest": "sha256:6a0a40640952fcbf1068ba4f814d8505dd21845088cfd635e60d61b5e64c088a",
+  "experiment_id": "reference.closed-loop",
+  "files": {
+    "authoring-provenance.json": {
+      "canonical_digest": "sha256:28255b63af81c4114d9dd8315e5172f8008d24fb2eaf1e4e6f0c24190da715f3",
+      "schema": "eegle.authoring_provenance.v1"
+    },
+    "deployment-requirements.json": {
+      "canonical_digest": "sha256:37ac848d183930482cbceb8fff75c3c831449fc73f467d58a91d7818fafa3e0e",
+      "schema": "eegle.deployment_requirements.v1"
+    },
+    "experiment.design.json": {
+      "canonical_digest": "sha256:6a0a40640952fcbf1068ba4f814d8505dd21845088cfd635e60d61b5e64c088a",
+      "schema": "eegle.experiment_design.v1"
+    },
+    "protocol.json": {
+      "canonical_digest": "sha256:ddb0fc338e404deca7334778b450f1594fd530b86dc716f97a259e46c1083479",
+      "schema": "eegle.protocol_spec.v1"
+    },
+    "suite.json": {
+      "canonical_digest": "sha256:9513ac79238430ea5e897cafbec4d0071bbc9c1747242cf743079a99499950fb",
+      "schema": "eegle.suite_spec.v1"
+    }
+  },
+  "revision": 1,
+  "schema": "eegle.composed_authoring_project.v1"
+}

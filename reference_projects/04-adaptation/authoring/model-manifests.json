@@ -1,0 +1,85 @@
+{
+  "manifests": [
+    {
+      "annotations": {
+        "purpose": "Phase 7 delayed-outcome adaptation reference"
+      },
+      "artifacts": [],
+      "contract": {
+        "contract_digest": "sha256:0c1c9ed72a3521e57afc9b36fc45f3e58b532f12adf77fa84566e5ea6abfeab3",
+        "inputs": [
+          {
+            "port_name": "window",
+            "preprocessing": [],
+            "requirements": {},
+            "schema": "eegle.model_input_contract.v1",
+            "type_id": "eegle.dense_window.v1"
+          }
+        ],
+        "metadata": {},
+        "outputs": [
+          {
+            "abstention_supported": false,
+            "port_name": "prediction",
+            "schema": "eegle.model_output_contract.v1",
+            "type_id": "eegle.prediction.v2",
+            "uncertainty_schema": null,
+            "validity_schema": null,
+            "value_schema": {
+              "additionalProperties": false,
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "score": {
+                  "type": "number"
+                },
+                "threshold": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "label",
+                "score",
+                "threshold"
+              ],
+              "type": "object"
+            }
+          }
+        ],
+        "schema": "eegle.model_contract.v1",
+        "state": {
+          "adaptation_supported": true,
+          "behavior": "snapshot_restore",
+          "initial_state_required": false,
+          "replay_equivalence": "numeric",
+          "schema": "eegle.model_state_contract.v1",
+          "state_affects_predictions": true,
+          "state_schema_id": "eegle.example_models.adaptive_mean_state.v1"
+        },
+        "supported_modes": [
+          "causal",
+          "oracle",
+          "retrospective"
+        ]
+      },
+      "contract_digest": "sha256:0c1c9ed72a3521e57afc9b36fc45f3e58b532f12adf77fa84566e5ea6abfeab3",
+      "evaluation_provenance": {},
+      "implementations": [
+        {
+          "plugin_id": "eegle.example_models.adaptive_mean",
+          "schema": "eegle.model_implementation_requirement.v1",
+          "version_spec": "~=1.0"
+        }
+      ],
+      "initial_state_artifact_id": null,
+      "license": null,
+      "manifest_digest": "sha256:0b147272cd1af76d8715135a0ab3079ff96224128f82d1453941fd567500b301",
+      "model_id": "eegle.reference.adaptive-mean",
+      "model_version": "1.0.0",
+      "schema": "eegle.model_manifest.v1",
+      "training_provenance": {}
+    }
+  ],
+  "schema": "eegle.project_model_manifests.v1"
+}

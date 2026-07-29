@@ -31,6 +31,7 @@ from eegle.specs import SuiteSpec
 _DENSE_WINDOW = "eegle.dense_window.v1"
 _SCHEMA = "https://json-schema.org/draft/2020-12/schema"
 _PLUGIN_ID = "fixture.phase5.mean_threshold"
+_PEAK_PLUGIN_ID = "fixture.phase5.peak_threshold"
 
 
 class Phase5MeanThresholdModel:
@@ -45,6 +46,34 @@ class Phase5MeanThresholdModel:
         if item.validity_mask is not None:
             valid &= item.validity_mask
         score = float(np.mean(item.values[valid]))
+        return ModelResult(
+            {
+                "label": (
+                    self.positive_label
+                    if score >= self.threshold
+                    else self.negative_label
+                ),
+                "score": score,
+                "threshold": self.threshold,
+            },
+            completion_delay_seconds=self.latency_seconds,
+        )
+
+
+class Phase5PeakThresholdModel:
+    """A genuinely different implementation used for comparison acceptance."""
+
+    def __init__(self, config: Mapping[str, Any]) -> None:
+        self.threshold = float(config.get("threshold", 0.0))
+        self.negative_label = str(config.get("negative_label", "negative"))
+        self.positive_label = str(config.get("positive_label", "positive"))
+        self.latency_seconds = float(config.get("latency_seconds", 0.0))
+
+    def predict(self, item: DenseWindow, context: Any) -> ModelResult:
+        valid = np.isfinite(item.values)
+        if item.validity_mask is not None:
+            valid &= item.validity_mask
+        score = float(np.max(np.abs(item.values[valid])))
         return ModelResult(
             {
                 "label": (
@@ -90,9 +119,21 @@ def phase5_model_manifest() -> ModelManifest:
     )
 
 
+def phase5_peak_model_manifest() -> ModelManifest:
+    base = phase5_model_manifest()
+    return ModelManifest(
+        model_id="fixture.phase5.peak-threshold",
+        model_version="0.1.0",
+        contract=base.contract,
+        artifacts=(),
+        implementations=(ModelImplementationRequirement(_PEAK_PLUGIN_ID, "~=0.1"),),
+        annotations={"scope": "test-only independent peak execution evidence"},
+    )
+
+
 def phase5_model_manifests() -> Mapping[str, ModelManifest]:
-    manifest = phase5_model_manifest()
-    return {manifest.manifest_digest: manifest}
+    manifests = (phase5_model_manifest(), phase5_peak_model_manifest())
+    return {manifest.manifest_digest: manifest for manifest in manifests}
 
 
 def bind_phase5_models(suite: SuiteSpec) -> SuiteSpec:
@@ -151,23 +192,24 @@ def compile_phase5_suite(protocol, suite, deployment, registry, **kwargs):
 
 
 def phase5_plugin_descriptors() -> tuple[PluginDescriptor, ...]:
+    common_schema = {
+        "$schema": _SCHEMA,
+        "type": "object",
+        "properties": {
+            "model_id": {"type": "string"},
+            "threshold": {"type": "number"},
+            "negative_label": {"type": "string"},
+            "positive_label": {"type": "string"},
+            "latency_seconds": {"type": "number", "minimum": 0.0},
+        },
+        "additionalProperties": False,
+    }
     return (
         PluginDescriptor(
             plugin_id=_PLUGIN_ID,
             version="0.1.0",
             kind=ComponentKind.MODEL,
-            config_schema={
-                "$schema": _SCHEMA,
-                "type": "object",
-                "properties": {
-                    "model_id": {"type": "string"},
-                    "threshold": {"type": "number"},
-                    "negative_label": {"type": "string"},
-                    "positive_label": {"type": "string"},
-                    "latency_seconds": {"type": "number", "minimum": 0.0},
-                },
-                "additionalProperties": False,
-            },
+            config_schema=common_schema,
             input_ports=(PortSpec("window", _DENSE_WINDOW),),
             output_ports=(PortSpec("prediction", PREDICTION_RECORD_SCHEMA),),
             capabilities=PluginCapabilities(
@@ -179,6 +221,25 @@ def phase5_plugin_descriptors() -> tuple[PluginDescriptor, ...]:
             factory=Phase5MeanThresholdModel,
             implementation=(
                 "tests.fixtures.phase5_model_components:Phase5MeanThresholdModel"
+            ),
+            distribution="tests",
+        ),
+        PluginDescriptor(
+            plugin_id=_PEAK_PLUGIN_ID,
+            version="0.1.0",
+            kind=ComponentKind.MODEL,
+            config_schema=common_schema,
+            input_ports=(PortSpec("window", _DENSE_WINDOW),),
+            output_ports=(PortSpec("prediction", PREDICTION_RECORD_SCHEMA),),
+            capabilities=PluginCapabilities(
+                supported_modes=frozenset(ExecutionMode),
+                determinism=Determinism.DETERMINISTIC,
+                equivalence=EquivalenceLevel.NUMERIC,
+                state_behavior=StateBehavior.STATELESS,
+            ),
+            factory=Phase5PeakThresholdModel,
+            implementation=(
+                "tests.fixtures.phase5_model_components:Phase5PeakThresholdModel"
             ),
             distribution="tests",
         ),

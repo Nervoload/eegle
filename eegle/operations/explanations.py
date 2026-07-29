@@ -347,18 +347,17 @@ def explain_composed_experiment(
 
 
 def diff_authored_experiments(
-    before: AuthoredExperiment,
-    after: AuthoredExperiment,
+    before: AuthoredExperiment | ComposedExperiment,
+    after: AuthoredExperiment | ComposedExperiment,
     *,
     before_plan: ExecutionPlan | None = None,
     after_plan: ExecutionPlan | None = None,
 ) -> ExperimentDiff:
     """Classify source, canonical, operational, and locked-plan differences."""
 
-    if not isinstance(before, AuthoredExperiment) or not isinstance(
-        after, AuthoredExperiment
-    ):
-        raise TypeError("experiment diff requires AuthoredExperiment values")
+    supported = (AuthoredExperiment, ComposedExperiment)
+    if not isinstance(before, supported) or not isinstance(after, supported):
+        raise TypeError("experiment diff requires authored experiment values")
     if (before_plan is None) != (after_plan is None):
         raise ValueError("experiment plan diff requires both plans or neither plan")
     changes: list[ExperimentChange] = []
@@ -421,12 +420,12 @@ def diff_authored_experiments(
 
 def guide_compilation_diagnostics(
     diagnostics: Iterable[CompilationDiagnostic],
-    authored: AuthoredExperiment,
+    authored: AuthoredExperiment | ComposedExperiment,
 ) -> tuple[OperationDiagnostic, ...]:
     """Attach source-aware guidance without altering compiler diagnostics or input."""
 
-    if not isinstance(authored, AuthoredExperiment):
-        raise TypeError("guided diagnostics require an AuthoredExperiment")
+    if not isinstance(authored, (AuthoredExperiment, ComposedExperiment)):
+        raise TypeError("guided diagnostics require an authored experiment")
     guided: list[OperationDiagnostic] = []
     for diagnostic in diagnostics:
         if not isinstance(diagnostic, CompilationDiagnostic):
@@ -474,7 +473,7 @@ def guide_compilation_diagnostics(
 
 def diagnose_compilation_failure(
     error: CompilationError,
-    authored: AuthoredExperiment,
+    authored: AuthoredExperiment | ComposedExperiment,
 ) -> OperationError:
     if not isinstance(error, CompilationError):
         raise TypeError("compilation failure diagnosis requires CompilationError")
@@ -943,7 +942,7 @@ def _append_hash_change(
 
 
 def _related_authoring_source(
-    authored: AuthoredExperiment,
+    authored: AuthoredExperiment | ComposedExperiment,
     diagnostic: CompilationDiagnostic,
     family: str,
 ) -> SourceLocation | None:

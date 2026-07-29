@@ -65,7 +65,7 @@ artifacts, provider availability, safe-state reports, and operator gates.
 
 ## Real EEG observe-only acceptance
 
-This gate is intentionally open as of 2026-07-28; the current environment has
+This gate is intentionally open as of 2026-07-29; the current environment has
 no `pylsl` installation or live EEG outlet. P7-010 must remain `in_progress`
 until the following non-participant run is completed and its redacted evidence
 identity is recorded here:

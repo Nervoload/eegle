@@ -87,6 +87,12 @@ class Phase5PackagingTests(unittest.TestCase):
             self.assertIn("eegle/authoring/drafts.py", names)
             self.assertIn("eegle/authoring/_template_profiles.py", names)
             self.assertIn("eegle/authoring/builders.py", names)
+            self.assertIn("eegle/authoring/composed_projects.py", names)
+            self.assertIn("eegle/authoring/composition.py", names)
+            self.assertIn("eegle/authoring/design.py", names)
+            self.assertIn("eegle/authoring/design_provenance.py", names)
+            self.assertIn("eegle/authoring/lowering.py", names)
+            self.assertIn("eegle/authoring/presets.py", names)
             self.assertIn("eegle/authoring/provenance.py", names)
             self.assertIn("eegle/authoring/schemas.py", names)
             self.assertIn("eegle/authoring/templates.py", names)
@@ -101,6 +107,7 @@ class Phase5PackagingTests(unittest.TestCase):
             self.assertIn("eegle/operations/cli.py", names)
             self.assertIn("eegle/models/packaging.py", names)
             self.assertIn("eegle/integrations/__init__.py", names)
+            self.assertIn("eegle/integrations/mne.py", names)
             self.assertIn("eegle/integrations/lsl/__init__.py", names)
             self.assertNotIn("eegle/integrations/legacy_sessions.py", names)
             self.assertNotIn("eegle/integrations/task_environment.py", names)
@@ -179,6 +186,139 @@ class Phase5PackagingTests(unittest.TestCase):
                     payload = json.loads(completed.stdout)
                     self.assertTrue(payload["ok"])
                     self.assertEqual(payload["operation"], command[0])
+
+            plugin_source = ROOT / "examples" / "plugins" / "eegle-example-models"
+            plugin_project = root / "eegle-example-models"
+            shutil.copytree(plugin_source, plugin_project)
+            plugin_wheel_dir = root / "plugin-wheel"
+            plugin_wheel_dir.mkdir()
+            plugin_build = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "wheel",
+                    ".",
+                    "--no-build-isolation",
+                    "--no-deps",
+                    "--wheel-dir",
+                    str(plugin_wheel_dir),
+                ],
+                cwd=plugin_project,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                plugin_build.returncode,
+                0,
+                plugin_build.stdout + plugin_build.stderr,
+            )
+            plugin_wheels = tuple(plugin_wheel_dir.glob("eegle_example_models-*.whl"))
+            self.assertEqual(len(plugin_wheels), 1)
+
+            model_environment = environment.copy()
+            model_environment["PYTHONPATH"] = os.pathsep.join(
+                (str(wheels[0]), str(plugin_wheels[0]))
+            )
+            comparison_root = root / "model-comparison"
+            model_commands = (
+                (
+                    "new",
+                    str(comparison_root),
+                    "--id",
+                    "clean-wheel-model-comparison",
+                    "--preset",
+                    "eegle.preset.model_comparison",
+                ),
+                ("compile", str(comparison_root)),
+                (
+                    "run",
+                    str(comparison_root),
+                    "--session-id",
+                    "session.clean.model-comparison",
+                ),
+            )
+            for command in model_commands:
+                with self.subTest(clean_plugin_command=command[0]):
+                    completed = subprocess.run(
+                        [sys.executable, "-m", "eegle", "--json", *command],
+                        cwd=root,
+                        env=model_environment,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertEqual(
+                        completed.returncode,
+                        0,
+                        completed.stdout + completed.stderr,
+                    )
+                    payload = json.loads(completed.stdout)
+                    self.assertTrue(payload["ok"])
+                    self.assertEqual(payload["operation"], command[0])
+
+            adaptation_root = root / "adaptation"
+            adaptation_session = "session.clean.adaptation"
+            adaptation_commands = (
+                (
+                    "new",
+                    str(adaptation_root),
+                    "--id",
+                    "clean-wheel-adaptation",
+                    "--preset",
+                    "eegle.preset.adaptation",
+                    "--grant-simulated-adaptation",
+                ),
+                ("compile", str(adaptation_root)),
+                (
+                    "run",
+                    str(adaptation_root),
+                    "--session-id",
+                    adaptation_session,
+                ),
+            )
+            for command in adaptation_commands:
+                with self.subTest(clean_adaptation_command=command[0]):
+                    completed = subprocess.run(
+                        [sys.executable, "-m", "eegle", "--json", *command],
+                        cwd=root,
+                        env=model_environment,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertEqual(
+                        completed.returncode,
+                        0,
+                        completed.stdout + completed.stderr,
+                    )
+
+            session_root = adaptation_root / "sessions" / adaptation_session
+            inspected = subprocess.run(
+                [sys.executable, "-m", "eegle", "--json", "inspect", str(session_root)],
+                cwd=root,
+                env=model_environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(inspected.returncode, 0, inspected.stdout + inspected.stderr)
+            inspection = json.loads(inspected.stdout)["result"]
+            self.assertEqual(
+                inspection["adaptation"]["transition_status_counts"],
+                {"applied": 1, "requested": 1},
+            )
+            replayed = subprocess.run(
+                [sys.executable, "-m", "eegle", "--json", "replay", str(session_root)],
+                cwd=root,
+                env=model_environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(replayed.returncode, 0, replayed.stdout + replayed.stderr)
+            self.assertTrue(json.loads(replayed.stdout)["result"]["equivalent"])
 
 
 if __name__ == "__main__":

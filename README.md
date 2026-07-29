@@ -1,155 +1,73 @@
 # EEGle
 
-EEGle is an EEG-first, neurophysiology-general Python framework for reproducing,
-recording, replaying, and validating synchronized model systems. It compiles
-portable scientific intent plus site-local deployment bindings into one
-immutable typed execution plan, then uses the same engine for simulated,
-recorded, and replay execution.
+EEGle is an EEG-first, neurophysiology-general Python framework for specifying, compiling, running, recording, replaying, and validating synchronized experimental model systems.
 
-This branch is the clean v1.0 rebuild. The first destructive cleanup removed
-the superseded compatibility facades and the alpha, attention, classification,
-DSART, and inhibition study recipes. Selected task, PsychoPy, LSL/hardware, model,
-adaptation, and analysis code remains temporarily as Phase 6–8 extraction
-evidence. It is not a public compatibility surface.
+EEG and BCI projects already have strong tools for signal processing, streaming, machine learning, task presentation, benchmarking, and data organization. The difficult part is connecting those tools into a complete experiment that can answer:
 
-## Current status
+- What exactly ran?
+- Which samples, events, preprocessing state, and model state were available to each prediction?
+- Why were inputs or outputs accepted, rejected, delayed, or skipped?
+- Did primary and candidate models receive comparable inputs?
+- Did adaptation change the model?
+- Was an action requested, authorized, delivered, or rejected?
+- Can replay reproduce the live system or locate the first divergence?
 
-Phases 0 through 6 are complete and Phase 7 is active. The Phase 7 product
-boundary and work plan are recorded in
-[`docs/PHASE7_AUTHORING_OPERATIONS.md`](docs/PHASE7_AUTHORING_OPERATIONS.md).
-P7-001 has locked the public/provisional surface, authoring payload envelopes,
-shared diagnostic/exit contract, and optional YAML distribution boundary;
-P7-002 now adds typed incomplete drafts, deterministic recording-only lowering,
-portable deployment requirements, non-hashing provenance, and source-mapped
-canonical diagnostics. P7-003 adds eight exact-version, deterministic templates
-for recording, observation, comparison, calibration/validation, delayed
-adaptation, and simulated action. P7-004 and P7-005 add persistent typed Python
-authoring and a restricted optional YAML 1.2 adapter over that same lowering
-path. P7-006 adds complete authoring/locked-plan explanations, four-impact
-diffs, and source-aware non-mutating diagnostic guidance. P7-007 adds separated
-project scaffolding, shared Python operations, and the first public
-artifact-oriented CLI journey. P7-008 adds canonical installed-capability
-detection, typed site observations, and immutable review-only deployment
-proposals. P7-009 adds capability-based preflight plus fault-evidenced,
-fail-closed rehearsal. P7-010 now has a dependency-lazy first-party LSL
-source/outlet/discovery implementation with simulated acceptance; its real EEG
-observe-only acceptance remains explicitly pending. P7-011 adds deterministic,
-hash-verified model packages, initial state and synthetic vectors, CLI
-pack/check operations, a real independently installed scikit-learn adapter
-proof, and contract-guarded replacement replay through the same engine. The
-P7-012 session experience adds privacy-aware projections for phases, sources,
-work, models, latency, adaptation, actions, integrity, and replay readiness;
-public replacement comparison and non-overwriting safe export; and structured
-partial/unavailable results that never recover, truncate, finalize, delete, or
-signal another process. The verified v1 foundation provides:
+EEGle addresses this by compiling portable scientific intent and site-local deployment bindings into an immutable, typed execution plan. The same plan-owned execution model supports simulation, recording, causal model execution, shadow comparison, adaptation, authorized action, evidence capture, replay, and validation.
 
-- versioned `ProtocolSpec`, `SuiteSpec`, and `DeploymentSpec` contracts;
-- a typed compiler with structured diagnostics and semantic passes;
-- one graph-bearing `eegle.execution_plan.v1` plus a separate lock manifest;
-- exact descriptor-locked plugin construction;
-- a modality-neutral graph and phase execution engine;
-- deterministic availability scheduling, watermarks, bounded queues, and
-  semantic component deadlines;
-- compiled scheduled/state triggers, semantic phase timeouts, protocol
-  acceptance decisions, and integrity-checked mid-phase restoration;
-- permission-driven model scheduling, role-local queue/failure dispositions,
-  and nonfatal backpressure policy;
-- compiler-checked outcome, adaptation, and action-capability permissions;
-- generic sessions, evidence bundles, artifact stores, and execution capture;
-- bundle-driven replay through the same locked graph with graded equivalence.
-- deterministic model packages with pre-materialization integrity checks and
-  optional-framework adapters kept in independent plugin distributions.
+> **Project status:** EEGle is an alpha under active development. The core compiler, runtime, evidence, replay, authoring, model-package, reference-project, and simulation workflows are implemented. Real EEG acceptance and broader research-library integrations remain in progress.
 
-Phase 6 has fixed model-system authority, introduced modality-neutral model
-contracts and path-free manifests, and joined suite model intent plus local
-artifact materialization into immutable `PlannedModelBinding` values. Bound
-model plugins now return contract-validated `ModelResult` values; the sole
-runtime creates canonical predictions with plan-owned identity, exact graph
-input lineage, model-state digests, timing, and terminal result dispositions.
-Compiled primary, candidate, shadow, observer, and custom-role permissions now
-govern priority, queueing, failure isolation, and policy influence. Exact
-complete/incomplete comparison evidence is produced for locked comparison
-groups. Enrolled direct-reference outcome expectations now provide bounded,
-checkpointable delayed-label lifecycles with explicit terminal dispositions.
-Calibration artifacts are content-addressed, and permissioned online adaptation
-is recorded as eligibility plus requested/applied/rejected/no-op/failed/rollback
-state transitions that restore and replay exactly. Policies now emit action
-requests into a deployment-owned authorization broker. Exact provider and grant
-locks enforce capability, parameter, timing, expiry, and failure bounds before
-the runtime can construct an actuator-ready command; missing authorization is
-observe-only. Pending decisions, cancellations, simulated receipts, and every
-terminal disposition are durable evidence. Replay accepts simulation-only
-action services and fails before constructing a physical or operator-facing
-service. Four representational suites now run dense EEG-like, irregular
-fNIRS-like, sparse spike plus dense LFP, and multi-rate auxiliary/behavior data
-through the same compiler, runtime, evidence, and replay path. Minimal
-estimator-shaped and tensor-callable fixtures confirm that optional framework
-adapters need only be ordinary external model plugins returning `ModelResult`;
-EEGle does not need a framework-specific runtime. These are compatibility
-proofs, not claims of validated modality or sklearn/Torch support. Phase 6
-closure additionally verifies artifact-backed factory construction and initial
-state, parameterized preprocessing lineage, required-output accounting,
-provider-visible action parameters, and alias-safe rollback. Every model now
-requires a manifest binding; no classifier-shaped built-in, v1 prediction,
-suite-wide role fallback, or `eegle.ml` package ships in the v1 wheel.
+## Key features
 
-The public base CLI now provides `new`, `detect`, `compile`, `explain`, `diff`,
-`graph`, `preflight`, `rehearse`, `run`, `inspect`, `replay`, `compare`,
-`export`, and `model` pack/check operations. It is available as `eegle` and
-`python -m eegle`; add `--json` before the command for the versioned machine
-result/error envelope. Inspection, replay, comparison, and export degrade to a
-structured result with exit 0 by default so an observer cannot end a recording,
-long-running analysis, or training process. Automation may explicitly request
-the older fail-on-attention behavior with `--strict`. Validation and plugin
-command families arrive with their owning tasks. Old study commands are not
-installed by the pip package.
+- **Researcher-facing authoring:** exact templates, typed Python builders, bounded compositional `ExperimentDesign`, and optional restricted YAML.
+- **Portable experiments:** scientific protocol and suite definitions remain separate from devices, paths, storage, model locations, secrets, and permissions.
+- **Typed compilation:** validate plugins, ports, units, channels, rates, windows, clocks, phases, artifacts, models, outcomes, adaptation, and action permissions before construction.
+- **Immutable execution:** run only a verified `ExecutionPlan` and `ExecutionLock`, not mutable authoring files.
+- **Causal evidence:** preserve what information was available to each prediction and action.
+- **Model-system comparison:** primary, shadow, candidate, and observer roles with equivalent-input and coverage evidence.
+- **Model packaging:** path-free manifests, content-addressed artifacts, initial state, synthetic conformance vectors, and guarded replacement replay.
+- **Preflight and rehearsal:** verify an exact deployment and exercise bounded failure scenarios before live operation.
+- **Replay and inspection:** replay captured inputs through the same engine, locate divergence, and inspect privacy-aware session summaries.
+- **Observe-only by default:** a policy request cannot become a device command without explicit deployment-owned authorization.
 
-Migration-only root orchestration modules remain in the checkout as extraction
-evidence but are excluded from built wheels. The wheel contains only
-`eegle.__main__`, the root package metadata/validation modules, and the target
-subpackages selected in `pyproject.toml`.
+## How EEGle works
 
-## Installation
-
-EEGle requires Python 3.11 or newer.
-
-```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e .
+```text
+Templates / Python / restricted YAML
+                ↓
+ExperimentDraft or ExperimentDesign
+                ↓
+ProtocolSpec + SuiteSpec + deployment requirements
+                ↓
+reviewed DeploymentSpec
+                ↓
+Compiler
+                ↓
+ExecutionPlan + ExecutionLock
+                ↓
+ExecutionEngine
+                ↓
+EvidenceBundle
+                ↓
+inspect / replay / compare / validate / export
 ```
 
-Windows PowerShell:
+### Core concepts
 
-```powershell
-py -3.11 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -e .
-```
+| Concept | Purpose |
+|---|---|
+| `ExperimentDesign` | Named, researcher-facing description of signals, events, processing, windows, models, phases, outcomes, and actions |
+| `ProtocolSpec` | Scientific claims, execution mode, metrics, and acceptance criteria |
+| `SuiteSpec` | Portable streams, components, phases, models, recording, and validation intent |
+| `DeploymentSpec` | Local streams, devices, storage, plugins, artifacts, placement, clocks, secrets, and permissions |
+| `ExecutionPlan` | Fully resolved and immutable runtime authority |
+| `ExecutionLock` | Exact hashes for specifications, graph, plugins, models, and artifacts |
+| `EvidenceBundle` | Durable record of admitted inputs, outputs, state, timing, outcomes, actions, integrity, and replay limits |
 
-The base dependency set is NumPy, SciPy, jsonschema, and packaging. LSL, MNE,
-PsychoPy, scikit-learn, Torch, plotting, and vendor integrations remain optional
-and must not be imported by the base foundations.
-
-Install restricted YAML authoring explicitly when needed:
-
-```bash
-python -m pip install -e ".[yaml]"
-```
-
-Install the first-party LSL adapter explicitly when needed:
-
-```bash
-python -m pip install -e ".[live]"
-```
+Custom computation remains an installed plugin. Authoring does not embed arbitrary Python or bypass compilation.
 
 ## First simulation
 
-The base install can create, compile, explain, rehearse, execute, inspect, and
-replay a deterministic recording-only simulation without hardware or optional
-dependencies:
+A base installation can create, compile, explain, rehearse, execute, inspect, replay, and export a deterministic recording-only project without hardware:
 
 ```bash
 eegle new first-simulation --id first-simulation
@@ -165,139 +83,22 @@ eegle replay first-simulation
 eegle export first-simulation first-simulation-export
 ```
 
-The scaffold keeps `authoring/`, generated canonical values, `deployments/`,
-content-addressed `builds/` and `locks/`, explanations, and `sessions/`
-separate. `run` resolves and verifies the compiled plan/lock pair and does not
-execute the mutable authoring source. The automatically generated simulation
-deployment is deliberately limited to the continuous-recording first journey.
-`eegle detect` runs independently and can index installed plugins and model
-manifest entry points, explicitly named model manifests, and typed output from
-optional integration detectors.
-With a project and `--propose`, it writes a content-addressed detection report,
-an ordinary proposed `DeploymentSpec`, and a provenance sidecar without
-replacing the simulation deployment. Compile that proposal only after review:
+The generated project keeps mutable authoring, canonical specifications, reviewed deployments, content-addressed plans and locks, explanations, and sessions separate. `run` resolves and verifies the compiled plan and lock; it does not execute mutable authoring source.
+
+Create one of the additive compositional preset revisions explicitly:
 
 ```bash
-eegle detect first-simulation --observations site-capabilities.json --propose
-eegle compile first-simulation --deployment deployment_proposal
+eegle new observer --id observer --preset eegle.preset.event_locked_observation --preset-version 2.0.0
 ```
 
-Ambiguous compatible resources require `--select-source`, `--select-storage`,
-or `--select-clock`. Detector configuration cannot contain credential-shaped
-literals; Python callers provide `SecretReference` bindings explicitly.
-Detected authorization providers are evidence only and never create a grant.
-Preflight verifies the exact plan/lock/deployment and the capabilities each
-lock declares. Rehearsal accepts only simulation resources and simulation-only
-action services; its eight initial fault dispositions are persisted in the
-normal evidence bundle and bound by a separate rehearsal report.
+Six complete generated examples live under [`reference_projects/`](reference_projects/README.md). Model examples use the independently installable plugin in [`examples/plugins/eegle-example-models/`](examples/plugins/eegle-example-models/README.md).
 
-`eegle inspect` reports session status, unfinished writers, phase timeline,
-source continuity, admitted/rejected work, model coverage/comparisons, latency,
-adaptation, action authorization/receipts, integrity, and replay ceiling. It
-does not expose participant pseudonyms, raw values, action parameters, provider
-evidence, or deployment content. `eegle export` uses a public-only policy by
-default, excludes evidence logs, execution captures/plans, raw recordings,
-component state, and deployment bindings, refuses an existing destination, and
-never changes the source session. `eegle replay` and `eegle compare` report the
-first bounded divergence without treating an expected counterfactual model
-difference as a crash.
+## Python authoring
 
-With `eegle[live]`, run bounded LSL discovery explicitly:
-
-```bash
-eegle detect first-simulation --lsl --lsl-wait 2
-```
-
-The adapter provides dense, sparse-marker, metadata, and outlet plugins with
-exact selectors, LSL clock synchronization, bounded reconnect, and sequence-gap
-packet-loss evidence. Current support is `simulated_validated`, not real-hardware
-validated; see [`docs/LSL_INTEGRATION.md`](docs/LSL_INTEGRATION.md).
-
-## Compile and execute a suite
-
-The current Python API consumes typed specifications rather than recipe
-arguments or mutable runtime dictionaries:
+Use `ExperimentDesign` for a custom bounded topology:
 
 ```python
-import json
-from pathlib import Path
-
-from eegle.compiler import compile_suite
-from eegle.plugins import PluginRegistry
-from eegle.runtime import ExecutionEngine
-from eegle.specs import DeploymentSpec, ProtocolSpec, SuiteSpec
-
-fixture = Path("tests/fixtures/migration/phase5_delayed_adaptation")
-
-protocol = ProtocolSpec.from_payload(
-    json.loads((fixture / "protocol.json").read_text())
-)
-suite = SuiteSpec.from_payload(
-    json.loads((fixture / "suite.json").read_text())
-)
-deployment = DeploymentSpec.from_payload(
-    json.loads((fixture / "deployment.json").read_text())
-)
-
-registry = PluginRegistry()
-registry.register_builtins()
-
-compiled = compile_suite(protocol, suite, deployment, registry)
-engine = ExecutionEngine.from_plan(compiled.plan, registry)
-result = engine.run()
-
-print(compiled.plan.plan_hash)
-print(result.status.value)
-```
-
-The compiler resolves exact plugins, validates modes, capabilities, resources,
-clocks, typed ports, phases, roles, triggers, outcome/adaptation uses, action
-capabilities, and artifact dependencies, and locks the resulting graph before
-any component is constructed.
-
-Exact built-in template revisions expand through the same authoring lowerer into
-ordinary canonical specifications plus portable deployment requirements:
-
-```python
-from eegle.authoring import expand_template
-
-expanded = expand_template(
-    "eegle.template.continuous_recording",
-    "1.0.0",
-    draft_id="resting-state",
-)
-
-print(expanded.lowered.protocol.spec_hash)
-print(expanded.lowered.suite.spec_hash)
-print(expanded.expansion_digest)
-```
-
-Templates do not compile, construct plugins, select site resources, or execute.
-Model templates require an exact external model plugin ID and manifest digest as
-parameters; all deployments still pass through normal review and compilation.
-
-The persistent builder exposes the same exact templates without creating a
-second specification or runtime API:
-
-```python
-from eegle.authoring import ExperimentBuilder
-
-authored = (
-    ExperimentBuilder.continuous_recording(draft_id="resting-state")
-    .signal(sample_rate_hz=250.0, channel_count=8)
-    .build()
-)
-
-print(authored.protocol.spec_hash)
-print(authored.defaults)
-print(authored.requirements.to_payload())
-```
-
-For a custom bounded topology, use named compositional authoring instead of
-declaring canonical component indexes and routes:
-
-```python
-from eegle.authoring import ExperimentDesign, ProcessingStep
+from eegle.authoring import ContractUpdate, ExperimentDesign, ProcessingStep
 
 authored = (
     ExperimentDesign.create(
@@ -315,7 +116,13 @@ authored = (
     .processing_chain(
         "clean",
         input="signal.eeg",
-        steps=(ProcessingStep("identity", "eegle.processing.identity"),),
+        steps=(
+            ProcessingStep(
+                "identity",
+                "eegle.processing.identity",
+                ContractUpdate(),
+            ),
+        ),
     )
     .event_window(
         "prestimulus",
@@ -334,124 +141,128 @@ print(authored.suite.spec_hash)
 print(authored.requirements.to_payload())
 ```
 
-`ExperimentDesign` is non-executable. It supports named channel-aware signals,
-installed-plugin processing chains, exact continuous/event windows, quality
-gates, independent models/comparisons, outcomes, adaptation/calibration,
-structured policies/actions, phases, recording, and acceptance. `build()`
-derives ordinary canonical specs; `compile()` still delegates them unchanged to
-the existing compiler. Declaring an action capability never creates a provider
-or permission grant, so missing deployment authority remains observe-only.
+`ExperimentDesign` is non-executable. It lowers into ordinary canonical specifications. Compilation remains authoritative, and the runtime accepts only a verified execution plan.
 
-With the optional extra installed, restricted YAML lowers through that same
-builder/template path:
+## Ecosystem and anticipated integrations
 
-```python
-from eegle.authoring import read_yaml_experiment
+EEGle is designed to coordinate established scientific packages rather than replace them.
 
-authored = read_yaml_experiment("experiment.yaml")
-print(authored.canonical_json())
-```
+| Package or standard | Expected use with EEGle | Current status |
+|---|---|---|
+| **MNE-Python** | Loading, preprocessing algorithms, epochs, visualization, statistics, source analysis | Dependency-lazy `DenseSampleBatch` to `RawArray` export bridge shipped; broader workflows pending |
+| **Lab Streaming Layer** | Live EEG, markers, metadata, clock synchronization, and outlets | First-party optional adapter; simulated validation complete, real EEG acceptance pending |
+| **MNE-LSL** | MNE-oriented live acquisition and processing | Complementary; direct reference integration pending |
+| **pyRiemann** | Covariance, tangent-space, Riemannian classifiers, transfer learning | Intended external model adapter and reference project |
+| **scikit-learn** | Classical estimators, pipelines, calibration, and metrics | Independently built adapter proof implemented; general packaged adapters remain ecosystem work |
+| **PyTorch / Braindecode** | Deep EEG models, training, pretrained and foundation models | Intended external adapters; not part of the base runtime |
+| **MOABB** | Public-dataset benchmarking and standardized offline evaluation | Complementary upstream benchmark layer |
+| **BIDS / MNE-BIDS** | Dataset organization, metadata, exchange, and archival | Intended import/export and evidence-reference integration |
+| **PsychoPy** | Stimulus presentation and behavioral marker generation | External task environment; reference integration pending |
+| **MLflow / Weights & Biases** | Model-training runs, aggregate metrics, and checkpoint tracking | Complementary; EEGle focuses on live execution and causal evidence |
 
-YAML input is one `eegle.template_authoring.v1` document. It supports only
-finite JSON-compatible values and rejects aliases, anchors, merges, tags,
-duplicate keys, implicit dates, untyped units, and excessive input resources.
-The same restricted parser accepts `eegle.experiment_design.v1` through
-`read_yaml_design()`. Typed Python and YAML produce identical canonical hashes;
-their source locations remain separate provenance.
+EEGle model packages do not install frameworks, train models, download checkpoints, or serialize executable source. The executable adapter is an independently installed plugin that returns a framework-neutral `ModelResult` through the normal runtime.
 
-Authored values can be explained before deployment or joined to a matching
-locked plan after compilation:
+See the [plugin workflow](docs/PLUGIN_DEVELOPMENT.md), [MNE export bridge](docs/MNE_INTEGRATION.md), and [LSL support boundary](docs/LSL_INTEGRATION.md) for the current integration contracts and support claims.
 
-```python
-from eegle.operations import ExplanationViewKind, explain_authored_experiment
+## Installation
 
-explanation = explain_authored_experiment(authored)
-print(explanation.view(ExplanationViewKind.SCIENTIFIC_INTENT).summary)
-print(explanation.view(ExplanationViewKind.ACTION_INFLUENCE).summary)
-```
+### Anticipated PyPI installation
 
-The six views cover scientific intent, dataflow, causality, model comparison,
-action influence, and defaults/provenance. Difference and diagnostic services
-return structured payloads; repair proposals are inspectable records and are
-never applied by explanation.
-
-## Core package model
-
-| Package | Responsibility |
-|---|---|
-| `eegle.authoring` | Provisional non-executable drafts, bounded named designs, exact-version templates, persistent Python/YAML authoring, deterministic lowering/export, deployment requirements, and provenance |
-| `eegle.operations` | Provisional project/run services, privacy-aware session projections, replay/replacement comparison, safe export, and shared Python/CLI diagnostics and envelopes |
-| `eegle.specs` | Portable protocol/suite intent and site-local deployment |
-| `eegle.compiler` | Diagnostics, typed graph, immutable plan, lock, explain/diff |
-| `eegle.plugins` | Component descriptors, discovery, capabilities, factories |
-| `eegle.streams` | Modality-neutral stream metadata, clocks, dense/sparse packets |
-| `eegle.processing` | Causal transforms, windows, and quality components |
-| `eegle.models` | Model contracts, manifests, results, deterministic packages, and framework-neutral adapter contracts |
-| `eegle.runtime` | Exact construction, admission, routing, queueing, phases, and work evidence |
-| `eegle.recording` | Sessions, evidence bundles, artifacts, captures, integrity |
-| `eegle.replay` | Capture-backed sources, locked-plan and guarded replacement replay, equivalence comparison |
-| `eegle.actions` | Policies, authorization records, commands, and receipts |
-
-## Development verification
-
-Focused Phase 5 checks:
+The intended public installation is:
 
 ```bash
-python -m unittest tests.test_phase5_specs_compiler
-python -m unittest tests.test_phase5_plan_execution
-python -m unittest tests.test_phase5_execution_semantics
-python -m unittest tests.test_phase5_remaining_semantics
-python -m unittest tests.test_phase5_packaging
+python -m pip install eegle
 ```
 
-Focused Phase 6 model-system checks:
+Optional capabilities are expected to remain explicit:
 
 ```bash
-python -m unittest tests.test_phase6_model_authority
-python -m unittest tests.test_phase6_compiler_bindings
-python -m unittest tests.test_phase6_model_runtime
-python -m unittest tests.test_phase6_role_semantics
-python -m unittest tests.test_phase6_outcomes_adaptation
-python -m unittest tests.test_phase6_action_authorization
-python -m unittest tests.test_phase6_generality
+# LSL live-stream integration
+python -m pip install "eegle[live]"
+
+# Restricted YAML authoring
+python -m pip install "eegle[yaml]"
+
+# Offline analysis dependencies such as MNE, pandas, and plotting
+python -m pip install "eegle[analysis]"
 ```
 
-Focused Phase 7 authoring and public-boundary checks:
+### Current source installation
+
+Until a public PyPI release is published:
 
 ```bash
-python -m unittest tests.test_phase7_explanations tests.test_phase7_authoring_surfaces tests.test_phase7_templates tests.test_phase7_draft_lowering
-python -m unittest tests.test_phase7_public_boundaries tests.test_source_boundaries
-python -m unittest tests.test_phase7_model_packaging
-python -m unittest tests.test_phase7_session_experience
+git clone https://github.com/Nervoload/eegle.git
+cd eegle
+git switch split
+
+python3.11 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e .
 ```
 
-Complete local verification:
+Install current optional extras from source as needed:
 
 ```bash
-python -m compileall -q eegle tests
-python -m unittest discover -s tests
-git diff --check
+python -m pip install -e ".[live]"
+python -m pip install -e ".[yaml]"
+python -m pip install -e ".[analysis]"
 ```
 
-## Architecture and migration authority
+## Device support
 
-- [docs/EEGLE.md](docs/EEGLE.md) defines the v1.0 vision and architecture.
-- [docs/MIGRATION.md](docs/MIGRATION.md) defines phase objectives and gates.
-- [docs/MIGRATION_STATUS.md](docs/MIGRATION_STATUS.md) tracks live decisions,
-  risks, completed work, and next tasks.
-- [docs/PHASE5_COMPILER.md](docs/PHASE5_COMPILER.md) records the current compiler
-  and runtime boundary.
-- [docs/PHASE6_MODEL_SYSTEMS.md](docs/PHASE6_MODEL_SYSTEMS.md) records the completed
-  model, role, outcome, adaptation, and authorization boundary.
-- [docs/PHASE7_AUTHORING_OPERATIONS.md](docs/PHASE7_AUTHORING_OPERATIONS.md)
-  records the active authoring, operations, integration, and product-journey
-  work plan.
-- [docs/PHASE7_PUBLIC_BOUNDARIES.md](docs/PHASE7_PUBLIC_BOUNDARIES.md) records
-  the P7-001 public/provisional/internal surface, payload schemas, diagnostic and
-  exit meanings, and optional YAML decision.
-- [docs/PHASE3_ENGINE.md](docs/PHASE3_ENGINE.md) preserves accepted execution
-  semantics and their mapping into the sole plan-owned engine.
+EEGle is device-agnostic at the portable suite level. Hardware is bound through a reviewed `DeploymentSpec` and executable plugins.
 
-Generated data may contain sensitive neurophysiological or participant
-information. `data/` is ignored by Git and must not be used for durable fixtures
-or documentation.
+Current intended live path:
+
+- Generic EEG, marker, and metadata streams through Lab Streaming Layer
+- Exact stream selectors rather than best-effort matching
+- Explicit channels, units, rates, clocks, reconnect behavior, and packet-loss evidence
+- Observe-only operation when action authorization is absent
+
+Current support claim:
+
+- **Simulation:** validated through automated tests
+- **LSL integration:** simulated-network validation complete
+- **Real EEG hardware:** acceptance pending; no broad live-hardware claim yet
+- **Vendor-specific amplifiers:** use LSL where available; direct vendor SDK support requires independent plugins and retained acceptance evidence
+- **Robots, stimulation devices, and physical actuators:** plugin-based bounded high-level requests only; device safety controllers, watchdogs, emergency stops, and certification remain external
+
+## Python and platform support
+
+- **Python:** 3.11 or newer
+- **Current automated matrix:** Linux on Python 3.11-3.13; macOS and Windows on Python 3.12
+- **Base dependencies:** NumPy, SciPy, jsonschema, and packaging
+- **Optional dependencies:** pylsl, MNE, pandas, matplotlib, PsychoPy, specparam, ruamel.yaml, and external model frameworks as installed by their adapter packages
+
+Support claims remain evidence-based. An importable dependency or representable configuration does not by itself imply validated hardware, framework, model, or modality support.
+
+## Scope and safety
+
+EEGle is not a replacement for:
+
+- MNE, pyRiemann, Braindecode, MOABB, or model-training frameworks
+- a low-level robot, prosthetic, or stimulation controller
+- institutional safety review, clinical validation, regulatory approval, or device certification
+- BIDS or another archival raw-data standard
+- a general arbitrary workflow engine
+
+EEGle should normally emit bounded, high-level action intent. Independent deployment authorization and the device controller remain responsible for physical safety.
+
+## Development status and next milestones
+
+The immediate milestones are:
+
+1. Complete a retained real EEG observe-only LSL acceptance run.
+2. Close Phase 7 against its gate-to-evidence matrix and stabilize the provisional authoring/operations surface.
+3. Add broader pyRiemann/scikit-learn, BIDS, and PyTorch/Braindecode integration paths.
+4. Expand scientific validation, performance budgets, reports, and fault qualification.
+
+The product rule is:
+
+> Authoring may be convenient, but execution remains explicit, locked, and evidence-producing.
+
+## License
+
+EEGle is released under the MIT License.

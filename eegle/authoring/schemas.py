@@ -19,10 +19,65 @@ EXPERIMENT_DRAFT_SCHEMA_ID = "eegle.experiment_draft.v1"
 AUTHORING_PROVENANCE_SCHEMA_ID = "eegle.authoring_provenance.v1"
 DEPLOYMENT_REQUIREMENTS_SCHEMA_ID = "eegle.deployment_requirements.v1"
 TEMPLATE_AUTHORING_SCHEMA_ID = "eegle.template_authoring.v1"
+EXPERIMENT_DESIGN_SCHEMA_ID = "eegle.experiment_design.v1"
 _JSON_SCHEMA = "https://json-schema.org/draft/2020-12/schema"
 _IDENTIFIER = r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,254}$"
 _DIGEST = r"^sha256:[0-9a-f]{64}$"
 _JSON_POINTER = r"^(?:/(?:[^~/]|~[01])*)*$"
+
+
+EXPERIMENT_DESIGN_JSON_SCHEMA: Mapping[str, Any] = freeze_json(
+    {
+        "$schema": _JSON_SCHEMA,
+        "title": "EEGle bounded compositional experiment design v1",
+        "type": "object",
+        "required": [
+            "schema",
+            "experiment_id",
+            "revision",
+            "study",
+            "signals",
+            "events",
+            "processing",
+            "windows",
+            "quality_gates",
+            "models",
+            "comparisons",
+            "outcomes",
+            "adaptations",
+            "calibrations",
+            "policies",
+            "actions",
+            "phases",
+            "initial_phase",
+            "recording",
+            "acceptance",
+        ],
+        "properties": {
+            "schema": {"const": EXPERIMENT_DESIGN_SCHEMA_ID},
+            "experiment_id": {"type": "string", "pattern": _IDENTIFIER},
+            "revision": {"type": "integer", "minimum": 1},
+            "study": {"type": "object"},
+            "signals": {"type": "array", "items": {"type": "object"}},
+            "events": {"type": "array", "items": {"type": "object"}},
+            "processing": {"type": "array", "items": {"type": "object"}},
+            "windows": {"type": "array", "items": {"type": "object"}},
+            "quality_gates": {"type": "array", "items": {"type": "object"}},
+            "models": {"type": "array", "items": {"type": "object"}},
+            "comparisons": {"type": "array", "items": {"type": "object"}},
+            "outcomes": {"type": "array", "items": {"type": "object"}},
+            "adaptations": {"type": "array", "items": {"type": "object"}},
+            "calibrations": {"type": "array", "items": {"type": "object"}},
+            "policies": {"type": "array", "items": {"type": "object"}},
+            "actions": {"type": "array", "items": {"type": "object"}},
+            "phases": {"type": "array", "items": {"type": "object"}},
+            "initial_phase": {"type": ["string", "null"], "pattern": _IDENTIFIER},
+            "recording": {"type": "object"},
+            "acceptance": {"type": "array", "items": {"type": "object"}},
+        },
+        "additionalProperties": False,
+    }
+)
 
 
 _SOURCE_LOCATION_SCHEMA: dict[str, Any] = {

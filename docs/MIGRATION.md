@@ -836,8 +836,9 @@ and `compile --deployment deployment_proposal` selects it explicitly. Later
 P7-009/P7-010 operations extend preflight/rehearsal and optional LSL detection;
 P7-011 makes `model pack` and `model check` available. Remaining families
 remain with their owning Phase 7 tasks. Built wheels still exclude
-migration-only root orchestration modules, including the historical
-`eegle.cli`, whose eventual source-checkout deletion remains C-003/P7-013 work.
+migration-only root orchestration modules. The historical `eegle.cli` source
+was deleted under C-003/P7-013 after the installed CLI and portability tests
+were transferred to `eegle.operations.cli`.
 
 #### Packaging
 

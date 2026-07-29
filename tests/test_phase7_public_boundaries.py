@@ -13,6 +13,8 @@ from eegle.authoring import (
     DEPLOYMENT_REQUIREMENTS_SCHEMA_ID,
     COMPOSED_EXPERIMENT_SCHEMA_ID,
     COMPOSED_PROJECT_SCHEMA_ID,
+    DESIGN_PRESET_SCHEMA_ID,
+    ExperimentDesign,
     EXPERIMENT_DESIGN_SCHEMA_ID,
     EXPERIMENT_DRAFT_SCHEMA_ID,
     TEMPLATE_AUTHORING_SCHEMA_ID,
@@ -126,7 +128,12 @@ class Phase7PublicBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(
             provisional,
-            {"eegle.authoring", "eegle.integrations.lsl", "eegle.operations"},
+            {
+                "eegle.authoring",
+                "eegle.integrations",
+                "eegle.integrations.lsl",
+                "eegle.operations",
+            },
         )
         for module in sorted(stable | provisional):
             with self.subTest(module=module):
@@ -136,6 +143,18 @@ class Phase7PublicBoundaryTests(unittest.TestCase):
                 self.assertEqual(len(exports), len(set(exports)))
                 if module == "eegle":
                     self.assertEqual(exports, {"ExecutionMode", "__version__"})
+
+    def test_compositional_authoring_is_split_behind_stable_public_imports(self) -> None:
+        from eegle.authoring import design as declarations
+        from eegle.authoring.composition import ExperimentDesign as ComposedDesign
+        from eegle.authoring.schemas import (
+            EXPERIMENT_DESIGN_SCHEMA_ID as SchemaBoundaryId,
+        )
+
+        self.assertIs(ExperimentDesign, ComposedDesign)
+        self.assertEqual(EXPERIMENT_DESIGN_SCHEMA_ID, SchemaBoundaryId)
+        self.assertFalse(hasattr(declarations, "ExperimentDesign"))
+        self.assertEqual(ExperimentDesign.__module__, "eegle.authoring.composition")
 
     def test_new_packages_are_selected_for_the_wheel_and_are_boundary_clean(self) -> None:
         pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
@@ -182,6 +201,7 @@ class Phase7PublicBoundaryTests(unittest.TestCase):
                 EXPERIMENT_DESIGN_SCHEMA_ID,
                 COMPOSED_EXPERIMENT_SCHEMA_ID,
                 COMPOSED_PROJECT_SCHEMA_ID,
+                DESIGN_PRESET_SCHEMA_ID,
             },
         )
         self.assertFalse(self.surface["authoring_lowering"]["runtime_input"])

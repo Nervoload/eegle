@@ -15,11 +15,15 @@ from eegle._domain import ComponentKind
 from eegle._validation import freeze_json, require_digest, require_identifier, thaw_json
 from eegle.authoring import (
     AuthoredExperiment,
+    ComposedExperiment,
     DraftLoweringError,
     DraftSourceMap,
     ExperimentBuilder,
+    ExperimentDesign,
     SourceKind,
     SourceLocation,
+    expand_design_preset,
+    reference_model_manifests,
 )
 from eegle.compiler import (
     CompilationError,
@@ -42,6 +46,7 @@ from eegle.operations.explanations import (
     diagnose_compilation_failure,
     diff_authored_experiments,
     explain_authored_experiment,
+    explain_composed_experiment,
 )
 from eegle.operations.discovery import (
     DeploymentProposal,
@@ -56,6 +61,7 @@ from eegle.operations.preflight import (
     preflight,
     rehearsal_fault_outcomes,
 )
+from eegle.models import ModelManifest
 from eegle.plugins import PluginRegistry
 from eegle.recording import (
     EvidenceRecord,
@@ -69,6 +75,7 @@ from eegle.specs import (
     ClockMappingStrategy,
     ComponentBindingSpec,
     DeploymentSpec,
+    PermissionGrant,
     Placement,
     ResourceSpec,
     StorageBinding,
@@ -80,6 +87,8 @@ from eegle.streams import (
     DenseSampleBatch,
     MissingDataPolicy,
     RateModel,
+    SparseEvent,
+    SparseEventBatch,
     StreamSpec,
     TimePoint,
 )
@@ -91,6 +100,7 @@ PROJECT_GRAPH_SCHEMA_ID = "eegle.project_graph.v1"
 PROJECT_MANIFEST_NAME = "eegle-project.json"
 
 AUTHORING_SOURCE_URI = "authoring/experiment.json"
+MODEL_MANIFESTS_URI = "authoring/model-manifests.json"
 GENERATED_ROOT_URI = "generated"
 SIMULATION_DEPLOYMENT_URI = "deployments/simulation.json"
 AUTHORING_EXPLANATION_URI = "explanations/authoring.json"
@@ -339,37 +349,77 @@ def create_project(
     template_id: str = "eegle.template.continuous_recording",
     template_version: str = "1.0.0",
     parameters: Mapping[str, Any] | None = None,
+    design: ExperimentDesign | Mapping[str, Any] | str | Path | None = None,
+    preset_id: str | None = None,
+    preset_version: str = "2.0.0",
+    grant_simulated_adaptation: bool = False,
 ) -> ExperimentProject:
-    """Create one non-overwriting, self-contained simulation project."""
+    """Create one non-overwriting project from a template, preset, or design."""
 
     target = Path(root).expanduser().resolve()
     if target.exists() and any(target.iterdir()):
         raise FileExistsError(f"project directory is not empty: {target}")
+    if design is not None and preset_id is not None:
+        raise ValueError("new project accepts either design or preset, not both")
+    if design is not None and parameters:
+        raise ValueError("normalized designs cannot be modified with template parameters")
     try:
-        builder = ExperimentBuilder(
-            draft_id=project_id,
-            template_id=template_id,
-            template_version=template_version,
-            parameters=parameters or {},
-            parameter_sources={
-                str(name): SourceLocation(SourceKind.CLI, symbol=f"--set {name}")
-                for name in (parameters or {})
-            },
-        )
-        authored = builder.build()
+        if design is not None:
+            normalized_design = _load_design_source(design)
+            if normalized_design.experiment_id != project_id:
+                raise ValueError(
+                    "project_id must match the normalized design experiment_id"
+                )
+            authored: AuthoredExperiment | ComposedExperiment = normalized_design.build()
+            source_payload = normalized_design.to_payload()
+            preset_lock = None
+        elif preset_id is not None:
+            normalized_design = expand_design_preset(
+                preset_id,
+                preset_version,
+                project_id,
+                parameters,
+            )
+            authored = normalized_design.build()
+            source_payload = normalized_design.to_payload()
+            preset_lock = {
+                "schema": "eegle.design_preset_lock.v1",
+                "preset_id": preset_id,
+                "version": preset_version,
+                "parameters": dict(parameters or {}),
+                "design_digest": normalized_design.design_digest,
+            }
+            preset_lock["lock_digest"] = canonical_hash(preset_lock)
+        else:
+            builder = ExperimentBuilder(
+                draft_id=project_id,
+                template_id=template_id,
+                template_version=template_version,
+                parameters=parameters or {},
+                parameter_sources={
+                    str(name): SourceLocation(SourceKind.CLI, symbol=f"--set {name}")
+                    for name in (parameters or {})
+                },
+            )
+            authored = builder.build()
+            source_payload = builder.to_source_payload()
+            preset_lock = None
     except DraftLoweringError as exc:
         raise _authoring_operation_error(exc, "new") from exc
-    deployment = create_simulation_deployment(authored)
+    deployment = create_simulation_deployment(
+        authored,
+        grant_simulated_adaptation=grant_simulated_adaptation,
+    )
     target.mkdir(parents=True, exist_ok=True)
-    source_path = _atomic_json(target / AUTHORING_SOURCE_URI, builder.to_source_payload())
+    source_path = _atomic_json(target / AUTHORING_SOURCE_URI, source_payload)
     written = authored.write_project(target / GENERATED_ROOT_URI)
     deployment_path = _atomic_json(
         target / SIMULATION_DEPLOYMENT_URI,
         deployment.to_payload(),
     )
-    explanation = explain_authored_experiment(authored).to_payload()
+    explanation = _explain_authored(authored).to_payload()
     explanation_path = _atomic_json(target / AUTHORING_EXPLANATION_URI, explanation)
-    artifacts = (
+    artifacts = [
         _artifact(target, "authoring_source", source_path),
         _artifact(target, "authoring_project", written.files["authoring-project.json"]),
         _artifact(target, "protocol", written.files["protocol.json"]),
@@ -381,8 +431,21 @@ def create_project(
         ),
         _artifact(target, "simulation_deployment", deployment_path),
         _artifact(target, "authoring_explanation", explanation_path),
-    )
-    manifest = ProjectManifest(project_id, artifacts)
+    ]
+    if preset_lock is not None:
+        preset_path = _atomic_json(target / "authoring/preset-lock.json", preset_lock)
+        artifacts.append(_artifact(target, "design_preset_lock", preset_path, immutable=True))
+    manifests = _reference_manifests_for(authored)
+    if manifests:
+        manifests_path = _atomic_json(
+            target / MODEL_MANIFESTS_URI,
+            {
+                "schema": "eegle.project_model_manifests.v1",
+                "manifests": [value.to_payload() for value in manifests],
+            },
+        )
+        artifacts.append(_artifact(target, "model_manifests", manifests_path))
+    manifest = ProjectManifest(project_id, tuple(artifacts))
     _write_manifest(target, manifest)
     return ExperimentProject(target, manifest)
 
@@ -400,9 +463,17 @@ def open_project(root: str | Path) -> ExperimentProject:
     return project
 
 
-def read_project_authoring(project: ExperimentProject) -> AuthoredExperiment:
+def read_project_authoring(
+    project: ExperimentProject,
+) -> AuthoredExperiment | ComposedExperiment:
     source_artifact = project.manifest.artifact("authoring_source")
     payload = _read_object(project.root / source_artifact.uri)
+    if payload.get("schema") == "eegle.experiment_design.v1":
+        source = SourceLocation(SourceKind.GENERATED, locator=source_artifact.uri)
+        return ExperimentDesign.from_payload(
+            payload,
+            source_map=DraftSourceMap({}, fallback=source),
+        ).build()
     template = payload.get("template")
     parameters = template.get("parameters", {}) if isinstance(template, Mapping) else {}
     source = SourceLocation(SourceKind.GENERATED, locator=source_artifact.uri)
@@ -510,8 +581,15 @@ def compile_project(
     selected_role = require_identifier(deployment_role, "deployment artifact role")
     deployment = DeploymentSpec.load(project.path_for(selected_role))
     registry = _builtin_registry()
-    model_manifests = None
-    if selected_role != "simulation_deployment":
+    model_manifests: dict[str, ModelManifest] = {}
+    try:
+        manifest_payload = _read_object(project.path_for("model_manifests"))
+    except KeyError:
+        manifest_payload = {}
+    for value in manifest_payload.get("manifests", ()):
+        manifest = ModelManifest.from_payload(value)
+        model_manifests[manifest.manifest_digest] = manifest
+    if selected_role != "simulation_deployment" or authored.suite.model_uses:
         try:
             registry.load_entry_points()
         except Exception as exc:
@@ -523,6 +601,7 @@ def compile_project(
                 "Installed plugin discovery failed",
                 str(exc),
             ) from exc
+    if selected_role != "simulation_deployment":
         try:
             proposal = DeploymentProposal.from_payload(
                 _read_object(project.path_for("deployment_proposal_provenance"))
@@ -558,14 +637,14 @@ def compile_project(
                 "Deployment proposal content does not match its selectable spec",
                 "The proposal provenance and DeploymentSpec artifacts differ.",
             )
-        model_manifests = {
-            value.manifest.manifest_digest: value.manifest for value in report.models
-        }
+        model_manifests.update(
+            {value.manifest.manifest_digest: value.manifest for value in report.models}
+        )
     try:
         compiled = authored.compile(
             deployment,
             registry,
-            model_manifests=model_manifests,
+            model_manifests=model_manifests or None,
         )
     except CompilationError as exc:
         raise diagnose_compilation_failure(exc, authored) from exc
@@ -579,10 +658,10 @@ def compile_project(
         project.root / "locks" / f"{lock_segment}.json",
         compiled.lock,
     )
-    explanation = explain_authored_experiment(authored, plan=compiled.plan).to_payload()
+    explanation = _explain_authored(authored, plan=compiled.plan).to_payload()
     authoring_explanation_path = _atomic_json(
         project.root / AUTHORING_EXPLANATION_URI,
-        explain_authored_experiment(authored).to_payload(),
+        _explain_authored(authored).to_payload(),
     )
     explanation_path = _write_immutable_json(
         project.root / "explanations" / f"{plan_segment}.json",
@@ -655,7 +734,7 @@ def explain_project(root: str | Path) -> Mapping[str, Any]:
         plan = None
     else:
         plan = read_plan(plan_path)
-    return freeze_json(explain_authored_experiment(authored, plan=plan).to_payload())
+    return freeze_json(_explain_authored(authored, plan=plan).to_payload())
 
 
 def diff_projects(before_root: str | Path, after_root: str | Path) -> Mapping[str, Any]:
@@ -1070,8 +1149,20 @@ def rehearse_locked_plan(
     return LockedRehearsal(run, preflight_report, report)
 
 
-def create_simulation_deployment(authored: AuthoredExperiment) -> DeploymentSpec:
+def create_simulation_deployment(
+    authored: AuthoredExperiment | ComposedExperiment,
+    *,
+    grant_simulated_adaptation: bool = False,
+) -> DeploymentSpec:
     """Create the bounded base-wheel deployment used by the first simulation."""
+
+    if isinstance(authored, ComposedExperiment):
+        return _create_composed_simulation_deployment(
+            authored,
+            grant_simulated_adaptation=grant_simulated_adaptation,
+        )
+    if not isinstance(authored, AuthoredExperiment):
+        raise TypeError("simulation deployment requires an authored experiment")
 
     if authored.expansion.template.template_id != "eegle.template.continuous_recording":
         raise _operation_error(
@@ -1205,7 +1296,217 @@ def create_simulation_deployment(authored: AuthoredExperiment) -> DeploymentSpec
             ),
         ),
         clock_mappings=clocks,
+        permissions=_simulation_adaptation_permissions(
+            suite,
+            grant=grant_simulated_adaptation,
+        ),
     )
+
+
+def _create_composed_simulation_deployment(
+    authored: ComposedExperiment,
+    *,
+    grant_simulated_adaptation: bool = False,
+) -> DeploymentSpec:
+    suite = authored.suite
+    execution_clock_id = str(suite.clock_policy["execution_clock_id"])
+    logical_streams = {value.stream_id: value for value in suite.streams}
+    bindings: list[ComponentBindingSpec] = []
+    resources: list[ResourceSpec] = []
+    stream_bindings: list[StreamBinding] = []
+    source_clocks: set[str] = set()
+
+    for component in suite.components:
+        if component.kind != ComponentKind.SOURCE:
+            if component.plugin_id is None:
+                raise ValueError(f"component {component.component_id} has no executable plugin")
+            bindings.append(
+                ComponentBindingSpec(
+                    component_id=component.component_id,
+                    plugin_id=component.plugin_id,
+                    version_spec=component.version_spec,
+                    placement=Placement.IN_PROCESS,
+                    config=thaw_json(component.config),
+                )
+            )
+            continue
+        if component.stream_id is None:
+            raise ValueError(f"source component {component.component_id} has no stream")
+        logical = logical_streams[component.stream_id]
+        stream, packet, plugin_id = _composed_simulation_stream(
+            logical,
+            execution_clock_id,
+        )
+        resource_id = f"resource.simulation.{component.stream_id.removeprefix('stream.')}"
+        bindings.append(
+            ComponentBindingSpec(
+                component_id=component.component_id,
+                plugin_id=plugin_id,
+                version_spec="~=0.1.0",
+                config={"stream_spec": stream.to_payload(), "packets": [packet.to_payload()]},
+                placement=Placement.IN_PROCESS,
+                resource_ids=(resource_id,),
+            )
+        )
+        resources.append(
+            ResourceSpec(
+                resource_id,
+                "simulator",
+                {"generator": "packet_sequence", "fixture": "composed_reference"},
+                ("deterministic",),
+                logical.contract,
+            )
+        )
+        stream_bindings.append(StreamBinding(logical.stream_id, resource_id))
+        if stream.clock_id != execution_clock_id:
+            source_clocks.add(stream.clock_id)
+
+    clocks = tuple(
+        ClockMappingBinding(
+            source_clock=value,
+            target_clock=execution_clock_id,
+            strategy=ClockMappingStrategy.DECLARED_AFFINE,
+            maximum_uncertainty_seconds=0.001,
+        )
+        for value in sorted(source_clocks)
+    )
+    return DeploymentSpec(
+        deployment_id=f"deployment.simulation.{authored.design.experiment_id}",
+        suite_id=suite.suite_id,
+        component_bindings=tuple(bindings),
+        resources=tuple(resources),
+        stream_bindings=tuple(stream_bindings),
+        storage=(
+            StorageBinding(
+                "storage.evidence",
+                "evidence",
+                f"memory://eegle/{authored.design.experiment_id}/simulation",
+            ),
+        ),
+        clock_mappings=clocks,
+        permissions=_simulation_adaptation_permissions(
+            suite,
+            grant=grant_simulated_adaptation,
+        ),
+    )
+
+
+def _simulation_adaptation_permissions(
+    suite: Any,
+    *,
+    grant: bool,
+) -> tuple[PermissionGrant, ...]:
+    if not grant:
+        return ()
+    if not suite.adaptations:
+        raise ValueError(
+            "simulated adaptation permission was requested for a suite without adaptation"
+        )
+    return tuple(
+        PermissionGrant(
+            permission_id=f"permission.simulation.{value.adaptation_id}",
+            capability="adaptation",
+            component_ids=(value.model_component_id,),
+            authorization_ref="authorization.simulation",
+        )
+        for value in suite.adaptations
+    )
+
+
+def _composed_simulation_stream(
+    logical: Any,
+    execution_clock_id: str,
+) -> tuple[StreamSpec, DenseSampleBatch | SparseEventBatch, str]:
+    contract = logical.contract
+    if contract.type_id == "eegle.dense_sample_batch.v1":
+        if contract.nominal_rate_hz is None or contract.channel_count is None:
+            raise ValueError("simulation dense streams require a rate and channel count")
+        channel_ids = contract.channel_ids or tuple(
+            f"channel.{logical.stream_id.removeprefix('stream.')}.{index + 1}"
+            for index in range(contract.channel_count)
+        )
+        channels = tuple(
+            ChannelSpec(
+                channel_id=value,
+                kind=logical.modality or "signal",
+                unit=contract.units.get(value, contract.unit or "1"),
+                name=value,
+            )
+            for value in channel_ids
+        )
+        stream = StreamSpec(
+            logical.stream_id,
+            1,
+            logical.modality or "signal",
+            ContentKind.DENSE_SAMPLES,
+            RateModel.REGULAR,
+            logical.clock_id or "device.clock",
+            channels,
+            contract.nominal_rate_hz,
+            "float64",
+            MissingDataPolicy.VALIDITY_MASK
+            if contract.missing_data_policy == "explicit_validity"
+            else MissingDataPolicy.FORBID,
+            metadata={"fixture": "eegle.composed_simulation.v1"},
+        )
+        sample_count = max(8, int(round(contract.nominal_rate_hz * 1.25)))
+        values = np.asarray(
+            [
+                [float(sample) / sample_count + channel / 10.0 for channel in range(len(channels))]
+                for sample in range(sample_count)
+            ],
+            dtype=np.float64,
+        )
+        packet = DenseSampleBatch(
+            f"batch.simulation.{logical.stream_id.removeprefix('stream.')}.1",
+            stream.stream_id,
+            stream.revision,
+            0,
+            tuple(value.channel_id for value in channels),
+            values,
+            TimePoint(1.4, execution_clock_id),
+            TimePoint(1.5, execution_clock_id),
+            TimePoint(0.0, stream.clock_id),
+            1.0 / contract.nominal_rate_hz,
+        )
+        return stream, packet, "eegle.sources.packet_sequence_dense"
+    if contract.type_id == "eegle.sparse_event_batch.v1":
+        stream = StreamSpec(
+            logical.stream_id,
+            1,
+            logical.modality or "events",
+            ContentKind.SPARSE_EVENTS,
+            RateModel.EVENT,
+            logical.clock_id or "device.clock",
+            metadata={"fixture": "eegle.composed_simulation.v1"},
+        )
+        kind = contract.event_kinds[0] if contract.event_kinds else "event"
+        delayed_outcome = logical.stream_id.startswith("stream.outcome")
+        payload: Mapping[str, Any] = (
+            {
+                "prediction_ids": ["prediction.00000001"],
+                "value": {"label": "positive", "delta": 1.0},
+            }
+            if delayed_outcome
+            else {"label": "positive", "value": 1}
+        )
+        event = SparseEvent(
+            f"event.simulation.{logical.stream_id.removeprefix('stream.')}.1",
+            kind,
+            TimePoint(0.25, stream.clock_id),
+            TimePoint(1.4, execution_clock_id),
+            TimePoint(2.0 if delayed_outcome else 1.5, execution_clock_id),
+            payload,
+        )
+        packet = SparseEventBatch(
+            f"batch.simulation.{logical.stream_id.removeprefix('stream.')}.1",
+            stream.stream_id,
+            stream.revision,
+            0,
+            (event,),
+        )
+        return stream, packet, "eegle.sources.packet_sequence_sparse"
+    raise ValueError(f"unsupported composed simulation stream contract: {contract.type_id}")
 
 
 def _builtin_registry() -> PluginRegistry:
@@ -1287,6 +1588,45 @@ def _session_status(status: EngineStatus) -> SessionStatus:
 def _session_id(kind: str) -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     return f"session.{require_identifier(kind, 'run kind')}.{stamp}"
+
+
+def _load_design_source(
+    value: ExperimentDesign | Mapping[str, Any] | str | Path,
+) -> ExperimentDesign:
+    if isinstance(value, ExperimentDesign):
+        return value
+    payload = _read_object(value) if isinstance(value, (str, Path)) else value
+    source = SourceLocation(
+        SourceKind.GENERATED,
+        locator=str(value) if isinstance(value, (str, Path)) else None,
+        symbol="normalized_design_source",
+    )
+    return ExperimentDesign.from_payload(
+        payload,
+        source_map=DraftSourceMap({}, fallback=source),
+    )
+
+
+def _reference_manifests_for(
+    authored: AuthoredExperiment | ComposedExperiment,
+) -> tuple[ModelManifest, ...]:
+    required = {value.manifest_digest for value in authored.suite.model_uses}
+    if not required:
+        return ()
+    known = {
+        value.manifest_digest: value for value in reference_model_manifests()
+    }
+    return tuple(known[value] for value in sorted(required) if value in known)
+
+
+def _explain_authored(
+    authored: AuthoredExperiment | ComposedExperiment,
+    *,
+    plan: ExecutionPlan | None = None,
+) -> Any:
+    if isinstance(authored, ComposedExperiment):
+        return explain_composed_experiment(authored, plan=plan)
+    return explain_authored_experiment(authored, plan=plan)
 
 
 def _artifact(

@@ -7,8 +7,8 @@ authors:
   - family-names: "Surette"
     given-names: "John"
 license: "MIT"
-repository-code: "https://github.com/johnsurette/closedloop"
-abstract: "A Python toolkit for reproducible realtime EEG/BCI experiments, model bundles, calibration, and causal replay."
+repository-code: "https://github.com/Nervoload/eegle"
+abstract: "An EEG-first framework for specifying, recording, replaying, and validating synchronized neurophysiological model systems."
 keywords:
   - EEG
   - BCI

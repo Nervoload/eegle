@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from eegle.cli import build_parser, cmd_check_setup
+from eegle.operations.cli import build_parser
 from eegle.config import DEFAULT_CONFIG, load_config, resolve_session_root
 from eegle.hardware.capabilities import (
     check_command_entrypoints,
@@ -29,11 +29,14 @@ from eegle.session import create_session
 
 
 class PortabilityTests(unittest.TestCase):
-    def test_primary_cli_name_and_setup_check_command_are_clear(self) -> None:
+    def test_primary_cli_name_and_current_command_surface_are_clear(self) -> None:
         parser = build_parser()
         self.assertEqual(parser.prog, "eegle")
-        self.assertIs(parser.parse_args(["check-setup"]).func, cmd_check_setup)
-        self.assertIs(parser.parse_args(["doctor"]).func, cmd_check_setup)
+        self.assertEqual(
+            parser.parse_args(["new", "project", "--id", "portable"]).command,
+            "new",
+        )
+        self.assertEqual(parser.parse_args(["detect"]).command, "detect")
 
     def test_default_config_is_packaged_with_the_runtime(self) -> None:
         self.assertTrue(DEFAULT_CONFIG.exists())

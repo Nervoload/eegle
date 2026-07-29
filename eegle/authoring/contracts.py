@@ -21,6 +21,7 @@ class AuthoringOrigin(str, Enum):
     USER_EXPLICIT = "user_explicit"
     TEMPLATE_DEFAULT = "template_default"
     AUTHORING_DEFAULT = "authoring_default"
+    AUTHORING_DERIVED = "authoring_derived"
     DETECTION_PROPOSAL = "detection_proposal"
     MIGRATION_GENERATED = "migration_generated"
 

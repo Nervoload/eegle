@@ -1,7 +1,7 @@
 # Phase 7 Experiment Authoring and Operations
 
-**Status:** Active implementation design
-**Date:** 2026-07-28
+**Status:** Active; P7-013 complete, P7-010 real acceptance, P7-013A plugin tooling, and P7-014 closure pending
+**Date:** 2026-07-29
 **Architecture authority:** [EEGLE.md](EEGLE.md)
 **Phase gate:** [MIGRATION.md](MIGRATION.md#12-phase-7--experiment-authoring-operations-packaging-and-integrations)
 
@@ -98,7 +98,8 @@ specifications directly.
   canonical specifications regardless of authoring surface.
 - The provenance sidecar may differ between surfaces. It maps generated
   canonical JSON paths to source locations and one of: user explicit, template
-  default, authoring default, detection proposal, or migration-generated.
+  default, authoring default, authoring derived, detection proposal, or
+  migration-generated.
 - Plugin defaults and compiler-derived values remain compiler/plan provenance.
   Explanation may join the two provenance layers, but it must not misattribute
   one to the other.
@@ -634,10 +635,9 @@ with those same five skips; compile-all, focused Ruff, and diff checks pass.
 
 ### P7-012A — Bounded compositional experiment authoring
 
-**Status:** in progress — named composition, shared lowering, Python/YAML,
-distinct-model, structured-action, and explanation slices implemented;
-compositional template revisions and CLI project integration remain P7-013
-work
+**Status:** done — named composition, shared lowering, Python/YAML,
+distinct-model, structured-action, explanation, correctness hardening, and
+P7-013 publication implemented
 
 The post-P7-012 review correctly identified a template cliff: the eight exact
 profiles make supported journeys concise, but structural changes still forced
@@ -683,7 +683,7 @@ causality, comparison, action, and provenance views. Composed authoring can be
 written as separate normalized design, protocol, suite, requirements, and
 provenance files without overwriting existing targets.
 
-Remaining scope is deliberately bounded:
+Publication scope remained deliberately bounded and is now complete:
 
 - preserve every exact template `1.0.0` expansion unchanged, then add new
   compositional preset revisions rather than silently replacing them;
@@ -700,9 +700,41 @@ Eleven dedicated tests and the complete 353-test Python 3.12 repository suite pa
 with six explicitly environment-conditioned skips; compile-all, focused Ruff,
 and diff checks pass.
 
+### P7-012B — Compositional correctness hardening
+
+**Status:** done
+
+The post-implementation review identified four real defects that could not be
+deferred to publication: recording sinks were absent from explicit phases;
+processing lowered only output type IDs rather than complete contracts; broad
+provenance bindings overstated derived/default fields as user-explicit; and
+phase membership required hand-maintained component lists.
+
+The hardening slice adds:
+
+- phase-scoped recording declarations whose compatible sinks join only phases
+  containing their source producer;
+- required `ContractUpdate` assertions carrying full unit/rate/channel/layout/
+  missingness transformations through downstream windows;
+- plugin-owned `ContractTransformSpec` attestations and compiler rejection of
+  missing or mismatched processing contracts;
+- exact canonical-leaf provenance with explicit authoring-derived origin and
+  confirmation only for scientifically material inferred/default values;
+- goal-based phase declarations with deterministic upstream dependency closure
+  and explicit exclusions;
+- an end-to-end simulated request, authorization, command, receipt, evidence,
+  persistence, and replay acceptance plus two independently implemented model
+  algorithms on one admitted window.
+
+Only after these regression tests passed was the former concentrated authoring
+module split into `design` (immutable declarations), `composition` (persistent
+editing), `lowering`, `design_provenance`, and `composed_projects`. The design
+JSON schema now belongs to `authoring.schemas`; package-level imports through
+`eegle.authoring` remain stable.
+
 ### P7-013 — Reference projects, packaging, documentation, and cleanup
 
-**Status:** todo
+**Status:** done
 
 Publish clean-install projects for recording, event-locked observation, model
 comparison, adaptation, simulated closed-loop action, and LSL observe-only.
@@ -725,12 +757,48 @@ wheel contains only current architecture; documentation matches executable
 commands; source-boundary, optional-import, wheel-content, and cleanup checks
 pass.
 
+Implemented: exact `2.0.0` compositional presets are additive and leave
+all template `1.0.0` expansions unchanged. `eegle new` accepts `--preset` or a
+normalized `--design` JSON source. Six self-indexed projects under
+`reference_projects/` contain normalized design, canonical outputs,
+requirements, deterministic simulation binding, preset lock, explanation, and
+commands. Model projects include canonical manifests and use the independently
+installable `examples/plugins/eegle-example-models` distribution, whose mean
+and peak algorithms are genuinely different; a third snapshot/restore model
+backs adaptation while authorization remains in the separate deployment. The
+reference's explicit `--grant-simulated-adaptation` scaffold option produces
+eligible/requested/applied transition evidence and equivalent replay without
+inferring permission for ordinary projects. The clean-wheel test builds both distributions
+and runs model-comparison and adaptation presets outside the source tree.
+`docs/PLUGIN_DEVELOPMENT.md` and
+the dependency-lazy `dense_batch_to_mne_raw()` bridge establish the minimal
+plugin/MNE workflows. The superseded source-checkout `eegle.cli` shell is
+deleted after the installed CLI replacement tests; other C-003 application and
+Phase 8 evidence remains protected until its own release condition exists.
+The declared CI matrix covers Linux Python 3.11–3.13 and macOS/Windows Python
+3.12. Package metadata and citation links name the canonical repository. Local
+Python 3.12 verification passes all 369 tests with seven conditional skips,
+compile-all, focused Ruff, diff checks, and the isolated wheel/plugin journey.
+
 ### P7-014 — Phase closure
 
 **Status:** todo
 
 Map every migration exit gate and required user journey to durable acceptance
 evidence. Do not close the phase merely because individual commands exist.
+
+Before closure, add the bounded plugin-developer acceptance identified by the
+P7-013 review: descriptor inspection/check commands, a reusable conformance
+harness, and independently installed entry-point, lifecycle, state,
+cleanup/failure, execution-evidence, and replay checks. Construction or live
+I/O must be explicit so inspection cannot connect to hardware. The current
+example distribution and clean-wheel runs are inputs to that kit, not a claim
+that the generalized kit already exists.
+
+Keep the shipped MNE bridge's alpha claim narrow: dense capture to `RawArray`.
+Markers-to-annotations, admitted-window-to-epochs, and MNE replay-input bridges
+remain additive integration work unless P7-014 deliberately promotes them into
+the initial support claim.
 
 ## 6. Implementation order
 

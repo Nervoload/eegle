@@ -1,0 +1,14 @@
+{
+  "acceptance": [],
+  "annotations": {},
+  "claims": [
+    {
+      "claim_id": "claim.reference.event-locked",
+      "statement": "Run a bounded EEGle reference experiment."
+    }
+  ],
+  "execution_mode": "causal",
+  "metrics": [],
+  "protocol_id": "protocol.reference.event-locked",
+  "schema": "eegle.protocol_spec.v1"
+}

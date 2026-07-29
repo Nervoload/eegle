@@ -1,0 +1,145 @@
+{
+  "acceptance": [],
+  "actions": [],
+  "adaptations": [],
+  "calibrations": [],
+  "comparisons": [
+    {
+      "comparison_id": "reference",
+      "members": [
+        "model.primary",
+        "model.candidate"
+      ]
+    }
+  ],
+  "events": [
+    {
+      "clock_id": "device.clock",
+      "event_id": "markers",
+      "event_kinds": [
+        "stimulus"
+      ],
+      "modality": "markers"
+    }
+  ],
+  "experiment_id": "reference.model-comparison",
+  "initial_phase": "phase.compare",
+  "models": [
+    {
+      "config": {
+        "threshold": 0.5
+      },
+      "inputs": {
+        "window": "window.stimulus"
+      },
+      "manifest_digest": "sha256:118acf658ab6668084512913f09cf8dc136b8c51a21ead927b1e2c9dd80814bc",
+      "model_id": "candidate",
+      "plugin_id": "eegle.example_models.peak_threshold",
+      "role": "candidate",
+      "version_spec": "~=1.0"
+    },
+    {
+      "config": {
+        "threshold": 0.0
+      },
+      "inputs": {
+        "window": "window.stimulus"
+      },
+      "manifest_digest": "sha256:581fea7fcc1ec3109fb186c403d1214b054c95e0e8e2f04258c11ea9b91c9e9a",
+      "model_id": "primary",
+      "plugin_id": "eegle.example_models.mean_threshold",
+      "role": "primary",
+      "version_spec": "~=1.0"
+    }
+  ],
+  "outcomes": [],
+  "phases": [
+    {
+      "active": [],
+      "exclude": [],
+      "goals": [
+        "model.primary",
+        "model.candidate"
+      ],
+      "include_dependencies": true,
+      "next_phases": [],
+      "operator_confirmation": false,
+      "phase_id": "compare",
+      "resume_policy": "checkpoint",
+      "retry_limit": 0,
+      "timeout_seconds": null
+    }
+  ],
+  "policies": [],
+  "processing": [
+    {
+      "chain_id": "clean",
+      "input": "signal.neural",
+      "steps": [
+        {
+          "config": {},
+          "input_port": "samples",
+          "output_contract": {
+            "drop_fields": []
+          },
+          "output_port": "samples",
+          "plugin_id": "eegle.processing.identity",
+          "step_id": "identity",
+          "version_spec": "~=0.1.0"
+        }
+      ]
+    }
+  ],
+  "quality_gates": [],
+  "recording": {
+    "execution_capture": true,
+    "inputs": [
+      "signal.neural",
+      "event.markers"
+    ],
+    "phases": [
+      "phase.compare"
+    ],
+    "raw_recording": "reference",
+    "semantic_evidence": true
+  },
+  "revision": 1,
+  "schema": "eegle.experiment_design.v1",
+  "signals": [
+    {
+      "channel_units": {},
+      "channels": [
+        "C3",
+        "C4"
+      ],
+      "clock_id": "device.clock",
+      "layout": "samples_by_channels",
+      "missing_data_policy": "explicit_validity",
+      "modality": "eeg",
+      "nominal_rate_hz": 250.0,
+      "rate_model": "regular",
+      "signal_id": "neural",
+      "unit": "uV"
+    }
+  ],
+  "study": {
+    "annotations": {},
+    "execution_clock_id": "boundary.clock",
+    "execution_mode": "causal",
+    "protocol_id": null,
+    "statement": "Run a bounded EEGle reference experiment.",
+    "suite_id": null
+  },
+  "windows": [
+    {
+      "end_offset_seconds": 0.8,
+      "event_kind": "stimulus",
+      "event_stream": "event.markers",
+      "input": "processing.clean",
+      "kind": "event",
+      "max_buffer_samples": 100000,
+      "start_offset_seconds": -0.2,
+      "window_id": "stimulus"
+    }
+  ]
+}

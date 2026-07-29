@@ -1,0 +1,62 @@
+{
+  "artifacts": [
+    {
+      "digest": "sha256:57aca1db8543cd1dc3c662eecfa8d99fede7608a7f26a25bb7f9559a7bef161c",
+      "immutable": false,
+      "role": "authoring_explanation",
+      "uri": "explanations/authoring.json"
+    },
+    {
+      "digest": "sha256:688a63905e69ca181fc2aa556ee4b7e5544b983bc2328a808d09232e78614ebe",
+      "immutable": false,
+      "role": "authoring_project",
+      "uri": "generated/authoring-project.json"
+    },
+    {
+      "digest": "sha256:6a0a40640952fcbf1068ba4f814d8505dd21845088cfd635e60d61b5e64c088a",
+      "immutable": false,
+      "role": "authoring_source",
+      "uri": "authoring/experiment.json"
+    },
+    {
+      "digest": "sha256:37ac848d183930482cbceb8fff75c3c831449fc73f467d58a91d7818fafa3e0e",
+      "immutable": false,
+      "role": "deployment_requirements",
+      "uri": "generated/deployment-requirements.json"
+    },
+    {
+      "digest": "sha256:e180267bf5f7ff15b3fd05b478a094e09bb54e0f25a53ef584fdf7cb85e06be0",
+      "immutable": true,
+      "role": "design_preset_lock",
+      "uri": "authoring/preset-lock.json"
+    },
+    {
+      "digest": "sha256:ee6f57e0dcfdc53dd5c096a8ad01268c228773e4d51c0612a010f3a62617136e",
+      "immutable": false,
+      "role": "model_manifests",
+      "uri": "authoring/model-manifests.json"
+    },
+    {
+      "digest": "sha256:ddb0fc338e404deca7334778b450f1594fd530b86dc716f97a259e46c1083479",
+      "immutable": false,
+      "role": "protocol",
+      "uri": "generated/protocol.json"
+    },
+    {
+      "digest": "sha256:1788c69f3cbd2f2b4081aabacfe383d57f24a082618d1ef77ebc0ebffd0de2b2",
+      "immutable": false,
+      "role": "simulation_deployment",
+      "uri": "deployments/simulation.json"
+    },
+    {
+      "digest": "sha256:9513ac79238430ea5e897cafbec4d0071bbc9c1747242cf743079a99499950fb",
+      "immutable": false,
+      "role": "suite",
+      "uri": "generated/suite.json"
+    }
+  ],
+  "manifest_hash": "sha256:5a7680af6109437b360cf55a0ea63f7f4e5405ee9917de338490647e457d79e9",
+  "project_id": "reference.closed-loop",
+  "schema": "eegle.project.v1",
+  "session_uris": []
+}

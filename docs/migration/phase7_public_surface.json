@@ -1,6 +1,6 @@
 {
   "schema": "eegle.migration.phase7_public_surface.v1",
-  "snapshot_date": "2026-07-28",
+  "snapshot_date": "2026-07-29",
   "decisions": [
     "D-014",
     "D-033",
@@ -34,6 +34,11 @@
       "review_gate": "P7-014"
     },
     {
+      "module": "eegle.integrations",
+      "exports": "__all__",
+      "review_gate": "P7-014"
+    },
+    {
       "module": "eegle.integrations.lsl",
       "exports": "__all__",
       "review_gate": "P7-014"
@@ -47,7 +52,6 @@
   "source_only_legacy": [
     "eegle.analysis",
     "eegle.calibration",
-    "eegle.cli",
     "eegle.config",
     "eegle.devices",
     "eegle.eeg_csv",
@@ -80,7 +84,8 @@
     "eegle.authoring_project.v1",
     "eegle.experiment_design.v1",
     "eegle.composed_experiment.v1",
-    "eegle.composed_authoring_project.v1"
+    "eegle.composed_authoring_project.v1",
+    "eegle.design_preset.v1"
   ],
   "authoring_lowering": {
     "service": [
@@ -108,6 +113,22 @@
       "primary_shadow_comparison",
       "simulated_closed_loop"
     ]
+  },
+  "compositional_presets": {
+    "catalog": "eegle.authoring.BUILTIN_DESIGN_PRESETS",
+    "exact_version": "2.0.0",
+    "normalized_source_schema": "eegle.experiment_design.v1",
+    "legacy_template_replacement": false,
+    "runtime_input": false
+  },
+  "compositional_implementation": {
+    "declarations": "eegle.authoring.design",
+    "persistent_editing": "eegle.authoring.composition",
+    "lowering": "eegle.authoring.lowering",
+    "provenance": "eegle.authoring.design_provenance",
+    "project_export": "eegle.authoring.composed_projects",
+    "json_schema": "eegle.authoring.schemas",
+    "public_import": "eegle.authoring"
   },
   "authoring_surfaces": {
     "python_builder": "eegle.authoring.ExperimentBuilder",
@@ -190,7 +211,7 @@
   "cli": {
     "installed": true,
     "entry_point": "eegle=eegle.__main__:main",
-    "implementation_tasks": ["P7-007", "P7-008", "P7-009", "P7-010", "P7-011", "P7-012"],
+    "implementation_tasks": ["P7-007", "P7-008", "P7-009", "P7-010", "P7-011", "P7-012", "P7-013"],
     "service_package": "eegle.operations",
     "base_commands": [
       "new",
@@ -272,6 +293,15 @@
     "support_level": "simulated_validated",
     "real_observe_only_acceptance": "pending",
     "portable_suite_mutated": false
+  },
+  "mne_integration": {
+    "module": "eegle.integrations",
+    "extra": "analysis",
+    "adapter": "dense_batch_to_mne_raw",
+    "direction": "analysis_export",
+    "base_import_safe": true,
+    "timing_sidecar": true,
+    "runtime_authority": false
   },
   "model_packaging": {
     "schemas": [

@@ -25,6 +25,7 @@ from eegle.models import (
     PreprocessingRequirement,
 )
 from eegle.plugins import (
+    ContractTransformSpec,
     ConstructionAPI,
     PluginCapabilities,
     PluginDescriptor,
@@ -84,6 +85,11 @@ def _descriptor(
             ConstructionAPI.MODEL_CONTEXT_V1
             if kind == ComponentKind.MODEL
             else ConstructionAPI.CONFIG_V1
+        ),
+        contract_transform=(
+            ContractTransformSpec(inputs[0].name, outputs[0].name)
+            if kind == ComponentKind.TRANSFORM and inputs and outputs
+            else None
         ),
     )
 
@@ -491,6 +497,7 @@ class Phase6CompilerBindingTests(unittest.TestCase):
                 factory=lambda config: object(),
                 implementation="tests.phase6:parameterized_detrend",
                 distribution="phase6-fixture",
+                contract_transform=ContractTransformSpec("input", "output"),
             )
         )
         suite = _suite(manifest)

@@ -74,10 +74,10 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/johnsurette/closedloop"
-Documentation = "https://github.com/johnsurette/closedloop/tree/main/docs"
-Issues = "https://github.com/johnsurette/closedloop/issues"
-Source = "https://github.com/johnsurette/closedloop"
+Homepage = "https://github.com/Nervoload/eegle"
+Documentation = "https://github.com/Nervoload/eegle/tree/split/docs"
+Issues = "https://github.com/Nervoload/eegle/issues"
+Source = "https://github.com/Nervoload/eegle"
 
 [project.scripts]
 eegle = "eegle.__main__:main"
