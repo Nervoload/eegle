@@ -58,6 +58,8 @@ class Phase5PackagingTests(unittest.TestCase):
             )
             wheel_dir = root / "wheel"
             wheel_dir.mkdir()
+            # Keep this consumer-like: the build must provision the exact
+            # backend declared by the copied project's pyproject.toml.
             built = subprocess.run(
                 [
                     sys.executable,
@@ -65,7 +67,6 @@ class Phase5PackagingTests(unittest.TestCase):
                     "pip",
                     "wheel",
                     ".",
-                    "--no-build-isolation",
                     "--no-deps",
                     "--wheel-dir",
                     str(wheel_dir),
@@ -199,7 +200,6 @@ class Phase5PackagingTests(unittest.TestCase):
                     "pip",
                     "wheel",
                     ".",
-                    "--no-build-isolation",
                     "--no-deps",
                     "--wheel-dir",
                     str(plugin_wheel_dir),
