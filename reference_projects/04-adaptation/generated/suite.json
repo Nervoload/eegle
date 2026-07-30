@@ -218,7 +218,7 @@
     {
       "comparison_group": null,
       "component_id": "model.primary",
-      "manifest_digest": "sha256:0b147272cd1af76d8715135a0ab3079ff96224128f82d1453941fd567500b301",
+      "manifest_digest": "sha256:41c999b0a82d18e5a2663e5127b9ccf11400254317c16fa0f42e529305623a15",
       "role_id": "primary"
     }
   ],

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from datetime import datetime, timezone
 import json
 import os
+import tempfile
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -35,11 +36,18 @@ from eegle.compiler import (
     write_lock,
     write_plan,
 )
+from eegle.models import ModelManifest
 from eegle.operations.contracts import (
     ExitCode,
     OperationCategory,
     OperationDiagnostic,
     OperationError,
+)
+from eegle.operations.discovery import (
+    DeploymentProposal,
+    DeploymentSelection,
+    DetectionReport,
+    propose_deployment,
 )
 from eegle.operations.explanations import (
     diagnose_authoring_failure,
@@ -48,12 +56,6 @@ from eegle.operations.explanations import (
     explain_authored_experiment,
     explain_composed_experiment,
 )
-from eegle.operations.discovery import (
-    DeploymentProposal,
-    DeploymentSelection,
-    DetectionReport,
-    propose_deployment,
-)
 from eegle.operations.preflight import (
     PreflightReport,
     RehearsalReport,
@@ -61,7 +63,6 @@ from eegle.operations.preflight import (
     preflight,
     rehearsal_fault_outcomes,
 )
-from eegle.models import ModelManifest
 from eegle.plugins import PluginRegistry
 from eegle.recording import (
     EvidenceRecord,
@@ -92,7 +93,6 @@ from eegle.streams import (
     StreamSpec,
     TimePoint,
 )
-
 
 PROJECT_MANIFEST_SCHEMA_ID = "eegle.project.v1"
 PROJECT_RESULT_SCHEMA_ID = "eegle.project_result.v1"
@@ -577,7 +577,6 @@ def compile_project(
         authored = read_project_authoring(project)
     except DraftLoweringError as exc:
         raise _authoring_operation_error(exc, "compile") from exc
-    authored.write_project(project.root / GENERATED_ROOT_URI, overwrite=True)
     selected_role = require_identifier(deployment_role, "deployment artifact role")
     deployment = DeploymentSpec.load(project.path_for(selected_role))
     registry = _builtin_registry()
@@ -659,13 +658,21 @@ def compile_project(
         compiled.lock,
     )
     explanation = _explain_authored(authored, plan=compiled.plan).to_payload()
-    authoring_explanation_path = _atomic_json(
-        project.root / AUTHORING_EXPLANATION_URI,
-        _explain_authored(authored).to_payload(),
-    )
     explanation_path = _write_immutable_json(
         project.root / "explanations" / f"{plan_segment}.json",
         explanation,
+    )
+    generated_files = _publish_generated_revision(project.root, authored)
+    authoring_explanation = _explain_authored(authored).to_payload()
+    authoring_explanation_segment = canonical_hash(
+        authoring_explanation
+    ).removeprefix("sha256:")
+    authoring_explanation_path = _write_immutable_json(
+        project.root
+        / "explanations"
+        / "authoring"
+        / f"{authoring_explanation_segment}.json",
+        authoring_explanation,
     )
     manifest = project.manifest.replacing_artifacts(
         _artifact(project.root, "authoring_source", project.path_for("authoring_source")),
@@ -688,17 +695,17 @@ def compile_project(
             "authoring_explanation",
             authoring_explanation_path,
         ),
-        _artifact(project.root, "protocol", project.root / GENERATED_ROOT_URI / "protocol.json"),
-        _artifact(project.root, "suite", project.root / GENERATED_ROOT_URI / "suite.json"),
+        _artifact(project.root, "protocol", generated_files["protocol.json"]),
+        _artifact(project.root, "suite", generated_files["suite.json"]),
         _artifact(
             project.root,
             "deployment_requirements",
-            project.root / GENERATED_ROOT_URI / "deployment-requirements.json",
+            generated_files["deployment-requirements.json"],
         ),
         _artifact(
             project.root,
             "authoring_project",
-            project.root / GENERATED_ROOT_URI / "authoring-project.json",
+            generated_files["authoring-project.json"],
         ),
     )
     _write_manifest(project.root, manifest)
@@ -1640,6 +1647,37 @@ def _artifact(
     resolved = path.expanduser().resolve()
     uri = resolved.relative_to(resolved_root).as_posix()
     return ProjectArtifact(role, uri, canonical_hash(_read_object(resolved)), immutable)
+
+
+def _publish_generated_revision(
+    root: Path,
+    authored: AuthoredExperiment | ComposedExperiment,
+) -> Mapping[str, Path]:
+    """Publish a complete content-addressed revision before switching the index."""
+
+    staging_parent = root / GENERATED_ROOT_URI / ".staging"
+    staging_parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="compile-", dir=staging_parent) as temporary:
+        staged_root = Path(temporary) / "project"
+        written = authored.write_project(staged_root)
+        segment = written.manifest_digest.removeprefix("sha256:")
+        final_root = root / GENERATED_ROOT_URI / "revisions" / segment
+        final_root.parent.mkdir(parents=True, exist_ok=True)
+        if final_root.exists():
+            for name, staged_path in written.files.items():
+                final_path = final_root / name
+                if not final_path.is_file() or _read_object(final_path) != _read_object(
+                    staged_path
+                ):
+                    raise FileExistsError(
+                        "generated revision already exists with other content: "
+                        f"{final_root}"
+                    )
+        else:
+            # The directory becomes complete in one same-filesystem rename. It
+            # remains unindexed until the atomic project-manifest write.
+            os.replace(staged_root, final_root)
+        return {name: final_root / name for name in written.files}
 
 
 def _write_manifest(root: Path, manifest: ProjectManifest) -> Path:

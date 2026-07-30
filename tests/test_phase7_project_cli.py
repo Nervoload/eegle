@@ -1,21 +1,21 @@
 from __future__ import annotations
 
-from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 
 from eegle.operations import (
+    PROJECT_GRAPH_SCHEMA_ID,
+    PROJECT_MANIFEST_SCHEMA_ID,
+    SESSION_INSPECTION_SCHEMA_ID,
     ExitCode,
     OperationError,
-    PROJECT_MANIFEST_SCHEMA_ID,
-    PROJECT_GRAPH_SCHEMA_ID,
-    SESSION_INSPECTION_SCHEMA_ID,
     compile_project,
     create_project,
     diff_projects,
@@ -28,8 +28,8 @@ from eegle.operations import (
     run_locked_plan,
     run_project,
 )
-from eegle.operations.cli import COMMAND_RESULT_SCHEMA_ID, main as cli_main
-
+from eegle.operations.cli import COMMAND_RESULT_SCHEMA_ID
+from eegle.operations.cli import main as cli_main
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -100,6 +100,62 @@ class Phase7ProjectCliTests(unittest.TestCase):
                     "sessions/session.rehearsal.service",
                     "sessions/session.run.service",
                 ),
+            )
+
+    def test_compile_publishes_one_revision_and_failure_preserves_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "project"
+            create_project(
+                root,
+                project_id="transactional-compile",
+                parameters={"sample_rate_hz": 128.0},
+            )
+            compiled = compile_project(root)
+            generated_roles = (
+                "authoring_project",
+                "protocol",
+                "suite",
+                "deployment_requirements",
+            )
+            generated = {
+                role: compiled.project.manifest.artifact(role)
+                for role in generated_roles
+            }
+            parents = {
+                Path(value.uri).parent for value in generated.values()
+            }
+            self.assertEqual(len(parents), 1)
+            revision = next(iter(parents))
+            self.assertEqual(revision.parts[:2], ("generated", "revisions"))
+            before_manifest = (root / "eegle-project.json").read_bytes()
+            before_payloads = {
+                role: compiled.project.path_for(role).read_bytes()
+                for role in generated_roles
+            }
+
+            source_path = root / "authoring" / "experiment.json"
+            source = json.loads(source_path.read_text(encoding="utf-8"))
+            source["template"]["parameters"]["sample_rate_hz"] = 250.0
+            source_path.write_text(json.dumps(source), encoding="utf-8")
+
+            with self.assertRaises(OperationError):
+                compile_project(root)
+
+            self.assertEqual(
+                (root / "eegle-project.json").read_bytes(),
+                before_manifest,
+            )
+            preserved = open_project(root)
+            self.assertEqual(
+                {role: preserved.manifest.artifact(role) for role in generated_roles},
+                generated,
+            )
+            self.assertEqual(
+                {
+                    role: preserved.path_for(role).read_bytes()
+                    for role in generated_roles
+                },
+                before_payloads,
             )
 
     def test_run_uses_locked_artifacts_and_not_a_mutated_authoring_source(self) -> None:

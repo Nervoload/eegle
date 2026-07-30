@@ -14,7 +14,7 @@ EEG and BCI projects already have strong tools for signal processing, streaming,
 
 EEGle addresses this by compiling portable scientific intent and site-local deployment bindings into an immutable, typed execution plan. The same plan-owned execution model supports simulation, recording, causal model execution, shadow comparison, adaptation, authorized action, evidence capture, replay, and validation.
 
-> **Project status:** EEGle is an alpha under active development. The core compiler, runtime, evidence, replay, authoring, model-package, reference-project, and simulation workflows are implemented. Real EEG acceptance and broader research-library integrations remain in progress.
+> **Project status:** EEGle is a pre-alpha, simulation-first candidate under active development. The core compiler, runtime, evidence, replay, authoring, model-package, reference-project, and simulation workflows are implemented. Real EEG acceptance, comprehensive validation, and public-alpha qualification remain in progress.
 
 ## Key features
 
@@ -48,7 +48,7 @@ ExecutionEngine
                 ↓
 EvidenceBundle
                 ↓
-inspect / replay / compare / validate / export
+inspect / replay / compare / structured validation results / export
 ```
 
 ### Core concepts
@@ -187,14 +187,15 @@ python -m pip install "eegle[yaml]"
 python -m pip install "eegle[analysis]"
 ```
 
-### Current source installation
+### Contributor source installation
 
-Until a public PyPI release is published:
+Until a public PyPI release is published, editable installation is a
+contributor workflow and exposes the checkout. Release acceptance uses built
+wheel and sdist artifacts in a clean environment.
 
 ```bash
 git clone https://github.com/Nervoload/eegle.git
 cd eegle
-git switch split
 
 python3.11 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\Activate.ps1

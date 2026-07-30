@@ -36,10 +36,46 @@ Install it, then verify discovery and a reference project:
 
 ```bash
 python -m pip install ./examples/plugins/eegle-example-models
-eegle detect
+eegle plugin inspect eegle.example_models.mean_threshold
+eegle plugin check eegle.example_models.mean_threshold --construct
 eegle compile reference_projects/03-model-comparison
 eegle rehearse reference_projects/03-model-comparison
 ```
+
+`eegle plugin inspect` and the default `eegle plugin check` read canonical
+descriptors without invoking component factories. `--construct` is an explicit
+factory call and performs structural checks; configurations are accepted only
+with that flag. Programmatic tests can supply typed behavioral cases to the
+reusable harness:
+
+```python
+from eegle.plugins import PluginExercise, check_plugin_conformance
+
+report = check_plugin_conformance(
+    descriptor,
+    config={},
+    construct=True,
+    exercises=(
+        PluginExercise(
+            "valid",
+            lambda component: component.predict(window, context),
+            expected_abstained=False,
+        ),
+    ),
+)
+assert report.ready
+```
+
+For lifecycle components, also pass an explicit `ExecutionContext`; the
+harness checks start/stop symmetry and attempts cleanup after an exercise
+failure. Stateful descriptors are reconstructed, restored from a finite JSON
+snapshot, and exercised again. A deterministic plugin fails conformance when
+the canonical result hashes differ across that fresh-component replay.
+
+Model fixtures should include valid, partially invalid, and all-invalid
+windows. All-invalid inputs must return a finite `ModelResult` with
+`abstained=True` and a stable reason such as `all_samples_invalid`; they must
+not depend on empty-array reductions or emit NaN/Infinity.
 
 Recommended acceptance for a plugin distribution:
 

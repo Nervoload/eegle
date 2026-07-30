@@ -45,6 +45,7 @@ def reference_model_manifests() -> tuple[ModelManifest, ...]:
                     },
                     "additionalProperties": False,
                 },
+                abstention_supported=True,
             ),
         ),
         state=ModelStateContract(replay_equivalence=EquivalenceLevel.NUMERIC),

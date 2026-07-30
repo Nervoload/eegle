@@ -1,0 +1,193 @@
+{
+  "schema": "eegle.migration.phase7_closure_evidence.v1",
+  "snapshot_date": "2026-07-29",
+  "phase": 7,
+  "phase_status": "blocked_external",
+  "product_claim": "pre_alpha_simulation_first_candidate",
+  "public_surface_inventory": {
+    "path": "docs/migration/phase7_public_surface.json",
+    "schema": "eegle.migration.phase7_public_surface.v1",
+    "stable_alpha_package_count": 11,
+    "provisional_package_count": 4
+  },
+  "remote_matrix": {
+    "status": "verified_baseline_refresh_required",
+    "repository": "Nervoload/eegle",
+    "workflow": ".github/workflows/tests.yml",
+    "run_id": 30491548423,
+    "run_url": "https://github.com/Nervoload/eegle/actions/runs/30491548423",
+    "head_sha": "417d8a44ed2e2bc39bdef990b8cfc16ce12c2740",
+    "conclusion": "success",
+    "completed_at": "2026-07-29T21:17:45Z",
+    "current_candidate_refresh_required": true,
+    "required_current_workflows": [
+      ".github/workflows/tests.yml",
+      ".github/workflows/package.yml (publish_testpypi=false)"
+    ],
+    "jobs": [
+      {"name": "Python 3.11 on ubuntu-latest", "conclusion": "success"},
+      {"name": "Python 3.12 on ubuntu-latest", "conclusion": "success"},
+      {"name": "Python 3.13 on ubuntu-latest", "conclusion": "success"},
+      {"name": "Python 3.12 on macos-latest", "conclusion": "success"},
+      {"name": "Python 3.12 on windows-latest", "conclusion": "success"}
+    ]
+  },
+  "local_native_lsl": {
+    "status": "pass",
+    "support_level": "simulated_validated",
+    "pylsl_version": "1.18.2",
+    "client": "tests/fixtures/phase7_native_lsl_smoke.py",
+    "installed_artifact": "wheel",
+    "observations": [
+      "full_channel_labels:C3,C4",
+      "channel_units:uV,uV",
+      "dense_packet_samples:2"
+    ],
+    "real_hardware_claim": false
+  },
+  "local_verification": {
+    "python_version": "3.14.4",
+    "repository_test_count": 385,
+    "repository_test_result": "pass",
+    "installed_artifact_journeys": [
+      "wheel",
+      "sdist",
+      "external_plugin",
+      "all_six_reference_projects"
+    ],
+    "additional_checks": [
+      "native_pylsl_local_network",
+      "compileall",
+      "focused_ruff_E9_F_I",
+      "workflow_yaml_parse",
+      "evidence_json_parse",
+      "git_diff_check"
+    ]
+  },
+  "blocking_gates": [
+    {
+      "gate_id": "P7-EG-06",
+      "kind": "real_hardware_acceptance",
+      "reason": "No retained non-participant real EEG LSL observe-only acceptance record exists."
+    },
+    {
+      "gate_id": "P7-EG-15",
+      "kind": "current_candidate_remote_evidence",
+      "reason": "The supported remote matrix passed at the pre-closure baseline; the current candidate changes have not yet been published and rerun remotely."
+    }
+  ],
+  "exit_gates": [
+    {
+      "gate_id": "P7-EG-01",
+      "status": "pass",
+      "summary": "A clean base artifact completes the create-to-replay simulation journey.",
+      "tests": ["tests/test_phase5_packaging.py", "tests/test_phase7_project_cli.py"]
+    },
+    {
+      "gate_id": "P7-EG-02",
+      "status": "pass",
+      "summary": "Python and restricted YAML authoring lower deterministically without manual graph wiring.",
+      "tests": ["tests/test_phase7_authoring_surfaces.py", "tests/test_phase7_templates.py"]
+    },
+    {
+      "gate_id": "P7-EG-03",
+      "status": "pass",
+      "summary": "Named bounded composition supports shared model inputs and observe-only structured actions.",
+      "tests": ["tests/test_phase7_compositional_authoring.py", "tests/test_phase7_reference_projects.py"]
+    },
+    {
+      "gate_id": "P7-EG-04",
+      "status": "pass",
+      "summary": "Authoring origins and compiler-resolved defaults remain visible and distinct.",
+      "tests": ["tests/test_phase7_draft_lowering.py", "tests/test_phase7_explanations.py", "tests/test_phase7_compositional_authoring.py"]
+    },
+    {
+      "gate_id": "P7-EG-05",
+      "status": "pass",
+      "summary": "Recording-only and preprocessing-only journeys require no model or action declarations.",
+      "tests": ["tests/test_phase5_plan_execution.py", "tests/test_phase7_reference_projects.py"]
+    },
+    {
+      "gate_id": "P7-EG-06",
+      "status": "pending_external",
+      "summary": "LSL simulation, native full-metadata discovery, packet transport, and portability pass; the documented real EEG observe-only acceptance run is still required.",
+      "tests": ["tests/test_phase7_lsl_integration.py", "tests/fixtures/phase7_native_lsl_smoke.py"],
+      "docs": ["docs/LSL_INTEGRATION.md"],
+      "workflows": [".github/workflows/package.yml"]
+    },
+    {
+      "gate_id": "P7-EG-07",
+      "status": "pass",
+      "summary": "Optional integrations remain dependency-lazy and base-import safe.",
+      "tests": ["tests/test_phase7_lsl_integration.py", "tests/test_phase7_mne_bridge.py", "tests/test_phase5_packaging.py"]
+    },
+    {
+      "gate_id": "P7-EG-08",
+      "status": "pass",
+      "summary": "Independent plugin wheels participate through entry-point discovery and reusable conformance.",
+      "tests": ["tests/test_phase2_foundations.py", "tests/test_phase7_plugin_conformance.py", "tests/test_phase5_packaging.py"]
+    },
+    {
+      "gate_id": "P7-EG-09",
+      "status": "pass",
+      "summary": "Plain callable and dependency-backed model plugins use the framework-neutral runtime boundary.",
+      "tests": ["tests/test_phase6_generality.py", "tests/test_phase7_model_packaging.py"]
+    },
+    {
+      "gate_id": "P7-EG-10",
+      "status": "pass",
+      "summary": "Simulation and LSL plans share compiler/evidence semantics while retaining distinct plan identities.",
+      "tests": ["tests/test_phase7_lsl_integration.py", "tests/test_phase7_preflight_rehearsal.py"]
+    },
+    {
+      "gate_id": "P7-EG-11",
+      "status": "pass",
+      "summary": "The public CLI is artifact-oriented and contains no study-specific recipe commands.",
+      "tests": ["tests/test_phase7_public_boundaries.py", "tests/test_phase5_packaging.py"]
+    },
+    {
+      "gate_id": "P7-EG-12",
+      "status": "pass",
+      "summary": "Superseded public facades are absent from target imports and built distributions.",
+      "tests": ["tests/test_source_boundaries.py", "tests/test_phase5_packaging.py", "tests/test_phase0_inventory.py"]
+    },
+    {
+      "gate_id": "P7-EG-13",
+      "status": "pass",
+      "summary": "Documentation names tested commands and current package-level imports.",
+      "tests": ["tests/test_phase7_release_integrity.py", "tests/test_phase7_public_boundaries.py"]
+    },
+    {
+      "gate_id": "P7-EG-14",
+      "status": "pass",
+      "summary": "Generated project revisions and their manifest publish transactionally after compiler acceptance.",
+      "tests": ["tests/test_phase7_project_cli.py"]
+    },
+    {
+      "gate_id": "P7-EG-15",
+      "status": "pending_external",
+      "summary": "Local wheel/sdist/plugin/reference evidence passes and the prior supported matrix is green; a current-candidate remote refresh remains required.",
+      "tests": ["tests/test_phase5_packaging.py", "tests/test_phase7_release_integrity.py"],
+      "workflows": [".github/workflows/tests.yml", ".github/workflows/package.yml"]
+    }
+  ],
+  "closure_requirements": [
+    {"requirement_id": "P7-C-01", "status": "pass", "gate_ids": ["P7-EG-01"]},
+    {"requirement_id": "P7-C-02", "status": "pass", "gate_ids": ["P7-EG-02", "P7-EG-04"]},
+    {"requirement_id": "P7-C-03", "status": "pass", "gate_ids": ["P7-EG-05"]},
+    {"requirement_id": "P7-C-04", "status": "pending_external", "gate_ids": ["P7-EG-06", "P7-EG-10"]},
+    {"requirement_id": "P7-C-05", "status": "pass", "gate_ids": ["P7-EG-09"]},
+    {"requirement_id": "P7-C-06", "status": "pass", "gate_ids": ["P7-EG-08"]},
+    {"requirement_id": "P7-C-07", "status": "pass", "gate_ids": ["P7-EG-03"]},
+    {"requirement_id": "P7-C-08", "status": "pass", "gate_ids": ["P7-EG-11", "P7-EG-12"]},
+    {"requirement_id": "P7-C-09", "status": "pass", "gate_ids": ["P7-EG-14"]},
+    {"requirement_id": "P7-C-10", "status": "pass", "gate_ids": ["P7-EG-13", "P7-EG-15"]},
+    {"requirement_id": "P7-C-11", "status": "pass", "gate_ids": ["P7-EG-12"]}
+  ],
+  "support_boundaries": {
+    "lsl": "simulated_validated",
+    "mne": "dense_capture_to_rawarray_only",
+    "comprehensive_validation": "phase_8",
+    "public_alpha": "phase_8"
+  }
+}

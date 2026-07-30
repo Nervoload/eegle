@@ -82,7 +82,9 @@ broader discovery when touching shared orchestration.
   eight fault outcomes in normal bundle evidence, and the closed-loop template.
 - `test_phase7_lsl_integration.py`: P7-010 dependency-lazy LSL descriptors,
   exact discovery/selectors, dense/sparse/metadata conversion, clock sync,
-  reconnect, sequence-gap loss, outlets, and simulation/live plan separation.
+  reconnect, sequence-gap loss, native full-info channel metadata, outlets, and
+  simulation/live plan separation. The installed-artifact native-network smoke
+  client is `fixtures/phase7_native_lsl_smoke.py`.
 - `test_phase7_model_packaging.py`: P7-011 deterministic manifest/artifact/state
   packages, synthetic vectors, pre-materialization tamper rejection, CLI
   pack/check, a real independently installed scikit-learn adapter wheel, and
@@ -95,6 +97,15 @@ broader discovery when touching shared orchestration.
   channel-aware signals, processing/windows/quality, distinct model manifests,
   shared design/draft/YAML lowering, structured vector actions, observe-only
   defaults, and composed explanations.
+- `test_phase7_plugin_conformance.py`: P7-013A construction-free descriptor
+  inspection, explicit construction, reusable lifecycle/state/replay checks,
+  failure cleanup, and valid/partial/all-invalid model behavior.
+- `test_phase7_release_integrity.py`: P7-013B single-source runtime versioning,
+  truthful release identity, current public-API prose, and independently visible
+  installed wheel/sdist/optional/plugin/reference workflow gates.
+- `test_phase7_closure.py`: P7-014 complete exit-gate/closure mapping, durable
+  evidence paths, exact prior remote-matrix identity, and truthful external
+  blocker/support boundaries.
 - `test_source_boundaries.py`: target packages may not import legacy
   application, recipe, worker, task, or analysis modules.
 - `eegle.plugins.testing`: reusable behavioral assertions for independently

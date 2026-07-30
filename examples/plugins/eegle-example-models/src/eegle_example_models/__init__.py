@@ -20,7 +20,6 @@ from eegle.plugins import (
 from eegle.processing import DenseWindow
 from eegle.runtime import AdaptationResult, Outcome, TransitionStatus
 
-
 _DENSE_WINDOW = "eegle.dense_window.v1"
 _PREDICTION = "eegle.prediction.v2"
 _SCHEMA = "https://json-schema.org/draft/2020-12/schema"
@@ -33,10 +32,10 @@ class MeanThresholdModel:
         self.threshold = float(config.get("threshold", 0.0))
 
     def predict(self, item: DenseWindow, context: Any) -> ModelResult:
-        valid = np.isfinite(item.values)
-        if item.validity_mask is not None:
-            valid &= item.validity_mask
-        score = float(np.mean(item.values[valid]))
+        values = _valid_values(item)
+        if values.size == 0:
+            return _abstention(self.threshold)
+        score = float(np.mean(values))
         return _result(score, self.threshold)
 
 
@@ -47,10 +46,10 @@ class PeakThresholdModel:
         self.threshold = float(config.get("threshold", 0.0))
 
     def predict(self, item: DenseWindow, context: Any) -> ModelResult:
-        valid = np.isfinite(item.values)
-        if item.validity_mask is not None:
-            valid &= item.validity_mask
-        score = float(np.max(np.abs(item.values[valid])))
+        values = _valid_values(item)
+        if values.size == 0:
+            return _abstention(self.threshold)
+        score = float(np.max(np.abs(values)))
         return _result(score, self.threshold)
 
 
@@ -62,10 +61,10 @@ class AdaptiveMeanModel:
         self.bias = float(config.get("initial_bias", 0.0))
 
     def predict(self, item: DenseWindow, context: Any) -> ModelResult:
-        valid = np.isfinite(item.values)
-        if item.validity_mask is not None:
-            valid &= item.validity_mask
-        score = float(np.mean(item.values[valid])) + self.bias
+        values = _valid_values(item)
+        if values.size == 0:
+            return _abstention(self.threshold)
+        score = float(np.mean(values)) + self.bias
         return _result(score, self.threshold)
 
     def adapt(
@@ -107,6 +106,25 @@ def _result(score: float, threshold: float) -> ModelResult:
             "threshold": threshold,
         }
     )
+
+
+def _abstention(threshold: float) -> ModelResult:
+    return ModelResult(
+        {
+            "label": "unavailable",
+            "score": 0.0,
+            "threshold": threshold,
+        },
+        abstained=True,
+        abstention_reason="all_samples_invalid",
+    )
+
+
+def _valid_values(item: DenseWindow) -> np.ndarray:
+    valid = np.isfinite(item.values)
+    if item.validity_mask is not None:
+        valid &= item.validity_mask
+    return np.asarray(item.values[valid], dtype=float)
 
 
 def plugin_descriptors() -> tuple[PluginDescriptor, ...]:

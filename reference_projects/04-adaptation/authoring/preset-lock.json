@@ -1,6 +1,6 @@
 {
-  "design_digest": "sha256:180b5547ca54c577184f41b267022c9eb38bf8928ebc9f2837c06b236794a462",
-  "lock_digest": "sha256:6c1038e2721181c722c9a9d9c12298d862ded2921a6160995305d457ad4a3c78",
+  "design_digest": "sha256:c0d0f1b4c39ab37a9739435207a413e7105df5524a70af78fbcc57ce8a1e59fe",
+  "lock_digest": "sha256:2fd33ff17de8d25de8143d5d8bb7a8dbbb5ffa058ee068c8e4b2ff2ae2ae828b",
   "parameters": {},
   "preset_id": "eegle.preset.adaptation",
   "schema": "eegle.design_preset_lock.v1",

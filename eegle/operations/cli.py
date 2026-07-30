@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from eegle import __version__
 from eegle._validation import thaw_json
 from eegle.compiler import read_plan
 from eegle.models import (
@@ -26,6 +27,13 @@ from eegle.operations.contracts import (
     OperationError,
     validate_operation_result_payload,
 )
+from eegle.operations.discovery import (
+    DeploymentSelection,
+    detect_capabilities,
+    read_capability_observations,
+    read_model_observations,
+)
+from eegle.operations.plugin_tools import check_plugin, inspect_plugins
 from eegle.operations.projects import (
     PROJECT_MANIFEST_NAME,
     compile_project,
@@ -35,6 +43,8 @@ from eegle.operations.projects import (
     graph_project,
     open_project,
     preflight_project,
+    propose_project_deployment,
+    record_detection_report,
     rehearse_project,
     run_project,
 )
@@ -46,17 +56,6 @@ from eegle.operations.sessions import (
     replay_session,
 )
 from eegle.plugins import PluginRegistry
-from eegle.operations.discovery import (
-    DeploymentSelection,
-    detect_capabilities,
-    read_capability_observations,
-    read_model_observations,
-)
-from eegle.operations.projects import (
-    propose_project_deployment,
-    record_detection_report,
-)
-
 
 COMMAND_RESULT_SCHEMA_ID = OPERATION_RESULT_SCHEMA_ID
 
@@ -84,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version="%(prog)s 0.1.0",
+        version=f"%(prog)s {__version__}",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -346,6 +345,40 @@ def build_parser() -> argparse.ArgumentParser:
         "--require-compatible-plugin",
         action="store_true",
         help="reject the package unless a compatible model plugin is installed",
+    )
+
+    plugin = commands.add_parser(
+        "plugin", help="inspect descriptors and explicitly check installed plugins"
+    )
+    plugin_actions = plugin.add_subparsers(dest="plugin_action", required=True)
+    plugin_inspect = plugin_actions.add_parser(
+        "inspect", help="inspect descriptors without constructing components"
+    )
+    plugin_inspect.add_argument("plugin_id", nargs="?")
+    plugin_inspect.add_argument("--version-spec")
+    plugin_inspect.add_argument(
+        "--no-entry-points",
+        action="store_true",
+        help="inspect only first-party base descriptors",
+    )
+    plugin_check = plugin_actions.add_parser(
+        "check", help="check a descriptor and optionally construct its component"
+    )
+    plugin_check.add_argument("plugin_id")
+    plugin_check.add_argument("--version-spec")
+    plugin_check.add_argument(
+        "--config",
+        help="JSON object used only when explicit construction is requested",
+    )
+    plugin_check.add_argument(
+        "--construct",
+        action="store_true",
+        help="explicitly invoke the factory and structural component checks",
+    )
+    plugin_check.add_argument(
+        "--no-entry-points",
+        action="store_true",
+        help="check only first-party base descriptors",
     )
     return parser
 
@@ -688,6 +721,44 @@ def _dispatch(args: argparse.Namespace) -> Mapping[str, Any]:
                 )
             return report.to_payload()
         raise _UsageError(f"unsupported model action: {args.model_action}")
+    if args.command == "plugin":
+        if args.plugin_action == "inspect":
+            return inspect_plugins(
+                args.plugin_id,
+                version_spec=args.version_spec,
+                include_entry_points=not args.no_entry_points,
+            ).to_payload()
+        if args.plugin_action == "check":
+            if args.config is not None and not args.construct:
+                raise _UsageError("plugin check --config requires --construct")
+            report = check_plugin(
+                args.plugin_id,
+                version_spec=args.version_spec,
+                include_entry_points=not args.no_entry_points,
+                config={}
+                if args.config is None
+                else _read_json_object(args.config),
+                construct=args.construct,
+            )
+            if not report.ready:
+                first = next(
+                    value for value in report.checks if value.status.value == "fail"
+                )
+                raise OperationError(
+                    "plugin",
+                    ExitCode.REJECTED,
+                    (
+                        OperationDiagnostic(
+                            "plugin.conformance_failed",
+                            OperationCategory.AVAILABILITY,
+                            "Plugin conformance check failed",
+                            first.summary,
+                            details={"check": report.to_payload()},
+                        ),
+                    ),
+                )
+            return report.to_payload()
+        raise _UsageError(f"unsupported plugin action: {args.plugin_action}")
     raise _UsageError(f"unsupported command: {args.command}")
 
 

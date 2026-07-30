@@ -1,8 +1,8 @@
 {
   "canonical_hashes": {
-    "deployment_requirements": "sha256:abc658f5f87da4751926165626cc314235b5a2155bcf15d3ee96fa687d73f97f",
+    "deployment_requirements": "sha256:bb193b86d5f76497c0a19edd2071209b1b4f9187f0e8ccb0126e8c6e2e036782",
     "protocol": "sha256:c0ec3c275c9678f2b7f694eba976035098d40c627a9f8feb6240d95e206914c0",
-    "suite": "sha256:df6a0deeb2536e33b97e8aa496dc44e564bafa1b37f464b4a4d1768ac9ad4533"
+    "suite": "sha256:346de68cdce12491375685cb5a48d50f4b210ebfeac7dd0822015a281a4c7fb3"
   },
   "compiler_projection": null,
   "diagnostics": [],
@@ -10,7 +10,7 @@
   "draft_revision": 1,
   "schema": "eegle.experiment_explanation.v1",
   "template": {
-    "design_digest": "sha256:180b5547ca54c577184f41b267022c9eb38bf8928ebc9f2837c06b236794a462",
+    "design_digest": "sha256:c0d0f1b4c39ab37a9739435207a413e7105df5524a70af78fbcc57ce8a1e59fe",
     "kind": "composed_design",
     "schema": "eegle.experiment_design.v1"
   },
@@ -3495,7 +3495,7 @@
             "component_id": "model.primary",
             "contract": null,
             "kind": "model_artifact",
-            "manifest_digest": "sha256:0b147272cd1af76d8715135a0ab3079ff96224128f82d1453941fd567500b301",
+            "manifest_digest": "sha256:41c999b0a82d18e5a2663e5127b9ccf11400254317c16fa0f42e529305623a15",
             "required_capabilities": [],
             "requirement_id": "requirement.model.primary",
             "source_clock": null,
@@ -3509,7 +3509,7 @@
           {
             "comparison_group": null,
             "component_id": "model.primary",
-            "manifest_digest": "sha256:0b147272cd1af76d8715135a0ab3079ff96224128f82d1453941fd567500b301",
+            "manifest_digest": "sha256:41c999b0a82d18e5a2663e5127b9ccf11400254317c16fa0f42e529305623a15",
             "role_id": "primary"
           }
         ]

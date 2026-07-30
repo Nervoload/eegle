@@ -32,6 +32,15 @@ from eegle.plugins.registry import (
     StateBehavior,
     validate_component_instance,
 )
+from eegle.plugins.testing import (
+    PLUGIN_CONFORMANCE_REPORT_SCHEMA_ID,
+    ConformanceStatus,
+    PluginConformanceCheck,
+    PluginConformanceReport,
+    PluginExercise,
+    check_plugin_conformance,
+    exercise_dense_transform,
+)
 
 
 __all__ = [
@@ -54,6 +63,11 @@ __all__ = [
     "ModelConstructionContext",
     "OutcomeResolver",
     "PluginCapabilities",
+    "PLUGIN_CONFORMANCE_REPORT_SCHEMA_ID",
+    "ConformanceStatus",
+    "PluginConformanceCheck",
+    "PluginConformanceReport",
+    "PluginExercise",
     "PluginDescriptor",
     "PluginRegistry",
     "Policy",
@@ -67,4 +81,6 @@ __all__ = [
     "Transform",
     "WindowBuilder",
     "validate_component_instance",
+    "check_plugin_conformance",
+    "exercise_dense_transform",
 ]

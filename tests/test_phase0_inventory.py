@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE_PATH = ROOT / "docs" / "migration" / "phase0_baseline.json"
 INVENTORY_PATH = ROOT / "docs" / "PHASE0_INVENTORY.md"
 MIGRATION_PATH = ROOT / "docs" / "MIGRATION.md"
+REPLACED_LEGACY_DOCUMENTS = {"docs/api/PUBLIC_API.md"}
 
 
 class Phase0InventoryTests(unittest.TestCase):
@@ -53,8 +53,12 @@ class Phase0InventoryTests(unittest.TestCase):
         for relative_path in self.baseline["legacy_documents"]:
             with self.subTest(path=relative_path):
                 prefix = (ROOT / relative_path).read_text(encoding="utf-8")[:800]
-                self.assertIn("Legacy", prefix)
-                self.assertIn("EEGLE.md", prefix)
+                if relative_path in REPLACED_LEGACY_DOCUMENTS:
+                    self.assertIn("current EEGle wheel", prefix)
+                    self.assertIn("phase7_public_surface.json", prefix)
+                else:
+                    self.assertIn("Legacy", prefix)
+                    self.assertIn("EEGLE.md", prefix)
 
     def test_baseline_console_scripts_are_not_v1_packaging_authority(self) -> None:
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")

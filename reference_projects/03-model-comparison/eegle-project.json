@@ -1,37 +1,37 @@
 {
   "artifacts": [
     {
-      "digest": "sha256:66a155f2abf43fe5c4528964ff452de38dbe1df7a3cc9a52b02b8585ed21317c",
+      "digest": "sha256:a8d6d859dd828d664a3402f6de65a39f7361a81aae54ec09dd803bc75d753741",
       "immutable": false,
       "role": "authoring_explanation",
       "uri": "explanations/authoring.json"
     },
     {
-      "digest": "sha256:cce37b477dc9d081cda701d2e8bd7edb17b53afb3e4c96fb659ad5437dc2c392",
+      "digest": "sha256:d7ee26499cc2ca895848e10adbbc440118d5b4a75676e907d16992c0cec77f6b",
       "immutable": false,
       "role": "authoring_project",
       "uri": "generated/authoring-project.json"
     },
     {
-      "digest": "sha256:e1fa1ef727528deed82366b46fdd2a17478188e9e4ace0f67f58c0f2b8927d7b",
+      "digest": "sha256:bd4e1554173364f43a2741b493067948daca8a71557ac0b9cd380eba283d7bcb",
       "immutable": false,
       "role": "authoring_source",
       "uri": "authoring/experiment.json"
     },
     {
-      "digest": "sha256:d2886ef4ca150912ce89a060fcad1d92b7332b00375b629704bde4b779578cd0",
+      "digest": "sha256:a84f76a7057f9385d3d847c6742eb4bb790287544528e46a71f784b791c8e2bc",
       "immutable": false,
       "role": "deployment_requirements",
       "uri": "generated/deployment-requirements.json"
     },
     {
-      "digest": "sha256:dfab4a5c2f85d395dde6bb012e6263f7895dfe440a6ea74e143522fccb5e1d4e",
+      "digest": "sha256:4d1710e50ce9600bec7646d19daa55bff2b738c63beb9f502fee179ff2901898",
       "immutable": true,
       "role": "design_preset_lock",
       "uri": "authoring/preset-lock.json"
     },
     {
-      "digest": "sha256:f680d0550492e52205edf3a1a2100eb54255557207171b7ead305185f960ed05",
+      "digest": "sha256:559decef50139d5bc6cd72fb001890de45b406e19309b6bf23ae86210a1e69be",
       "immutable": false,
       "role": "model_manifests",
       "uri": "authoring/model-manifests.json"
@@ -49,13 +49,13 @@
       "uri": "deployments/simulation.json"
     },
     {
-      "digest": "sha256:a7d6ce607fb022b2791bd489b7f81362c27b77b128072dedacaadf256429927a",
+      "digest": "sha256:19d6693012492c1413c08ccce78233fed0a5a607e2f688e5c0feae5b8e8453e5",
       "immutable": false,
       "role": "suite",
       "uri": "generated/suite.json"
     }
   ],
-  "manifest_hash": "sha256:c4004828285f8a932e7cf50fd9e6f3bddcd4e10fa8cf5c36cd0b6aeb56ee4ec4",
+  "manifest_hash": "sha256:00d79202e8598bd7a743e083219bfb4cd6a2316b771523cb72dbac1b3e94c399",
   "project_id": "reference.model-comparison",
   "schema": "eegle.project.v1",
   "session_uris": []

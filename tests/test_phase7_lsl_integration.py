@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import json
 import subprocess
 import sys
 import unittest
+from dataclasses import replace
 
 from eegle.authoring import ExperimentBuilder
 from eegle.compiler import compile_suite
-
 from eegle.integrations.lsl import (
     LSL_DENSE_SOURCE_PLUGIN_ID,
     LSL_METADATA_SOURCE_PLUGIN_ID,
@@ -68,11 +67,15 @@ class _Info:
         channels=(),
         hostname="fixture-host",
         failures=0,
+        descriptor_channels=None,
     ):
         self.values = (name, stream_type, count, rate, channel_format, source_id, uid, hostname)
         self.chunks = list(chunks)
         self.channels = tuple(channels)
         self.failures = failures
+        self.descriptor_channels = (
+            self.channels if descriptor_channels is None else tuple(descriptor_channels)
+        )
 
     def name(self): return self.values[0]
     def type(self): return self.values[1]
@@ -82,26 +85,33 @@ class _Info:
     def source_id(self): return self.values[5]
     def uid(self): return self.values[6]
     def hostname(self): return self.values[7]
-    def desc(self): return _Xml(self.channels)
+    def desc(self): return _Xml(self.descriptor_channels)
 
 
 class _Inlet:
     def __init__(self, info, recover, processing_flags):
-        self.info = info
+        self.stream_info = info
         self.recover = recover
         self.processing_flags = processing_flags
         self.closed = False
 
     def pull_chunk(self, timeout, max_samples):
-        if self.info.failures:
-            self.info.failures -= 1
+        if self.stream_info.failures:
+            self.stream_info.failures -= 1
             raise RuntimeError("simulated disconnect")
-        if not self.info.chunks:
+        if not self.stream_info.chunks:
             return [], []
-        return self.info.chunks.pop(0)
+        return self.stream_info.chunks.pop(0)
 
     def time_correction(self, timeout):
         return 0.002
+
+    def info(self, timeout):
+        return _Info(
+            *self.stream_info.values[:7],
+            channels=self.stream_info.channels,
+            hostname=self.stream_info.values[7],
+        )
 
     def close_stream(self):
         self.closed = True
@@ -226,6 +236,31 @@ class Phase7LslIntegrationTests(unittest.TestCase):
         duplicate = _Info(*dense.values[:7], hostname=dense.values[7])
         with self.assertRaisesRegex(ValueError, "ambiguous"):
             select_exact_stream((dense, duplicate), {"source_id": "amp-01"})
+
+    def test_discovery_retrieves_native_full_info_channel_metadata(self) -> None:
+        short = _Info(
+            "Amp-Short-Info",
+            "EEG",
+            2,
+            100.0,
+            "float32",
+            "amp-short",
+            "uid-short",
+            channels=(
+                {"label": "Fz", "unit": "uV"},
+                {"label": "Cz", "unit": "uV"},
+            ),
+            descriptor_channels=(),
+        )
+        pylsl = _Pylsl((short,))
+
+        detected = detect_lsl(wait_time=0, pylsl_module=pylsl)
+
+        stream = detected.sources[0].stream
+        self.assertEqual(tuple(channel.name for channel in stream.channels), ("Fz", "Cz"))
+        self.assertEqual(tuple(channel.unit for channel in stream.channels), ("uV", "uV"))
+        self.assertEqual(len(pylsl.inlets), 1)
+        self.assertTrue(pylsl.inlets[0].closed)
 
     def test_dense_sparse_metadata_clock_reconnect_and_packet_loss(self) -> None:
         pylsl, dense, sparse, metadata = _network()

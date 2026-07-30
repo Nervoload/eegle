@@ -2,20 +2,20 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import replace
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 from scipy import signal
 
 from eegle._domain import ComponentKind, ExecutionMode, Lineage
 from eegle.actions import (
-    ActionRequest,
     ActionReceipt,
+    ActionRequest,
     AuthorizationDecision,
     AuthorizationRequest,
     AuthorizationStatus,
@@ -75,7 +75,6 @@ from eegle.streams import (
     TimePoint,
 )
 from tests.fixtures.build_external_plugin_wheel import build_external_plugin_wheel
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -514,7 +513,12 @@ import numpy as np
 
 sys.path.insert(0, __TARGET__)
 
-from eegle.plugins import ExecutionMode, PluginRegistry
+from eegle.plugins import (
+    ExecutionMode,
+    PluginExercise,
+    PluginRegistry,
+    check_plugin_conformance,
+)
 from eegle.streams import DenseSampleBatch, TimePoint
 from eegle.plugins.testing import exercise_dense_transform
 
@@ -556,6 +560,19 @@ output = exercise_dense_transform(component, packet, Context())
 np.testing.assert_allclose(output.values, [[2.5], [5.0]])
 descriptor = registry.resolve("fixture.external.scale")
 assert descriptor.distribution == "eegle-phase2-external-fixture", descriptor.distribution
+report = check_plugin_conformance(
+    descriptor,
+    config={"scale": 2.5},
+    construct=True,
+    exercises=(
+        PluginExercise(
+            "dense_transform",
+            lambda value: exercise_dense_transform(value, packet, Context()),
+        ),
+    ),
+)
+assert report.ready, report.to_payload()
+assert any(check.check_id == "replay.equivalence" for check in report.checks)
 print(descriptor.plugin_id, descriptor.version)
 '''.replace("__TARGET__", repr(str(target)))
             executed = subprocess.run(

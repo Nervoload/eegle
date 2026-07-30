@@ -32,7 +32,7 @@
       "inputs": {
         "window": "window.stimulus"
       },
-      "manifest_digest": "sha256:118acf658ab6668084512913f09cf8dc136b8c51a21ead927b1e2c9dd80814bc",
+      "manifest_digest": "sha256:ce9b1b90c756412d17ed860a8c2fe03bf0e6bc834d5de94a439c1dc1a0b051ea",
       "model_id": "candidate",
       "plugin_id": "eegle.example_models.peak_threshold",
       "role": "candidate",
@@ -45,7 +45,7 @@
       "inputs": {
         "window": "window.stimulus"
       },
-      "manifest_digest": "sha256:581fea7fcc1ec3109fb186c403d1214b054c95e0e8e2f04258c11ea9b91c9e9a",
+      "manifest_digest": "sha256:641f0466ca501055295ef39d9caeabd69f8701c4b4f71f8b2bb394c7f3176d13",
       "model_id": "primary",
       "plugin_id": "eegle.example_models.mean_threshold",
       "role": "primary",

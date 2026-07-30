@@ -765,7 +765,13 @@ proof, and guarded same-engine model replacement replay as recorded in
 [MODEL_PACKAGING.md](MODEL_PACKAGING.md). The post-P7-012 review adds P7-012A:
 a bounded named `ExperimentDesign` fills the missing composition layer between
 fixed profiles and direct canonical graph authoring without changing compiler
-or runtime authority.
+or runtime authority. The post-P7-013 release review adds P7-013A for the
+general plugin-developer conformance workflow and P7-013B for transactional
+project compilation, authoritative release identity, current public-API
+documentation, and installed-artifact release evidence. P7-014 now maps every
+gate in [PHASE7_CLOSURE.md](PHASE7_CLOSURE.md); local closure evidence is
+complete, while real EEG observe-only acceptance and a current-candidate remote
+workflow remain required.
 
 ### Work
 
@@ -799,7 +805,9 @@ or runtime authority.
 
 #### CLI
 
-Implement an artifact-oriented project and operations command set:
+The target product spans the following artifact-oriented project and operations
+command set; Phase 7 implements the operational families, while comprehensive
+`validate` remains a Phase 8 gate:
 
 ```text
 eegle new
@@ -834,11 +842,12 @@ thin adapter over shared operations services. The implemented base slice is
 remain evidence-only or may produce a separate immutable deployment proposal,
 and `compile --deployment deployment_proposal` selects it explicitly. Later
 P7-009/P7-010 operations extend preflight/rehearsal and optional LSL detection;
-P7-011 makes `model pack` and `model check` available. Remaining families
-remain with their owning Phase 7 tasks. Built wheels still exclude
-migration-only root orchestration modules. The historical `eegle.cli` source
-was deleted under C-003/P7-013 after the installed CLI and portability tests
-were transferred to `eegle.operations.cli`.
+P7-011 makes `model pack` and `model check` available; P7-012 owns compare and
+export; and P7-013A owns plugin inspection/checking. The comprehensive
+`eegle validate` aggregator is P8-001. Built wheels still exclude migration-only
+root orchestration modules. The historical `eegle.cli` source was deleted under
+C-003/P7-013 after the installed CLI and portability tests were transferred to
+`eegle.operations.cli`.
 
 #### Packaging
 
@@ -850,6 +859,19 @@ were transferred to `eegle.operations.cli`.
 - Test one plugin as an independently built wheel.
 - Establish Python 3.11, 3.12, and compatible newer-version CI according to the
   dependency matrix.
+- Compile mutable projects transactionally: do not publish regenerated
+  canonical values or a project manifest until compilation has succeeded, and
+  preserve the last consistent published set after failure.
+- Use distribution metadata as the single package/CLI version authority and
+  keep documentation, citation, and project URLs immutable or tied to the
+  default branch rather than a mutable migration branch.
+- Test actual wheel and sdist installation in a clean environment. Editable
+  source installation is a contributor workflow and must not be used to infer
+  shipped module contents.
+- Keep base, optional-dependency, independent-plugin, reference-project, and
+  built-artifact smoke failures independently visible in release automation.
+- Treat a Phase 7 TestPyPI artifact as a pre-alpha or simulation-first
+  candidate. Public-alpha naming and promotion remain gated by Phase 8.
 
 #### Integrations and examples
 
@@ -865,6 +887,11 @@ were transferred to `eegle.operations.cli`.
   arbitrary import paths, embedded Python source, a trainer, or a second model
   runtime. Prove at least one real optional framework adapter as an independent
   plugin distribution.
+- Provide construction-free plugin descriptor inspection plus a reusable
+  installed-wheel conformance harness. Model conformance includes empty,
+  partially invalid, and all-invalid windows with explicit finite abstention or
+  invalid-result behavior, lifecycle cleanup, state restoration, evidence, and
+  replay.
 - Create complete reference projects from the minimal suites in Phase 5. They
   must cover recording-only, event-locked observation, model comparison,
   adaptation, simulated closed-loop action, and LSL observe-only operation.
@@ -912,6 +939,12 @@ public-alpha support claims.
 - The public CLI contains no study-specific recipe commands.
 - Old facades and superseded runtime paths are removed.
 - Documentation describes only tested commands and current public imports.
+- Failed project compilation cannot publish a mixed generated-spec/manifest
+  state; successful publication is atomic as a set.
+- Package, CLI, built artifacts, and documentation share one authoritative
+  version and release identity.
+- Clean installed wheel/sdist journeys, independent plugin conformance, and the
+  supported remote matrix pass with separately attributable evidence.
 
 ## 13. Phase 8 — Validation depth and public alpha
 
@@ -937,6 +970,11 @@ and release a truthful public alpha of the new architecture.
   - protocol-level acceptance.
 - Standardize result status, severity, evidence references, and insufficient-
   evidence behavior.
+- Implement the public read-only `eegle validate` service and CLI as an
+  aggregator over the authoritative schema/compiler, evidence, timing,
+  causality, model, action, replay, and protocol-validation results. It must not
+  create a second validator or manufacture conclusions from insufficient
+  evidence.
 - Add optional reports and plots generated only from structured results.
 - Benchmark throughput, memory, latency, backpressure, dense channel scale, and
   sparse event scale.
@@ -944,10 +982,19 @@ and release a truthful public alpha of the new architecture.
   fault injection.
 - Publish a support matrix distinguishing representable, adapter available,
   validated, and reference-supported modalities/integrations.
+- Extend the MNE bridge with marker annotations, admitted-window epochs, or
+  replay-input conversion only when those paths receive installed-artifact
+  acceptance evidence and enter the support matrix. pyRiemann, foundation
+  models, and other research-framework paths remain ordinary optional plugins;
+  absent evidence they are documented as unvalidated rather than blocking the
+  base alpha.
 - Complete API reference, tutorials, plugin authoring guide, evidence format
   guide, and migration/release notes.
 - Audit wheels, licenses, dependency bounds, typing, import time, and clean
   installation.
+- Rehearse publication through TestPyPI, install the exact candidate artifacts,
+  and promote the same verified identities through release automation only
+  after the Phase 8 gates pass.
 
 ### Exit gate
 
@@ -960,6 +1007,8 @@ and release a truthful public alpha of the new architecture.
   scientific conclusions.
 - Alpha API stability and deprecation policy are documented.
 - The old architecture is absent from the base package.
+- `eegle validate` reports structured insufficient-evidence outcomes and the
+  release support claims do not exceed the integration evidence.
 
 ## 14. Current-to-target responsibility map
 

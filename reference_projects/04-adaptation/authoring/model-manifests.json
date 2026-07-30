@@ -6,7 +6,7 @@
       },
       "artifacts": [],
       "contract": {
-        "contract_digest": "sha256:0c1c9ed72a3521e57afc9b36fc45f3e58b532f12adf77fa84566e5ea6abfeab3",
+        "contract_digest": "sha256:d141322106c5200d7d3fcdcd71804568e4bdb0fc6a9a7ecae9fa959473915fb3",
         "inputs": [
           {
             "port_name": "window",
@@ -19,7 +19,7 @@
         "metadata": {},
         "outputs": [
           {
-            "abstention_supported": false,
+            "abstention_supported": true,
             "port_name": "prediction",
             "schema": "eegle.model_output_contract.v1",
             "type_id": "eegle.prediction.v2",
@@ -63,7 +63,7 @@
           "retrospective"
         ]
       },
-      "contract_digest": "sha256:0c1c9ed72a3521e57afc9b36fc45f3e58b532f12adf77fa84566e5ea6abfeab3",
+      "contract_digest": "sha256:d141322106c5200d7d3fcdcd71804568e4bdb0fc6a9a7ecae9fa959473915fb3",
       "evaluation_provenance": {},
       "implementations": [
         {
@@ -74,7 +74,7 @@
       ],
       "initial_state_artifact_id": null,
       "license": null,
-      "manifest_digest": "sha256:0b147272cd1af76d8715135a0ab3079ff96224128f82d1453941fd567500b301",
+      "manifest_digest": "sha256:41c999b0a82d18e5a2663e5127b9ccf11400254317c16fa0f42e529305623a15",
       "model_id": "eegle.reference.adaptive-mean",
       "model_version": "1.0.0",
       "schema": "eegle.model_manifest.v1",

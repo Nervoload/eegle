@@ -1,67 +1,106 @@
-# EEGle Public API
+# EEGle public API
 
-> **Legacy current-implementation document.** This describes the pre-migration
-> import surface and remains only as compatibility evidence. The future public
-> API is governed by [EEGLE.md](../EEGLE.md) and [MIGRATION.md](../MIGRATION.md).
+This document describes the pre-alpha API shipped by the current EEGle wheel.
+Package-level exports are authoritative; importable implementation submodules
+and source-only migration evidence are not public merely because a checkout
+contains them. The machine inventory lives in
+[`docs/migration/phase7_public_surface.json`](../migration/phase7_public_surface.json).
 
-EEGle's pip-facing API is organized around stable scientific primitives rather
-than task-specific scripts.
+## Stability boundary
 
-## Core
+The package-level exports of these modules are the stable-alpha low-level
+surface. “Stable-alpha” requires an explicit migration decision for breaking
+changes; it is not a 1.0 compatibility promise.
 
-Use `eegle.core` for session layout, config loading, telemetry, provenance, and
-artifact hashing.
-
-```python
-from eegle.core import Session, create_session, load_config
+```text
+eegle
+eegle.actions
+eegle.compiler
+eegle.models
+eegle.plugins
+eegle.processing
+eegle.recording
+eegle.replay
+eegle.runtime
+eegle.specs
+eegle.streams
 ```
 
-The session directory and model-bundle formats are public library concepts. The
-legacy imports such as `eegle.session.create_session` remain available during
-the `0.1.x` compatibility window.
+The package-level exports of `eegle.authoring`, `eegle.integrations`,
+`eegle.integrations.lsl`, and `eegle.operations` are provisional through the
+Phase 7 closure review.
 
-## Streams
+## Author, compile, and run
 
-Use `eegle.streams` for LSL stream discovery, marker outlets, marker events,
-recorders, and simulated streams.
-
-```python
-from eegle.streams import LslStream, MarkerEvent, resolve_streams
-```
-
-Hardware-specific profiles stay outside core session/model contracts.
-
-## Realtime
-
-Use `eegle.realtime` for marker-locked epoching, model prediction payloads, and
-decision-policy action records.
+Researcher-facing authoring lowers into the canonical specification and
+compiler boundary:
 
 ```python
-from eegle.realtime import EpochingConfig, MarkerEvent, ModelPrediction, TaskAction
+from eegle.authoring import ExperimentDesign
+from eegle.operations import compile_project, create_project, run_project
+
+project = create_project(
+    "first-simulation",
+    project_id="first-simulation",
+)
+compiled = compile_project(project.root)
+run = run_project(project.root, session_id="session.first.run")
 ```
 
-Worker subprocess details remain internal. Dashboard and task workflows should
-be optional observers/recipes over these primitives.
+Advanced callers may author `ProtocolSpec`, `SuiteSpec`, and `DeploymentSpec`
+directly and call `eegle.compiler.compile_suite`. Runtime construction accepts
+only a verified `ExecutionPlan`; mutable authoring values and project manifests
+are never runtime inputs.
 
-## Models
+## Evidence and replay
 
-Use `eegle.models` for model specs, dynamic registration, model bundles,
-contracts, metrics, targets, adapters, and calibration state.
+`eegle.recording` owns sessions, evidence bundles, integrity, stores, recovery,
+and privacy/export primitives. `eegle.replay` owns same-engine replay and
+divergence results. The provisional operations projections provide concise,
+read-only workflows:
 
 ```python
-from eegle.models import ModelBundle, ModelContract, register_model_spec
+from eegle.operations import inspect_session, replay_session
+
+inspection = inspect_session("first-simulation/sessions/session.first.run")
+replay = replay_session("first-simulation/sessions/session.first.run")
 ```
 
-Foundation models should register through optional adapter packages and remain
-shadow-first until their input contract, latency, and replay behavior are
-validated.
+Inspection, comparison, replay, and export do not signal workers or mutate,
+recover, truncate, overwrite, or delete their source evidence.
 
-## Protocols
+## Models and plugins
 
-Use `eegle.protocols` for machine-readable scientific protocol files that state
-the task, target, prediction window, prediction horizon, split strategy,
-baselines, and metrics.
+`eegle.models` owns framework-neutral contracts, manifests, model packages,
+results, predictions, state artifacts, and package verification. Executable
+behavior belongs to descriptors discovered through `eegle.plugins`:
 
 ```python
-from eegle.protocols import ScientificProtocol
+from eegle.operations import check_plugin, inspect_plugins
+from eegle.plugins import PluginRegistry
+
+inspection = inspect_plugins("eegle.processing.identity")
+static_check = check_plugin("eegle.processing.identity")
 ```
+
+Descriptor inspection never invokes a component factory. Construction and
+behavioral conformance are explicit through `check_plugin(..., construct=True)`
+or the reusable `eegle.plugins.check_plugin_conformance` harness. Model plugins
+return `ModelResult`; EEGle adds prediction identity, timing, role, lineage, and
+evidence only after validating that result against the locked model contract.
+The matching installed commands are `eegle plugin inspect` and
+`eegle plugin check`; component construction requires `--construct`.
+
+## Command surface
+
+The installed `eegle` command and `python -m eegle` share the operations
+services. Current families are:
+
+```text
+new  detect  compile  explain  diff  graph  preflight  rehearse
+run  inspect  replay  compare  export  model  plugin
+```
+
+The comprehensive `eegle validate` aggregator belongs to Phase 8 and is not a
+current command. Existing compiler, preflight, integrity, replay, comparison,
+and acceptance results remain available through their owning services.

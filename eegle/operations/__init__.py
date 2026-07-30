@@ -114,6 +114,12 @@ from eegle.operations.preflight import (
     preflight,
     rehearsal_fault_outcomes,
 )
+from eegle.operations.plugin_tools import (
+    PLUGIN_INSPECTION_SCHEMA_ID,
+    PluginInspection,
+    check_plugin,
+    inspect_plugins,
+)
 
 
 __all__ = [
@@ -134,6 +140,7 @@ __all__ = [
     "DEPLOYMENT_PROPOSAL_SCHEMA_ID",
     "MODEL_MANIFEST_ENTRY_POINT_GROUP",
     "PREFLIGHT_REPORT_SCHEMA_ID",
+    "PLUGIN_INSPECTION_SCHEMA_ID",
     "REHEARSAL_REPORT_SCHEMA_ID",
     "AuthorizationProviderCapability",
     "ClockCapability",
@@ -171,6 +178,7 @@ __all__ = [
     "RepairOption",
     "PlacementCapability",
     "PluginObservation",
+    "PluginInspection",
     "ReplayInspection",
     "RehearsalReport",
     "SessionInspection",
@@ -181,6 +189,7 @@ __all__ = [
     "validate_operation_error_payload",
     "validate_operation_result_payload",
     "canonical_path_pointer",
+    "check_plugin",
     "compile_project",
     "compare_session_models",
     "create_project",
@@ -197,6 +206,7 @@ __all__ = [
     "guide_compilation_diagnostics",
     "graph_project",
     "inspect_session",
+    "inspect_plugins",
     "map_compilation_diagnostics",
     "map_schema_validation_error",
     "open_project",

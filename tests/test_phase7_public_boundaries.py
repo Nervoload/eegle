@@ -2,56 +2,29 @@ from __future__ import annotations
 
 import ast
 import json
-from pathlib import Path
 import tomllib
 import unittest
+from pathlib import Path
 
 from eegle.authoring import (
     AUTHORING_EXPORT_SCHEMA_ID,
     AUTHORING_PROJECT_SCHEMA_ID,
     AUTHORING_PROVENANCE_SCHEMA_ID,
-    DEPLOYMENT_REQUIREMENTS_SCHEMA_ID,
     COMPOSED_EXPERIMENT_SCHEMA_ID,
     COMPOSED_PROJECT_SCHEMA_ID,
+    DEPLOYMENT_REQUIREMENTS_SCHEMA_ID,
     DESIGN_PRESET_SCHEMA_ID,
-    ExperimentDesign,
     EXPERIMENT_DESIGN_SCHEMA_ID,
     EXPERIMENT_DRAFT_SCHEMA_ID,
     TEMPLATE_AUTHORING_SCHEMA_ID,
     TEMPLATE_DEFINITION_SCHEMA_ID,
     TEMPLATE_EXPANSION_LOCK_SCHEMA_ID,
-    TemplateProfile,
+    ExperimentDesign,
     SourceKind,
     SourceLocation,
+    TemplateProfile,
     validate_authoring_provenance_payload,
     validate_experiment_draft_payload,
-)
-from eegle.operations import (
-    DETECTION_REPORT_SCHEMA_ID,
-    DEPLOYMENT_PROPOSAL_SCHEMA_ID,
-    EXPERIMENT_DIFF_SCHEMA_ID,
-    EXPERIMENT_EXPLANATION_SCHEMA_ID,
-    OPERATION_ERROR_SCHEMA_ID,
-    OPERATION_RESULT_SCHEMA_ID,
-    MODEL_REPLACEMENT_COMPARISON_SCHEMA_ID,
-    PREFLIGHT_REPORT_SCHEMA_ID,
-    PROJECT_MANIFEST_SCHEMA_ID,
-    PROJECT_GRAPH_SCHEMA_ID,
-    PROJECT_RESULT_SCHEMA_ID,
-    REPLAY_INSPECTION_SCHEMA_ID,
-    REHEARSAL_REPORT_SCHEMA_ID,
-    SESSION_EXPORT_SCHEMA_ID,
-    SESSION_INSPECTION_SCHEMA_ID,
-    DifferenceImpact,
-    ExitCode,
-    OperationCategory,
-    OperationDiagnostic,
-    OperationError,
-    RepairKind,
-    RepairOption,
-    ExplanationViewKind,
-    validate_operation_error_payload,
-    validate_operation_result_payload,
 )
 from eegle.models import (
     MODEL_PACKAGE_CHECK_SCHEMA_ID,
@@ -61,8 +34,36 @@ from eegle.models import (
     SYNTHETIC_TEST_VECTOR_SCHEMA_ID,
     SYNTHETIC_TEST_VECTOR_SET_SCHEMA_ID,
 )
+from eegle.operations import (
+    DEPLOYMENT_PROPOSAL_SCHEMA_ID,
+    DETECTION_REPORT_SCHEMA_ID,
+    EXPERIMENT_DIFF_SCHEMA_ID,
+    EXPERIMENT_EXPLANATION_SCHEMA_ID,
+    MODEL_REPLACEMENT_COMPARISON_SCHEMA_ID,
+    OPERATION_ERROR_SCHEMA_ID,
+    OPERATION_RESULT_SCHEMA_ID,
+    PLUGIN_INSPECTION_SCHEMA_ID,
+    PREFLIGHT_REPORT_SCHEMA_ID,
+    PROJECT_GRAPH_SCHEMA_ID,
+    PROJECT_MANIFEST_SCHEMA_ID,
+    PROJECT_RESULT_SCHEMA_ID,
+    REHEARSAL_REPORT_SCHEMA_ID,
+    REPLAY_INSPECTION_SCHEMA_ID,
+    SESSION_EXPORT_SCHEMA_ID,
+    SESSION_INSPECTION_SCHEMA_ID,
+    DifferenceImpact,
+    ExitCode,
+    ExplanationViewKind,
+    OperationCategory,
+    OperationDiagnostic,
+    OperationError,
+    RepairKind,
+    RepairOption,
+    validate_operation_error_payload,
+    validate_operation_result_payload,
+)
+from eegle.plugins import PLUGIN_CONFORMANCE_REPORT_SCHEMA_ID
 from eegle.specs import SchemaValidationError
-
 
 ROOT = Path(__file__).resolve().parents[1]
 SURFACE_PATH = ROOT / "docs" / "migration" / "phase7_public_surface.json"
@@ -341,6 +342,8 @@ class Phase7PublicBoundaryTests(unittest.TestCase):
                 DEPLOYMENT_PROPOSAL_SCHEMA_ID,
                 PREFLIGHT_REPORT_SCHEMA_ID,
                 REHEARSAL_REPORT_SCHEMA_ID,
+                PLUGIN_INSPECTION_SCHEMA_ID,
+                PLUGIN_CONFORMANCE_REPORT_SCHEMA_ID,
             },
         )
         explanation = self.surface["explanations"]
@@ -406,10 +409,29 @@ class Phase7PublicBoundaryTests(unittest.TestCase):
                 "compare",
                 "export",
                 "model",
+                "plugin",
             },
         )
         self.assertEqual(cli["machine_envelope"], OPERATION_RESULT_SCHEMA_ID)
         self.assertEqual(cli["runtime_input"], "verified_execution_plan_and_lock")
+
+        plugins = self.surface["plugin_operations"]
+        self.assertEqual(plugins["inspection_schema"], PLUGIN_INSPECTION_SCHEMA_ID)
+        self.assertEqual(
+            plugins["conformance_schema"],
+            PLUGIN_CONFORMANCE_REPORT_SCHEMA_ID,
+        )
+        self.assertFalse(plugins["descriptor_inspection_constructs_components"])
+        self.assertEqual(plugins["component_construction"], "explicit_opt_in")
+        self.assertTrue(plugins["state_restore_and_replay_equivalence"])
+        self.assertTrue(plugins["failure_path_lifecycle_cleanup"])
+
+        projects = self.surface["project_operations"]
+        self.assertEqual(
+            projects["generated_publication"],
+            "content_addressed_revision_then_atomic_manifest_switch",
+        )
+        self.assertFalse(projects["failed_compilation_changes_indexed_generated_set"])
 
         sessions = self.surface["session_operations"]
         self.assertEqual(

@@ -30,6 +30,9 @@ outlet is constructed.
   another matching-looking stream;
 - regular-stream timestamp gaps advance packet sequence identity and expose a
   typed estimated-loss observation;
+- native discovery upgrades LSL's short network `StreamInfo` through a
+  temporary observational inlet so channel labels and units come from the full
+  descriptor; the temporary inlet is closed before a source owns live I/O;
 - discovery emits typed source, channel, unit, nominal-rate, clock, reconnect,
   and packet-loss capabilities for the normal Phase 7 deployment proposal.
 
@@ -65,10 +68,12 @@ artifacts, provider availability, safe-state reports, and operator gates.
 
 ## Real EEG observe-only acceptance
 
-This gate is intentionally open as of 2026-07-29; the current environment has
-no `pylsl` installation or live EEG outlet. P7-010 must remain `in_progress`
-until the following non-participant run is completed and its redacted evidence
-identity is recorded here:
+This gate is intentionally open as of 2026-07-29. A clean installed wheel has
+passed a native `pylsl 1.18.2` local-network smoke covering full channel
+metadata (`C3`, `C4`, `uV`) and dense packet transport, but the current
+environment has no live EEG outlet. That is simulation evidence, not hardware
+acceptance. P7-010 must remain `in_progress` until the following non-participant
+run is completed and its redacted evidence identity is recorded here:
 
 1. Start one EEG outlet with a stable `source_id`/UID and known channel order,
    units, and nominal rate. No policy, authorization provider, or actuator may

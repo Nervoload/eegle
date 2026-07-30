@@ -6,7 +6,7 @@
       },
       "artifacts": [],
       "contract": {
-        "contract_digest": "sha256:08e264c534313fd4ecfb19c876c6a1fcbf9f445d15bbb0bd77b08fd106db53b8",
+        "contract_digest": "sha256:3dc154b55dbf109023a25c3d5521972403caf838b367ddc9bdcf312eb0218a40",
         "inputs": [
           {
             "port_name": "window",
@@ -19,7 +19,7 @@
         "metadata": {},
         "outputs": [
           {
-            "abstention_supported": false,
+            "abstention_supported": true,
             "port_name": "prediction",
             "schema": "eegle.model_output_contract.v1",
             "type_id": "eegle.prediction.v2",
@@ -63,7 +63,7 @@
           "retrospective"
         ]
       },
-      "contract_digest": "sha256:08e264c534313fd4ecfb19c876c6a1fcbf9f445d15bbb0bd77b08fd106db53b8",
+      "contract_digest": "sha256:3dc154b55dbf109023a25c3d5521972403caf838b367ddc9bdcf312eb0218a40",
       "evaluation_provenance": {},
       "implementations": [
         {
@@ -74,7 +74,7 @@
       ],
       "initial_state_artifact_id": null,
       "license": null,
-      "manifest_digest": "sha256:581fea7fcc1ec3109fb186c403d1214b054c95e0e8e2f04258c11ea9b91c9e9a",
+      "manifest_digest": "sha256:641f0466ca501055295ef39d9caeabd69f8701c4b4f71f8b2bb394c7f3176d13",
       "model_id": "eegle.reference.mean-threshold",
       "model_version": "1.0.0",
       "schema": "eegle.model_manifest.v1",

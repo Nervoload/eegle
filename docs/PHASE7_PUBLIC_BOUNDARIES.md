@@ -1,6 +1,6 @@
 # Phase 7 Public and Authoring Boundaries
 
-**Status:** P7-001 through P7-009 and P7-011 through P7-013 implemented; P7-010 real acceptance, P7-013A plugin tooling, and P7-014 closure remain pending
+**Status:** P7-014 local surface audit complete; real EEG acceptance and current-candidate remote closure evidence remain pending
 **Date:** 2026-07-29
 **Architecture authority:** [EEGLE.md](EEGLE.md)
 **Phase design:** [PHASE7_AUTHORING_OPERATIONS.md](PHASE7_AUTHORING_OPERATIONS.md)
@@ -142,6 +142,23 @@ model distribution publishes mean, peak, and stateful adaptive algorithms
 through `eegle.plugins`; model code never enters authoring or a model package.
 The dependency-lazy MNE bridge is a one-way analysis export and retains EEGle
 timing identities in a sidecar rather than claiming MNE as a replay authority.
+
+P7-013A adds construction-free installed-descriptor inspection and a reusable
+conformance harness at the existing plugin boundary. Component construction,
+behavioral exercises, and lifecycle I/O remain explicit caller choices. The
+harness verifies canonical contract outputs, cleanup on failure, declared
+snapshot/restore behavior, and fresh-component replay equivalence. Model
+fixtures cover valid, partially invalid, and all-invalid inputs; an all-invalid
+window yields a finite explicit abstention rather than an incidental numerical
+exception or non-finite score.
+
+P7-013B makes compiled generated project values content-addressed revisions.
+A successful compile publishes the complete generated directory with one
+same-filesystem rename, then atomically switches `eegle-project.json`; a failed
+compile leaves the previously indexed generated set unchanged. Distribution
+metadata is the runtime and CLI version authority, release language remains
+pre-alpha, and package automation separately proves the wheel, sdist, optional
+dependencies, independent plugin, and reference journey outside the checkout.
 
 ## 3. Authoring payload contracts
 
@@ -431,6 +448,11 @@ The support record is deliberately three-valued: `unavailable`,
 a named real acceptance identity. No such identity exists yet, so P7-010
 remains in progress even though its automated implementation and simulated
 acceptance are present.
+
+The installed-wheel native-network probe additionally verifies that discovery
+retrieves full `pylsl` channel descriptors rather than accepting resolver-short
+fallback labels, and that dense packets traverse the local network adapter.
+This strengthens simulated validation without changing the live-support claim.
 
 ## 5. D-034 — Restricted YAML distribution
 

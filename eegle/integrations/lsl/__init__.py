@@ -7,11 +7,11 @@ safe when the optional native dependency is absent.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from enum import Enum
 import importlib
 import json
 import math
+from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
@@ -43,7 +43,6 @@ from eegle.streams import (
     StreamSpec,
     TimePoint,
 )
-
 
 LSL_DENSE_SOURCE_PLUGIN_ID = "eegle.integrations.lsl_dense_source"
 LSL_SPARSE_SOURCE_PLUGIN_ID = "eegle.integrations.lsl_sparse_source"
@@ -518,7 +517,13 @@ def detect_lsl(
             rate_model = RateModel.REGULAR if identity.nominal_rate_hz > 0 else RateModel.IRREGULAR
             sample_rate = identity.nominal_rate_hz if identity.nominal_rate_hz > 0 else None
             sample_dtype = _numpy_dtype(identity.channel_format)
-            labels, units = _channel_metadata(info, identity.channel_count, default_dense_unit)
+            labels, units = _channel_metadata(
+                pylsl,
+                info,
+                identity.channel_count,
+                default_dense_unit,
+                timeout_seconds=max(wait, 0.1),
+            )
             channels = tuple(
                 ChannelSpec(
                     f"channel.{index + 1}.{_identifier(label or str(index + 1))}",
@@ -693,21 +698,54 @@ def _numpy_dtype(channel_format: str) -> str:
     return "float64"
 
 
-def _channel_metadata(info: Any, count: int, default_unit: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _channel_metadata(
+    pylsl: Any,
+    info: Any,
+    count: int,
+    default_unit: str,
+    *,
+    timeout_seconds: float,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     labels = [f"CH{index + 1}" for index in range(count)]
     units = [default_unit for _ in range(count)]
+    found = _read_channel_metadata(info, labels, units)
+    if found == count:
+        return tuple(labels), tuple(units)
+
+    # Discovery results contain only LSL's short StreamInfo on native pylsl.
+    # Retrieve the full descriptor through a temporary inlet before falling
+    # back to generated channel names. The inlet is observational and is
+    # closed immediately; source construction still owns its separate inlet.
+    inlet = None
+    try:
+        inlet = pylsl.StreamInlet(info, recover=True, processing_flags=0)
+        full_info = inlet.info(timeout=timeout_seconds)
+        _read_channel_metadata(full_info, labels, units)
+    except (AttributeError, TypeError, RuntimeError):
+        pass
+    finally:
+        if inlet is not None:
+            close = getattr(inlet, "close_stream", None)
+            if callable(close):
+                close()
+    return tuple(labels), tuple(units)
+
+
+def _read_channel_metadata(info: Any, labels: list[str], units: list[str]) -> int:
     try:
         channel = info.desc().child("channels").child("channel")
-        for index in range(count):
+        found = 0
+        for index in range(len(labels)):
             if channel.empty():
                 break
             label = str(channel.child_value("label") or labels[index])
             unit = str(channel.child_value("unit") or units[index])
             labels[index], units[index] = label, unit
+            found += 1
             channel = channel.next_sibling("channel")
+        return found
     except (AttributeError, TypeError):
-        pass
-    return tuple(labels), tuple(units)
+        return 0
 
 
 def _library_version(pylsl: Any) -> str | None:

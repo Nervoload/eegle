@@ -156,7 +156,9 @@
     "eegle.detection_report.v1",
     "eegle.deployment_proposal.v1",
     "eegle.preflight_report.v1",
-    "eegle.rehearsal_report.v1"
+    "eegle.rehearsal_report.v1",
+    "eegle.plugin_inspection.v1",
+    "eegle.plugin_conformance_report.v1"
   ],
   "operation_error_schema": "eegle.operation_error.v1",
   "explanations": {
@@ -211,7 +213,7 @@
   "cli": {
     "installed": true,
     "entry_point": "eegle=eegle.__main__:main",
-    "implementation_tasks": ["P7-007", "P7-008", "P7-009", "P7-010", "P7-011", "P7-012", "P7-013"],
+    "implementation_tasks": ["P7-007", "P7-008", "P7-009", "P7-010", "P7-011", "P7-012", "P7-013", "P7-013A", "P7-013B"],
     "service_package": "eegle.operations",
     "base_commands": [
       "new",
@@ -227,7 +229,8 @@
       "replay",
       "compare",
       "export",
-      "model"
+      "model",
+      "plugin"
     ],
     "runtime_input": "verified_execution_plan_and_lock",
     "machine_envelope": "eegle.operation_result.v1"
@@ -243,7 +246,22 @@
     "plan_only_run_service": "eegle.operations.run_locked_plan",
     "inspect_service": "eegle.operations.inspect_session",
     "replay_service": "eegle.operations.replay_session",
-    "simulation_scope": "locked_simulation_deployment_with_fault_evidence"
+    "simulation_scope": "locked_simulation_deployment_with_fault_evidence",
+    "generated_publication": "content_addressed_revision_then_atomic_manifest_switch",
+    "failed_compilation_changes_indexed_generated_set": false
+  },
+  "plugin_operations": {
+    "inspection_service": "eegle.operations.inspect_plugins",
+    "check_service": "eegle.operations.check_plugin",
+    "inspection_schema": "eegle.plugin_inspection.v1",
+    "conformance_schema": "eegle.plugin_conformance_report.v1",
+    "reusable_harness": "eegle.plugins.check_plugin_conformance",
+    "descriptor_inspection_constructs_components": false,
+    "component_construction": "explicit_opt_in",
+    "behavioral_exercises": "explicit_caller_supplied",
+    "state_restore_and_replay_equivalence": true,
+    "failure_path_lifecycle_cleanup": true,
+    "model_all_invalid_behavior": "finite_explicit_abstention"
   },
   "session_operations": {
     "inspection_service": "eegle.operations.inspect_session",

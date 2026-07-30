@@ -1,6 +1,6 @@
 # Phase 7 Experiment Authoring and Operations
 
-**Status:** Active; P7-013 complete, P7-010 real acceptance, P7-013A plugin tooling, and P7-014 closure pending
+**Status:** Active; P7-014 local closure audit complete, with real EEG and current-candidate remote evidence pending
 **Date:** 2026-07-29
 **Architecture authority:** [EEGLE.md](EEGLE.md)
 **Phase gate:** [MIGRATION.md](MIGRATION.md#12-phase-7--experiment-authoring-operations-packaging-and-integrations)
@@ -780,25 +780,114 @@ The declared CI matrix covers Linux Python 3.11–3.13 and macOS/Windows Python
 Python 3.12 verification passes all 369 tests with seven conditional skips,
 compile-all, focused Ruff, diff checks, and the isolated wheel/plugin journey.
 
+### P7-013A — Plugin-developer conformance workflow
+
+**Status:** done
+
+Add the bounded plugin-developer acceptance identified by the P7-013 review:
+safe descriptor inspection/check commands, a reusable conformance harness, and
+independently installed entry-point, explicit-construction, lifecycle, state,
+cleanup/failure, execution-evidence, and replay checks. Descriptor inspection
+must remain construction-free so it cannot connect to hardware or start live
+I/O.
+
+The harness must exercise valid, empty, partially invalid, and all-invalid
+model inputs. Example models must return an explicit schema-valid abstention or
+invalid result for an all-invalid window; they must not reduce an empty array,
+raise an incidental NumPy exception, or emit a non-finite prediction.
+
+Acceptance: the example distribution and at least one independent test plugin
+pass the reusable harness from an installed wheel; inspection performs no
+construction; lifecycle and restore behavior leave no resources behind after
+success or failure; and the all-invalid model case has deterministic result,
+evidence, and replay behavior.
+
+Implemented: `eegle plugin inspect` and the default check path expose canonical
+descriptors without factory invocation; construction is an explicit opt-in.
+`eegle.plugins.check_plugin_conformance()` supplies reusable typed exercises,
+lifecycle cleanup, finite snapshot/restore, and deterministic fresh-component
+replay checks. The independently installed Phase 2 transform fixture and the
+separately built example-model distribution use this boundary. Mean, peak, and
+adaptive examples deterministically cover valid, empty, partially invalid, and
+all-invalid windows; empty/all-invalid inputs return a finite explicit
+`all_samples_invalid` abstention.
+
+### P7-013B — Release and project integrity
+
+**Status:** done
+
+Close the operational integrity gaps discovered after P7-013 without turning
+Phase 7 into public-alpha validation:
+
+- make project compilation transactional: stage or retain generated canonical
+  values in memory, compile successfully, and atomically publish the complete
+  generated set plus its matching project manifest; a failed compile must
+  leave the last published set intact and may write diagnostics only to a
+  separate failure artifact;
+- establish distribution metadata as the single version authority used by
+  `eegle.__version__`, CLI version output, built artifacts, and release checks;
+- replace or unmistakably archive the stale `docs/api/PUBLIC_API.md` content,
+  and make current public-import documentation agree with the P7-014 boundary
+  inventory;
+- document editable installs as contributor/source-tree workflows and exercise
+  wheel and sdist installation in a clean environment, including negative
+  imports for migration-only modules;
+- split release checks sufficiently that base, optional YAML, live-import,
+  external-plugin, reference-project, and built-artifact failures are
+  independently visible; preserve the corrected isolated PEP 517 builds and
+  supported Python/OS matrix;
+- use an immutable or default-branch documentation URL and keep package, CLI,
+  citation, and documentation identities consistent; and
+- describe the Phase 7 artifact as a pre-alpha or simulation-first candidate.
+  TestPyPI rehearsal is permitted, but a public-alpha claim remains gated by
+  Phase 8 unless the migration plan is deliberately amended.
+
+Acceptance: an intentionally failing compilation cannot create mixed generated
+state; version/identity checks have one authoritative source; a clean
+environment installs and exercises built artifacts rather than the checkout;
+documented imports and commands are executable; forbidden wheel imports remain
+absent; and the release workflow preserves successful supported-matrix and
+artifact-install evidence by independently diagnosable job.
+
+Implemented: successful compilation stages a complete generated authoring
+project, publishes it under a content-addressed revision with one
+same-filesystem rename, and then atomically switches the project manifest.
+Failure leaves the prior indexed revision byte-for-byte intact. Distribution
+metadata now supplies runtime and CLI version identity; current API/install
+prose, default-branch links, SPDX metadata, and pre-alpha naming agree. The
+sdist manifest enforces the wheel's migration-source boundary. Release jobs
+separately report base wheel, sdist, YAML/live import, independent plugin, and
+reference-project failures, and clean artifact checks reject legacy imports.
+The TestPyPI job is separately and explicitly gated by a false-by-default
+Phase 8 dispatch input, so collecting Phase 7 package evidence does not publish
+an artifact.
+
 ### P7-014 — Phase closure
 
-**Status:** todo
+**Status:** in progress — local gate matrix complete; two external records pending
 
 Map every migration exit gate and required user journey to durable acceptance
 evidence. Do not close the phase merely because individual commands exist.
 
-Before closure, add the bounded plugin-developer acceptance identified by the
-P7-013 review: descriptor inspection/check commands, a reusable conformance
-harness, and independently installed entry-point, lifecycle, state,
-cleanup/failure, execution-evidence, and replay checks. Construction or live
-I/O must be explicit so inspection cannot connect to hardware. The current
-example distribution and clean-wheel runs are inputs to that kit, not a claim
-that the generalized kit already exists.
+P7-013A and P7-013B are closure prerequisites, not evidence supplied merely by
+the current example distribution or source-tree test suite. Record the remote
+supported-version workflow result, the installed-artifact journey, the final
+public/provisional inventory, current documentation/command agreement, and the
+transactional project failure probe in the gate matrix.
 
 Keep the shipped MNE bridge's alpha claim narrow: dense capture to `RawArray`.
 Markers-to-annotations, admitted-window-to-epochs, and MNE replay-input bridges
 remain additive integration work unless P7-014 deliberately promotes them into
 the initial support claim.
+
+Implemented locally: [PHASE7_CLOSURE.md](PHASE7_CLOSURE.md) and its
+machine-readable evidence record map all fifteen exit gates and eleven closure
+requirements. Clean artifact checks now exercise all six references and native
+`pylsl` local-network metadata/packet transport. The native probe exposed and
+closed a short-`StreamInfo` defect by retrieving the full channel descriptor
+through a temporary observational inlet. Phase closure remains blocked only on
+the documented non-participant real EEG observe-only record and successful
+supported-matrix/package workflows for the published current candidate.
 
 ## 6. Implementation order
 
@@ -808,7 +897,7 @@ the initial support claim.
 4. **Model research:** P7-011 and the replacement/comparison part of P7-012.
 5. **General authoring:** P7-012A after the operational review, preserving all
    earlier exact revisions.
-6. **Proof and cleanup:** P7-013 and P7-014.
+6. **Proof, integrity, and cleanup:** P7-013, P7-013A, P7-013B, and P7-014.
 
 The first implementation slice must establish the authoring-to-canonical
 boundary before expanding the command surface.
@@ -843,7 +932,13 @@ Phase 7 closes only when:
    receipts while absent authority remains observe-only;
 8. public commands and APIs are tested from a clean wheel and contain no recipe
    authority; and
-9. protected Phase 7 legacy shells are removed only after their replacement
+9. project compilation publishes generated values and their manifest as one
+   successful transaction, while failed compilation preserves the last
+   internally consistent published set;
+10. package, CLI, documentation, and built-artifact identity come from one
+    version authority, and public documentation names only tested current
+    imports and commands; and
+11. protected Phase 7 legacy shells are removed only after their replacement
    evidence exists, while Phase 8 evidence remains intact.
 
 The product rule is: authoring may be convenient, but execution remains

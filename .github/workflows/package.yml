@@ -2,6 +2,12 @@ name: package
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_testpypi:
+        description: Publish the verified candidate to TestPyPI (Phase 8 only)
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -22,10 +28,158 @@ jobs:
           name: dist
           path: dist/
 
-  testpypi:
+  wheel-smoke:
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install exact wheel in a clean environment
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/eegle-wheel"
+          "$RUNNER_TEMP/eegle-wheel/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/eegle-wheel/bin/python" -m pip install dist/eegle-*.whl
+      - name: Run base artifact journey outside the checkout
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$RUNNER_TEMP/eegle-wheel/bin/eegle" --version
+          "$RUNNER_TEMP/eegle-wheel/bin/python" -c "import importlib.util; forbidden = ('eegle.analysis', 'eegle.ml', 'eegle.realtime', 'eegle.tasks', 'eegle.workers'); assert all(importlib.util.find_spec(name) is None for name in forbidden)"
+          "$RUNNER_TEMP/eegle-wheel/bin/eegle" --json plugin inspect eegle.processing.identity --no-entry-points
+          "$RUNNER_TEMP/eegle-wheel/bin/eegle" --json new eegle-smoke --id artifact-smoke
+          "$RUNNER_TEMP/eegle-wheel/bin/eegle" --json compile eegle-smoke
+          "$RUNNER_TEMP/eegle-wheel/bin/eegle" --json preflight eegle-smoke
+          "$RUNNER_TEMP/eegle-wheel/bin/eegle" --json run eegle-smoke --session-id session.artifact.smoke
+          "$RUNNER_TEMP/eegle-wheel/bin/eegle" --json replay eegle-smoke
+
+  sdist-smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build and install exact sdist in a clean environment
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/eegle-sdist"
+          "$RUNNER_TEMP/eegle-sdist/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/eegle-sdist/bin/python" -m pip install dist/eegle-*.tar.gz
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/eegle-sdist/bin/python" -c "import importlib.util; forbidden = ('eegle.analysis', 'eegle.ml', 'eegle.realtime', 'eegle.tasks', 'eegle.workers'); assert all(importlib.util.find_spec(name) is None for name in forbidden)"
+          "$RUNNER_TEMP/eegle-sdist/bin/python" -c "import eegle; from eegle.operations import inspect_plugins; print(eegle.__version__, len(inspect_plugins(include_entry_points=False).descriptors))"
+
+  optional-smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        capability: [yaml, live-import]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install exact wheel
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/eegle-${{ matrix.capability }}"
+          "$RUNNER_TEMP/eegle-${{ matrix.capability }}/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/eegle-${{ matrix.capability }}/bin/python" -m pip install dist/eegle-*.whl
+      - name: Exercise optional boundary
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          if [ "${{ matrix.capability }}" = "yaml" ]; then
+            "$RUNNER_TEMP/eegle-${{ matrix.capability }}/bin/python" -m pip install "ruamel.yaml>=0.18.10,<0.19"
+            "$RUNNER_TEMP/eegle-${{ matrix.capability }}/bin/python" -c "from eegle.authoring import load_yaml_design; print(load_yaml_design.__name__)"
+          else
+            "$RUNNER_TEMP/eegle-${{ matrix.capability }}/bin/python" -m pip install "pylsl>=1.18,<2"
+            "$RUNNER_TEMP/eegle-${{ matrix.capability }}/bin/python" "$GITHUB_WORKSPACE/tests/fixtures/phase7_native_lsl_smoke.py"
+          fi
+
+  plugin-smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build independent example plugin
+        working-directory: examples/plugins/eegle-example-models
+        run: python -m pip wheel . --no-deps --wheel-dir ../../../plugin-dist
+      - name: Install exact base and plugin wheels
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/eegle-plugin"
+          "$RUNNER_TEMP/eegle-plugin/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/eegle-plugin/bin/python" -m pip install dist/eegle-*.whl plugin-dist/eegle_example_models-*.whl
+      - name: Run installed plugin checks outside the checkout
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$RUNNER_TEMP/eegle-plugin/bin/eegle" --json plugin inspect eegle.example_models.mean_threshold
+          "$RUNNER_TEMP/eegle-plugin/bin/eegle" --json plugin check eegle.example_models.mean_threshold --construct
+
+  reference-project-smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build independent example plugin
+        working-directory: examples/plugins/eegle-example-models
+        run: python -m pip wheel . --no-deps --wheel-dir ../../../plugin-dist
+      - name: Install exact base and plugin wheels
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/eegle-reference"
+          "$RUNNER_TEMP/eegle-reference/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/eegle-reference/bin/python" -m pip install dist/eegle-*.whl plugin-dist/eegle_example_models-*.whl
+      - name: Run all reference-project simulation journeys outside the checkout
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          cp -R "$GITHUB_WORKSPACE/reference_projects" reference-projects
+          for name in 01-recording 02-event-locked-observation 03-model-comparison 04-adaptation 05-simulated-closed-loop 06-lsl-observe-only; do
+            project="$RUNNER_TEMP/reference-projects/$name"
+            session="session.reference.${name//-/.}"
+            "$RUNNER_TEMP/eegle-reference/bin/eegle" --json compile "$project"
+            "$RUNNER_TEMP/eegle-reference/bin/eegle" --json preflight "$project"
+            "$RUNNER_TEMP/eegle-reference/bin/eegle" --json run "$project" --session-id "$session"
+            "$RUNNER_TEMP/eegle-reference/bin/eegle" --json replay "$project"
+          done
+
+  testpypi:
+    needs: [wheel-smoke, sdist-smoke, optional-smoke, plugin-smoke, reference-project-smoke]
+    runs-on: ubuntu-latest
+    if: ${{ inputs.publish_testpypi }}
     permissions:
       id-token: write
     environment: testpypi

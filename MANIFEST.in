@@ -1,0 +1,28 @@
+# Keep source distributions inside the same v1 boundary as built wheels.
+# These paths remain in the repository only as migration evidence.
+prune tests
+prune eegle/analysis
+prune eegle/calibration
+prune eegle/devices
+prune eegle/hardware
+prune eegle/io
+prune eegle/ml
+prune eegle/realtime
+prune eegle/tasks
+prune eegle/workers
+
+exclude eegle/config.py
+exclude eegle/eeg_csv.py
+exclude eegle/experiment.py
+exclude eegle/factory.py
+exclude eegle/feedback_manager.py
+exclude eegle/lsl.py
+exclude eegle/preflight.py
+exclude eegle/psychopy_input.py
+exclude eegle/recording_health.py
+exclude eegle/session.py
+exclude eegle/telemetry.py
+exclude eegle/integrations/legacy_sessions.py
+exclude eegle/integrations/task_environment.py
+
+global-exclude __pycache__ *.py[cod]

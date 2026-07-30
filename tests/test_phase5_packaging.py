@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import os
 import json
-from pathlib import Path
+import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
+import tomllib
 import unittest
 import zipfile
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 LEGACY_ROOT_WHEEL_PATHS = {
@@ -49,7 +50,12 @@ class Phase5PackagingTests(unittest.TestCase):
             root = Path(directory)
             project = root / "project"
             project.mkdir()
-            for filename in ("pyproject.toml", "setup.py", "README.md"):
+            for filename in (
+                "pyproject.toml",
+                "setup.py",
+                "MANIFEST.in",
+                "README.md",
+            ):
                 shutil.copy2(ROOT / filename, project / filename)
             shutil.copytree(
                 ROOT / "eegle",
@@ -127,8 +133,63 @@ class Phase5PackagingTests(unittest.TestCase):
             self.assertIn("eegle = eegle.__main__:main", entry_point_text)
             self.assertIn("lsl = eegle.integrations.lsl:lsl_plugin_descriptors", entry_point_text)
 
+            sdist_dir = root / "sdist"
+            sdist_dir.mkdir()
+            built_sdist = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "build",
+                    "--sdist",
+                    "--outdir",
+                    str(sdist_dir),
+                ],
+                cwd=project,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                built_sdist.returncode,
+                0,
+                built_sdist.stdout + built_sdist.stderr,
+            )
+            sdists = tuple(sdist_dir.glob("eegle-*.tar.gz"))
+            self.assertEqual(len(sdists), 1)
+            with tarfile.open(sdists[0], "r:gz") as archive:
+                sdist_names = {
+                    "/".join(Path(value.name).parts[1:])
+                    for value in archive.getmembers()
+                }
+            self.assertFalse(LEGACY_ROOT_WHEEL_PATHS & sdist_names)
+            self.assertFalse(any(name.startswith("eegle/ml/") for name in sdist_names))
+            self.assertFalse(any(name.startswith("tests/") for name in sdist_names))
+            self.assertIn("eegle/operations/plugin_tools.py", sdist_names)
+
+            installed = root / "installed"
+            installed_base = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "--no-deps",
+                    "--target",
+                    str(installed),
+                    str(wheels[0]),
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                installed_base.returncode,
+                0,
+                installed_base.stdout + installed_base.stderr,
+            )
             environment = os.environ.copy()
-            environment["PYTHONPATH"] = str(wheels[0])
+            environment["PYTHONPATH"] = str(installed)
             invoked = subprocess.run(
                 [sys.executable, "-m", "eegle", "--help"],
                 cwd=root,
@@ -139,10 +200,31 @@ class Phase5PackagingTests(unittest.TestCase):
             )
             self.assertEqual(invoked.returncode, 0, invoked.stdout + invoked.stderr)
             self.assertIn(
-                "{new,compile,detect,explain,diff,graph,rehearse,preflight,run,inspect,replay,compare,export,model}",
+                "{new,compile,detect,explain,diff,graph,rehearse,preflight,run,inspect,replay,compare,export,model,plugin}",
                 invoked.stdout,
             )
             self.assertNotIn("check-setup", invoked.stdout + invoked.stderr)
+
+            declared_version = tomllib.loads(
+                (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+            )["project"]["version"]
+            installed_version = subprocess.run(
+                [sys.executable, "-m", "eegle", "--version"],
+                cwd=root,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                installed_version.returncode,
+                0,
+                installed_version.stdout + installed_version.stderr,
+            )
+            self.assertEqual(
+                installed_version.stdout.strip(),
+                f"eegle {declared_version}",
+            )
 
             project_root = root / "first-simulation"
             commands = (
@@ -217,10 +299,45 @@ class Phase5PackagingTests(unittest.TestCase):
             plugin_wheels = tuple(plugin_wheel_dir.glob("eegle_example_models-*.whl"))
             self.assertEqual(len(plugin_wheels), 1)
 
-            model_environment = environment.copy()
-            model_environment["PYTHONPATH"] = os.pathsep.join(
-                (str(wheels[0]), str(plugin_wheels[0]))
+            installed_plugin = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "--no-deps",
+                    "--target",
+                    str(installed),
+                    str(plugin_wheels[0]),
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
             )
+            self.assertEqual(
+                installed_plugin.returncode,
+                0,
+                installed_plugin.stdout + installed_plugin.stderr,
+            )
+            model_environment = environment.copy()
+            for command in (
+                ("plugin", "inspect", "eegle.example_models.mean_threshold"),
+                ("plugin", "check", "eegle.example_models.mean_threshold", "--construct"),
+            ):
+                completed = subprocess.run(
+                    [sys.executable, "-m", "eegle", "--json", *command],
+                    cwd=root,
+                    env=model_environment,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(
+                    completed.returncode,
+                    0,
+                    completed.stdout + completed.stderr,
+                )
             comparison_root = root / "model-comparison"
             model_commands = (
                 (
@@ -319,6 +436,40 @@ class Phase5PackagingTests(unittest.TestCase):
             )
             self.assertEqual(replayed.returncode, 0, replayed.stdout + replayed.stderr)
             self.assertTrue(json.loads(replayed.stdout)["result"]["equivalent"])
+
+            reference_root = root / "reference-projects"
+            shutil.copytree(ROOT / "reference_projects", reference_root)
+            for name in (
+                "01-recording",
+                "02-event-locked-observation",
+                "03-model-comparison",
+                "04-adaptation",
+                "05-simulated-closed-loop",
+                "06-lsl-observe-only",
+            ):
+                reference = reference_root / name
+                session_id = f"session.reference.{name.replace('-', '.')}"
+                for command in (
+                    ("compile", str(reference)),
+                    ("preflight", str(reference)),
+                    ("run", str(reference), "--session-id", session_id),
+                    ("replay", str(reference)),
+                ):
+                    with self.subTest(reference=name, command=command[0]):
+                        completed = subprocess.run(
+                            [sys.executable, "-m", "eegle", "--json", *command],
+                            cwd=root,
+                            env=model_environment,
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                        )
+                        self.assertEqual(
+                            completed.returncode,
+                            0,
+                            completed.stdout + completed.stderr,
+                        )
+                        self.assertTrue(json.loads(completed.stdout)["ok"])
 
 
 if __name__ == "__main__":

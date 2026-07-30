@@ -5,11 +5,11 @@
       "schema": "eegle.protocol_spec.v1"
     },
     "suite": {
-      "digest": "sha256:9513ac79238430ea5e897cafbec4d0071bbc9c1747242cf743079a99499950fb",
+      "digest": "sha256:ad785daea51eebcd073d43fa2d5cf3941aeadf5c27d204e5fb0e98ebe90fbdbc",
       "schema": "eegle.suite_spec.v1"
     }
   },
-  "draft_digest": "sha256:10e9b0d468e2f4be6a36ced5f8ab1767e7453e0f08e377c9c1b789d1c900e772",
+  "draft_digest": "sha256:95b1efdae4e54db9e945e83478688ea86455eb7a84ff1aded1b00c88059c78c7",
   "draft_id": "reference.closed-loop",
   "draft_revision": 1,
   "entries": [

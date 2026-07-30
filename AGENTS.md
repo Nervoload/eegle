@@ -17,12 +17,14 @@ Start here before changing code:
 5. `docs/PHASE2_FOUNDATIONS.md` before building engine or compiler behavior.
 6. `docs/PHASE7_AUTHORING_OPERATIONS.md` for the active authoring, operations,
    packaging, and integration work plan.
-7. `docs/MODEL_PACKAGING.md` before changing model package, optional adapter,
+7. `docs/PHASE7_CLOSURE.md` for the current gate-to-evidence matrix and the
+   external records still required to close Phase 7.
+8. `docs/MODEL_PACKAGING.md` before changing model package, optional adapter,
    or replacement-replay behavior.
-8. `README.md` for the current v1 foundation installation and API workflow.
-9. `eegle/AGENTS.md` for package-level implementation guidance.
-10. `configs/AGENTS.md` before changing legacy JSON experiment configs.
-11. `tests/AGENTS.md` before deciding which tests to run.
+9. `README.md` for the current v1 foundation installation and API workflow.
+10. `eegle/AGENTS.md` for package-level implementation guidance.
+11. `configs/AGENTS.md` before changing legacy JSON experiment configs.
+12. `tests/AGENTS.md` before deciding which tests to run.
 
 `docs/ARCHITECTURE.md`, `docs/MODEL_TRAINING_TESTING_GOALS.md`, and other
 pre-vision documents are legacy implementation evidence, not design authority.

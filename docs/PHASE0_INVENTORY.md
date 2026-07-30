@@ -332,6 +332,7 @@ boundary was determined from Phases 6–8 rather than from file age:
 | Deleted | `eegle/core`, `eegle/protocols`, and `eegle/components.py` | Compatibility/metadata facades had no target consumers; typed sessions, specs, plugins, and records already own their responsibilities. |
 | Deleted | All `alpha8`, `attention8`, `classify8`, `dsart*`, and `inhibition8` pipeline modules, their shell launchers, recipe-only tests, and the legacy `Makefile` | The plan-owned runtime and durable Phase 5 suites now own orchestration. Model/action and analysis assertions were retained at their direct contract boundaries. These study recipes are recoverable from the Phase 0 commit and must not constrain v1 APIs. |
 | Rewritten | Mixed classification/adaptation tests and Phase 1 migration invariants | Scientific checks now enter through model, outcome, capture, and validation boundaries instead of old workers, sessions, dashboards, or recipe CLIs. |
+| Replaced in Phase 7 | `docs/api/PUBLIC_API.md` | P7-013B replaced the recorded legacy import claims with the current wheel surface and links it to the machine-readable P7-014 boundary inventory. The historical baseline entry remains immutable. |
 | Protected for Phase 6 | `models`, `ml`, relevant `realtime` model/label/adaptation/policy logic, `calibration`, and their scientific tests | Model bundles, frameworks, outcomes, adaptation, policies, and action semantics still require deliberate extraction. |
 | Protected for Phase 7 | `devices`, `hardware`, `integrations`, `lsl.py`, `preflight.py`, recording health, task/worker hardware evidence, and deployment configs | They contain real adapter, preflight, synchronization, and optional-dependency requirements for the new operations/integration layer. |
 | Protected for Phase 8 | `analysis`, legacy replay/evaluation algorithms, report/metric logic, and integrity fixtures | Validation and reporting algorithms must be classified and moved before their application shells are removed. |
@@ -368,7 +369,7 @@ for another cleanup batch once an import scan proves it isolated.
 | Recipe disposition decided | Section 7 |
 | Historical recovery identified | Commit and recovery branches in machine baseline |
 | Test/import/dependency baseline recorded | `MIGRATION_STATUS.md` and machine baseline |
-| Conflicting docs cannot appear authoritative | Legacy notices on all pre-vision documents |
+| Conflicting docs cannot appear authoritative | Legacy notices remain on unreplaced pre-vision documents; the explicitly replaced public-API document names its current machine-readable authority |
 | Cleanup is ordered and checkpointed | Section 11 |
 
 Phase 0 is complete: the consistency test, Phase 1 invariant tests, 265-test

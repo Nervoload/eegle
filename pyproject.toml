@@ -8,7 +8,8 @@ version = "0.1.0"
 description = "Reproduce, record, replay, and validate synchronized neurophysiological model systems."
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
   {name = "John Surette"},
 ]
@@ -17,9 +18,8 @@ maintainers = [
 ]
 keywords = ["eeg", "bci", "realtime", "lsl", "psychopy", "reproducibility", "neuroscience"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 2 - Pre-Alpha",
   "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -75,7 +75,7 @@ all = [
 
 [project.urls]
 Homepage = "https://github.com/Nervoload/eegle"
-Documentation = "https://github.com/Nervoload/eegle/tree/split/docs"
+Documentation = "https://github.com/Nervoload/eegle/tree/main/docs"
 Issues = "https://github.com/Nervoload/eegle/issues"
 Source = "https://github.com/Nervoload/eegle"
 

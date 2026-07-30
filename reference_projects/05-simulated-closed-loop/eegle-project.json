@@ -1,37 +1,37 @@
 {
   "artifacts": [
     {
-      "digest": "sha256:57aca1db8543cd1dc3c662eecfa8d99fede7608a7f26a25bb7f9559a7bef161c",
+      "digest": "sha256:c3c68d0330718b3ae98b1dfda6e54998b6e81baca758197011a90b547e1495a0",
       "immutable": false,
       "role": "authoring_explanation",
       "uri": "explanations/authoring.json"
     },
     {
-      "digest": "sha256:688a63905e69ca181fc2aa556ee4b7e5544b983bc2328a808d09232e78614ebe",
+      "digest": "sha256:cf78f63f3fa6b643229abeb33620ed3a70eb90b79d49088db84877235515bb6d",
       "immutable": false,
       "role": "authoring_project",
       "uri": "generated/authoring-project.json"
     },
     {
-      "digest": "sha256:6a0a40640952fcbf1068ba4f814d8505dd21845088cfd635e60d61b5e64c088a",
+      "digest": "sha256:4e9e405d1a6989746cd0a61a64bff6a709b4c1811193c1fe205620163308fdcb",
       "immutable": false,
       "role": "authoring_source",
       "uri": "authoring/experiment.json"
     },
     {
-      "digest": "sha256:37ac848d183930482cbceb8fff75c3c831449fc73f467d58a91d7818fafa3e0e",
+      "digest": "sha256:32b253377d30abb24c2ee2c42832379e368fe33fb37056cc24d7149603c25629",
       "immutable": false,
       "role": "deployment_requirements",
       "uri": "generated/deployment-requirements.json"
     },
     {
-      "digest": "sha256:e180267bf5f7ff15b3fd05b478a094e09bb54e0f25a53ef584fdf7cb85e06be0",
+      "digest": "sha256:b31b30dca46700ac59b02332a652fdeaabb1bcbfd817d32ab5ec7138d78e0ef6",
       "immutable": true,
       "role": "design_preset_lock",
       "uri": "authoring/preset-lock.json"
     },
     {
-      "digest": "sha256:ee6f57e0dcfdc53dd5c096a8ad01268c228773e4d51c0612a010f3a62617136e",
+      "digest": "sha256:1cbf902acda57656e72ffbfbd763a3772525389dc1f37b84bf7b00d7555177f7",
       "immutable": false,
       "role": "model_manifests",
       "uri": "authoring/model-manifests.json"
@@ -49,13 +49,13 @@
       "uri": "deployments/simulation.json"
     },
     {
-      "digest": "sha256:9513ac79238430ea5e897cafbec4d0071bbc9c1747242cf743079a99499950fb",
+      "digest": "sha256:ad785daea51eebcd073d43fa2d5cf3941aeadf5c27d204e5fb0e98ebe90fbdbc",
       "immutable": false,
       "role": "suite",
       "uri": "generated/suite.json"
     }
   ],
-  "manifest_hash": "sha256:5a7680af6109437b360cf55a0ea63f7f4e5405ee9917de338490647e457d79e9",
+  "manifest_hash": "sha256:86561afe29b1495dd2ec5a7e99141b8e172edd634a3e359c6d84e1e2a60e6a2f",
   "project_id": "reference.closed-loop",
   "schema": "eegle.project.v1",
   "session_uris": []

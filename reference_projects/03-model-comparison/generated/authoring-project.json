@@ -1,17 +1,17 @@
 {
-  "design_digest": "sha256:e1fa1ef727528deed82366b46fdd2a17478188e9e4ace0f67f58c0f2b8927d7b",
+  "design_digest": "sha256:bd4e1554173364f43a2741b493067948daca8a71557ac0b9cd380eba283d7bcb",
   "experiment_id": "reference.model-comparison",
   "files": {
     "authoring-provenance.json": {
-      "canonical_digest": "sha256:4960844df87c4cef436b99f6f5d0d38c7304277944e32e49e7e23e79cc4c9d29",
+      "canonical_digest": "sha256:ae1864afccf565ea2b8ae4f250f6a48a1fbd7cb1a3b12047fad9241dac76351f",
       "schema": "eegle.authoring_provenance.v1"
     },
     "deployment-requirements.json": {
-      "canonical_digest": "sha256:d2886ef4ca150912ce89a060fcad1d92b7332b00375b629704bde4b779578cd0",
+      "canonical_digest": "sha256:a84f76a7057f9385d3d847c6742eb4bb790287544528e46a71f784b791c8e2bc",
       "schema": "eegle.deployment_requirements.v1"
     },
     "experiment.design.json": {
-      "canonical_digest": "sha256:e1fa1ef727528deed82366b46fdd2a17478188e9e4ace0f67f58c0f2b8927d7b",
+      "canonical_digest": "sha256:bd4e1554173364f43a2741b493067948daca8a71557ac0b9cd380eba283d7bcb",
       "schema": "eegle.experiment_design.v1"
     },
     "protocol.json": {
@@ -19,7 +19,7 @@
       "schema": "eegle.protocol_spec.v1"
     },
     "suite.json": {
-      "canonical_digest": "sha256:a7d6ce607fb022b2791bd489b7f81362c27b77b128072dedacaadf256429927a",
+      "canonical_digest": "sha256:19d6693012492c1413c08ccce78233fed0a5a607e2f688e5c0feae5b8e8453e5",
       "schema": "eegle.suite_spec.v1"
     }
   },
