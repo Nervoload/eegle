@@ -85,7 +85,7 @@ class ArtifactPublication:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ArtifactPublication":
         return cls(
-            schema=str(payload.get("schema", ARTIFACT_PUBLICATION_SCHEMA)),
+            schema=str(payload["schema"]),
             publication_id=str(payload["publication_id"]),
             reference=ArtifactReference.from_payload(payload["reference"]),
             producer_component_id=str(payload["producer_component_id"]),

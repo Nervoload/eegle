@@ -62,7 +62,7 @@ class QualityDecision:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "QualityDecision":
         return cls(
-            schema=str(payload.get("schema", QUALITY_DECISION_SCHEMA)),
+            schema=str(payload["schema"]),
             decision_id=str(payload["decision_id"]),
             item_id=str(payload["item_id"]),
             gate_id=str(payload["gate_id"]),

@@ -102,7 +102,7 @@ class ComponentStateSnapshot:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ComponentStateSnapshot":
         return cls(
-            schema=str(payload.get("schema", COMPONENT_STATE_SNAPSHOT_SCHEMA)),
+            schema=str(payload["schema"]),
             snapshot_id=str(payload["snapshot_id"]),
             component_id=str(payload["component_id"]),
             component_version=str(payload["component_version"]),
@@ -186,7 +186,7 @@ class EvidenceBundle:
     def from_payload(cls, payload: Mapping[str, Any]) -> "EvidenceBundle":
         completed = payload.get("completed_time")
         bundle = cls(
-            schema=str(payload.get("schema", EVIDENCE_BUNDLE_SCHEMA)),
+            schema=str(payload["schema"]),
             bundle_id=str(payload["bundle_id"]),
             session_id=str(payload["session_id"]),
             plan_hash=str(payload["plan_hash"]),

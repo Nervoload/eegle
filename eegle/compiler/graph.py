@@ -147,6 +147,7 @@ def contract_issues(source: SignalContract, target: SignalContract) -> tuple[str
         ("rate_model", "rate model"),
         ("missing_data_policy", "missing-data policy"),
         ("layout", "layout"),
+        ("model_input_safety", "model input safety"),
     ):
         required = getattr(target, field)
         observed = getattr(source, field)

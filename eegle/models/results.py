@@ -71,7 +71,7 @@ class ModelResult:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ModelResult":
         return cls(
-            schema=str(payload.get("schema", MODEL_RESULT_SCHEMA)),
+            schema=str(payload["schema"]),
             value=payload.get("value"),
             uncertainty=payload.get("uncertainty"),
             validity=payload.get("validity"),

@@ -173,7 +173,7 @@ class Prediction:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "Prediction":
         return cls(
-            schema=str(payload.get("schema", PREDICTION_RECORD_SCHEMA)),
+            schema=str(payload["schema"]),
             prediction_id=str(payload["prediction_id"]),
             component_id=str(payload["component_id"]),
             plugin_id=str(payload["plugin_id"]),

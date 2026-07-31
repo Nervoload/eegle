@@ -7,7 +7,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from eegle.operations.cli import build_parser
 from eegle.config import DEFAULT_CONFIG, load_config, resolve_session_root
 from eegle.hardware.capabilities import (
     check_command_entrypoints,
@@ -15,16 +14,17 @@ from eegle.hardware.capabilities import (
     check_training_ready,
 )
 from eegle.hardware.eeg_device import identify_eeg_device
-from eegle.hardware.profiles import mapped_channel_names as mapped_eeg_channel_names
 from eegle.hardware.os_support import check_os_support
+from eegle.hardware.profiles import mapped_channel_names as mapped_eeg_channel_names
 from eegle.hardware.system import CheckResult, check_platform, check_python
-from eegle.lsl import LslStream
-from eegle.preflight import run_preflight
 from eegle.integrations.task_environment import (
     _disable_psychopy_glfw,
     ensure_runtime_environment,
     resolve_runtime_cache_root,
 )
+from eegle.lsl import LslStream
+from eegle.operations.cli import build_parser
+from eegle.preflight import run_preflight
 from eegle.session import create_session
 
 
@@ -155,6 +155,34 @@ class PortabilityTests(unittest.TestCase):
 
         self.assertTrue(os.path.realpath(paths.root).startswith(os.path.realpath(session_root)))
         self.assertEqual(os.path.realpath(written["runtime"]["session_root"]), os.path.realpath(session_root))
+
+    def test_session_paths_reject_traversal_and_reserve_directories_atomically(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "sessions"
+            config = {
+                "runtime": {"session_root": str(root)},
+                "experiment": {
+                    "experiment_id": "experiment",
+                    "participant_id": "unit",
+                    "task": "pvt",
+                },
+            }
+            for field, kwargs in (
+                ("participant_id", {"participant_id": "../escape"}),
+                ("task", {"task": "nested/task"}),
+            ):
+                with self.subTest(field=field), self.assertRaisesRegex(
+                    ValueError,
+                    "safe path component",
+                ):
+                    create_session(config, root=root, **kwargs)
+
+            first = create_session(config, root=root)
+            second = create_session(config, root=root)
+
+        self.assertNotEqual(first.root, second.root)
+        self.assertTrue(first.root.name.startswith("run-"))
+        self.assertTrue(second.root.name.startswith(first.root.name))
 
     def test_console_command_visibility_is_reported_without_failing_preflight(self) -> None:
         with patch("eegle.hardware.capabilities.shutil.which", return_value=None):

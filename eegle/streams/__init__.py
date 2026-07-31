@@ -16,6 +16,7 @@ from eegle.streams.clocks import ClockIdentity, ClockKind, ClockMapping, TimePoi
 from eegle.streams.packets import DenseSampleBatch, MetadataEvent, SparseEvent, SparseEventBatch
 from eegle.streams.sources import Source
 from eegle.streams.synthetic import PacketSequenceSource
+from eegle.streams.validation import validate_packet_against_stream_spec
 
 
 __all__ = [
@@ -35,4 +36,5 @@ __all__ = [
     "SparseEventBatch",
     "StreamSpec",
     "TimePoint",
+    "validate_packet_against_stream_spec",
 ]

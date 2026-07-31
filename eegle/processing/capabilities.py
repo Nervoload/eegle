@@ -63,7 +63,7 @@ class TransformCapabilities:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "TransformCapabilities":
         return cls(
-            schema=str(payload.get("schema", TRANSFORM_CAPABILITIES_SCHEMA)),
+            schema=str(payload["schema"]),
             supported_modes=frozenset(
                 ExecutionMode(str(value)) for value in payload["supported_modes"]
             ),

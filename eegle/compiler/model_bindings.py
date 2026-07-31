@@ -43,7 +43,6 @@ from eegle.specs.suite import (
     SuiteSpec,
 )
 
-
 _EQUIVALENCE_STRENGTH = {
     EquivalenceLevel.BITWISE: 0,
     EquivalenceLevel.NUMERIC: 1,
@@ -569,6 +568,7 @@ def _model_signal_contract(
         "layout",
         "window_duration_seconds",
         "minimum_duration_seconds",
+        "model_input_safety",
     }
     normalized: dict[str, Any] = {}
     for key, value in requirements.items():

@@ -132,7 +132,7 @@ class PreflightReport:
             if payload.get("detection_report_hash") is None
             else str(payload["detection_report_hash"]),
             checks=tuple(PreflightCheck.from_payload(item) for item in payload["checks"]),
-            schema=str(payload.get("schema", PREFLIGHT_REPORT_SCHEMA_ID)),
+            schema=str(payload["schema"]),
         )
         if bool(payload.get("ready")) != value.ready:
             raise ValueError("preflight ready value does not match its checks")
@@ -268,7 +268,7 @@ class RehearsalReport:
             live_plan_hash=None
             if payload.get("live_plan_hash") is None
             else str(payload["live_plan_hash"]),
-            schema=str(payload.get("schema", REHEARSAL_REPORT_SCHEMA_ID)),
+            schema=str(payload["schema"]),
         )
         if payload.get("report_hash") != value.report_hash:
             raise ValueError("rehearsal report hash mismatch")

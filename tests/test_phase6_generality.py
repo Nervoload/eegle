@@ -276,6 +276,7 @@ def _signal_contract(
         payload["nominal_rate_hz"] = stream.sample_rate_hz
     if event_kinds:
         payload["event_kinds"] = list(event_kinds)
+        payload["model_input_safety"] = "label_blind"
     if minimum_duration_seconds is not None:
         payload["minimum_duration_seconds"] = minimum_duration_seconds
         payload["window_duration_seconds"] = minimum_duration_seconds

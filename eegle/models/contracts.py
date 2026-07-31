@@ -90,7 +90,7 @@ class PreprocessingRequirement:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "PreprocessingRequirement":
         return cls(
-            schema=str(payload.get("schema", PREPROCESSING_REQUIREMENT_SCHEMA)),
+            schema=str(payload["schema"]),
             requirement_id=str(payload["requirement_id"]),
             operation=str(payload["operation"]),
             ownership=PreprocessingOwnership(str(payload["ownership"])),
@@ -137,7 +137,7 @@ class ModelInputContract:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ModelInputContract":
         return cls(
-            schema=str(payload.get("schema", MODEL_INPUT_CONTRACT_SCHEMA)),
+            schema=str(payload["schema"]),
             port_name=str(payload["port_name"]),
             type_id=str(payload["type_id"]),
             requirements=dict(payload.get("requirements") or {}),
@@ -201,7 +201,7 @@ class ModelOutputContract:
         uncertainty = payload.get("uncertainty_schema")
         validity = payload.get("validity_schema")
         return cls(
-            schema=str(payload.get("schema", MODEL_OUTPUT_CONTRACT_SCHEMA)),
+            schema=str(payload["schema"]),
             port_name=str(payload["port_name"]),
             type_id=str(payload["type_id"]),
             value_schema=dict(payload.get("value_schema") or {}),
@@ -258,7 +258,7 @@ class ModelStateContract:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ModelStateContract":
         return cls(
-            schema=str(payload.get("schema", MODEL_STATE_CONTRACT_SCHEMA)),
+            schema=str(payload["schema"]),
             behavior=ModelStateBehavior(str(payload.get("behavior", "stateless"))),
             state_schema_id=None
             if payload.get("state_schema_id") is None
@@ -320,7 +320,7 @@ class ModelContract:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ModelContract":
         value = cls(
-            schema=str(payload.get("schema", MODEL_CONTRACT_SCHEMA)),
+            schema=str(payload["schema"]),
             inputs=tuple(ModelInputContract.from_payload(item) for item in payload["inputs"]),
             outputs=tuple(
                 ModelOutputContract.from_payload(item) for item in payload["outputs"]

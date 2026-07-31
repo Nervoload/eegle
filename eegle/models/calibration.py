@@ -76,7 +76,7 @@ class CalibrationArtifact:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "CalibrationArtifact":
         value = cls(
-            schema=str(payload.get("schema", CALIBRATION_ARTIFACT_SCHEMA)),
+            schema=str(payload["schema"]),
             calibration_id=str(payload["calibration_id"]),
             algorithm_id=str(payload["algorithm_id"]),
             model_id=str(payload["model_id"]),

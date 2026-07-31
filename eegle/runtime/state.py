@@ -88,7 +88,7 @@ class WorkRecord:
         completed = payload.get("completed_time")
         deadline = payload.get("deadline_time")
         return cls(
-            schema=str(payload.get("schema", WORK_RECORD_SCHEMA)),
+            schema=str(payload["schema"]),
             work_id=str(payload["work_id"]),
             component_id=str(payload["component_id"]),
             stage=str(payload["stage"]),
@@ -145,7 +145,7 @@ class Rejection:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "Rejection":
         return cls(
-            schema=str(payload.get("schema", REJECTION_SCHEMA)),
+            schema=str(payload["schema"]),
             rejection_id=str(payload["rejection_id"]),
             work_id=str(payload["work_id"]),
             component_id=str(payload["component_id"]),
@@ -226,7 +226,7 @@ class AdaptationEligibilityDecision:
         cls, payload: Mapping[str, Any]
     ) -> "AdaptationEligibilityDecision":
         return cls(
-            schema=str(payload.get("schema", ADAPTATION_ELIGIBILITY_SCHEMA)),
+            schema=str(payload["schema"]),
             decision_id=str(payload["decision_id"]),
             adaptation_id=str(payload["adaptation_id"]),
             model_component_id=str(payload["model_component_id"]),
@@ -272,7 +272,7 @@ class AdaptationResult:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "AdaptationResult":
         return cls(
-            schema=str(payload.get("schema", ADAPTATION_RESULT_SCHEMA)),
+            schema=str(payload["schema"]),
             status=TransitionStatus(str(payload["status"])),
             reason=None if payload.get("reason") is None else str(payload["reason"]),
             metadata=dict(payload.get("metadata") or {}),
@@ -344,7 +344,7 @@ class StateTransition:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "StateTransition":
         return cls(
-            schema=str(payload.get("schema", STATE_TRANSITION_SCHEMA)),
+            schema=str(payload["schema"]),
             transition_id=str(payload["transition_id"]),
             component_id=str(payload["component_id"]),
             status=TransitionStatus(str(payload["status"])),

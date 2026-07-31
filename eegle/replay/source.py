@@ -37,7 +37,9 @@ class ReplaySource(PacketSequenceSource):
         mode: ReplayMode = ReplayMode.ACCELERATED_CAUSAL,
     ) -> None:
         self.mode = ReplayMode(mode)
-        super().__init__(stream_spec, packets)
+        # Captured source-contract violations must be replayed through admission
+        # so their rejection evidence remains reproducible.
+        super().__init__(stream_spec, packets, validate_packets=False)
 
 
 def build_replay_source_overrides(

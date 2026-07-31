@@ -7,9 +7,9 @@ language and not a container for arbitrary Python.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, replace
 from enum import Enum
-import json
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping
@@ -24,7 +24,6 @@ from eegle._validation import (
 )
 from eegle.compiler.lock import canonical_hash
 from eegle.specs.schemas import validate_payload
-
 
 SUITE_SPEC_SCHEMA = "eegle.suite_spec.v1"
 SUITE_OVERLAY_SCHEMA = "eegle.suite_overlay.v1"
@@ -58,15 +57,25 @@ class SignalContract:
     layout: str | None = None
     window_duration_seconds: float | None = None
     minimum_duration_seconds: float | None = None
+    model_input_safety: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "type_id", require_identifier(self.type_id, "type_id"))
         if self.unit is not None and not self.unit.strip():
             raise ValueError("signal unit cannot be empty")
-        for field in ("content_kind", "rate_model", "missing_data_policy", "layout"):
+        for field in (
+            "content_kind",
+            "rate_model",
+            "missing_data_policy",
+            "layout",
+        ):
             value = getattr(self, field)
             if value is not None:
                 object.__setattr__(self, field, require_identifier(value, field))
+        if self.model_input_safety not in {None, "label_blind", "label_bearing"}:
+            raise ValueError(
+                "model_input_safety must be label_blind or label_bearing"
+            )
         for field in (
             "channel_ids",
             "required_channel_ids",
@@ -196,6 +205,7 @@ class SignalContract:
                 "layout": self.layout,
                 "window_duration_seconds": self.window_duration_seconds,
                 "minimum_duration_seconds": self.minimum_duration_seconds,
+                "model_input_safety": self.model_input_safety,
             }.items()
             if value is not None
         }
@@ -699,21 +709,47 @@ class BackpressureDisposition(str, Enum):
     REJECT_NEWEST = "reject_newest"
 
 
+class LatenessDisposition(str, Enum):
+    REJECT = "reject"
+    FAIL_RUN = "fail_run"
+
+
 @dataclass(frozen=True, slots=True)
 class SchedulingSpec:
     backpressure: BackpressureDisposition = BackpressureDisposition.FAIL_RUN
+    allowed_lateness_seconds: float = 0.0
+    lateness: LatenessDisposition = LatenessDisposition.REJECT
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "backpressure", BackpressureDisposition(self.backpressure))
+        allowed = require_finite(
+            self.allowed_lateness_seconds,
+            "allowed_lateness_seconds",
+        )
+        if allowed < 0:
+            raise ValueError("allowed_lateness_seconds cannot be negative")
+        object.__setattr__(self, "allowed_lateness_seconds", allowed)
+        object.__setattr__(self, "lateness", LatenessDisposition(self.lateness))
 
     def to_payload(self) -> dict[str, Any]:
-        return {"backpressure": self.backpressure.value}
+        payload: dict[str, Any] = {"backpressure": self.backpressure.value}
+        if self.allowed_lateness_seconds != 0.0:
+            payload["allowed_lateness_seconds"] = self.allowed_lateness_seconds
+        if self.lateness != LatenessDisposition.REJECT:
+            payload["lateness"] = self.lateness.value
+        return payload
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "SchedulingSpec":
         return cls(
             backpressure=BackpressureDisposition(
                 str(payload.get("backpressure", BackpressureDisposition.FAIL_RUN.value))
+            ),
+            allowed_lateness_seconds=float(
+                payload.get("allowed_lateness_seconds", 0.0)
+            ),
+            lateness=LatenessDisposition(
+                str(payload.get("lateness", LatenessDisposition.REJECT.value))
             ),
         )
 
@@ -1102,7 +1138,7 @@ class SuiteSpec:
     def from_payload(cls, payload: Mapping[str, Any]) -> "SuiteSpec":
         validate_payload(payload, SUITE_JSON_SCHEMA)
         return cls(
-            schema=str(payload.get("schema", SUITE_SPEC_SCHEMA)),
+            schema=str(payload["schema"]),
             suite_id=str(payload["suite_id"]),
             protocol_id=str(payload["protocol_id"]),
             streams=tuple(
@@ -1185,7 +1221,7 @@ class SuiteOverlay:
     def from_payload(cls, payload: Mapping[str, Any]) -> "SuiteOverlay":
         validate_payload(payload, SUITE_OVERLAY_JSON_SCHEMA)
         return cls(
-            schema=str(payload.get("schema", SUITE_OVERLAY_SCHEMA)),
+            schema=str(payload["schema"]),
             overlay_id=str(payload["overlay_id"]),
             component_config=dict(payload.get("component_config") or {}),
             recording=dict(payload.get("recording") or {}),
@@ -1275,6 +1311,7 @@ _SIGNAL_CONTRACT_SCHEMA: Mapping[str, Any] = {
         "maximum_rate_hz": {"type": "number", "exclusiveMinimum": 0},
         "window_samples": {"type": "integer", "minimum": 1},
         "minimum_window_samples": {"type": "integer", "minimum": 1},
+        "model_input_safety": {"enum": ["label_blind", "label_bearing"]},
         "content_kind": {"type": "string", "minLength": 1},
         "rate_model": {"type": "string", "minLength": 1},
         "channel_ids": {
@@ -1574,6 +1611,10 @@ SUITE_JSON_SCHEMA: Mapping[str, Any] = {
             "properties": {
                 "backpressure": {
                     "enum": [value.value for value in BackpressureDisposition]
+                },
+                "allowed_lateness_seconds": {"type": "number", "minimum": 0},
+                "lateness": {
+                    "enum": [value.value for value in LatenessDisposition]
                 },
             },
             "additionalProperties": False,

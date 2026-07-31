@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from eegle.config import merged_config, resolve_path, resolve_session_root, write_config
+from eegle.config import merged_config, resolve_session_root, write_config
 from eegle.hardware.system import system_snapshot
 from eegle.lsl import session_marker_source_id
 from eegle.recording.compat import SessionPaths
@@ -20,10 +20,12 @@ def create_session(
     root: str | Path | None = None,
 ) -> SessionPaths:
     experiment = config.get("experiment", {})
-    runtime = config.get("runtime", {})
     task_name = task or experiment.get("task", "pvt")
     participant = participant_id or experiment.get("participant_id", "example-participant")
     experiment_id = experiment.get("experiment_id", "experiment")
+    task_name = _safe_path_component(task_name, "task")
+    participant = _safe_path_component(participant, "participant_id")
+    experiment_id = _safe_path_component(experiment_id, "experiment_id")
     session_root = resolve_session_root(config, root)
     now = datetime.now()
     run_stamp = now.strftime("run-%Y%m%dT%H%M%S")
@@ -148,13 +150,33 @@ def create_session(
 
 def _unique_session_dir(candidate: Path) -> Path:
     """Avoid reusing a child recording directory when attempts start in one second."""
-    if not candidate.exists():
-        return candidate
-    for suffix in range(1, 1000):
-        alternate = candidate.with_name(f"{candidate.name}-{suffix:02d}")
-        if not alternate.exists():
-            return alternate
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    for suffix in range(1000):
+        alternate = (
+            candidate
+            if suffix == 0
+            else candidate.with_name(f"{candidate.name}-{suffix:02d}")
+        )
+        try:
+            alternate.mkdir(exist_ok=False)
+        except FileExistsError:
+            continue
+        return alternate
     raise RuntimeError(f"could not allocate a unique session directory beside {candidate}")
+
+
+def _safe_path_component(value: Any, field: str) -> str:
+    normalized = str(value).strip()
+    if (
+        not normalized
+        or normalized in {".", ".."}
+        or "/" in normalized
+        or "\\" in normalized
+        or "\x00" in normalized
+        or len(Path(normalized).parts) != 1
+    ):
+        raise ValueError(f"{field} must be one safe path component")
+    return normalized
 
 
 def paths_for_existing_session(root: str | Path) -> SessionPaths:

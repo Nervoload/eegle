@@ -11,7 +11,13 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
-from eegle._validation import freeze_json, require_digest, require_identifier, thaw_json
+from eegle._validation import (
+    freeze_json,
+    is_literal_secret_field,
+    require_digest,
+    require_identifier,
+    thaw_json,
+)
 from eegle.compiler.lock import canonical_hash, canonical_json_bytes, content_hash
 from eegle.recording.artifacts import ArtifactReference, Sensitivity
 
@@ -100,7 +106,7 @@ class JsonRedactionSpec:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "JsonRedactionSpec":
         return cls(
-            schema=str(payload.get("schema", JSON_REDACTION_SCHEMA)),
+            schema=str(payload["schema"]),
             source_digest=str(payload["source_digest"]),
             rules=tuple(JsonFieldRule.from_payload(item) for item in payload["rules"]),
         )
@@ -173,7 +179,7 @@ class ExportPolicy:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ExportPolicy":
         policy = cls(
-            schema=str(payload.get("schema", EXPORT_POLICY_SCHEMA)),
+            schema=str(payload["schema"]),
             policy_id=str(payload.get("policy_id", "portable.safe-default")),
             allowed_sensitivities=tuple(
                 Sensitivity(str(value)) for value in payload["allowed_sensitivities"]
@@ -351,7 +357,7 @@ class PortableExportManifest:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "PortableExportManifest":
         manifest = cls(
-            schema=str(payload.get("schema", EXPORT_MANIFEST_SCHEMA)),
+            schema=str(payload["schema"]),
             source_session_id=None
             if payload.get("source_session_id") is None
             else str(payload["source_session_id"]),
@@ -610,29 +616,10 @@ def _safe_relative(value: str) -> Path:
     return path
 
 
-_SECRET_KEYS = frozenset(
-    {
-        "password",
-        "passwd",
-        "token",
-        "api_token",
-        "access_token",
-        "refresh_token",
-        "api_key",
-        "secret",
-        "client_secret",
-        "credential",
-        "credentials",
-        "private_key",
-    }
-)
-
-
 def _reject_secret_fields(value: Any, artifact_id: str, path: str = "$") -> None:
     if isinstance(value, dict):
         for key, child in value.items():
-            normalized = key.casefold().replace("-", "_").replace(" ", "_")
-            if normalized in _SECRET_KEYS:
+            if is_literal_secret_field(key):
                 raise ValueError(
                     f"portable export rejected secret-shaped field {path}.{key} "
                     f"in artifact {artifact_id}; remove it with an explicit redaction rule"
@@ -715,7 +702,7 @@ class RetentionPolicy:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "RetentionPolicy":
         policy = cls(
-            schema=str(payload.get("schema", RETENTION_POLICY_SCHEMA)),
+            schema=str(payload["schema"]),
             policy_id=str(payload.get("policy_id", "retention.review-default")),
             rules=tuple(
                 RetentionRule(

@@ -29,6 +29,7 @@ from eegle.operations import (
     propose_deployment,
 )
 from eegle.plugins import PluginRegistry
+from eegle.processing.windows import ContinuousWindowBuilder
 from eegle.specs import StorageBinding
 from eegle.streams import ContentKind, DenseSampleBatch, MetadataEvent, SparseEventBatch
 
@@ -273,6 +274,22 @@ class Phase7LslIntegrationTests(unittest.TestCase):
         second = source.read()
         self.assertIsInstance(first, DenseSampleBatch)
         self.assertIsInstance(second, DenseSampleBatch)
+        self.assertEqual(
+            tuple(value.seconds for value in first.sample_times),
+            (1.0, 1.01),
+        )
+
+        class Context:
+            component_id = "window.lsl"
+            component_version = "0.1.0"
+            clock_mapping_revisions = {}
+            current_time = first.available_time
+
+            def next_id(self, namespace):
+                return f"{namespace}.lsl"
+
+        windows = tuple(ContinuousWindowBuilder(2, 2).update(first, Context()))
+        self.assertEqual(len(windows), 1)
         self.assertEqual(source.reconnect_count, 1)
         self.assertEqual(second.sequence_start, 5)
         self.assertEqual(source.packet_loss_observations[0].estimated_missing_samples, 3)
@@ -288,6 +305,38 @@ class Phase7LslIntegrationTests(unittest.TestCase):
         event = metadata_source.read()
         self.assertIsInstance(event, MetadataEvent)
         self.assertEqual(event.metadata["impedance"], "ok")
+
+    def test_metadata_chunks_preserve_every_record_and_sequence(self) -> None:
+        metadata = _Info(
+            "Quality",
+            "Metadata",
+            1,
+            0.0,
+            "string",
+            "quality-multi",
+            "uid-metadata-multi",
+            chunks=(
+                (
+                    [[json.dumps({"n": 1})], [json.dumps({"n": 2})]],
+                    [3.0, 3.1],
+                ),
+            ),
+        )
+        pylsl = _Pylsl((metadata,))
+        detected = detect_lsl(wait_time=0, pylsl_module=pylsl)
+        source = LslSource(detected.sources[0].config, pylsl_module=pylsl)
+
+        first = source.read()
+        second = source.read()
+
+        self.assertIsInstance(first, MetadataEvent)
+        self.assertIsInstance(second, MetadataEvent)
+        self.assertEqual((first.metadata["n"], second.metadata["n"]), (1, 2))
+        self.assertEqual((first.sequence, second.sequence), (0, 1))
+        self.assertEqual(
+            (first.event_time.seconds, second.event_time.seconds),
+            (3.0, 3.1),
+        )
 
     def test_outlets_and_dependency_lazy_descriptors(self) -> None:
         pylsl, _, _, _ = _network()

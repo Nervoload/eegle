@@ -5,10 +5,15 @@ from __future__ import annotations
 from typing import Any, Iterable, Mapping
 
 from eegle.compiler.lock import canonical_hash
-
 from eegle.streams.channels import StreamSpec
 from eegle.streams.clocks import TimePoint
-from eegle.streams.packets import DenseSampleBatch, MetadataEvent, Packet, SparseEventBatch
+from eegle.streams.packets import (
+    DenseSampleBatch,
+    MetadataEvent,
+    Packet,
+    SparseEventBatch,
+)
+from eegle.streams.validation import validate_packet_against_stream_spec
 
 
 def packet_available_time(packet: Packet) -> TimePoint:
@@ -28,17 +33,21 @@ def packet_available_time(packet: Packet) -> TimePoint:
 class PacketSequenceSource:
     """A finite source with a monotonic scheduling watermark."""
 
-    def __init__(self, stream_spec: StreamSpec, packets: Iterable[Packet]) -> None:
+    def __init__(
+        self,
+        stream_spec: StreamSpec,
+        packets: Iterable[Packet],
+        *,
+        validate_packets: bool = True,
+    ) -> None:
         self._stream_spec = stream_spec
         self._packets = tuple(packets)
         self._index = 0
         self._closed = False
         self._watermark: TimePoint | None = None
-        for packet in self._packets:
-            if packet.stream_id != stream_spec.stream_id:
-                raise ValueError("source packet stream_id does not match stream_spec")
-            if packet.stream_revision != stream_spec.revision:
-                raise ValueError("source packet revision does not match stream_spec")
+        if validate_packets:
+            for packet in self._packets:
+                validate_packet_against_stream_spec(packet, stream_spec)
 
     @property
     def stream_spec(self) -> StreamSpec:

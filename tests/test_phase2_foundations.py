@@ -451,6 +451,47 @@ class DomainRecordTests(unittest.TestCase):
         )
         self.assertEqual(ActionReceipt.from_payload(receipt.to_payload()), receipt)
 
+    def test_action_receipts_reject_contradictory_delivery_evidence(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires delivered_time"):
+            ActionReceipt(
+                "receipt.missing",
+                "command.1",
+                "actuator.simulated",
+                ReceiptStatus.DELIVERED,
+                _time(7.02),
+                authorization_decision_id="authorization.1",
+            )
+        with self.assertRaisesRegex(ValueError, "only a delivered receipt"):
+            ActionReceipt(
+                "receipt.rejected",
+                "command.1",
+                "actuator.simulated",
+                ReceiptStatus.REJECTED,
+                _time(7.02),
+                authorization_decision_id="authorization.1",
+                delivered_time=_time(7.01),
+            )
+        with self.assertRaisesRegex(ValueError, "same clock"):
+            ActionReceipt(
+                "receipt.clock",
+                "command.1",
+                "actuator.simulated",
+                ReceiptStatus.DELIVERED,
+                _time(7.02),
+                authorization_decision_id="authorization.1",
+                delivered_time=TimePoint(7.01, "other.clock"),
+            )
+        with self.assertRaisesRegex(ValueError, "cannot be negative"):
+            ActionReceipt(
+                "receipt.negative",
+                "command.1",
+                "actuator.simulated",
+                ReceiptStatus.DELIVERED,
+                _time(7.02),
+                authorization_decision_id="authorization.1",
+                delivered_time=_time(-0.01),
+            )
+
     def test_prediction_rejects_input_lineage_that_was_not_yet_available(self) -> None:
         lineage = Lineage(
             component_id="model.primary",

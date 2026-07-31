@@ -99,7 +99,7 @@ class ActionRequest:
         intended = payload.get("intended_delivery_time")
         expires = payload.get("expires_at")
         return cls(
-            schema=str(payload.get("schema", ACTION_REQUEST_SCHEMA)),
+            schema=str(payload["schema"]),
             request_id=str(payload["request_id"]),
             capability=str(payload["capability"]),
             requested_by=str(payload["requested_by"]),
@@ -199,7 +199,7 @@ class AuthorizedCommand:
         intended = payload.get("intended_delivery_time")
         expires = payload.get("expires_at")
         return cls(
-            schema=str(payload.get("schema", AUTHORIZED_COMMAND_SCHEMA)),
+            schema=str(payload["schema"]),
             command_id=str(payload["command_id"]),
             request_id=str(payload["request_id"]),
             authorization_request_id=str(payload["authorization_request_id"]),

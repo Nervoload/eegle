@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
 
 from packaging.specifiers import InvalidSpecifier
@@ -30,14 +30,14 @@ from eegle.compiler.model_bindings import compile_model_bindings
 from eegle.compiler.plan import (
     ExecutionPlan,
     LockedPlugin,
-    PlannedArtifact,
     PlannedActionGrant,
     PlannedAdaptation,
+    PlannedArtifact,
     PlannedAuthorizationProvider,
     PlannedComponent,
+    PlannedOutcomeExpectation,
     PlannedPhase,
     PlannedPlacement,
-    PlannedOutcomeExpectation,
     PlannedScheduledTrigger,
     PlannedStateTrigger,
     PlannedTransition,
@@ -49,9 +49,10 @@ from eegle.compiler.semantic_passes import (
     validate_runtime_policy,
     validate_triggers_and_permissions,
 )
+from eegle.models.input_safety import causal_model_input_rejection
 from eegle.plugins.registry import PluginDescriptor, PluginRegistry, PortSpec
 from eegle.specs.deployment import (
-    AuthorizationProviderBindingSpec,
+    DEPLOYMENT_JSON_SCHEMA,
     ClockMappingStrategy,
     ComponentBindingSpec,
     DeploymentSpec,
@@ -65,7 +66,6 @@ from eegle.specs.suite import (
     SignalContract,
     SuiteSpec,
 )
-from eegle.specs.deployment import DEPLOYMENT_JSON_SCHEMA
 
 if TYPE_CHECKING:
     from eegle.models.manifests import ModelManifest
@@ -248,7 +248,13 @@ def compile_suite(
             diagnostics,
         )
 
-    graph = _compile_graph(suite, resolved, streams_by_id, diagnostics)
+    graph = _compile_graph(
+        protocol.execution_mode,
+        suite,
+        resolved,
+        streams_by_id,
+        diagnostics,
+    )
     planned_model_bindings, compiled_model_roles = compile_model_bindings(
         protocol,
         suite,
@@ -995,6 +1001,7 @@ def _validate_clocks(
 
 
 def _compile_graph(
+    execution_mode: ExecutionMode,
     suite: SuiteSpec,
     resolved: Mapping[str, PluginDescriptor],
     streams: Mapping[str, Any],
@@ -1150,6 +1157,26 @@ def _compile_graph(
                     target=target.endpoint,
                 )
             )
+        target_component = components.get(target.component_id)
+        if (
+            target_component is not None
+            and target_component.kind == ComponentKind.MODEL
+        ):
+            label_rejection = causal_model_input_rejection(
+                execution_mode,
+                source.type_id,
+                model_input_safety=source.contract.model_input_safety,
+            )
+            if label_rejection is not None:
+                diagnostics.append(
+                    _error(
+                        "model.label_blind_input",
+                        path,
+                        label_rejection,
+                        source=source.endpoint,
+                        target=target.endpoint,
+                    )
+                )
         if source.type_id == target.type_id:
             routes.append(
                 CompiledRoute(

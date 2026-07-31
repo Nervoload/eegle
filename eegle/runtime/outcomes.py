@@ -60,7 +60,7 @@ class OutcomeReference:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "OutcomeReference":
         return cls(
-            schema=str(payload.get("schema", OUTCOME_REFERENCE_SCHEMA)),
+            schema=str(payload["schema"]),
             reference_kind=OutcomeReferenceKind(str(payload["reference_kind"])),
             reference_id=str(payload["reference_id"]),
         )
@@ -160,7 +160,7 @@ class OutcomeDisposition:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "OutcomeDisposition":
         value = cls(
-            schema=str(payload.get("schema", OUTCOME_DISPOSITION_SCHEMA)),
+            schema=str(payload["schema"]),
             disposition_id=str(payload["disposition_id"]),
             expectation_id=str(payload["expectation_id"]),
             reference=OutcomeReference.from_payload(payload["reference"]),
@@ -268,7 +268,7 @@ class Outcome:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "Outcome":
         return cls(
-            schema=str(payload.get("schema", OUTCOME_SCHEMA)),
+            schema=str(payload["schema"]),
             outcome_id=str(payload["outcome_id"]),
             subject_id=str(payload["subject_id"]),
             source_id=str(payload["source_id"]),

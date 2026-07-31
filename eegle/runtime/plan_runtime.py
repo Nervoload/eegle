@@ -116,7 +116,7 @@ class PlanRuntimeSnapshot:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "PlanRuntimeSnapshot":
         value = cls(
-            schema=str(payload.get("schema", RUNTIME_SNAPSHOT_SCHEMA)),
+            schema=str(payload["schema"]),
             plan_hash=str(payload["plan_hash"]),
             component_states=dict(payload.get("component_states") or {}),
         )

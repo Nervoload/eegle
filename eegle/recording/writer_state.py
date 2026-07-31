@@ -140,7 +140,7 @@ class EvidenceWriterState:
         completed_time = payload.get("completed_time")
         semantic_log = payload.get("semantic_log")
         state = cls(
-            schema=str(payload.get("schema", EVIDENCE_WRITER_STATE_SCHEMA)),
+            schema=str(payload["schema"]),
             bundle_id=str(payload["bundle_id"]),
             session_id=str(payload["session_id"]),
             plan_hash=str(payload["plan_hash"]),

@@ -182,7 +182,7 @@ class ProjectManifest:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ProjectManifest":
         manifest = cls(
-            schema=str(payload.get("schema", PROJECT_MANIFEST_SCHEMA_ID)),
+            schema=str(payload["schema"]),
             project_id=str(payload["project_id"]),
             artifacts=tuple(
                 ProjectArtifact.from_payload(value)

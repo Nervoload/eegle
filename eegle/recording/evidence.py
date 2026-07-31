@@ -57,7 +57,7 @@ class EvidenceRecord:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "EvidenceRecord":
         record = cls(
-            schema=str(payload.get("schema", EVIDENCE_RECORD_SCHEMA)),
+            schema=str(payload["schema"]),
             record_id=str(payload["record_id"]),
             record_type=str(payload["record_type"]),
             sequence=int(payload["sequence"]),
@@ -128,7 +128,7 @@ class EvidenceBundleManifest:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "EvidenceBundleManifest":
         manifest = cls(
-            schema=str(payload.get("schema", EVIDENCE_BUNDLE_MANIFEST_SCHEMA)),
+            schema=str(payload["schema"]),
             bundle_id=str(payload["bundle_id"]),
             plan_hash=str(payload["plan_hash"]),
             status=EvidenceStatus(str(payload["status"])),

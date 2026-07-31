@@ -156,7 +156,7 @@ class ProtocolSpec:
     def from_payload(cls, payload: Mapping[str, Any]) -> "ProtocolSpec":
         validate_payload(payload, PROTOCOL_JSON_SCHEMA)
         return cls(
-            schema=str(payload.get("schema", PROTOCOL_SPEC_SCHEMA)),
+            schema=str(payload["schema"]),
             protocol_id=str(payload["protocol_id"]),
             execution_mode=ExecutionMode(str(payload["execution_mode"])),
             claims=tuple(ClaimSpec.from_payload(value) for value in payload["claims"]),

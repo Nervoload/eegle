@@ -67,7 +67,7 @@ class ArtifactReference:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ArtifactReference":
         return cls(
-            schema=str(payload.get("schema", ARTIFACT_REFERENCE_SCHEMA)),
+            schema=str(payload["schema"]),
             artifact_id=str(payload["artifact_id"]),
             role=str(payload["role"]),
             uri=str(payload["uri"]),
@@ -131,7 +131,7 @@ class ArtifactLineage:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ArtifactLineage":
         return cls(
-            schema=str(payload.get("schema", ARTIFACT_LINEAGE_SCHEMA)),
+            schema=str(payload["schema"]),
             component_id=str(payload["component_id"]),
             component_version=None
             if payload.get("component_version") is None
@@ -173,7 +173,7 @@ class ArtifactEntry:
     def from_payload(cls, payload: Mapping[str, Any]) -> "ArtifactEntry":
         lineage = payload.get("lineage")
         return cls(
-            schema=str(payload.get("schema", ARTIFACT_ENTRY_SCHEMA)),
+            schema=str(payload["schema"]),
             namespace=str(payload["namespace"]),
             reference=ArtifactReference.from_payload(payload["reference"]),
             lineage=None if lineage is None else ArtifactLineage.from_payload(lineage),
@@ -219,7 +219,7 @@ class ArtifactManifest:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ArtifactManifest":
         manifest = cls(
-            schema=str(payload.get("schema", ARTIFACT_MANIFEST_SCHEMA)),
+            schema=str(payload["schema"]),
             session_id=str(payload["session_id"]),
             entries=tuple(ArtifactEntry.from_payload(item) for item in payload.get("entries", ())),
             aliases={str(key): str(value) for key, value in dict(payload.get("aliases") or {}).items()},

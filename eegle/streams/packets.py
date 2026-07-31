@@ -191,7 +191,7 @@ class DenseSampleBatch:
         first = payload.get("first_sample_time")
         lineage = payload.get("lineage")
         return cls(
-            schema=str(payload.get("schema", DENSE_SAMPLE_BATCH_SCHEMA)),
+            schema=str(payload["schema"]),
             batch_id=str(payload["batch_id"]),
             stream_id=str(payload["stream_id"]),
             stream_revision=int(payload["stream_revision"]),
@@ -298,7 +298,7 @@ class SparseEventBatch:
     def from_payload(cls, payload: Mapping[str, Any]) -> "SparseEventBatch":
         lineage = payload.get("lineage")
         return cls(
-            schema=str(payload.get("schema", SPARSE_EVENT_BATCH_SCHEMA)),
+            schema=str(payload["schema"]),
             batch_id=str(payload["batch_id"]),
             stream_id=str(payload["stream_id"]),
             stream_revision=int(payload["stream_revision"]),
@@ -357,7 +357,7 @@ class MetadataEvent:
     def from_payload(cls, payload: Mapping[str, Any]) -> "MetadataEvent":
         lineage = payload.get("lineage")
         return cls(
-            schema=str(payload.get("schema", METADATA_EVENT_SCHEMA)),
+            schema=str(payload["schema"]),
             event_id=str(payload["event_id"]),
             stream_id=str(payload["stream_id"]),
             stream_revision=int(payload["stream_revision"]),

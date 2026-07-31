@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 import eegle.runtime as runtime_surface
 from eegle._domain import (
@@ -17,6 +18,9 @@ from eegle.plugins import (
 )
 from eegle.processing.quality import QualityDecision, QualityStatus
 from eegle.runtime import EngineStatus, ExecutionEngine
+from eegle.runtime.context import DeterministicIdSource
+from eegle.runtime.work import completed_work
+from eegle.streams import TimePoint
 from tests.test_phase5_plan_execution import (
     _compile,
     _dense_packet,
@@ -25,7 +29,6 @@ from tests.test_phase5_plan_execution import (
     _registry,
     _with_packets,
 )
-
 
 DENSE_WINDOW = "eegle.dense_window.v1"
 QUALITY_DECISION = "eegle.quality_decision.v1"
@@ -77,6 +80,21 @@ def _rejecting_quality_descriptor() -> PluginDescriptor:
 
 
 class Phase5ImplementedSemanticAcceptanceTests(unittest.TestCase):
+    def test_completed_work_rejects_reversed_causal_timing(self) -> None:
+        node = SimpleNamespace(
+            component_id="component.fixture",
+            planned=SimpleNamespace(role=None),
+        )
+        with self.assertRaisesRegex(ValueError, "cannot precede"):
+            completed_work(
+                DeterministicIdSource(),
+                node,
+                "fixture",
+                (),
+                TimePoint(2.0, "boundary.clock"),
+                TimePoint(1.0, "boundary.clock"),
+            )
+
     def test_quality_rejection_prevents_model_and_policy_work(self) -> None:
         suite = _payload("suite.json")
         suite["components"].insert(

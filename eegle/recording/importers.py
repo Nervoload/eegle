@@ -191,7 +191,7 @@ class LegacyImportReport:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "LegacyImportReport":
         report = cls(
-            schema=str(payload.get("schema", LEGACY_IMPORT_REPORT_SCHEMA)),
+            schema=str(payload["schema"]),
             source_family=str(payload["source_family"]),
             source_session_id=str(payload["source_session_id"]),
             source_fingerprint=str(payload["source_fingerprint"]),

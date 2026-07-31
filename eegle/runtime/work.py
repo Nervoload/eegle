@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Mapping
 
 from eegle._domain import WorkStatus
 from eegle.runtime.context import DeterministicIdSource
@@ -42,7 +42,7 @@ def completed_work(
     completed: TimePoint,
 ) -> WorkRecord:
     if completed.seconds < started.seconds:
-        completed = started
+        raise ValueError("completed work time cannot precede its start")
     return WorkRecord(
         work_id=ids.next("work"),
         component_id=node.component_id,

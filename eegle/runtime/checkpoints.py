@@ -70,7 +70,7 @@ class EngineCheckpoint:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "EngineCheckpoint":
         checkpoint = cls(
-            schema=str(payload.get("schema", ENGINE_CHECKPOINT_SCHEMA)),
+            schema=str(payload["schema"]),
             checkpoint_id=str(payload["checkpoint_id"]),
             execution_id=str(payload["execution_id"]),
             plan_hash=str(payload["plan_hash"]),

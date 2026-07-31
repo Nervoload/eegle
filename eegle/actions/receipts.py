@@ -9,7 +9,6 @@ from typing import Any, Mapping
 from eegle._validation import freeze_json, require_identifier, thaw_json
 from eegle.streams.clocks import TimePoint
 
-
 ACTION_RECEIPT_SCHEMA = "eegle.action_receipt.v1"
 
 
@@ -45,6 +44,19 @@ class ActionReceipt:
             require_identifier(self.authorization_decision_id, "authorization_decision_id"),
         )
         object.__setattr__(self, "status", ReceiptStatus(self.status))
+        if self.status == ReceiptStatus.DELIVERED:
+            if self.delivered_time is None:
+                raise ValueError("delivered receipt requires delivered_time")
+            if self.delivered_time.clock_id != self.observed_time.clock_id:
+                raise ValueError(
+                    "delivered_time and observed_time must use the same clock"
+                )
+            if self.delivered_time.seconds < 0:
+                raise ValueError("delivered_time cannot be negative")
+            if self.delivered_time.seconds > self.observed_time.seconds:
+                raise ValueError("delivered_time cannot follow observed_time")
+        elif self.delivered_time is not None:
+            raise ValueError("only a delivered receipt may include delivered_time")
         object.__setattr__(self, "details", freeze_json(self.details or {}))
 
     def to_payload(self) -> dict[str, Any]:
@@ -66,7 +78,7 @@ class ActionReceipt:
     def from_payload(cls, payload: Mapping[str, Any]) -> "ActionReceipt":
         delivered = payload.get("delivered_time")
         return cls(
-            schema=str(payload.get("schema", ACTION_RECEIPT_SCHEMA)),
+            schema=str(payload["schema"]),
             receipt_id=str(payload["receipt_id"]),
             command_id=str(payload["command_id"]),
             actuator_id=str(payload["actuator_id"]),

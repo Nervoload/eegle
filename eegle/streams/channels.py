@@ -68,7 +68,7 @@ class ChannelSpec:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ChannelSpec":
         return cls(
-            schema=str(payload.get("schema", CHANNEL_SPEC_SCHEMA)),
+            schema=str(payload["schema"]),
             channel_id=str(payload["channel_id"]),
             kind=str(payload["kind"]),
             unit=str(payload["unit"]),
@@ -166,7 +166,7 @@ class StreamSpec:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "StreamSpec":
         return cls(
-            schema=str(payload.get("schema", STREAM_SPEC_SCHEMA)),
+            schema=str(payload["schema"]),
             stream_id=str(payload["stream_id"]),
             revision=int(payload["revision"]),
             modality=str(payload["modality"]),

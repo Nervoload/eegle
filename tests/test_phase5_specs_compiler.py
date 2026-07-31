@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from copy import deepcopy
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from copy import deepcopy
+from pathlib import Path
+from types import SimpleNamespace
 
 from eegle._domain import ComponentKind, Determinism, EquivalenceLevel, ExecutionMode
 from eegle.compiler import (
@@ -13,12 +14,12 @@ from eegle.compiler import (
     ExecutionPlan,
     diff_plans,
     explain_plan,
-    compile_suite,
     read_lock,
     read_plan,
     write_lock,
     write_plan,
 )
+from eegle.compiler.compiler import _compile_graph
 from eegle.plugins import (
     PluginCapabilities,
     PluginDescriptor,
@@ -27,17 +28,20 @@ from eegle.plugins import (
     StateBehavior,
 )
 from eegle.specs import (
+    ComponentSpec,
     DeploymentSpec,
     ProtocolSpec,
+    RouteSpec,
     SuiteOverlay,
     SuiteSpec,
     compose_suite,
 )
 from tests.fixtures.phase5_model_components import (
     compile_phase5_suite as compile_suite,
+)
+from tests.fixtures.phase5_model_components import (
     register_phase5_plugins,
 )
-
 
 FIXTURE = Path(__file__).parent / "fixtures" / "migration" / "phase5_simulated"
 DENSE = "eegle.dense_sample_batch.v1"
@@ -106,6 +110,15 @@ class Phase5SpecificationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "literal secret fields are forbidden"):
             DeploymentSpec.from_payload(secret)
 
+        for key in ("apiKey", "clientSecret"):
+            camel_case = _payload("deployment.json")
+            camel_case["component_bindings"][0]["config"][key] = "do-not-store"
+            with self.subTest(key=key), self.assertRaisesRegex(
+                ValueError,
+                "literal secret fields are forbidden",
+            ):
+                DeploymentSpec.from_payload(camel_case)
+
         implicit = _payload("deployment.json")
         implicit["storage"][0]["uri"] = "relative/session"
         with self.assertRaisesRegex(ValueError, "include a URI scheme"):
@@ -116,8 +129,71 @@ class Phase5SpecificationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Windows drive path"):
             DeploymentSpec.from_payload(windows_path)
 
+    def test_versioned_specs_reject_missing_schema_instead_of_upgrading(self) -> None:
+        for contract, payload in (
+            (ProtocolSpec, _payload("protocol.json")),
+            (SuiteSpec, _payload("suite.json")),
+            (DeploymentSpec, _payload("deployment.json")),
+        ):
+            del payload["schema"]
+            with self.subTest(contract=contract.__name__), self.assertRaises(ValueError):
+                contract.from_payload(payload)
+
 
 class Phase5CompilerTests(unittest.TestCase):
+    def test_causal_compiler_rejects_label_bearing_model_routes(self) -> None:
+        sparse = "eegle.sparse_event_batch.v1"
+        capabilities = PluginCapabilities(
+            supported_modes=frozenset({ExecutionMode.CAUSAL}),
+            determinism=Determinism.DETERMINISTIC,
+            equivalence=EquivalenceLevel.BITWISE,
+            state_behavior=StateBehavior.STATELESS,
+        )
+        source = PluginDescriptor(
+            plugin_id="fixture.events",
+            version="1.0.0",
+            kind=ComponentKind.TRANSFORM,
+            config_schema={"type": "object"},
+            input_ports=(),
+            output_ports=(PortSpec("events", sparse),),
+            capabilities=capabilities,
+            factory=lambda config: object(),
+            implementation="fixture:Events",
+            distribution="tests",
+        )
+        model = PluginDescriptor(
+            plugin_id="fixture.leaky_model",
+            version="1.0.0",
+            kind=ComponentKind.MODEL,
+            config_schema={"type": "object"},
+            input_ports=(PortSpec("labels", sparse),),
+            output_ports=(),
+            capabilities=capabilities,
+            factory=lambda config: object(),
+            implementation="fixture:LeakyModel",
+            distribution="tests",
+        )
+        suite = SimpleNamespace(
+            components=(
+                ComponentSpec("events", ComponentKind.TRANSFORM),
+                ComponentSpec("model", ComponentKind.MODEL),
+            ),
+            routes=(RouteSpec("route.labels", "events", "events", "model", "labels"),),
+        )
+        diagnostics = []
+
+        _compile_graph(
+            ExecutionMode.CAUSAL,
+            suite,
+            {"events": source, "model": model},
+            {},
+            diagnostics,
+        )
+
+        self.assertTrue(
+            any(value.code == "model.label_blind_input" for value in diagnostics)
+        )
+
     def test_reference_suite_compiles_deterministically_to_plan_graph_and_lock(self) -> None:
         protocol, suite, deployment = _specs()
         registry = _registry()

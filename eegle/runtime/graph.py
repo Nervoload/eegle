@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum
-import math
+from time import monotonic, sleep
 from typing import Any, Mapping
 
 from eegle._domain import ComponentKind, WorkStatus
@@ -21,22 +22,23 @@ from eegle.compiler.plan import (
     PlannedModelQueueDisposition,
     PlannedPhase,
 )
+from eegle.models.input_safety import causal_model_input_rejection
 from eegle.models.predictions import Prediction
 from eegle.recording.evidence import EvidenceRecord
 from eegle.recording.publications import ArtifactPublication
-from eegle.runtime.admission import (
-    SourceAdmissionState,
-    poll_source,
-    watermark_blockers,
-)
 from eegle.runtime.action_broker import (
     ActionBroker,
     BrokerOutcome,
     PendingAuthorization,
 )
-from eegle.runtime.context import DeterministicIdSource, RuntimeExecutionContext
-from eegle.runtime.checkpoints import EngineCheckpoint
+from eegle.runtime.admission import (
+    SourceAdmissionState,
+    poll_source,
+    watermark_blockers,
+)
 from eegle.runtime.canonical_state import capture_canonical_state
+from eegle.runtime.checkpoints import EngineCheckpoint
+from eegle.runtime.context import DeterministicIdSource, RuntimeExecutionContext
 from eegle.runtime.model_runtime import (
     ModelComparison,
     ModelComparisonStatus,
@@ -61,7 +63,7 @@ from eegle.runtime.routing import (
     value_payload,
     value_type,
 )
-from eegle.runtime.scheduling import ScheduledTrigger, TriggerResult
+from eegle.runtime.scheduling import ScheduledTrigger, SchedulingPolicy, TriggerResult
 from eegle.runtime.state import (
     AdaptationEligibilityDecision,
     AdaptationEligibilityStatus,
@@ -183,6 +185,13 @@ class GraphPhaseResult:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class GraphRetrySnapshot:
+    """Rewindable executor state, excluding monotonic audit identities."""
+
+    state: Mapping[str, Any]
+
+
 class PlanGraphExecutor:
     """Execute any active phase subgraph from one exact :class:`PlanRuntime`."""
 
@@ -215,6 +224,25 @@ class PlanGraphExecutor:
         self._targets = {
             key: tuple(sorted(values)) for key, values in targets.items()
         }
+        port_contracts = {
+            value.endpoint: value.contract for value in self.plan.graph.ports
+        }
+        routed_input_safety: dict[str, list[str | None]] = {}
+        for route in self.plan.graph.routes:
+            routed_input_safety.setdefault(route.target, []).append(
+                port_contracts[route.source].model_input_safety
+            )
+        self._model_input_safety = {
+            target: (
+                "label_bearing"
+                if "label_bearing" in declarations
+                else "label_blind"
+                if declarations
+                and all(value == "label_blind" for value in declarations)
+                else None
+            )
+            for target, declarations in routed_input_safety.items()
+        }
         self._component_order = {
             component_id: index
             for index, component_id in enumerate(self.plan.graph.component_order)
@@ -224,9 +252,19 @@ class PlanGraphExecutor:
         self.max_pending_events = int(validation.get("max_pending_events", 1_024))
         self.max_idle_cycles = int(validation.get("max_idle_cycles", 1))
         scheduling = self.plan.scheduling_policy
-        self.backpressure = str(scheduling.get("backpressure", "fail_run"))
-        if self.backpressure not in {"fail_run", "reject_newest"}:
-            raise ValueError("unknown graph backpressure policy")
+        self.scheduling = SchedulingPolicy(
+            execution_clock_id=self.execution_clock_id,
+            max_pending_packets=self.max_pending_events,
+            allowed_lateness_seconds=float(
+                scheduling.get("allowed_lateness_seconds", 0.0)
+            ),
+            backpressure=str(scheduling.get("backpressure", "fail_run")),
+            lateness=str(scheduling.get("lateness", "reject")),
+            max_idle_cycles=self.max_idle_cycles,
+        )
+        self.backpressure = self.scheduling.backpressure.value
+        self.allowed_lateness_seconds = self.scheduling.allowed_lateness_seconds
+        self.lateness = self.scheduling.lateness.value
         if (
             self.max_events <= 0
             or self.max_pending_events <= 0
@@ -317,6 +355,109 @@ class PlanGraphExecutor:
             str(component_id): dict(value)
             for component_id, value in restored.items()
         }
+
+    def snapshot_retry_state(self) -> GraphRetrySnapshot:
+        """Capture semantic executor state at a retry-safe phase boundary.
+
+        Evidence sequence numbers and generated IDs intentionally remain outside
+        this snapshot: records from a failed attempt stay in the audit trail and
+        identities emitted by the next attempt must not collide with them.
+        """
+
+        return GraphRetrySnapshot(
+            freeze_json(
+                {
+                    "current_time": self._current_time.to_payload(),
+                    "event_sequence": self._event_sequence,
+                    "component_state": thaw_json(self.snapshot_component_state()),
+                    "clock_mapping_revisions": dict(self._clock_mapping_revisions),
+                    "fired_state_rules": sorted(self._fired_state_rules),
+                    "admitted_input_lineage": {
+                        key: list(value)
+                        for key, value in sorted(self._admitted_input_lineage.items())
+                    },
+                    "emitted_predictions": {
+                        key: value.to_payload()
+                        for key, value in sorted(self._emitted_predictions.items())
+                    },
+                    "pending_model_comparisons": {
+                        key: {
+                            component_id: prediction.to_payload()
+                            for component_id, prediction in sorted(value.items())
+                        }
+                        for key, value in sorted(
+                            self._pending_model_comparisons.items()
+                        )
+                    },
+                    "outcome_lifecycle": thaw_json(self._outcomes.snapshot()),
+                    "cancel_requested": self._cancel_requested,
+                    "resumed_phase_id": self._resumed_phase_id,
+                    "resumed_phase_started_time": (
+                        None
+                        if self._resumed_phase_started_time is None
+                        else self._resumed_phase_started_time.to_payload()
+                    ),
+                }
+            )
+        )
+
+    def restore_retry_state(self, snapshot: GraphRetrySnapshot) -> None:
+        """Restore all rewindable executor state after a failed attempt."""
+
+        if not isinstance(snapshot, GraphRetrySnapshot):
+            raise TypeError("retry state must be a GraphRetrySnapshot")
+        state = thaw_json(snapshot.state)
+        self._current_time = TimePoint.from_payload(state["current_time"])
+        self._require_execution_time(self._current_time)
+        self._event_sequence = int(state["event_sequence"])
+        self.restore_component_state(state.get("component_state") or {})
+        self._clock_mapping_revisions = {
+            str(key): int(value)
+            for key, value in dict(state["clock_mapping_revisions"]).items()
+        }
+        self._fired_state_rules = {
+            require_identifier(str(value), "state trigger rule")
+            for value in state.get("fired_state_rules", ())
+        }
+        self._admitted_input_lineage = {
+            require_identifier(str(key), "lineage value_id"): tuple(
+                require_identifier(str(item), "admitted input_id") for item in value
+            )
+            for key, value in dict(
+                state.get("admitted_input_lineage") or {}
+            ).items()
+        }
+        self._emitted_predictions = {
+            require_identifier(str(key), "prediction_id"): Prediction.from_payload(
+                value
+            )
+            for key, value in dict(
+                state.get("emitted_predictions") or {}
+            ).items()
+        }
+        self._pending_model_comparisons = {
+            str(key): {
+                require_identifier(str(component_id), "comparison component"): (
+                    Prediction.from_payload(prediction)
+                )
+                for component_id, prediction in dict(value).items()
+            }
+            for key, value in dict(
+                state.get("pending_model_comparisons") or {}
+            ).items()
+        }
+        self._outcomes.restore(state.get("outcome_lifecycle") or {})
+        self._cancel_requested = bool(state.get("cancel_requested", False))
+        resumed_phase_id = state.get("resumed_phase_id")
+        self._resumed_phase_id = (
+            None
+            if resumed_phase_id is None
+            else require_identifier(str(resumed_phase_id), "resumed_phase_id")
+        )
+        resumed_time = state.get("resumed_phase_started_time")
+        self._resumed_phase_started_time = (
+            None if resumed_time is None else TimePoint.from_payload(resumed_time)
+        )
 
     def restore_checkpoint(self, checkpoint: EngineCheckpoint) -> str:
         """Restore a fresh executor at a persisted, queue-empty phase boundary."""
@@ -422,6 +563,17 @@ class PlanGraphExecutor:
                 self.execution_clock_id,
             )
         )
+        source_nodes = self._ordered_nodes(active, kind=ComponentKind.SOURCE)
+        live_source_ids = {
+            node.component_id
+            for node in source_nodes
+            if bool(getattr(node.component, "is_live", False))
+        }
+        live_wall_deadline = (
+            monotonic() + planned_phase.timeout_seconds
+            if live_source_ids and planned_phase.timeout_seconds is not None
+            else None
+        )
         self._emit(
             evidence,
             "phase_resumed" if resumed else "phase_started",
@@ -437,6 +589,15 @@ class PlanGraphExecutor:
                 if callable(start):
                     start(self._context(node))
                 lifecycle_started.append(node)
+                self._emit(
+                    evidence,
+                    "component_started",
+                    {
+                        "phase_id": planned_phase.phase_id,
+                        "component_id": node.component_id,
+                        "component_version": node.plugin.version,
+                    },
+                )
             for graph_input in inputs:
                 if resumed:
                     raise ValueError("resumed phase cannot accept replacement external inputs")
@@ -474,7 +635,7 @@ class PlanGraphExecutor:
                 admitted.append(graph_input.value)
             if not resumed:
                 self._schedule_phase_triggers(planned_phase, queue, phase_started_time)
-            for node in self._ordered_nodes(active, kind=ComponentKind.SOURCE):
+            for node in source_nodes:
                 self._poll_source(
                     node,
                     queue,
@@ -486,6 +647,21 @@ class PlanGraphExecutor:
             while queue or admission.incomplete_sources:
                 if self._cancel_requested:
                     status = GraphRunStatus.CANCELLED
+                    break
+                if live_wall_deadline is not None and monotonic() >= live_wall_deadline:
+                    status = GraphRunStatus.TIMED_OUT
+                    failure = (
+                        f"phase exceeded timeout_seconds={planned_phase.timeout_seconds}"
+                    )
+                    self._emit(
+                        evidence,
+                        "phase_timeout",
+                        {
+                            "phase_id": planned_phase.phase_id,
+                            "timeout_seconds": planned_phase.timeout_seconds,
+                            "clock": "wall",
+                        },
+                    )
                     break
                 if not queue:
                     if (
@@ -506,6 +682,16 @@ class PlanGraphExecutor:
                             progressed = True
                     if progressed:
                         idle_cycles = 0
+                        continue
+                    if admission.incomplete_sources & live_source_ids:
+                        wait_seconds = 0.001
+                        if live_wall_deadline is not None:
+                            wait_seconds = min(
+                                wait_seconds,
+                                max(0.0, live_wall_deadline - monotonic()),
+                            )
+                        if wait_seconds > 0:
+                            sleep(wait_seconds)
                         continue
                     idle_cycles += 1
                     if idle_cycles >= self.max_idle_cycles:
@@ -530,6 +716,16 @@ class PlanGraphExecutor:
                             progressed = True
                     if progressed:
                         idle_cycles = 0
+                        continue
+                    if set(blocked_sources) & live_source_ids:
+                        wait_seconds = 0.001
+                        if live_wall_deadline is not None:
+                            wait_seconds = min(
+                                wait_seconds,
+                                max(0.0, live_wall_deadline - monotonic()),
+                            )
+                        if wait_seconds > 0:
+                            sleep(wait_seconds)
                         continue
                     idle_cycles += 1
                     if idle_cycles >= self.max_idle_cycles:
@@ -615,6 +811,71 @@ class PlanGraphExecutor:
                     continue
                 if event.kind == "source":
                     admitted.append(event.value)
+                    packet_key = (node.component_id, value_id(event.value))
+                    rejection = admission.packet_rejections.pop(packet_key, None)
+                    rejection_code = admission.packet_rejection_codes.pop(
+                        packet_key,
+                        "source_contract_violation",
+                    )
+                    late_packet = admission.late_packets.pop(packet_key, None)
+                    if late_packet is not None:
+                        self._emit(
+                            evidence,
+                            "source_lateness",
+                            {
+                                "component_id": node.component_id,
+                                "packet_id": value_id(event.value),
+                                "lateness_seconds": late_packet[0],
+                                "allowed_lateness_seconds": (
+                                    self.allowed_lateness_seconds
+                                ),
+                                "disposition": late_packet[1],
+                            },
+                        )
+                    sequence_gap = admission.sequence_gaps.pop(packet_key, None)
+                    if sequence_gap is not None:
+                        self._emit(
+                            evidence,
+                            "source_sequence_gap",
+                            {
+                                "component_id": node.component_id,
+                                "packet_id": value_id(event.value),
+                                "expected_sequence": sequence_gap[0],
+                                "observed_sequence": sequence_gap[1],
+                            },
+                        )
+                    if rejection is not None:
+                        rejected = WorkRecord(
+                            work_id=self._ids.next("work"),
+                            component_id=node.component_id,
+                            stage="source",
+                            status=WorkStatus.REJECTED,
+                            started_time=self._current_time,
+                            completed_time=self._current_time,
+                            input_ids=(value_id(event.value),),
+                            role=node.planned.role,
+                            reason_code=rejection_code,
+                            details={"error": rejection},
+                        )
+                        work.append(rejected)
+                        self._emit(evidence, "work", rejected.to_payload())
+                        self._emit(
+                            evidence,
+                            "source_packet_rejected",
+                            {
+                                "component_id": node.component_id,
+                                "packet_id": value_id(event.value),
+                                "reason": rejection,
+                                "reason_code": rejection_code,
+                                "packet_hash": canonical_hash(value_payload(event.value)),
+                            },
+                        )
+                        if not bool(getattr(node.component, "exhausted", False)):
+                            if node.component_id in live_source_ids:
+                                admission.incomplete_sources.add(node.component_id)
+                            else:
+                                self._poll_source(node, queue, admission)
+                        continue
                     output_time = self._record_emission(
                         node,
                         event.port,
@@ -637,7 +898,11 @@ class PlanGraphExecutor:
                     )
                     work.append(source_work)
                     self._emit(evidence, "work", source_work.to_payload())
-                    if (
+                    if node.component_id in live_source_ids and not bool(
+                        getattr(node.component, "exhausted", False)
+                    ):
+                        admission.incomplete_sources.add(node.component_id)
+                    elif (
                         checkpoint_after_inputs is None
                         and not bool(getattr(node.component, "exhausted", False))
                     ):
@@ -677,7 +942,7 @@ class PlanGraphExecutor:
                             started,
                         )
                         continue
-                    self._validate_model_role_input(node, event.value)
+                    self._validate_model_role_input(node, event.port, event.value)
                     outputs = dispatch_component(
                         node,
                         event.port,
@@ -828,6 +1093,33 @@ class PlanGraphExecutor:
                 self._record_cancelled_model_results(queue, status, evidence)
             if status != GraphRunStatus.CHECKPOINTED:
                 self._finalize_model_comparisons(status, evidence)
+            for node in lifecycle_started:
+                snapshot = getattr(node.component, "snapshot_state", None)
+                if not callable(snapshot):
+                    continue
+                try:
+                    state_snapshot = capture_canonical_state(node.component)
+                    self._emit(
+                        evidence,
+                        "component_state",
+                        {
+                            "phase_id": planned_phase.phase_id,
+                            "component_id": node.component_id,
+                            "component_kind": node.plugin.kind.value,
+                            "state": state_snapshot.thaw(),
+                            "state_hash": state_snapshot.state_hash,
+                        },
+                    )
+                except Exception as exc:  # pragma: no cover - external boundary
+                    self._emit(
+                        evidence,
+                        "component_state_unavailable",
+                        {
+                            "phase_id": planned_phase.phase_id,
+                            "component_id": node.component_id,
+                            "failure": f"{type(exc).__name__}: {exc}",
+                        },
+                    )
             stop_failures: list[str] = []
             for node in reversed(lifecycle_started):
                 stop = getattr(node.component, "stop", None)
@@ -922,11 +1214,38 @@ class PlanGraphExecutor:
             return False
         packet = admitted.packet
         available = admitted.available_time
+        scheduled = available
+        packet_key = (node.component_id, value_id(packet))
+        graph_lateness = max(0.0, self._current_time.seconds - available.seconds)
+        watermark_lateness = admission.watermark_lateness.pop(packet_key, 0.0)
+        lateness = max(graph_lateness, watermark_lateness)
+        if lateness > 0:
+            if lateness > self.allowed_lateness_seconds:
+                if self.lateness == "fail_run":
+                    raise RuntimeError(
+                        f"source {node.component_id} exceeded allowed lateness by "
+                        f"{lateness - self.allowed_lateness_seconds:.9g} seconds"
+                    )
+                admission.packet_rejections[packet_key] = (
+                    f"packet arrived {lateness:.9g} seconds behind the declared "
+                    "source or graph frontier"
+                )
+                admission.packet_rejection_codes[packet_key] = (
+                    "source_late_input"
+                    if graph_lateness > 0
+                    else "source_watermark_violation"
+                )
+                disposition = "rejected"
+            else:
+                disposition = "accepted"
+            admission.late_packets[packet_key] = (lateness, disposition)
+            if available.seconds < self._current_time.seconds:
+                scheduled = self._current_time
         self._event_sequence += 1
         queue.push(
             QueuedEvent(
                 (
-                    available.seconds,
+                    scheduled.seconds,
                     0,
                     node.component_id,
                     sequence_key(packet),
@@ -937,7 +1256,7 @@ class PlanGraphExecutor:
                 node.component_id,
                 admitted.output_port,
                 packet,
-                available,
+                scheduled,
             ),
             rejectable=False,
         )
@@ -974,7 +1293,10 @@ class PlanGraphExecutor:
             )
         available = available_time(value, self._current_time)
         self._require_execution_time(available)
-        if available.seconds < self._current_time.seconds:
+        if (
+            available.seconds < self._current_time.seconds
+            and node.plugin.kind != ComponentKind.SOURCE
+        ):
             raise ValueError(
                 f"component {node.component_id} emitted output before its input was available"
             )
@@ -1091,6 +1413,8 @@ class PlanGraphExecutor:
                     evidence,
                     work,
                 )
+        if available.seconds < self._current_time.seconds:
+            return self._current_time
         return available
 
     def _handle_action_request(
@@ -1633,7 +1957,22 @@ class PlanGraphExecutor:
             self._emit(evidence, "model_comparison", comparison.to_payload())
         self._pending_model_comparisons.clear()
 
-    def _validate_model_role_input(self, node: RuntimeNode, value: Any) -> None:
+    def _validate_model_role_input(
+        self,
+        node: RuntimeNode,
+        input_port: str,
+        value: Any,
+    ) -> None:
+        if node.plugin.kind == ComponentKind.MODEL:
+            rejection = causal_model_input_rejection(
+                self.plan.execution_mode,
+                value_type(value),
+                model_input_safety=self._model_input_safety.get(
+                    f"{node.component_id}.{input_port}"
+                ),
+            )
+            if rejection is not None:
+                raise PermissionError(rejection)
         if node.plugin.kind != ComponentKind.POLICY or not isinstance(value, Prediction):
             return
         emitted = self._emitted_predictions.get(value.prediction_id)
@@ -1748,6 +2087,16 @@ class PlanGraphExecutor:
     ) -> WorkSchedulingDisposition:
         available = available_time(value, self._current_time)
         self._require_execution_time(available)
+        if available.seconds < self._current_time.seconds:
+            lateness = self._current_time.seconds - available.seconds
+            if lateness > self.allowed_lateness_seconds:
+                if self.lateness == "fail_run":
+                    raise RuntimeError(
+                        f"input exceeded allowed lateness by "
+                        f"{lateness - self.allowed_lateness_seconds:.9g} seconds"
+                    )
+                return WorkSchedulingDisposition("late_input")
+            available = self._current_time
         node = self.runtime.node(component_id)
         role = None if node.model_binding is None else node.model_binding.role
         evicted: QueuedEvent | None = None

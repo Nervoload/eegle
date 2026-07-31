@@ -68,7 +68,7 @@ class ClockIdentity:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ClockIdentity":
         return cls(
-            schema=str(payload.get("schema", CLOCK_IDENTITY_SCHEMA)),
+            schema=str(payload["schema"]),
             clock_id=str(payload["clock_id"]),
             kind=ClockKind(str(payload["kind"])),
             name=None if payload.get("name") is None else str(payload["name"]),
@@ -191,7 +191,7 @@ class ClockMapping:
     def from_payload(cls, payload: Mapping[str, Any]) -> "ClockMapping":
         measured = payload.get("measured_at")
         return cls(
-            schema=str(payload.get("schema", CLOCK_MAPPING_SCHEMA)),
+            schema=str(payload["schema"]),
             mapping_id=str(payload["mapping_id"]),
             revision=int(payload["revision"]),
             source_clock_id=str(payload["source_clock_id"]),

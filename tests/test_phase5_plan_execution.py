@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from copy import deepcopy
-from dataclasses import replace
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from copy import deepcopy
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -16,7 +17,7 @@ from eegle._domain import (
     ExecutionMode,
     WorkStatus,
 )
-from eegle.compiler import CompilationError, compile_suite
+from eegle.compiler import CompilationError
 from eegle.plugins import (
     PluginCapabilities,
     PluginDescriptor,
@@ -25,19 +26,22 @@ from eegle.plugins import (
     StateBehavior,
 )
 from eegle.plugins.builtins import builtin_plugin_descriptors
+from eegle.processing.windows import EventWindowBuilder
 from eegle.recording import (
     ArtifactReference,
     EvidenceReader,
+    EvidenceRecord,
     Session,
     persist_engine_run,
 )
-from eegle.replay import BundleReplayRunner
+from eegle.replay import BundleReplayRunner, EquivalencePolicy, compare_runs
 from eegle.runtime import (
     ConfirmSingleOperatorTransition,
-    ExecutionEngine,
     EngineStatus,
+    ExecutionEngine,
     PlanConstructionError,
 )
+from eegle.runtime.graph import GraphPhaseResult, GraphRunStatus
 from eegle.specs import DeploymentSpec, ProtocolSpec, SuiteSpec
 from eegle.streams import (
     ContentKind,
@@ -48,11 +52,13 @@ from eegle.streams import (
     StreamSpec,
     TimePoint,
 )
+from eegle.streams.synthetic import PacketSequenceSource
 from tests.fixtures.phase5_model_components import (
     compile_phase5_suite as compile_suite,
+)
+from tests.fixtures.phase5_model_components import (
     register_phase5_plugins,
 )
-
 
 FIXTURE = Path(__file__).parent / "fixtures" / "migration" / "phase5_simulated"
 CALIBRATION_FIXTURE = (
@@ -189,6 +195,322 @@ def _compile(
 
 
 class Phase5PlanExecutionTests(unittest.TestCase):
+    def test_live_source_survives_empty_reads_without_stalling_downstream(self) -> None:
+        deployment = _payload("deployment.json")
+        stream_spec = StreamSpec.from_payload(
+            deployment["component_bindings"][0]["config"]["stream_spec"]
+        )
+        packet = _dense_packet("batch.after-idle", 0.01)
+
+        class LiveThenComplete:
+            is_live = True
+
+            def __init__(self) -> None:
+                self.stream_spec = stream_spec
+                self.watermark = None
+                self.exhausted = False
+                self.calls = 0
+
+            def read(self):
+                self.calls += 1
+                if self.calls == 1:
+                    self.watermark = TimePoint(0.001, "boundary.clock")
+                    return None
+                self.watermark = packet.available_time
+                self.exhausted = True
+                return packet
+
+            def close(self):
+                self.exhausted = True
+
+            def snapshot_state(self):
+                return {"calls": self.calls, "exhausted": self.exhausted}
+
+            def restore_state(self, state):
+                self.calls = int(state["calls"])
+                self.exhausted = bool(state["exhausted"])
+
+        compiled, registry = _compile(_recording_suite(), deployment)
+        source = LiveThenComplete()
+        engine = ExecutionEngine.from_plan(
+            compiled.plan,
+            registry,
+            component_overrides={"source.neural": source},
+        )
+        run = engine.run()
+
+        self.assertEqual(run.status, EngineStatus.COMPLETE, run.failure)
+        self.assertEqual(source.calls, 2)
+        self.assertEqual(
+            tuple(value.batch_id for value in run.captured_packets),
+            ("batch.after-idle",),
+        )
+        self.assertEqual(
+            tuple(
+                value.batch_id
+                for value in engine.runtime.node("sink.dense").component.records
+            ),
+            ("batch.after-idle",),
+        )
+
+    def test_live_empty_source_uses_wall_timeout_instead_of_partial_idle_exit(self) -> None:
+        suite = _recording_suite()
+        suite["phases"][0]["timeout_seconds"] = 0.02
+        deployment = _payload("deployment.json")
+        stream_spec = StreamSpec.from_payload(
+            deployment["component_bindings"][0]["config"]["stream_spec"]
+        )
+
+        class EmptyLiveSource:
+            is_live = True
+
+            def __init__(self) -> None:
+                self.stream_spec = stream_spec
+                self.watermark = None
+                self.exhausted = False
+                self.calls = 0
+
+            def read(self):
+                self.calls += 1
+                self.watermark = TimePoint(
+                    self.calls / 10_000.0, "boundary.clock"
+                )
+                return None
+
+            def close(self):
+                self.exhausted = True
+
+            def snapshot_state(self):
+                return {"calls": self.calls, "exhausted": self.exhausted}
+
+            def restore_state(self, state):
+                self.calls = int(state["calls"])
+                self.exhausted = bool(state["exhausted"])
+
+        compiled, registry = _compile(suite, deployment)
+        source = EmptyLiveSource()
+        run = ExecutionEngine.from_plan(
+            compiled.plan,
+            registry,
+            component_overrides={"source.neural": source},
+        ).run()
+
+        self.assertEqual(run.status, EngineStatus.TIMED_OUT)
+        self.assertGreater(source.calls, 1)
+        timeout = next(
+            value for value in run.evidence if value.record_type == "phase_timeout"
+        )
+        self.assertEqual(timeout.payload["clock"], "wall")
+
+    def test_source_contract_violations_are_captured_quarantined_and_evidenced(self) -> None:
+        deployment = _payload("deployment.json")
+        stream_spec = StreamSpec.from_payload(
+            deployment["component_bindings"][0]["config"]["stream_spec"]
+        )
+        wrong = DenseSampleBatch(
+            batch_id="batch.contract-violation",
+            stream_id=stream_spec.stream_id,
+            stream_revision=stream_spec.revision,
+            sequence_start=0,
+            channel_ids=("channel.wrong",),
+            values=np.ones((2, 1), dtype=np.int16),
+            received_time=TimePoint(0.009, "boundary.clock"),
+            available_time=TimePoint(0.01, "boundary.clock"),
+            first_sample_time=TimePoint(0.0, stream_spec.clock_id),
+            sample_period_seconds=0.01,
+        )
+
+        class InvalidFiniteSource:
+            def __init__(self) -> None:
+                self.stream_spec = stream_spec
+                self.exhausted = False
+
+            def read(self):
+                self.exhausted = True
+                return wrong
+
+            def close(self):
+                self.exhausted = True
+
+            def snapshot_state(self):
+                return {"exhausted": self.exhausted}
+
+            def restore_state(self, state):
+                self.exhausted = bool(state["exhausted"])
+
+        compiled, registry = _compile(_recording_suite(), deployment)
+        engine = ExecutionEngine.from_plan(
+            compiled.plan,
+            registry,
+            component_overrides={"source.neural": InvalidFiniteSource()},
+        )
+        run = engine.run()
+
+        self.assertEqual(run.status, EngineStatus.COMPLETE, run.failure)
+        self.assertEqual(run.captured_packets, (wrong,))
+        self.assertTrue(
+            any(
+                value.record_type == "source_packet_rejected"
+                for value in run.evidence
+            )
+        )
+        self.assertTrue(any(value.status == WorkStatus.REJECTED for value in run.work))
+        self.assertEqual(engine.runtime.node("sink.dense").component.records, ())
+
+        with self.assertRaisesRegex(ValueError, "channel_ids"):
+            PacketSequenceSource(stream_spec, (wrong,))
+
+        with tempfile.TemporaryDirectory() as directory:
+            session = Session.create(
+                Path(directory) / "session",
+                session_id="session.source-contract-quarantine",
+            )
+            bundle = persist_engine_run(
+                session,
+                run,
+                plan=compiled.plan,
+                streams=(stream_spec,),
+            )
+            replay = BundleReplayRunner(registry).run(
+                EvidenceReader.open(session, bundle.bundle_id)
+            )
+        self.assertEqual(replay.result.captured_packets, (wrong,))
+        self.assertTrue(replay.equivalence.equivalent, replay.equivalence.divergences)
+        self.assertTrue(
+            any(
+                value.record_type == "source_packet_rejected"
+                for value in replay.result.evidence
+            )
+        )
+
+    def test_source_sequence_gaps_are_evidenced_without_stopping_recording(self) -> None:
+        deployment = _with_packets(
+            _payload("deployment.json"),
+            _dense_packet("batch.before-gap", 0.01, sequence_start=0),
+            _dense_packet("batch.after-gap", 0.02, sequence_start=5),
+        )
+        compiled, registry = _compile(_recording_suite(), deployment)
+        engine = ExecutionEngine.from_plan(compiled.plan, registry)
+
+        run = engine.run()
+
+        self.assertEqual(run.status, EngineStatus.COMPLETE, run.failure)
+        self.assertEqual(len(engine.runtime.node("sink.dense").component.records), 2)
+        gap = next(
+            value
+            for value in run.evidence
+            if value.record_type == "source_sequence_gap"
+        )
+        self.assertEqual(
+            (gap.payload["expected_sequence"], gap.payload["observed_sequence"]),
+            (4, 5),
+        )
+
+    def test_event_windows_bound_history_and_reset_at_sequence_gaps(self) -> None:
+        class Context:
+            component_id = "window.event"
+            component_version = "0.1.0"
+            clock_mapping_revisions = {}
+
+            def __init__(self) -> None:
+                self.index = 0
+
+            def next_id(self, namespace):
+                self.index += 1
+                return f"{namespace}.{self.index}"
+
+        def sample(sequence: int) -> DenseSampleBatch:
+            return DenseSampleBatch(
+                batch_id=f"batch.sample.{sequence}",
+                stream_id="stream.neural",
+                stream_revision=1,
+                sequence_start=sequence,
+                channel_ids=("channel.c3",),
+                values=np.asarray([[float(sequence)]], dtype=np.float64),
+                received_time=TimePoint(sequence * 0.01, "boundary.clock"),
+                available_time=TimePoint(sequence * 0.01, "boundary.clock"),
+                first_sample_time=TimePoint(sequence * 0.01, "device.clock"),
+                sample_period_seconds=0.01,
+            )
+
+        def events(event_id: str, event_seconds: float) -> SparseEventBatch:
+            point = TimePoint(event_seconds, "boundary.clock")
+            return SparseEventBatch(
+                batch_id=f"batch.{event_id}",
+                stream_id="stream.markers",
+                stream_revision=1,
+                sequence_start=0,
+                events=(
+                    SparseEvent(
+                        event_id=event_id,
+                        kind="stimulus",
+                        event_time=TimePoint(event_seconds, "device.clock"),
+                        received_time=point,
+                        available_time=point,
+                    ),
+                ),
+            )
+
+        context = Context()
+        builder = EventWindowBuilder(
+            start_offset_seconds=-0.02,
+            end_offset_seconds=0.01,
+            max_buffer_samples=3,
+        )
+        for sequence in range(10):
+            builder.process("samples", sample(sequence), context)
+        self.assertEqual(builder.buffered_samples, 3)
+        emitted = builder.process("events", events("event.recent", 0.09), context)
+        window = emitted["windows"][0]
+        self.assertEqual((window.sequence_start, window.sequence_end), (7, 9))
+
+        discontinuous = EventWindowBuilder(
+            start_offset_seconds=0.0,
+            end_offset_seconds=0.02,
+            max_buffer_samples=10,
+        )
+        discontinuous.process("samples", sample(0), context)
+        discontinuous.process("samples", sample(5), context)
+        stale = discontinuous.process("events", events("event.stale", 0.0), context)
+        self.assertEqual(stale["windows"], ())
+        self.assertEqual(
+            discontinuous.rejected_events["event.stale"],
+            "sample_history_evicted",
+        )
+        discontinuous.process("events", events("event.clean", 0.05), context)
+        discontinuous.process("samples", sample(6), context)
+        clean = discontinuous.process("samples", sample(7), context)
+        self.assertEqual(
+            (clean["windows"][0].sequence_start, clean["windows"][0].sequence_end),
+            (5, 6),
+        )
+
+        explicit = DenseSampleBatch(
+            batch_id="batch.explicit-times",
+            stream_id="stream.neural",
+            stream_revision=1,
+            sequence_start=0,
+            channel_ids=("channel.c3",),
+            values=np.asarray([[0.0], [1.0], [2.0]], dtype=np.float64),
+            received_time=TimePoint(0.02, "boundary.clock"),
+            available_time=TimePoint(0.02, "boundary.clock"),
+            sample_times=(
+                TimePoint(0.0, "device.clock"),
+                TimePoint(0.01, "device.clock"),
+                TimePoint(0.02, "device.clock"),
+            ),
+        )
+        explicit_builder = EventWindowBuilder(
+            start_offset_seconds=0.0,
+            end_offset_seconds=0.02,
+            max_buffer_samples=10,
+        )
+        explicit_builder.process("samples", explicit, context)
+        explicit_result = explicit_builder.process(
+            "events", events("event.explicit", 0.0), context
+        )
+        self.assertEqual(explicit_result["windows"][0].sample_count, 2)
+
     def test_locked_classifier_graph_executes_without_manual_engine_components(self) -> None:
         suite = _payload("suite.json")
         suite["components"][3]["config"]["latency_seconds"] = 0.1
@@ -713,6 +1035,184 @@ class Phase5PlanExecutionTests(unittest.TestCase):
             )
         )
 
+    def test_restart_retry_rewinds_graph_after_semantic_time_advanced(self) -> None:
+        class FailOnSecondCall:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def process(self, input_port, value, context):
+                self.calls += 1
+                if self.calls == 2:
+                    raise RuntimeError("late transient")
+                return {"samples": value}
+
+        registry = _registry()
+        registry.register(
+            PluginDescriptor(
+                plugin_id="fixture.fail_second",
+                version="1.0.0",
+                kind=ComponentKind.TRANSFORM,
+                config_schema={
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+                input_ports=(PortSpec("samples", DENSE),),
+                output_ports=(PortSpec("samples", DENSE),),
+                capabilities=PluginCapabilities(
+                    supported_modes=frozenset({ExecutionMode.CAUSAL}),
+                    determinism=Determinism.EXTERNAL,
+                    equivalence=EquivalenceLevel.TRACE,
+                    state_behavior=StateBehavior.EXTERNAL,
+                ),
+                factory=lambda config: FailOnSecondCall(),
+                implementation="tests.fixture:FailOnSecondCall",
+                distribution="tests",
+            )
+        )
+        suite = _recording_suite(transform=True)
+        suite["components"][1]["plugin_id"] = "fixture.fail_second"
+        suite["components"][1]["version_spec"] = "==1.0.0"
+        suite["components"][1]["config"] = {}
+        suite["phases"][0]["retry_limit"] = 1
+        suite["phases"][0]["resume_policy"] = "restart"
+        deployment = _with_packets(
+            _payload("deployment.json"),
+            _dense_packet("batch.retry.1", 0.1),
+            _dense_packet("batch.retry.2", 0.2, sequence_start=4),
+        )
+
+        compiled, _ = _compile(suite, deployment, registry)
+        run = ExecutionEngine.from_plan(compiled.plan, registry).run()
+
+        self.assertEqual(run.status, EngineStatus.COMPLETE, run.failure)
+        self.assertEqual(
+            tuple(value.result.status.value for value in run.phase_attempts),
+            ("failed", "complete"),
+        )
+        self.assertTrue(any(value.record_type == "phase_retry" for value in run.evidence))
+
+    def test_zero_windows_and_predictions_have_zero_coverage(self) -> None:
+        result = GraphPhaseResult(
+            execution_id="execution.coverage",
+            plan_hash="sha256:" + "0" * 64,
+            phase_id="phase.validation",
+            status=GraphRunStatus.COMPLETE,
+            evidence=(),
+            admitted_inputs=(),
+            emissions=(),
+            work=(),
+        )
+
+        observed = ExecutionEngine._measure(
+            {
+                "measure": "prediction_coverage",
+                "parameters": {
+                    "prediction_component": "model.primary",
+                    "window_component": "window.continuous",
+                },
+            },
+            result,
+        )
+
+        self.assertEqual(observed, 0.0)
+
+    def test_lateness_policy_rejects_or_tolerates_without_stopping_capture(self) -> None:
+        deployment = _with_packets(
+            _payload("deployment.json"),
+            _dense_packet("batch.on-time", 0.2),
+            _dense_packet("batch.late", 0.1, sequence_start=4),
+        )
+        rejecting_suite = _recording_suite()
+        rejecting_suite["scheduling"] = {
+            "backpressure": "fail_run",
+            "allowed_lateness_seconds": 0.0,
+            "lateness": "reject",
+        }
+        rejected_plan, registry = _compile(rejecting_suite, deployment)
+
+        rejected = ExecutionEngine.from_plan(rejected_plan.plan, registry).run()
+
+        self.assertEqual(rejected.status, EngineStatus.COMPLETE, rejected.failure)
+        self.assertEqual(len(rejected.captured_packets), 2)
+        self.assertEqual(
+            tuple(value.batch_id for value in rejected.captured_packets),
+            ("batch.on-time", "batch.late"),
+        )
+        self.assertTrue(
+            any(
+                value.status == WorkStatus.REJECTED
+                and value.reason_code == "source_late_input"
+                for value in rejected.work
+            )
+        )
+
+        accepting_suite = _recording_suite()
+        accepting_suite["scheduling"] = {
+            "backpressure": "fail_run",
+            "allowed_lateness_seconds": 0.15,
+            "lateness": "reject",
+        }
+        accepted_plan, accepted_registry = _compile(accepting_suite, deployment)
+        accepted_engine = ExecutionEngine.from_plan(
+            accepted_plan.plan,
+            accepted_registry,
+        )
+
+        accepted = accepted_engine.run()
+
+        self.assertEqual(accepted.status, EngineStatus.COMPLETE, accepted.failure)
+        self.assertEqual(
+            len(accepted_engine.runtime.node("sink.dense").component.records),
+            2,
+        )
+        self.assertTrue(
+            any(
+                value.record_type == "source_lateness"
+                and value.payload["disposition"] == "accepted"
+                for value in accepted.evidence
+            )
+        )
+
+    def test_replay_distinguishes_complete_and_failed_phase_records(self) -> None:
+        def run_with(status: str, *, admitted_input_count: int = 1):
+            return SimpleNamespace(
+                evidence=(
+                    EvidenceRecord(
+                        "evidence.phase",
+                        "phase_finished",
+                        0,
+                        TimePoint(1.0, "boundary.clock"),
+                        {
+                            "phase_id": "phase.observe",
+                            "status": status,
+                            "failure": None if status == "complete" else "boom",
+                            "admitted_input_count": admitted_input_count,
+                            "emission_count": 1,
+                            "work_count": 1,
+                        },
+                    ),
+                ),
+                equivalence_ceiling=EquivalenceLevel.BITWISE,
+            )
+
+        for level in (EquivalenceLevel.SEMANTIC, EquivalenceLevel.TRACE):
+            report = compare_runs(
+                run_with("complete"),
+                run_with("failed"),
+                EquivalencePolicy(requested_level=level),
+            )
+            with self.subTest(level=level):
+                self.assertFalse(report.equivalent)
+
+        semantic_counts = compare_runs(
+            run_with("complete", admitted_input_count=1),
+            run_with("complete", admitted_input_count=2),
+            EquivalencePolicy(requested_level=EquivalenceLevel.SEMANTIC),
+        )
+        self.assertFalse(semantic_counts.equivalent)
+
     def test_runtime_rejects_plugin_drift_from_the_locked_graph(self) -> None:
         compiled, _ = _compile(_recording_suite(), _payload("deployment.json"))
         drifted = PluginRegistry()
@@ -861,8 +1361,21 @@ class Phase5PlanExecutionTests(unittest.TestCase):
         )
         run = engine.run()
 
-        self.assertEqual(run.status, EngineStatus.FAILED)
-        self.assertIn("before its declared watermark", run.failure or "")
+        self.assertEqual(run.status, EngineStatus.COMPLETE)
+        self.assertTrue(
+            any(
+                value.status == WorkStatus.REJECTED
+                and value.reason_code == "source_watermark_violation"
+                for value in run.work
+            )
+        )
+        self.assertTrue(
+            any(
+                value.record_type == "source_packet_rejected"
+                and value.payload["reason_code"] == "source_watermark_violation"
+                for value in run.evidence
+            )
+        )
 
     def test_component_deadline_suppresses_late_outputs_and_records_timeout(self) -> None:
         suite = _payload("suite.json")
@@ -932,6 +1445,7 @@ class Phase5PlanExecutionTests(unittest.TestCase):
         self.assertTrue(report.valid)
         self.assertEqual(bundle.plan_hash, compiled.plan.plan_hash)
         self.assertEqual(len(bundle.execution_captures), 1)
+        self.assertGreater(len(bundle.component_states), 0)
         self.assertEqual(
             sum(value.role == "execution_plan" for value in bundle.artifacts),
             1,

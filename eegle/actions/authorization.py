@@ -136,7 +136,7 @@ class AuthorizationRequest:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "AuthorizationRequest":
         return cls(
-            schema=str(payload.get("schema", AUTHORIZATION_REQUEST_SCHEMA)),
+            schema=str(payload["schema"]),
             authorization_request_id=str(payload["authorization_request_id"]),
             action_request_id=str(payload["action_request_id"]),
             permission_id=str(payload["permission_id"]),
@@ -274,7 +274,7 @@ class AuthorizationDecision:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "AuthorizationDecision":
         return cls(
-            schema=str(payload.get("schema", AUTHORIZATION_DECISION_SCHEMA)),
+            schema=str(payload["schema"]),
             decision_id=str(payload["decision_id"]),
             authorization_request_id=str(payload["authorization_request_id"]),
             action_request_id=str(payload["action_request_id"]),
@@ -350,7 +350,7 @@ class ActionDisposition:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ActionDisposition":
         return cls(
-            schema=str(payload.get("schema", ACTION_DISPOSITION_SCHEMA)),
+            schema=str(payload["schema"]),
             disposition_id=str(payload["disposition_id"]),
             action_request_id=str(payload["action_request_id"]),
             actuator_id=str(payload["actuator_id"]),
@@ -411,7 +411,7 @@ class ActionCancellation:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ActionCancellation":
         return cls(
-            schema=str(payload.get("schema", ACTION_CANCELLATION_SCHEMA)),
+            schema=str(payload["schema"]),
             cancellation_id=str(payload["cancellation_id"]),
             action_request_id=str(payload["action_request_id"]),
             actuator_id=str(payload["actuator_id"]),

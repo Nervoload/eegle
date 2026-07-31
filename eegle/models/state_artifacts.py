@@ -79,7 +79,7 @@ class ModelStateArtifact:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ModelStateArtifact":
         return cls(
-            schema=str(payload.get("schema", MODEL_STATE_ARTIFACT_SCHEMA)),
+            schema=str(payload["schema"]),
             model_id=str(payload["model_id"]),
             model_version=str(payload["model_version"]),
             contract_digest=str(payload["contract_digest"]),

@@ -570,7 +570,7 @@ class DetectionReport:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "DetectionReport":
         report = cls(
-            schema=str(payload.get("schema", DETECTION_REPORT_SCHEMA_ID)),
+            schema=str(payload["schema"]),
             detection_id=str(payload["detection_id"]),
             observed_at=str(payload["observed_at"]),
             plugins=tuple(PluginObservation.from_payload(value) for value in payload.get("plugins", ())),
@@ -753,7 +753,7 @@ class DeploymentProposal:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "DeploymentProposal":
         proposal = cls(
-            schema=str(payload.get("schema", DEPLOYMENT_PROPOSAL_SCHEMA_ID)),
+            schema=str(payload["schema"]),
             proposal_id=str(payload["proposal_id"]),
             suite_hash=str(payload["suite_hash"]),
             requirements_hash=str(payload["requirements_hash"]),

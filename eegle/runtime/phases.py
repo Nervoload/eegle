@@ -9,17 +9,19 @@ from typing import Any, Mapping, Protocol
 from eegle._domain import EquivalenceLevel
 from eegle._validation import require_identifier, thaw_json
 from eegle.compiler.plan import ExecutionPlan, PlannedPhase, PlannedTransition
+from eegle.models.predictions import Prediction
 from eegle.plugins.registry import PluginRegistry
-from eegle.recording.evidence import EvidenceRecord
+from eegle.processing.windows import DenseWindow
 from eegle.recording.artifacts import ArtifactReference
+from eegle.recording.evidence import EvidenceRecord
 from eegle.recording.publications import ArtifactPublication
+from eegle.runtime.checkpoints import EngineCheckpoint
 from eegle.runtime.graph import (
     GraphInput,
     GraphPhaseResult,
     GraphRunStatus,
     PlanGraphExecutor,
 )
-from eegle.runtime.checkpoints import EngineCheckpoint
 from eegle.runtime.plan_runtime import (
     ArtifactResolver,
     ComponentProxyFactory,
@@ -27,7 +29,12 @@ from eegle.runtime.plan_runtime import (
     construct_plan_runtime,
 )
 from eegle.streams.clocks import TimePoint
-from eegle.streams.packets import DenseSampleBatch, MetadataEvent, Packet, SparseEventBatch
+from eegle.streams.packets import (
+    DenseSampleBatch,
+    MetadataEvent,
+    Packet,
+    SparseEventBatch,
+)
 
 
 class EngineStatus(str, Enum):
@@ -353,7 +360,7 @@ class ExecutionEngine:
                         status = EngineStatus.BLOCKED
                         break
                 runtime_snapshot = self.runtime.snapshot_state()
-                executor_state = self.graph.snapshot_component_state()
+                executor_state = self.graph.snapshot_retry_state()
                 attempt_number = 0
                 result: GraphPhaseResult | None = None
                 while True:
@@ -389,7 +396,7 @@ class ExecutionEngine:
                     if phase.resume_policy == "forbidden":
                         break
                     self.runtime.restore_state(runtime_snapshot)
-                    self.graph.restore_component_state(executor_state)
+                    self.graph.restore_retry_state(executor_state)
                     evidence.append(
                         self.graph.record_event(
                             "phase_retry",
@@ -660,13 +667,24 @@ class ExecutionEngine:
         if measure == "prediction_coverage":
             numerator = str(parameters["prediction_component"])
             denominator = str(parameters["window_component"])
+            prediction_port = parameters.get("prediction_port")
+            window_port = parameters.get("window_port")
             predictions = sum(
-                value.component_id == numerator for value in result.emissions
+                value.component_id == numerator
+                and isinstance(value.value, Prediction)
+                and (
+                    prediction_port is None
+                    or value.output_port == str(prediction_port)
+                )
+                for value in result.emissions
             )
             windows = sum(
-                value.component_id == denominator for value in result.emissions
+                value.component_id == denominator
+                and isinstance(value.value, DenseWindow)
+                and (window_port is None or value.output_port == str(window_port))
+                for value in result.emissions
             )
-            return 1.0 if windows == 0 else predictions / windows
+            return 0.0 if windows == 0 else predictions / windows
         raise ValueError(f"unsupported acceptance metric measure: {measure}")
 
     @staticmethod

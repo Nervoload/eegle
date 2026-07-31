@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from enum import Enum
-import json
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 from eegle._validation import (
     freeze_json,
+    is_literal_secret_field,
     require_digest,
     require_finite,
     require_identifier,
@@ -21,21 +22,8 @@ from eegle.compiler.lock import canonical_hash
 from eegle.specs.schemas import validate_payload
 from eegle.specs.suite import SignalContract
 
-
 DEPLOYMENT_SPEC_SCHEMA = "eegle.deployment_spec.v1"
 _JSON_SCHEMA = "https://json-schema.org/draft/2020-12/schema"
-_SECRET_KEYS = {
-    "api_key",
-    "credential",
-    "credentials",
-    "password",
-    "passwd",
-    "private_key",
-    "secret",
-    "token",
-}
-
-
 class Placement(str, Enum):
     IN_PROCESS = "in_process"
     SUBPROCESS_PROXY = "subprocess_proxy"
@@ -587,7 +575,7 @@ class DeploymentSpec:
     def from_payload(cls, payload: Mapping[str, Any]) -> "DeploymentSpec":
         validate_payload(payload, DEPLOYMENT_JSON_SCHEMA)
         return cls(
-            schema=str(payload.get("schema", DEPLOYMENT_SPEC_SCHEMA)),
+            schema=str(payload["schema"]),
             deployment_id=str(payload["deployment_id"]),
             suite_id=str(payload["suite_id"]),
             component_bindings=tuple(
@@ -632,8 +620,7 @@ class DeploymentSpec:
 def _reject_secret_literals(value: Any, *, path: str) -> None:
     if isinstance(value, Mapping):
         for key, item in value.items():
-            normalized = str(key).strip().lower().replace("-", "_")
-            if normalized in _SECRET_KEYS:
+            if is_literal_secret_field(str(key)):
                 raise ValueError(f"{path}.{key}: literal secret fields are forbidden")
             _reject_secret_literals(item, path=f"{path}.{key}")
     elif isinstance(value, (list, tuple)):
@@ -678,6 +665,9 @@ _RESOURCE_SCHEMA: Mapping[str, Any] = {
                 "maximum_rate_hz": {"type": "number", "exclusiveMinimum": 0},
                 "window_samples": {"type": "integer", "minimum": 1},
                 "minimum_window_samples": {"type": "integer", "minimum": 1},
+                "model_input_safety": {
+                    "enum": ["label_blind", "label_bearing"]
+                },
                 "content_kind": {"type": "string", "minLength": 1},
                 "rate_model": {"type": "string", "minLength": 1},
                 "channel_ids": {

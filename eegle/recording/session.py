@@ -96,7 +96,7 @@ class SessionManifest:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "SessionManifest":
         manifest = cls(
-            schema=str(payload.get("schema", SESSION_MANIFEST_SCHEMA)),
+            schema=str(payload["schema"]),
             session_id=str(payload["session_id"]),
             created_at=str(payload["created_at"]),
             completed_at=None

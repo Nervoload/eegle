@@ -7,6 +7,7 @@ that contributed to every window.  Dense arrays remain samples x channels.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
@@ -110,6 +111,20 @@ class Window:
 
 
 DENSE_WINDOW_SCHEMA = "eegle.dense_window.v1"
+
+
+def _dense_sample_times(packet: DenseSampleBatch) -> tuple[TimePoint, ...]:
+    if packet.sample_times:
+        return packet.sample_times
+    assert packet.first_sample_time is not None
+    assert packet.sample_period_seconds is not None
+    return tuple(
+        TimePoint(
+            packet.first_sample_time.seconds + index * packet.sample_period_seconds,
+            packet.first_sample_time.clock_id,
+        )
+        for index in range(packet.sample_count)
+    )
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -259,7 +274,7 @@ class DenseWindow:
         if values.shape != tuple(int(value) for value in payload["shape"]):
             raise ValueError("dense window payload shape does not match encoded values")
         return cls(
-            schema=str(payload.get("schema", DENSE_WINDOW_SCHEMA)),
+            schema=str(payload["schema"]),
             window_id=str(payload["window_id"]),
             stream_id=str(payload["stream_id"]),
             stream_revision=int(payload["stream_revision"]),
@@ -293,10 +308,13 @@ class ContinuousWindowBuilder:
         self._validity: np.ndarray | None = None
         self._sample_input_ids: list[str] = []
         self._sample_available_times: list[TimePoint] = []
+        self._sample_times: list[TimePoint] = []
         self._sequence_start: int | None = None
         self._next_sequence: int | None = None
         self._first_sample_time: TimePoint | None = None
         self._sample_period_seconds: float | None = None
+        self._sample_clock_id: str | None = None
+        self._timing_mode: str | None = None
         self._stream_id: str | None = None
         self._stream_revision: int | None = None
         self._channel_ids: tuple[str, ...] | None = None
@@ -335,7 +353,7 @@ class ContinuousWindowBuilder:
                     row.append(values[row_index, column_index].item() if valid else None)
                 rows.append(row)
         payload: dict[str, Any] = {
-            "schema": "eegle.continuous_window_state.v1",
+            "schema": "eegle.continuous_window_state.v2",
             "window_samples": self.window_samples,
             "step_samples": self.step_samples,
             "dtype": None if values is None else values.dtype.name,
@@ -345,12 +363,15 @@ class ContinuousWindowBuilder:
             "sample_available_times": [
                 value.to_payload() for value in self._sample_available_times
             ],
+            "sample_times": [value.to_payload() for value in self._sample_times],
             "sequence_start": self._sequence_start,
             "next_sequence": self._next_sequence,
             "first_sample_time": None
             if self._first_sample_time is None
             else self._first_sample_time.to_payload(),
             "sample_period_seconds": self._sample_period_seconds,
+            "sample_clock_id": self._sample_clock_id,
+            "timing_mode": self._timing_mode,
             "stream_id": self._stream_id,
             "stream_revision": self._stream_revision,
             "channel_ids": None if self._channel_ids is None else list(self._channel_ids),
@@ -361,7 +382,11 @@ class ContinuousWindowBuilder:
         return payload
 
     def restore_state(self, payload: Mapping[str, Any]) -> None:
-        if payload.get("schema") != "eegle.continuous_window_state.v1":
+        schema = payload.get("schema")
+        if schema not in {
+            "eegle.continuous_window_state.v1",
+            "eegle.continuous_window_state.v2",
+        }:
             raise ValueError(
                 f"unsupported continuous window state schema: {payload.get('schema')}"
             )
@@ -399,26 +424,70 @@ class ContinuousWindowBuilder:
             for value in payload.get("sample_available_times", ())
         ]
         sample_count = 0 if values is None else int(values.shape[0])
-        if len(input_ids) != sample_count or len(available) != sample_count:
-            raise ValueError("continuous window state sample metadata length mismatch")
         first = payload.get("first_sample_time")
+        first_sample_time = None if first is None else TimePoint.from_payload(first)
+        sample_period = (
+            None
+            if payload.get("sample_period_seconds") is None
+            else float(payload["sample_period_seconds"])
+        )
+        if schema == "eegle.continuous_window_state.v1":
+            if sample_count and (first_sample_time is None or sample_period is None):
+                raise ValueError("legacy continuous window timing is incomplete")
+            sample_times = (
+                []
+                if first_sample_time is None or sample_period is None
+                else [
+                    TimePoint(
+                        first_sample_time.seconds + index * sample_period,
+                        first_sample_time.clock_id,
+                    )
+                    for index in range(sample_count)
+                ]
+            )
+        else:
+            sample_times = [
+                TimePoint.from_payload(value)
+                for value in payload.get("sample_times", ())
+            ]
+        if (
+            len(input_ids) != sample_count
+            or len(available) != sample_count
+            or len(sample_times) != sample_count
+        ):
+            raise ValueError("continuous window state sample metadata length mismatch")
         channels = payload.get("channel_ids")
         self._values = None if values is None else values.copy()
         self._validity = None if mask is None else mask.copy()
         self._sample_input_ids = input_ids
         self._sample_available_times = available
+        self._sample_times = sample_times
         self._sequence_start = (
             None if payload.get("sequence_start") is None else int(payload["sequence_start"])
         )
         self._next_sequence = (
             None if payload.get("next_sequence") is None else int(payload["next_sequence"])
         )
-        self._first_sample_time = None if first is None else TimePoint.from_payload(first)
-        self._sample_period_seconds = (
-            None
-            if payload.get("sample_period_seconds") is None
-            else float(payload["sample_period_seconds"])
-        )
+        self._first_sample_time = first_sample_time
+        self._sample_period_seconds = sample_period
+        if schema == "eegle.continuous_window_state.v1":
+            self._sample_clock_id = (
+                None if first_sample_time is None else first_sample_time.clock_id
+            )
+            self._timing_mode = None if first_sample_time is None else "regular"
+        else:
+            self._sample_clock_id = (
+                None
+                if payload.get("sample_clock_id") is None
+                else str(payload["sample_clock_id"])
+            )
+            self._timing_mode = (
+                None
+                if payload.get("timing_mode") is None
+                else str(payload["timing_mode"])
+            )
+        if self._timing_mode not in {None, "regular", "explicit"}:
+            raise ValueError("continuous window state has an invalid timing mode")
         self._stream_id = None if payload.get("stream_id") is None else str(payload["stream_id"])
         self._stream_revision = (
             None
@@ -443,22 +512,49 @@ class ContinuousWindowBuilder:
             raise ValueError("window context and packet availability must share a clock")
         if context.current_time.seconds < packet.available_time.seconds:
             raise ValueError("window builder cannot consume a packet before it is available")
-        if packet.first_sample_time is None or packet.sample_period_seconds is None:
-            raise ValueError("continuous dense windows currently require regular sample timing")
-        if self._next_sequence is not None and packet.sequence_start != self._next_sequence:
-            raise ValueError("continuous dense window input sequences must be contiguous")
+        sample_times = _dense_sample_times(packet)
+        timing_mode = "regular" if packet.sample_period_seconds is not None else "explicit"
+        sample_clock_id = sample_times[0].clock_id
         if self._stream_id is not None:
             if (
                 packet.stream_id != self._stream_id
                 or packet.stream_revision != self._stream_revision
                 or packet.channel_ids != self._channel_ids
-                or packet.first_sample_time.clock_id != self._first_sample_time.clock_id
-                or packet.sample_period_seconds != self._sample_period_seconds
+                or packet.values.dtype != self._values.dtype
+                or sample_clock_id != self._sample_clock_id
+                or timing_mode != self._timing_mode
+                or (
+                    timing_mode == "regular"
+                    and packet.sample_period_seconds != self._sample_period_seconds
+                )
             ):
                 raise ValueError("continuous dense window stream contract changed mid-buffer")
+        if self._next_sequence is not None and packet.sequence_start != self._next_sequence:
+            self._reset_buffer()
+
+    def _reset_buffer(self) -> None:
+        """Drop only the incomplete window at a source discontinuity."""
+
+        self._values = None
+        self._validity = None
+        self._sample_input_ids = []
+        self._sample_available_times = []
+        self._sample_times = []
+        self._sequence_start = None
+        self._next_sequence = None
+        self._first_sample_time = None
+        self._sample_period_seconds = None
+        self._sample_clock_id = None
+        self._timing_mode = None
+        self._stream_id = None
+        self._stream_revision = None
+        self._channel_ids = None
+        self._clock_mapping_revisions = {}
+        self._stream_revisions = {}
 
     def _append(self, packet: DenseSampleBatch) -> None:
-        if self._values is None:
+        packet_sample_times = _dense_sample_times(packet)
+        if self.buffered_samples == 0:
             self._values = np.array(packet.values, copy=True)
             self._validity = (
                 None
@@ -466,11 +562,16 @@ class ContinuousWindowBuilder:
                 else np.asarray(packet.validity_mask, dtype=bool).copy()
             )
             self._sequence_start = packet.sequence_start
-            self._first_sample_time = packet.first_sample_time
+            self._first_sample_time = packet_sample_times[0]
             self._sample_period_seconds = packet.sample_period_seconds
-            self._stream_id = packet.stream_id
-            self._stream_revision = packet.stream_revision
-            self._channel_ids = packet.channel_ids
+            self._sample_clock_id = packet_sample_times[0].clock_id
+            self._timing_mode = (
+                "regular" if packet.sample_period_seconds is not None else "explicit"
+            )
+            if self._stream_id is None:
+                self._stream_id = packet.stream_id
+                self._stream_revision = packet.stream_revision
+                self._channel_ids = packet.channel_ids
         else:
             self._values = np.concatenate((self._values, packet.values), axis=0)
             if self._validity is not None or packet.validity_mask is not None:
@@ -491,6 +592,7 @@ class ContinuousWindowBuilder:
                 self._validity = np.concatenate((current, incoming), axis=0)
         self._sample_input_ids.extend([packet.batch_id] * packet.sample_count)
         self._sample_available_times.extend([packet.available_time] * packet.sample_count)
+        self._sample_times.extend(packet_sample_times)
         self._next_sequence = packet.sequence_end + 1
         if packet.lineage is not None:
             self._merge_revisions(
@@ -513,7 +615,7 @@ class ContinuousWindowBuilder:
         assert self._values is not None
         assert self._sequence_start is not None
         assert self._first_sample_time is not None
-        assert self._sample_period_seconds is not None
+        assert len(self._sample_times) >= self.window_samples
         assert self._stream_id is not None
         assert self._stream_revision is not None
         assert self._channel_ids is not None
@@ -541,6 +643,27 @@ class ContinuousWindowBuilder:
             clock_mapping_revisions=self._clock_mapping_revisions,
             stream_revisions=self._stream_revisions,
         )
+        selected_times = self._sample_times[: self.window_samples]
+        if self._sample_period_seconds is not None:
+            end_seconds = (
+                selected_times[0].seconds
+                + self.window_samples * self._sample_period_seconds
+            )
+        else:
+            positive_intervals = [
+                current.seconds - previous.seconds
+                for previous, current in zip(selected_times, selected_times[1:])
+                if current.seconds > previous.seconds
+            ]
+            end_seconds = (
+                selected_times[-1].seconds + positive_intervals[-1]
+                if positive_intervals
+                else math.nextafter(selected_times[-1].seconds, math.inf)
+            )
+            end_seconds = max(
+                end_seconds,
+                math.nextafter(selected_times[0].seconds, math.inf),
+            )
         return DenseWindow(
             window_id=context.next_id("window"),
             stream_id=self._stream_id,
@@ -551,11 +674,10 @@ class ContinuousWindowBuilder:
             validity_mask=None
             if self._validity is None
             else self._validity[: self.window_samples],
-            start_time=self._first_sample_time,
+            start_time=selected_times[0],
             end_time=TimePoint(
-                self._first_sample_time.seconds
-                + self.window_samples * self._sample_period_seconds,
-                self._first_sample_time.clock_id,
+                end_seconds,
+                selected_times[0].clock_id,
             ),
             available_time=context.current_time,
             input_ids=input_ids,
@@ -565,18 +687,14 @@ class ContinuousWindowBuilder:
     def _discard(self, count: int) -> None:
         assert self._values is not None
         assert self._sequence_start is not None
-        assert self._first_sample_time is not None
-        assert self._sample_period_seconds is not None
         self._values = self._values[count:]
         if self._validity is not None:
             self._validity = self._validity[count:]
         del self._sample_input_ids[:count]
         del self._sample_available_times[:count]
+        del self._sample_times[:count]
         self._sequence_start += count
-        self._first_sample_time = TimePoint(
-            self._first_sample_time.seconds + count * self._sample_period_seconds,
-            self._first_sample_time.clock_id,
-        )
+        self._first_sample_time = self._sample_times[0] if self._sample_times else None
 
     @staticmethod
     def _merge_revisions(
@@ -607,6 +725,19 @@ class EventWindowBuilder:
             raise ValueError("max_buffer_samples must be positive")
         self._packets: list[DenseSampleBatch] = []
         self._events: list[SparseEvent] = []
+        self._buffered_samples = 0
+        self._next_sequence: int | None = None
+        self._evicted_through_time: TimePoint | None = None
+        self._rejected_events: dict[str, str] = {}
+        self._rejected_event_count = 0
+
+    @property
+    def buffered_samples(self) -> int:
+        return self._buffered_samples
+
+    @property
+    def rejected_events(self) -> Mapping[str, str]:
+        return dict(self._rejected_events)
 
     def process(
         self, input_port: str, value: Any, context: "ExecutionContext"
@@ -614,9 +745,10 @@ class EventWindowBuilder:
         if input_port == "samples":
             if not isinstance(value, DenseSampleBatch):
                 raise TypeError("event windows samples port requires DenseSampleBatch")
+            self._admit_dense_packet(value)
             self._packets.append(value)
-            if sum(packet.sample_count for packet in self._packets) > self.max_buffer_samples:
-                raise RuntimeError("event window sample buffer exceeded max_buffer_samples")
+            self._buffered_samples += value.sample_count
+            self._trim_to_limit()
         elif input_port == "events":
             if not isinstance(value, SparseEventBatch):
                 raise TypeError("event windows events port requires SparseEventBatch")
@@ -630,7 +762,11 @@ class EventWindowBuilder:
         ready: list[DenseWindow] = []
         pending: list[SparseEvent] = []
         for event in self._events:
-            window = self._event_window(event, context)
+            try:
+                window = self._event_window(event, context)
+            except _EventWindowExpired:
+                self._reject_event(event.event_id, "sample_history_evicted")
+                continue
             if window is None:
                 pending.append(event)
             else:
@@ -638,31 +774,132 @@ class EventWindowBuilder:
         self._events = pending
         return {"windows": tuple(ready)}
 
+    def _admit_dense_packet(self, packet: DenseSampleBatch) -> None:
+        if self._packets:
+            first = self._packets[0]
+            self._validate_dense_contract(
+                first, packet, _dense_sample_times(first)[0].clock_id
+            )
+        if self._next_sequence is not None and packet.sequence_start != self._next_sequence:
+            if self._packets:
+                previous = self._packets[-1]
+                self._evicted_through_time = _dense_sample_times(previous)[-1]
+            for event in self._events:
+                self._reject_event(event.event_id, "sequence_discontinuity")
+            self._packets = []
+            self._events = []
+            self._buffered_samples = 0
+        self._next_sequence = packet.sequence_end + 1
+
+    def _reject_event(self, event_id: str, reason: str) -> None:
+        self._rejected_event_count += 1
+        self._rejected_events[event_id] = reason
+        while len(self._rejected_events) > 128:
+            del self._rejected_events[next(iter(self._rejected_events))]
+
+    def _trim_to_limit(self) -> None:
+        overflow = self._buffered_samples - self.max_buffer_samples
+        while overflow > 0 and self._packets:
+            packet = self._packets[0]
+            discard = min(overflow, packet.sample_count)
+            self._evicted_through_time = _dense_sample_times(packet)[discard - 1]
+            if discard == packet.sample_count:
+                del self._packets[0]
+            else:
+                self._packets[0] = self._slice_dense_packet(packet, discard)
+            self._buffered_samples -= discard
+            overflow -= discard
+
+    @staticmethod
+    def _slice_dense_packet(
+        packet: DenseSampleBatch, start_index: int
+    ) -> DenseSampleBatch:
+        timing: dict[str, Any]
+        if packet.sample_times:
+            timing = {"sample_times": packet.sample_times[start_index:]}
+        else:
+            assert packet.first_sample_time is not None
+            assert packet.sample_period_seconds is not None
+            timing = {
+                "first_sample_time": TimePoint(
+                    packet.first_sample_time.seconds
+                    + start_index * packet.sample_period_seconds,
+                    packet.first_sample_time.clock_id,
+                ),
+                "sample_period_seconds": packet.sample_period_seconds,
+            }
+        return DenseSampleBatch(
+            batch_id=packet.batch_id,
+            stream_id=packet.stream_id,
+            stream_revision=packet.stream_revision,
+            sequence_start=packet.sequence_start + start_index,
+            channel_ids=packet.channel_ids,
+            values=packet.values[start_index:],
+            validity_mask=None
+            if packet.validity_mask is None
+            else packet.validity_mask[start_index:],
+            received_time=packet.received_time,
+            available_time=packet.available_time,
+            lineage=packet.lineage,
+            **timing,
+        )
+
     def _event_window(
         self, event: SparseEvent, context: "ExecutionContext"
     ) -> DenseWindow | None:
         if not self._packets:
             return None
         first = self._packets[0]
-        if first.first_sample_time is None or first.sample_period_seconds is None:
-            raise ValueError("event windows require regular dense sample timing")
-        sample_clock = first.first_sample_time.clock_id
+        first_times = _dense_sample_times(first)
+        sample_clock = first_times[0].clock_id
         if event.event_time.clock_id != sample_clock:
             raise ValueError("event and dense sample times must share a mapped clock")
         start = event.event_time.seconds + self.spec.start_offset_seconds
         end = event.event_time.seconds + self.spec.end_offset_seconds
+        if (
+            self._evicted_through_time is not None
+            and self._evicted_through_time.clock_id == sample_clock
+            and start <= self._evicted_through_time.seconds
+        ):
+            raise _EventWindowExpired
         selected: list[tuple[DenseSampleBatch, int]] = []
         latest_sample: float | None = None
         for packet in self._packets:
             self._validate_dense_contract(first, packet, sample_clock)
-            assert packet.first_sample_time is not None
-            assert packet.sample_period_seconds is not None
-            for index in range(packet.sample_count):
-                seconds = packet.first_sample_time.seconds + index * packet.sample_period_seconds
-                latest_sample = seconds if latest_sample is None else max(latest_sample, seconds)
+            packet_times = _dense_sample_times(packet)
+            packet_start = packet_times[0].seconds
+            packet_latest = packet_times[-1].seconds
+            latest_sample = (
+                packet_latest
+                if latest_sample is None
+                else max(latest_sample, packet_latest)
+            )
+            if packet_latest < start or packet_start >= end:
+                continue
+            if packet.sample_period_seconds is not None:
+                period = packet.sample_period_seconds
+                first_index = max(
+                    0,
+                    math.ceil((start - packet_start) / period - 1e-9),
+                )
+                stop_index = min(
+                    packet.sample_count,
+                    math.ceil((end - packet_start) / period - 1e-9),
+                )
+            else:
+                seconds = [value.seconds for value in packet_times]
+                first_index = int(np.searchsorted(seconds, start, side="left"))
+                stop_index = int(np.searchsorted(seconds, end, side="left"))
+            for index in range(first_index, max(first_index, stop_index)):
+                seconds = packet_times[index].seconds
                 if start <= seconds < end:
                     selected.append((packet, index))
-        if latest_sample is None or latest_sample < end - first.sample_period_seconds:
+        if latest_sample is None:
+            return None
+        if first.sample_period_seconds is not None:
+            if latest_sample < end - first.sample_period_seconds:
+                return None
+        elif latest_sample < end:
             return None
         if not selected:
             raise ValueError(f"event {event.event_id} window contains no samples")
@@ -712,31 +949,44 @@ class EventWindowBuilder:
         first: DenseSampleBatch, packet: DenseSampleBatch, sample_clock: str
     ) -> None:
         if (
-            packet.first_sample_time is None
-            or packet.sample_period_seconds is None
-            or packet.stream_id != first.stream_id
+            packet.stream_id != first.stream_id
             or packet.stream_revision != first.stream_revision
             or packet.channel_ids != first.channel_ids
-            or packet.first_sample_time.clock_id != sample_clock
-            or packet.sample_period_seconds != first.sample_period_seconds
+            or packet.values.dtype != first.values.dtype
+            or _dense_sample_times(packet)[0].clock_id != sample_clock
+            or bool(packet.sample_times) != bool(first.sample_times)
+            or (
+                not packet.sample_times
+                and packet.sample_period_seconds != first.sample_period_seconds
+            )
         ):
             raise ValueError("event window dense stream contract changed")
 
     def snapshot_state(self) -> Mapping[str, Any]:
         payload = {
-            "schema": "eegle.event_window_state.v1",
+            "schema": "eegle.event_window_state.v2",
             "spec": [self.spec.start_offset_seconds, self.spec.end_offset_seconds],
             "event_kinds": list(self.event_kinds),
             "max_buffer_samples": self.max_buffer_samples,
             "packets": [value.to_payload() for value in self._packets],
             "events": [value.to_payload() for value in self._events],
+            "next_sequence": self._next_sequence,
+            "evicted_through_time": None
+            if self._evicted_through_time is None
+            else self._evicted_through_time.to_payload(),
+            "rejected_events": dict(sorted(self._rejected_events.items())),
+            "rejected_event_count": self._rejected_event_count,
         }
         payload["state_hash"] = canonical_hash(payload)
         return payload
 
     def restore_state(self, payload: Mapping[str, Any]) -> None:
         content = {key: value for key, value in payload.items() if key != "state_hash"}
-        if payload.get("schema") != "eegle.event_window_state.v1":
+        schema = payload.get("schema")
+        if schema not in {
+            "eegle.event_window_state.v1",
+            "eegle.event_window_state.v2",
+        }:
             raise ValueError("unsupported event window state")
         if payload.get("state_hash") != canonical_hash(content):
             raise ValueError("event window state hash mismatch")
@@ -749,3 +999,31 @@ class EventWindowBuilder:
             raise ValueError("event window state belongs to different parameters")
         self._packets = [DenseSampleBatch.from_payload(value) for value in payload["packets"]]
         self._events = [SparseEvent.from_payload(value) for value in payload["events"]]
+        self._buffered_samples = sum(value.sample_count for value in self._packets)
+        if self._buffered_samples > self.max_buffer_samples:
+            raise ValueError("event window state exceeds its sample buffer limit")
+        if schema == "eegle.event_window_state.v1":
+            self._next_sequence = (
+                None if not self._packets else self._packets[-1].sequence_end + 1
+            )
+        else:
+            self._next_sequence = (
+                None
+                if payload.get("next_sequence") is None
+                else int(payload["next_sequence"])
+            )
+        evicted = payload.get("evicted_through_time")
+        self._evicted_through_time = (
+            None if evicted is None else TimePoint.from_payload(evicted)
+        )
+        self._rejected_events = {
+            require_identifier(str(key), "event_id"): str(value)
+            for key, value in dict(payload.get("rejected_events") or {}).items()
+        }
+        self._rejected_event_count = int(payload.get("rejected_event_count", 0))
+        if self._rejected_event_count < len(self._rejected_events):
+            raise ValueError("event window rejection count is inconsistent")
+
+
+class _EventWindowExpired(Exception):
+    """Internal control flow for an event older than the bounded sample history."""

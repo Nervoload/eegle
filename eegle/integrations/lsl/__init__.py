@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib
 import json
 import math
+from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Iterable, Mapping, Sequence
@@ -283,6 +284,8 @@ class LslSource:
         self._sequence = 0
         self._batch = 0
         self._last_timestamp: float | None = None
+        self._watermark: TimePoint | None = None
+        self._pending_metadata: deque[MetadataEvent] = deque()
         self._losses: list[LslPacketLoss] = []
         self._reconnect_count = 0
         self._open()
@@ -290,6 +293,16 @@ class LslSource:
     @property
     def stream_spec(self) -> StreamSpec:
         return self._stream_spec
+
+    @property
+    def is_live(self) -> bool:
+        """Tell the engine that an empty read is an ordinary open-stream state."""
+
+        return True
+
+    @property
+    def watermark(self) -> TimePoint | None:
+        return self._watermark
 
     @property
     def packet_loss_observations(self) -> tuple[LslPacketLoss, ...]:
@@ -308,6 +321,8 @@ class LslSource:
     def read(self) -> DenseSampleBatch | SparseEventBatch | MetadataEvent | None:
         if self._closed:
             return None
+        if self._pending_metadata:
+            return self._pending_metadata.popleft()
         for attempt in range(self._reconnect_attempts + 1):
             try:
                 samples, timestamps = self._inlet.pull_chunk(
@@ -322,6 +337,9 @@ class LslSource:
                 self._close_inlet()
                 self._open()
         if not timestamps:
+            self._watermark = TimePoint(
+                float(self._pylsl.local_clock()), self._boundary_clock_id
+            )
             return None
         if len(samples) != len(timestamps):
             raise ValueError("LSL chunk sample and timestamp counts differ")
@@ -333,6 +351,7 @@ class LslSource:
         self._last_timestamp = float(timestamps[-1])
         self._batch += 1
         boundary = TimePoint(now, self._boundary_clock_id)
+        self._watermark = boundary
         kind = self._stream_spec.content_kind
         if kind == ContentKind.DENSE_SAMPLES:
             values = np.asarray(samples, dtype=self._stream_spec.sample_dtype)
@@ -348,7 +367,8 @@ class LslSource:
                 received_time=boundary,
                 available_time=boundary,
                 sample_times=tuple(
-                    TimePoint(float(value), self._stream_spec.clock_id) for value in timestamps
+                    TimePoint(float(value), self._stream_spec.clock_id)
+                    for value in timestamps
                 ),
             )
         if kind == ContentKind.SPARSE_EVENTS:
@@ -371,31 +391,39 @@ class LslSource:
                 sequence_start=sequence,
                 events=events,
             )
-        raw = samples[-1]
-        value = raw[0] if isinstance(raw, Sequence) and len(raw) == 1 else raw
-        if isinstance(value, str):
-            try:
-                metadata = json.loads(value)
-            except json.JSONDecodeError:
+        for index, (raw, timestamp) in enumerate(zip(samples, timestamps)):
+            value = raw[0] if isinstance(raw, Sequence) and len(raw) == 1 else raw
+            if isinstance(value, str):
+                try:
+                    metadata = json.loads(value)
+                except json.JSONDecodeError:
+                    metadata = {"value": value}
+            elif isinstance(value, Mapping):
+                metadata = dict(value)
+            else:
                 metadata = {"value": value}
-        elif isinstance(value, Mapping):
-            metadata = dict(value)
-        else:
-            metadata = {"value": value}
-        return MetadataEvent(
-            event_id=f"metadata.{self._stream_spec.stream_id}.{sequence + len(samples) - 1}",
-            stream_id=self._stream_spec.stream_id,
-            stream_revision=self._stream_spec.revision,
-            sequence=sequence + len(samples) - 1,
-            kind="lsl_metadata",
-            event_time=TimePoint(float(timestamps[-1]), self._stream_spec.clock_id),
-            received_time=boundary,
-            available_time=boundary,
-            metadata=metadata,
-        )
+            self._pending_metadata.append(
+                MetadataEvent(
+                    event_id=(
+                        f"metadata.{self._stream_spec.stream_id}.{sequence + index}"
+                    ),
+                    stream_id=self._stream_spec.stream_id,
+                    stream_revision=self._stream_spec.revision,
+                    sequence=sequence + index,
+                    kind="lsl_metadata",
+                    event_time=TimePoint(
+                        float(timestamp), self._stream_spec.clock_id
+                    ),
+                    received_time=boundary,
+                    available_time=boundary,
+                    metadata=metadata,
+                )
+            )
+        return self._pending_metadata.popleft()
 
     def close(self) -> None:
         self._closed = True
+        self._pending_metadata.clear()
         self._close_inlet()
 
     def _open(self) -> None:

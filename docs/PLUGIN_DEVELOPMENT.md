@@ -22,7 +22,10 @@ plugin-attested result.
 Model plugins return `ModelResult`. EEGle—not the plugin—constructs prediction
 identity, timing, role, lineage, and evidence. Inference metadata must remain
 label-blind: stimulus condition, response correctness, and training labels are
-not model inputs. Artifact-backed plugins use `MODEL_CONTEXT_V1` and read only
+not model inputs. A causal route carrying sparse events or metadata directly to
+a model must have an upstream `SignalContract` that explicitly declares
+`model_input_safety: label_blind`; outcome records remain forbidden causal model
+inputs. Artifact-backed plugins use `MODEL_CONTEXT_V1` and read only
 digest-verified `ModelConstructionContext` materializations.
 
 Use this repository’s

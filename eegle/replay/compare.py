@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 from typing import Any, Mapping, Protocol, Sequence
 
 from eegle._domain import EquivalenceLevel
 from eegle._validation import require_finite
-from eegle.compiler.lock import canonical_json_bytes
+from eegle.compiler.lock import canonical_hash, canonical_json_bytes
 from eegle.recording.evidence import EvidenceRecord
 
 
@@ -389,8 +389,53 @@ def _trace_projection(record: EvidenceRecord) -> Mapping[str, Any]:
                 "reason": payload["reason"],
             }
         )
+    elif record.record_type == "component_state":
+        projected.update(
+            {
+                "component_id": payload.get("component_id"),
+                "component_kind": payload.get("component_kind"),
+            }
+        )
+    elif record.record_type == "phase_finished":
+        projected.update(
+            {
+                "phase_id": payload["phase_id"],
+                "status": payload["status"],
+                "failure": payload.get("failure"),
+            }
+        )
+    elif record.record_type == "phase_transition":
+        projected.update(
+            {
+                "source_phase": payload["source_phase"],
+                "target_phase": payload["target_phase"],
+                "condition": payload["condition"],
+                "attempt": payload["attempt"],
+            }
+        )
+    elif record.record_type == "model_comparison":
+        projected.update(
+            {
+                "group_id": payload["group_id"],
+                "output_port": payload["output_port"],
+                "status": payload["status"],
+                "member_components": payload["member_components"],
+                "missing_members": payload.get("missing_members", ()),
+                "reason_code": payload.get("reason_code"),
+            }
+        )
+    elif record.record_type == "artifact_registered":
+        projected.update(
+            {
+                "phase_id": payload["phase_id"],
+                "artifact_id": payload["artifact_id"],
+                "digest": payload["digest"],
+                "producer_component": payload["producer_component"],
+                "producer_port": payload["producer_port"],
+            }
+        )
     else:
-        projected["payload_keys"] = sorted(payload)
+        projected["payload"] = _nonnumeric_structure(payload)
     return projected
 
 
@@ -423,8 +468,16 @@ def _semantic_projection(record: EvidenceRecord) -> Any:
         trace.update(
             {
                 "component_id": payload.get("component_id"),
-                "state_schema": state.get("schema") if isinstance(state, Mapping) else None,
-                "state_hash": state.get("state_hash") if isinstance(state, Mapping) else None,
+                "state_schema": (
+                    None
+                    if payload.get("component_kind") == "source"
+                    else state.get("schema") if isinstance(state, Mapping) else None
+                ),
+                "state_hash": (
+                    None
+                    if payload.get("component_kind") == "source"
+                    else canonical_hash(state)
+                ),
             }
         )
     elif record.record_type == "action_request":
@@ -477,6 +530,24 @@ def _semantic_projection(record: EvidenceRecord) -> Any:
     elif record.record_type == "action_receipt":
         receipt = payload["receipt"]
         trace["details"] = receipt.get("details", {})
+    elif record.record_type == "phase_finished":
+        trace.update(
+            {
+                "admitted_input_count": payload.get("admitted_input_count"),
+                "emission_count": payload.get("emission_count"),
+                "work_count": payload.get("work_count"),
+            }
+        )
+    elif record.record_type == "model_comparison":
+        trace.update(
+            {
+                "prediction_ids": payload.get("prediction_ids", {}),
+                "result_digests": payload.get("result_digests", {}),
+                "input_ids": payload.get("input_ids", ()),
+                "admitted_input_ids": payload.get("admitted_input_ids", ()),
+                "outputs_equal": payload.get("outputs_equal"),
+            }
+        )
     return trace
 
 

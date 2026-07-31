@@ -151,7 +151,7 @@ class ModelComparison:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ModelComparison":
         return cls(
-            schema=str(payload.get("schema", MODEL_COMPARISON_SCHEMA)),
+            schema=str(payload["schema"]),
             comparison_id=str(payload["comparison_id"]),
             group_id=str(payload["group_id"]),
             output_port=str(payload["output_port"]),
@@ -244,7 +244,7 @@ class ModelResultDisposition:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ModelResultDisposition":
         return cls(
-            schema=str(payload.get("schema", MODEL_RESULT_DISPOSITION_SCHEMA)),
+            schema=str(payload["schema"]),
             disposition_id=str(payload["disposition_id"]),
             component_id=str(payload["component_id"]),
             output_port=str(payload["output_port"]),

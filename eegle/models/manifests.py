@@ -47,9 +47,7 @@ class ModelImplementationRequirement:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ModelImplementationRequirement":
         return cls(
-            schema=str(
-                payload.get("schema", MODEL_IMPLEMENTATION_REQUIREMENT_SCHEMA)
-            ),
+            schema=str(payload["schema"]),
             plugin_id=str(payload["plugin_id"]),
             version_spec=str(payload["version_spec"]),
         )
@@ -151,7 +149,7 @@ class ModelManifest:
         if payload.get("contract_digest") != contract.contract_digest:
             raise ValueError("model manifest contract digest mismatch")
         value = cls(
-            schema=str(payload.get("schema", MODEL_MANIFEST_SCHEMA)),
+            schema=str(payload["schema"]),
             model_id=str(payload["model_id"]),
             model_version=str(payload["model_version"]),
             contract=contract,

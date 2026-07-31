@@ -212,7 +212,7 @@ class SyntheticModelTestVector:
             description=None
             if payload.get("description") is None
             else str(payload["description"]),
-            schema=str(payload.get("schema", SYNTHETIC_TEST_VECTOR_SCHEMA_ID)),
+            schema=str(payload["schema"]),
         )
         if payload.get("vector_hash") != value.vector_hash:
             raise ValueError("synthetic model test-vector hash mismatch")
@@ -277,7 +277,7 @@ class ModelPackageIndex:
                 SyntheticModelTestVector.from_payload(item)
                 for item in payload.get("test_vectors", ())
             ),
-            schema=str(payload.get("schema", MODEL_PACKAGE_SCHEMA_ID)),
+            schema=str(payload["schema"]),
         )
         if payload.get("index_hash") != value.index_hash:
             raise ValueError("model package index hash mismatch")
@@ -492,7 +492,7 @@ class ModelPackageCheckReport:
                 ModelPackageIssue.from_payload(issue)
                 for issue in payload.get("issues", ())
             ),
-            schema=str(payload.get("schema", MODEL_PACKAGE_CHECK_SCHEMA_ID)),
+            schema=str(payload["schema"]),
         )
         if payload.get("ready") is not value.ready:
             raise ValueError("model package check readiness mismatch")

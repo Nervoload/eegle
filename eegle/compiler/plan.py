@@ -1266,7 +1266,7 @@ class ExecutionPlan:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ExecutionPlan":
         plan = cls(
-            schema=str(payload.get("schema", EXECUTION_PLAN_SCHEMA)),
+            schema=str(payload["schema"]),
             plan_id=str(payload["plan_id"]),
             execution_mode=ExecutionMode(str(payload["execution_mode"])),
             plugins=tuple(LockedPlugin.from_payload(item) for item in payload["plugins"]),

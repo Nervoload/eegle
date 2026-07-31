@@ -104,7 +104,7 @@ class ExecutionLock:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ExecutionLock":
         value = cls(
-            schema=str(payload.get("schema", EXECUTION_LOCK_SCHEMA)),
+            schema=str(payload["schema"]),
             lock_id=str(payload["lock_id"]),
             plan_hash=str(payload["plan_hash"]),
             spec_hashes={str(key): str(item) for key, item in payload["spec_hashes"].items()},

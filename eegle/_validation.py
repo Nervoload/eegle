@@ -7,9 +7,33 @@ import re
 from types import MappingProxyType
 from typing import Any, Mapping
 
-
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,254}$")
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+_SECRET_FIELD_SUFFIXES = frozenset(
+    {
+        "api_key",
+        "api_token",
+        "access_token",
+        "refresh_token",
+        "client_secret",
+        "credential",
+        "credentials",
+        "password",
+        "passwd",
+        "private_key",
+        "secret",
+        "token",
+    }
+)
+_SECRET_REFERENCE_SUFFIXES = frozenset(
+    {
+        "credential_id",
+        "credential_ref",
+        "secret_id",
+        "secret_ref",
+        "secret_reference",
+    }
+)
 
 
 def require_identifier(value: str, field: str) -> str:
@@ -34,6 +58,22 @@ def require_finite(value: float, field: str) -> float:
     if not math.isfinite(normalized):
         raise ValueError(f"{field} must be finite")
     return normalized
+
+
+def is_literal_secret_field(value: str) -> bool:
+    """Recognize secret-shaped field names across snake, kebab, and camel case."""
+
+    expanded = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(value).strip())
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", expanded).strip("_").casefold()
+    if any(
+        normalized == suffix or normalized.endswith(f"_{suffix}")
+        for suffix in _SECRET_REFERENCE_SUFFIXES
+    ):
+        return False
+    return any(
+        normalized == suffix or normalized.endswith(f"_{suffix}")
+        for suffix in _SECRET_FIELD_SUFFIXES
+    )
 
 
 def freeze_json(value: Any) -> Any:
