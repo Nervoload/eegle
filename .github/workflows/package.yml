@@ -109,7 +109,7 @@ jobs:
             "$RUNNER_TEMP/eegle-${{ matrix.capability }}/bin/python" -m pip install "ruamel.yaml>=0.18.10,<0.19"
             "$RUNNER_TEMP/eegle-${{ matrix.capability }}/bin/python" -c "from eegle.authoring import load_yaml_design; print(load_yaml_design.__name__)"
           else
-            "$RUNNER_TEMP/eegle-${{ matrix.capability }}/bin/python" -m pip install "pylsl>=1.18,<2"
+            "$RUNNER_TEMP/eegle-${{ matrix.capability }}/bin/python" -m pip install "pylsl>=1.18,<2" "mne>=1.12,<2"
             "$RUNNER_TEMP/eegle-${{ matrix.capability }}/bin/python" "$GITHUB_WORKSPACE/tests/fixtures/phase7_native_lsl_smoke.py"
           fi
 

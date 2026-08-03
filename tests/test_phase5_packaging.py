@@ -111,10 +111,20 @@ class Phase5PackagingTests(unittest.TestCase):
             self.assertIn("eegle/operations/preflight.py", names)
             self.assertIn("eegle/operations/projects.py", names)
             self.assertIn("eegle/operations/sessions.py", names)
+            self.assertIn("eegle/operations/validation.py", names)
             self.assertIn("eegle/operations/cli.py", names)
+            self.assertIn("eegle/validation/__init__.py", names)
+            self.assertIn("eegle/validation/contracts.py", names)
+            self.assertIn("eegle/validation/evidence.py", names)
+            self.assertIn("eegle/validation/metrics.py", names)
+            self.assertIn("eegle/validation/qualification.py", names)
+            self.assertIn("eegle/validation/qualification_profile.json", names)
+            self.assertIn("eegle/validation/service.py", names)
             self.assertIn("eegle/models/packaging.py", names)
             self.assertIn("eegle/integrations/__init__.py", names)
             self.assertIn("eegle/integrations/mne.py", names)
+            self.assertIn("eegle/integrations/support.py", names)
+            self.assertIn("eegle/integrations/research_support.json", names)
             self.assertIn("eegle/integrations/lsl/__init__.py", names)
             self.assertNotIn("eegle/integrations/legacy_sessions.py", names)
             self.assertNotIn("eegle/integrations/task_environment.py", names)
@@ -165,6 +175,10 @@ class Phase5PackagingTests(unittest.TestCase):
             self.assertFalse(any(name.startswith("eegle/ml/") for name in sdist_names))
             self.assertFalse(any(name.startswith("tests/") for name in sdist_names))
             self.assertIn("eegle/operations/plugin_tools.py", sdist_names)
+            self.assertIn("eegle/integrations/research_support.json", sdist_names)
+            self.assertIn(
+                "eegle/validation/qualification_profile.json", sdist_names
+            )
 
             installed = root / "installed"
             installed_base = subprocess.run(
@@ -200,7 +214,7 @@ class Phase5PackagingTests(unittest.TestCase):
             )
             self.assertEqual(invoked.returncode, 0, invoked.stdout + invoked.stderr)
             self.assertIn(
-                "{new,compile,detect,explain,diff,graph,rehearse,preflight,run,inspect,replay,compare,export,model,plugin}",
+                "{new,compile,detect,explain,diff,graph,rehearse,preflight,run,inspect,validate,replay,compare,export,model,plugin}",
                 invoked.stdout,
             )
             self.assertNotIn("check-setup", invoked.stdout + invoked.stderr)
@@ -249,6 +263,7 @@ class Phase5PackagingTests(unittest.TestCase):
                     "session.clean.run",
                 ),
                 ("inspect", str(project_root)),
+                ("validate", str(project_root)),
                 ("replay", str(project_root)),
             )
             for command in commands:

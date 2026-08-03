@@ -24,21 +24,24 @@ outlet is constructed.
   records without introducing a second runtime;
 - selectors require `uid`, `source_id`, or the exact `name`/`type` pair and
   reject zero or multiple matches;
-- inlets enable liblsl clock synchronization; optional dejittering also enables
-  monotonization, while the default preserves unsmoothed synchronized times;
+- inlets preserve raw device timestamps and label them with the declared source
+  clock; the device-to-boundary `time_correction` is recorded separately as
+  `source_clock_observation` evidence;
 - bounded reconnect re-resolves the same exact selector and never falls over to
   another matching-looking stream;
-- regular-stream timestamp gaps advance packet sequence identity and expose a
-  typed estimated-loss observation;
+- regular-stream timestamp gaps advance packet sequence identity and emit typed
+  loss evidence; reconnect attempts and refreshed clock mappings are also
+  emitted through the normal engine evidence path;
 - native discovery upgrades LSL's short network `StreamInfo` through a
   temporary observational inlet so channel labels and units come from the full
   descriptor; the temporary inlet is closed before a source owns live I/O;
 - discovery emits typed source, channel, unit, nominal-rate, clock, reconnect,
   and packet-loss capabilities for the normal Phase 7 deployment proposal.
 
-LSL post-processing is explicit because liblsl documents that clock-sync maps
-remote timestamps into the local clock domain and that enabling post-processing
-means original timestamps are no longer recoverable. Liblsl also documents
+LSL post-processing is disabled at this boundary because liblsl documents that
+clock-sync maps remote timestamps into the local clock domain and that enabling
+post-processing means original timestamps are no longer recoverable. EEGle
+instead retains the raw source clock and persists the measured mapping. Liblsl also documents
 recoverable inlet reconnection by stream UID. See the upstream
 [post-processing flags](https://labstreaminglayer.readthedocs.io/projects/liblsl/ref/enums.html),
 [stream inlet and time-correction contract](https://labstreaminglayer.readthedocs.io/projects/liblsl/ref/inlet.html),
@@ -96,3 +99,12 @@ run is completed and its redacted evidence identity is recorded here:
 Until that record exists, documentation and machine output must never claim
 more than `simulated_validated`; an installation without the optional dependency
 reports `unavailable`.
+
+Automated engine acceptance already covers transient silence, reconnect,
+timestamp gaps, packet-loss and sequence-gap evidence, synchronous
+cancellation, a bounded duration, and final bundle persistence using a
+simulated LSL network. Live-source bundles declare the clock observations they
+require; `eegle validate` reports missing required clock evidence as
+`insufficient_evidence` and recorded reconnect/loss facts as warnings with
+counts and evidence references. This is integration evidence, not real EEG
+evidence.

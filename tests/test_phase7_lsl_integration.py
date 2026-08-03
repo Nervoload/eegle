@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from dataclasses import replace
+from pathlib import Path
 
 from eegle.authoring import ExperimentBuilder
 from eegle.compiler import compile_suite
@@ -30,8 +32,17 @@ from eegle.operations import (
 )
 from eegle.plugins import PluginRegistry
 from eegle.processing.windows import ContinuousWindowBuilder
-from eegle.specs import StorageBinding
+from eegle.recording import EvidenceReader, Session, persist_engine_run
+from eegle.runtime import EngineStatus, ExecutionEngine
+from eegle.specs import DeploymentSpec, ProtocolSpec, StorageBinding, SuiteSpec
 from eegle.streams import ContentKind, DenseSampleBatch, MetadataEvent, SparseEventBatch
+from eegle.validation import (
+    ValidationStatus,
+    validate_evidence,
+    validate_evidence_payloads,
+)
+from tests.fixtures.phase5_model_components import compile_phase5_suite
+from tests.test_phase5_plan_execution import _payload, _recording_suite, _registry
 
 
 class _Xml:
@@ -209,6 +220,38 @@ def _network():
     return _Pylsl((dense, sparse, metadata)), dense, sparse, metadata
 
 
+def _compiled_lsl_recording(*, timeout_seconds: float):
+    suite = _recording_suite()
+    suite["phases"][0]["timeout_seconds"] = timeout_seconds
+    deployment = _payload("deployment.json")
+    source_binding = deployment["component_bindings"][0]
+    source_binding["plugin_id"] = LSL_DENSE_SOURCE_PLUGIN_ID
+    source_binding["version_spec"] = "~=0.1.0"
+    source_binding["config"] = {
+        "stream_spec": source_binding["config"]["stream_spec"],
+        "selector": {"uid": "uid-eeg"},
+        "boundary_clock_id": "boundary.clock",
+        "timestamp_mode": "raw_with_mapping",
+        "resolve_timeout_seconds": 0,
+        "pull_timeout_seconds": 0,
+    }
+    deployment["resources"][0]["kind"] = "lsl_stream"
+    deployment["resources"][0]["selector"] = {"uid": "uid-eeg"}
+    deployment["resources"][0]["capabilities"] = ["lsl", "clock_mapping"]
+    deployment["clock_mappings"][0]["strategy"] = "online_estimated"
+    deployment["clock_mappings"][0]["maximum_uncertainty_seconds"] = 0.01
+    registry = _registry()
+    for descriptor in lsl_plugin_descriptors():
+        registry.register(descriptor)
+    compiled = compile_phase5_suite(
+        ProtocolSpec.from_payload(_payload("protocol.json")),
+        SuiteSpec.from_payload(suite),
+        DeploymentSpec.from_payload(deployment),
+        registry,
+    )
+    return compiled, registry, source_binding["config"]
+
+
 class Phase7LslIntegrationTests(unittest.TestCase):
     def test_discovery_is_typed_exact_and_truthfully_simulation_validated(self) -> None:
         pylsl, dense, sparse, metadata = _network()
@@ -294,7 +337,26 @@ class Phase7LslIntegrationTests(unittest.TestCase):
         self.assertEqual(second.sequence_start, 5)
         self.assertEqual(source.packet_loss_observations[0].estimated_missing_samples, 3)
         self.assertEqual(source.clock_observation().correction_seconds, 0.002)
-        self.assertTrue(pylsl.inlets[-1].processing_flags & pylsl.proc_clocksync)
+        self.assertEqual(pylsl.inlets[-1].processing_flags, 0)
+        observations = source.drain_evidence_observations()
+        self.assertEqual(
+            tuple(value[0] for value in observations),
+            (
+                "source_clock_observation",
+                "source_reconnect",
+                "source_clock_observation",
+                "source_packet_loss",
+            ),
+        )
+        self.assertTrue(
+            all(
+                value.clock_id == by_plugin[LSL_DENSE_SOURCE_PLUGIN_ID].stream.clock_id
+                for value in (*first.sample_times, *second.sample_times)
+            )
+        )
+        self.assertEqual(
+            observations[0][1]["timestamp_mode"], "raw_with_mapping"
+        )
 
         marker_source = LslSource(by_plugin[LSL_SPARSE_SOURCE_PLUGIN_ID].config, pylsl_module=pylsl)
         marker = marker_source.read()
@@ -493,6 +555,118 @@ assert len(lsl_plugin_descriptors()) == 6
             if value.check_id.endswith(".available")
         )
         self.assertEqual(identity.status.value, "fail")
+
+    def test_compiled_engine_handles_silence_reconnect_gap_timeout_and_persistence(self) -> None:
+        compiled, registry, config = _compiled_lsl_recording(timeout_seconds=0.03)
+        pylsl, dense, _, _ = _network()
+        pylsl.clock = -0.02
+        dense.failures = 1
+        source = LslSource(config, pylsl_module=pylsl)
+        engine = ExecutionEngine.from_plan(
+            compiled.plan,
+            registry,
+            component_overrides={"source.neural": source},
+        )
+
+        run = engine.run()
+
+        self.assertEqual(run.status, EngineStatus.TIMED_OUT)
+        self.assertEqual(len(run.captured_packets), 2)
+        record_types = [value.record_type for value in run.evidence]
+        for expected in (
+            "source_clock_observation",
+            "source_reconnect",
+            "source_packet_loss",
+            "source_sequence_gap",
+            "phase_timeout",
+            "phase_finished",
+        ):
+            self.assertIn(expected, record_types)
+        semantic = validate_evidence_payloads(
+            run.evidence,
+            subject_id="session.lsl.lifecycle",
+        )
+        self.assertEqual(semantic.status, ValidationStatus.PASS, semantic.details)
+        health = next(
+            value
+            for value in validate_evidence(
+                run.evidence,
+                subject_id="session.lsl.lifecycle",
+                required_source_observations=("source_clock_observation",),
+            ).results
+            if value.result_id == "source.acquisition_observations"
+        )
+        self.assertEqual(health.status, ValidationStatus.WARNING)
+        observations = {
+            value.observation_id: value.value for value in health.observations
+        }
+        self.assertEqual(observations["source.clock_observation_count"], 2)
+        self.assertEqual(observations["source.reconnect_count"], 1)
+        self.assertEqual(observations["source.packet_loss_event_count"], 1)
+
+        without_clock = tuple(
+            value
+            for value in run.evidence
+            if value.record_type != "source_clock_observation"
+        )
+        missing_health = next(
+            value
+            for value in validate_evidence(
+                without_clock,
+                subject_id="session.lsl.missing-clock",
+                required_source_observations=("source_clock_observation",),
+            ).results
+            if value.result_id == "source.acquisition_observations"
+        )
+        self.assertEqual(
+            missing_health.status,
+            ValidationStatus.INSUFFICIENT_EVIDENCE,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            session = Session.create(
+                Path(directory) / "session",
+                session_id="session.lsl.lifecycle",
+            )
+            bundle = persist_engine_run(
+                session,
+                run,
+                plan=compiled.plan,
+                streams=(source.stream_spec,),
+                bundle_id="bundle.lsl.lifecycle",
+            )
+            reader = EvidenceReader.open(session, bundle.bundle_id)
+            self.assertTrue(reader.verify().valid)
+            self.assertEqual(
+                tuple(reader.bundle.metadata["source_observation_requirements"]),
+                ("source_clock_observation",),
+            )
+            persisted_types = {
+                value.record_type for value in reader.records()
+            }
+
+        self.assertIn("source_clock_observation", persisted_types)
+        self.assertIn("source_packet_loss", persisted_types)
+
+    def test_compiled_live_lsl_run_has_a_synchronous_cancellation_path(self) -> None:
+        compiled, registry, config = _compiled_lsl_recording(timeout_seconds=1.0)
+        pylsl, dense, _, _ = _network()
+        pylsl.clock = -0.02
+        dense.chunks.clear()
+        source = LslSource(config, pylsl_module=pylsl)
+        engine = ExecutionEngine.from_plan(
+            compiled.plan,
+            registry,
+            component_overrides={"source.neural": source},
+        )
+        engine.cancel()
+
+        run = engine.run()
+
+        self.assertEqual(run.status, EngineStatus.CANCELLED)
+        self.assertTrue(
+            any(value.record_type == "phase_finished" for value in run.evidence)
+        )
 
 
 if __name__ == "__main__":

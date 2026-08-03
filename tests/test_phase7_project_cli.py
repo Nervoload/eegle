@@ -217,6 +217,7 @@ class Phase7ProjectCliTests(unittest.TestCase):
                 ),
                 (["--json", "inspect", str(root)], "inspect"),
                 (["--json", "replay", str(root)], "replay"),
+                (["--json", "validate", str(root), "--strict"], "validate"),
             ):
                 code, output, errors = _invoke_cli(arguments)
                 payload = json.loads(output)

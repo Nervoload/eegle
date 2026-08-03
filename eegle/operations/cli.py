@@ -5,8 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from eegle import __version__
 from eegle._validation import thaw_json
@@ -55,7 +56,9 @@ from eegle.operations.sessions import (
     inspect_session,
     replay_session,
 )
+from eegle.operations.validation import validate_target
 from eegle.plugins import PluginRegistry
+from eegle.validation import ValidationStatus
 
 COMMAND_RESULT_SCHEMA_ID = OPERATION_RESULT_SCHEMA_ID
 
@@ -269,6 +272,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--strict",
         action="store_true",
         help="return a non-zero status when evidence needs attention",
+    )
+
+    validate = commands.add_parser(
+        "validate",
+        help="read-only validation of a project or immutable session bundle",
+    )
+    validate.add_argument("target", help="project or session directory")
+    validate.add_argument("--bundle-id")
+    validate.add_argument(
+        "--no-replay",
+        action="store_true",
+        help="skip replay and report replay equivalence as insufficient evidence",
+    )
+    validate.add_argument(
+        "--strict",
+        action="store_true",
+        help="return a non-zero status for failure or insufficient evidence",
     )
 
     replay = commands.add_parser("replay", help="replay one immutable evidence bundle")
@@ -626,6 +646,18 @@ def _dispatch(args: argparse.Namespace) -> Mapping[str, Any]:
         if args.strict and inspection.outcome != OperationOutcome.COMPLETE:
             _raise_strict_result("inspect", inspection.to_payload())
         return inspection.to_payload()
+    if args.command == "validate":
+        report = validate_target(
+            args.target,
+            bundle_id=args.bundle_id,
+            replay=not args.no_replay,
+        )
+        if args.strict and report.status in {
+            ValidationStatus.FAIL,
+            ValidationStatus.INSUFFICIENT_EVIDENCE,
+        }:
+            _raise_strict_validation(report.to_payload())
+        return report.to_payload()
     if args.command == "replay":
         target = _session_target(args.target, require_session=True)
         assert target is not None
@@ -843,6 +875,35 @@ def _raise_strict_result(operation: str, result: Mapping[str, Any]) -> None:
     )
 
 
+def _raise_strict_validation(result: Mapping[str, Any]) -> None:
+    status = str(result.get("status"))
+    failed = status == ValidationStatus.FAIL.value
+    results = result.get("results") or ()
+    first = next(
+        (
+            value
+            for value in results
+            if isinstance(value, Mapping) and value.get("status") == status
+        ),
+        {},
+    )
+    raise OperationError(
+        "validate",
+        ExitCode.INTEGRITY_FAILED if failed else ExitCode.INSUFFICIENT_EVIDENCE,
+        (
+            OperationDiagnostic(
+                "validation.failed" if failed else "validation.insufficient_evidence",
+                OperationCategory.INTEGRITY
+                if failed
+                else OperationCategory.INSUFFICIENT_EVIDENCE,
+                "Validation failed" if failed else "Validation is inconclusive",
+                str(first.get("summary") or f"Validation status is {status}."),
+                details={"result": result},
+            ),
+        ),
+    )
+
+
 def _require_successful_run(result: Any) -> None:
     if result.successful:
         return
@@ -901,6 +962,10 @@ def _render_success(operation: str, envelope: Mapping[str, Any], *, machine: boo
             print(f"Session inspection: {result['status']}")
             print(f"Integrity: {'valid' if result['valid'] else 'needs attention'}")
             print(f"Bundles: {len(result['bundles'])}")
+    elif operation == "validate":
+        print(f"Validation: {result['status']}")
+        print(f"Checks: {len(result['results'])}")
+        print(f"Report: {result['report_hash']}")
     elif operation == "replay":
         if result["status"] == OperationOutcome.UNAVAILABLE.value:
             print("Replay unavailable; recorded evidence was left unchanged")
@@ -961,6 +1026,7 @@ def _operation_hint(arguments: Sequence[str]) -> str:
         "rehearse",
         "run",
         "inspect",
+        "validate",
         "replay",
         "compare",
         "export",

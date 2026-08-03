@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 import os
 import secrets
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Mapping
+from typing import TYPE_CHECKING, Any
 
 from eegle._validation import freeze_json, require_digest, require_identifier, thaw_json
 from eegle.compiler.lock import canonical_hash, canonical_json_bytes
@@ -18,7 +19,6 @@ from eegle.recording.artifacts import (
     Sensitivity,
 )
 from eegle.recording.evidence import EvidenceRecord, EvidenceStatus
-from eegle.recording.publications import ArtifactPublication
 from eegle.recording.external import (
     ExternalArtifactVerification,
     ExternalArtifactVerifier,
@@ -33,6 +33,7 @@ from eegle.recording.framing import (
     recover_framed_prefix,
 )
 from eegle.recording.ledgers import EvidenceLedgerWriter, read_evidence_ledger
+from eegle.recording.publications import ArtifactPublication
 from eegle.recording.stores import (
     FRAMED_SAMPLE_MEDIA_TYPE,
     FramedSampleStore,
@@ -48,7 +49,12 @@ from eegle.recording.writer_state import (
 )
 from eegle.streams.channels import StreamSpec
 from eegle.streams.clocks import TimePoint
-from eegle.streams.packets import Packet
+from eegle.streams.packets import (
+    DenseSampleBatch,
+    MetadataEvent,
+    Packet,
+    SparseEventBatch,
+)
 
 if TYPE_CHECKING:
     from eegle.recording.session import Session
@@ -281,6 +287,7 @@ class EvidenceWriter:
         self._artifacts: list[ArtifactReference] = []
         self._states: list[ComponentStateSnapshot] = []
         self._last_sequence: int | None = None
+        self._last_emitted_time: TimePoint | None = None
         self._closed = False
         self._resume_token = resume_token or secrets.token_urlsafe(32)
         self._state = EvidenceWriterState(
@@ -305,6 +312,31 @@ class EvidenceWriter:
         """
 
         return self._resume_token
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    @property
+    def last_sequence(self) -> int | None:
+        return self._last_sequence
+
+    @property
+    def record_count(self) -> int:
+        return 0 if self._last_sequence is None else self._last_sequence + 1
+
+    @property
+    def last_emitted_time(self) -> TimePoint | None:
+        return self._last_emitted_time
+
+    def update_metadata(self, values: Mapping[str, Any]) -> None:
+        """Merge bounded run metadata before the bundle is finalized."""
+
+        self._require_open()
+        merged = {**thaw_json(self.metadata), **thaw_json(freeze_json(values))}
+        self.metadata = freeze_json(merged)
+        self._state = self._state.replacing(metadata=merged)
+        self._sync_state()
 
     @classmethod
     def resume(
@@ -398,6 +430,9 @@ class EvidenceWriter:
             ComponentStateSnapshot.from_payload(payload) for payload in state.component_states
         ]
         self._last_sequence = authoritative_last
+        self._last_emitted_time = (
+            None if not result.records else result.records[-1].emitted_time
+        )
         self._closed = False
         self._resume_token = resume_token
         self._state = state.replacing(
@@ -412,6 +447,7 @@ class EvidenceWriter:
         self._require_open()
         self._ledger.append(record)
         self._last_sequence = record.sequence
+        self._last_emitted_time = record.emitted_time
         self._sync_state()
 
     def add_execution_capture(self, reference: ArtifactReference) -> None:
@@ -519,18 +555,21 @@ class EvidenceWriter:
         result: Any,
         *,
         streams: Iterable[StreamSpec],
+        include_evidence: bool = True,
+        include_capture: bool = True,
     ) -> None:
         """Persist any semantic engine result exposing the typed evidence contract."""
 
         if result.plan_hash != self.plan_hash:
             raise ValueError("engine result plan hash does not match evidence writer")
-        for record in result.evidence:
-            self.append(record)
-        packets = tuple(result.captured_packets)
+        if include_evidence:
+            for record in result.evidence:
+                self.append(record)
+        packets = tuple(result.captured_packets) if include_capture else ()
         if packets:
             self.capture_packets(streams, packets)
         component_versions: dict[str, str] = {}
-        for record in result.evidence:
+        for record in result.evidence if include_evidence else ():
             if record.record_type == "component_started":
                 component_versions[str(record.payload["component_id"])] = str(
                     record.payload["component_version"]
@@ -626,6 +665,98 @@ class EvidenceWriter:
                 "writer state references artifacts absent from the session registry: "
                 + ", ".join(missing)
             )
+
+
+class IncrementalEngineEvidenceSink:
+    """Durably append engine evidence and materialize state as it is emitted."""
+
+    def __init__(self, writer: EvidenceWriter) -> None:
+        if not isinstance(writer, EvidenceWriter):
+            raise TypeError("incremental engine evidence sink requires EvidenceWriter")
+        self.writer = writer
+        self.last_record: EvidenceRecord | None = None
+        self._component_versions: dict[str, str] = {}
+
+    @property
+    def record_count(self) -> int:
+        return self.writer.record_count
+
+    def __call__(self, record: EvidenceRecord) -> None:
+        if not isinstance(record, EvidenceRecord):
+            raise TypeError("engine evidence sink accepts only EvidenceRecord values")
+        self.writer.append(record)
+        self.last_record = record
+        if record.record_type == "component_started":
+            self._component_versions[str(record.payload["component_id"])] = str(
+                record.payload["component_version"]
+            )
+        elif record.record_type == "component_state":
+            component_id = str(record.payload["component_id"])
+            self.writer.snapshot_component(
+                component_id=component_id,
+                component_version=self._component_versions.get(
+                    component_id, "unknown"
+                ),
+                sequence=record.sequence,
+                captured_time=record.emitted_time,
+                state=dict(record.payload["state"]),
+            )
+
+
+class IncrementalEngineCaptureSink:
+    """Append admitted engine packets directly to one durable sample store."""
+
+    def __init__(
+        self,
+        writer: EvidenceWriter,
+        streams: Iterable[StreamSpec],
+        *,
+        durable: bool = True,
+    ) -> None:
+        if not isinstance(writer, EvidenceWriter):
+            raise TypeError("incremental engine capture sink requires EvidenceWriter")
+        values = tuple(streams)
+        if not values or any(not isinstance(value, StreamSpec) for value in values):
+            raise TypeError("incremental engine capture sink requires StreamSpec values")
+        identities = tuple((value.stream_id, value.revision) for value in values)
+        if len(identities) != len(set(identities)):
+            raise ValueError("incremental capture streams must have unique revisions")
+        self.writer = writer
+        self.streams = values
+        self.durable = bool(durable)
+        self.packet_count = 0
+        self._store: FramedSampleStore | None = None
+        self._reference: ArtifactReference | None = None
+
+    def __call__(self, packet: Packet) -> None:
+        if not isinstance(packet, (DenseSampleBatch, SparseEventBatch, MetadataEvent)):
+            raise TypeError("incremental engine capture sink accepts only packet values")
+        if self._reference is not None:
+            raise RuntimeError("incremental engine capture sink is closed")
+        if self._store is None:
+            self._store = FramedSampleStore(
+                self.writer.session.artifacts,
+                store_id=f"{self.writer.bundle_id}.execution-capture",
+                purpose=SampleStorePurpose.EXECUTION_CAPTURE,
+                namespace=f"bundles/{self.writer.bundle_id}",
+                relative_uri=(
+                    f"bundles/{self.writer.bundle_id}/execution-capture.eegle"
+                ),
+                durable=self.durable,
+            )
+            for stream in self.streams:
+                self._store.open_stream(stream)
+        self._store.append(packet)
+        self.packet_count += 1
+
+    def close(self) -> ArtifactReference | None:
+        if self._reference is not None:
+            return self._reference
+        if self._store is None:
+            return None
+        self._reference = self._store.close()
+        self.writer.add_execution_capture(self._reference)
+        return self._reference
 
 
 class EvidenceReader:
@@ -839,31 +970,63 @@ def persist_engine_run(
     plan: Any,
     streams: Iterable[StreamSpec],
     bundle_id: str | None = None,
+    writer: EvidenceWriter | None = None,
+    evidence_streamed: bool = False,
+    capture_streamed: bool = False,
 ) -> EvidenceBundle:
     """Create a complete/partial/failed bundle from one semantic engine result."""
 
     records = tuple(result.evidence)
-    if not records:
+    if capture_streamed and writer is None:
+        raise ValueError("streamed capture requires an existing evidence writer")
+    if not records and (writer is None or writer.last_sequence is None):
         raise ValueError("an engine result without evidence cannot form an evidence bundle")
     if getattr(plan, "plan_hash", None) != result.plan_hash:
         raise ValueError("execution plan hash does not match engine result")
     if not callable(getattr(plan, "to_payload", None)):
         raise TypeError("execution plan must implement to_payload()")
-    identifier = bundle_id or f"bundle.{result.execution_id}"
-    equivalence = getattr(getattr(result, "equivalence_ceiling", None), "value", None)
-    writer = EvidenceWriter(
-        session,
-        bundle_id=identifier,
-        plan_hash=result.plan_hash,
-        created_time=records[0].emitted_time,
-        metadata={
-            "execution_id": result.execution_id,
-            "engine_status": result.status.value,
-            "equivalence_ceiling": equivalence,
-            "failure": getattr(result, "failure", None),
-        },
+    identifier = (
+        writer.bundle_id
+        if writer is not None
+        else bundle_id or f"bundle.{result.execution_id}"
     )
-    writer.add_execution_plan(plan)
+    if writer is not None:
+        if writer.session is not session:
+            raise ValueError("incremental evidence writer belongs to another session")
+        if writer.plan_hash != result.plan_hash:
+            raise ValueError("incremental evidence writer plan hash differs from result")
+        if bundle_id is not None and writer.bundle_id != bundle_id:
+            raise ValueError("incremental evidence writer bundle identity differs")
+        if not evidence_streamed:
+            raise ValueError(
+                "an existing evidence writer requires evidence_streamed=True"
+            )
+    equivalence = getattr(getattr(result, "equivalence_ceiling", None), "value", None)
+    metadata = {
+        "execution_id": result.execution_id,
+        "engine_status": result.status.value,
+        "equivalence_ceiling": equivalence,
+        "failure": getattr(result, "failure", None),
+        "incremental_evidence": evidence_streamed,
+        "incremental_capture": capture_streamed,
+        "source_observation_requirements": list(
+            source_observation_requirements(plan)
+        ),
+        "source_clock_drift_tolerance_seconds": (
+            source_clock_drift_tolerance_seconds(plan)
+        ),
+    }
+    if writer is None:
+        writer = EvidenceWriter(
+            session,
+            bundle_id=identifier,
+            plan_hash=result.plan_hash,
+            created_time=records[0].emitted_time,
+            metadata=metadata,
+        )
+        writer.add_execution_plan(plan)
+    else:
+        writer.update_metadata(metadata)
     namespace = f"bundles/{identifier}"
     for value in getattr(result, "artifacts", ()):
         if isinstance(value, ArtifactPublication):
@@ -937,7 +1100,12 @@ def persist_engine_run(
                 "engine result artifacts must be ArtifactReference or ArtifactPublication"
             )
         writer.add_artifact(reference)
-    writer.write_engine_result(result, streams=streams)
+    writer.write_engine_result(
+        result,
+        streams=streams,
+        include_evidence=not evidence_streamed,
+        include_capture=not capture_streamed,
+    )
     status_value = str(result.status.value)
     evidence_status = {
         "complete": EvidenceStatus.COMPLETE,
@@ -946,7 +1114,43 @@ def persist_engine_run(
         "blocked": EvidenceStatus.PARTIAL,
         "failed": EvidenceStatus.FAILED,
     }.get(status_value, EvidenceStatus.FAILED)
-    return writer.finalize(status=evidence_status, completed_time=records[-1].emitted_time)
+    completed_time = (
+        records[-1].emitted_time
+        if records
+        else writer.last_emitted_time
+    )
+    if completed_time is None:
+        raise ValueError("evidence bundle has no completion timestamp")
+    return writer.finalize(status=evidence_status, completed_time=completed_time)
+
+
+def source_observation_requirements(plan: Any) -> tuple[str, ...]:
+    """Return runtime observations required by transport-bound source plugins."""
+
+    plugin_ids = {
+        str(getattr(value, "plugin_id", "")) for value in getattr(plan, "components", ())
+    }
+    if any(
+        value.startswith("eegle.integrations.lsl_") and value.endswith("_source")
+        for value in plugin_ids
+    ):
+        return ("source_clock_observation",)
+    return ()
+
+
+def source_clock_drift_tolerance_seconds(plan: Any) -> float | None:
+    """Return the strictest compiled mapping uncertainty for a live source."""
+
+    if not source_observation_requirements(plan):
+        return None
+    mappings = getattr(plan, "clock_policy", {}).get("mappings", ())
+    values = [
+        float(value["maximum_uncertainty_seconds"])
+        for value in mappings
+        if isinstance(value, Mapping)
+        and value.get("maximum_uncertainty_seconds") is not None
+    ]
+    return None if not values else min(values)
 
 
 def complete_interrupted_finalization(

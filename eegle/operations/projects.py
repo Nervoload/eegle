@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 import numpy as np
 
@@ -66,9 +67,17 @@ from eegle.operations.preflight import (
 from eegle.plugins import PluginRegistry
 from eegle.recording import (
     EvidenceRecord,
+    EvidenceStatus,
+    EvidenceWriter,
+    IncrementalEngineCaptureSink,
+    IncrementalEngineEvidenceSink,
     Session,
     SessionStatus,
     persist_engine_run,
+)
+from eegle.recording.bundles import (
+    source_clock_drift_tolerance_seconds,
+    source_observation_requirements,
 )
 from eegle.runtime import EngineStatus, ExecutionEngine
 from eegle.specs import (
@@ -814,6 +823,7 @@ def run_project(
     *,
     session_id: str | None = None,
     kind: str = "run",
+    evidence_resume_token: str | None = None,
     _registry: PluginRegistry | None = None,
     _supplemental_evidence: tuple[tuple[str, Mapping[str, Any]], ...] = (),
 ) -> ProjectRun:
@@ -851,6 +861,7 @@ def run_project(
         session_id=identifier,
         kind=kind,
         registry=_registry,
+        evidence_resume_token=evidence_resume_token,
         supplemental_evidence=_supplemental_evidence,
     )
     session_uri = session_root.relative_to(project.root).as_posix()
@@ -1031,9 +1042,14 @@ def run_locked_plan(
     session_id: str,
     kind: str = "run",
     registry: PluginRegistry | None = None,
+    evidence_resume_token: str | None = None,
     supplemental_evidence: tuple[tuple[str, Mapping[str, Any]], ...] = (),
 ) -> ProjectRun:
-    """Run a verified plan/lock pair without reading authoring or project state."""
+    """Run a verified plan/lock pair without reading authoring or project state.
+
+    A supervisor may supply and retain ``evidence_resume_token`` to authorize
+    recovery after a process-boundary failure. The token is never persisted.
+    """
 
     try:
         plan = read_plan(plan_path)
@@ -1058,30 +1074,161 @@ def run_locked_plan(
             "lock_hash": lock.lock_hash,
         },
     )
+    writer: EvidenceWriter | None = None
+    evidence_sink: IncrementalEngineEvidenceSink | None = None
+    capture_sink: IncrementalEngineCaptureSink | None = None
     try:
-        engine = ExecutionEngine.from_plan(plan, registry)
+        execution_segment = canonical_hash(
+            {"session_id": session.session_id, "plan_hash": plan.plan_hash}
+        ).removeprefix("sha256:")[:16]
+        execution_id = f"execution.{execution_segment}"
+        execution_clock = str(
+            plan.clock_policy["suite"]["execution_clock_id"]
+        )
+        writer = EvidenceWriter(
+            session,
+            bundle_id=f"bundle.{execution_id}",
+            plan_hash=plan.plan_hash,
+            created_time=TimePoint(0.0, execution_clock),
+            durable=True,
+            resume_token=evidence_resume_token,
+            metadata={
+                "execution_id": execution_id,
+                "operation": kind,
+                "incremental_evidence": True,
+                "source_observation_requirements": list(
+                    source_observation_requirements(plan)
+                ),
+                "source_clock_drift_tolerance_seconds": (
+                    source_clock_drift_tolerance_seconds(plan)
+                ),
+            },
+        )
+        writer.add_execution_plan(plan)
+        evidence_sink = IncrementalEngineEvidenceSink(writer)
+        streams = _streams_from_plan(plan)
+        capture_sink = IncrementalEngineCaptureSink(writer, streams)
+        engine = ExecutionEngine.from_plan(
+            plan,
+            registry,
+            execution_id=execution_id,
+            evidence_sink=evidence_sink,
+            capture_sink=capture_sink,
+            retain_evidence=False,
+            retain_phase_details=False,
+        )
         result = engine.run()
         if supplemental_evidence:
-            records = list(result.evidence)
-            emitted = records[-1].emitted_time
+            emitted = (
+                engine.graph.current_time
+                if evidence_sink.last_record is None
+                else evidence_sink.last_record.emitted_time
+            )
             for record_type, payload in supplemental_evidence:
-                sequence = len(records)
-                records.append(
+                sequence = evidence_sink.record_count
+                evidence_sink(
                     EvidenceRecord(
-                        record_id=f"{record_type}.{sequence}",
+                        record_id=f"evidence.supplemental.{sequence}",
                         record_type=record_type,
                         sequence=sequence,
                         emitted_time=emitted,
                         payload=payload,
                     )
                 )
-            result = replace(result, evidence=tuple(records))
-        streams = _streams_from_plan(plan)
-        bundle = persist_engine_run(session, result, plan=plan, streams=streams)
+        capture_sink.close()
+        bundle = persist_engine_run(
+            session,
+            result,
+            plan=plan,
+            streams=streams,
+            bundle_id=writer.bundle_id,
+            writer=writer,
+            evidence_streamed=True,
+            capture_streamed=True,
+        )
         session.finalize(_session_status(result.status))
-    except Exception:
+    except Exception as exc:
+        if writer is not None and not writer.closed:
+            completed_time = (
+                TimePoint(0.0, str(plan.clock_policy["suite"]["execution_clock_id"]))
+                if evidence_sink is None or evidence_sink.last_record is None
+                else evidence_sink.last_record.emitted_time
+            )
+            try:
+                if capture_sink is not None:
+                    capture_sink.close()
+                writer.update_metadata(
+                    {
+                        "interrupted": True,
+                        "interruption": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+                writer.finalize(
+                    status=EvidenceStatus.FAILED,
+                    completed_time=completed_time,
+                )
+            except Exception:
+                if not writer.closed:
+                    try:
+                        writer.close_unfinalized()
+                    except Exception:
+                        pass
         if session.status == SessionStatus.OPEN:
             session.finalize(SessionStatus.FAILED)
+        raise
+    except BaseException as exc:
+        # A supervisor-owned secret keeps process-loss evidence resumable.
+        # Without one, publish a partial bundle so Ctrl-C never strands an
+        # open writer that the caller cannot authorize.
+        finalized_partial = False
+        if writer is not None and not writer.closed:
+            completed_time = (
+                TimePoint(0.0, str(plan.clock_policy["suite"]["execution_clock_id"]))
+                if evidence_sink is None or evidence_sink.last_record is None
+                else evidence_sink.last_record.emitted_time
+            )
+            if evidence_resume_token is None:
+                try:
+                    if capture_sink is not None:
+                        capture_sink.close()
+                    writer.update_metadata(
+                        {
+                            "interrupted": True,
+                            "interruption": f"{type(exc).__name__}: execution cancelled",
+                        }
+                    )
+                    writer.finalize(
+                        status=EvidenceStatus.PARTIAL,
+                        completed_time=completed_time,
+                    )
+                    finalized_partial = True
+                except Exception:
+                    if not writer.closed:
+                        try:
+                            writer.close_unfinalized()
+                        except Exception:
+                            pass
+            else:
+                try:
+                    if capture_sink is not None:
+                        capture_sink.close()
+                    writer.update_metadata(
+                        {
+                            "interrupted": True,
+                            "interruption": (
+                                f"{type(exc).__name__}: process boundary exit"
+                            ),
+                        }
+                    )
+                except Exception:
+                    pass
+                if not writer.closed:
+                    try:
+                        writer.close_unfinalized()
+                    except Exception:
+                        pass
+        if finalized_partial and session.status == SessionStatus.OPEN:
+            session.finalize(SessionStatus.PARTIAL)
         raise
     return ProjectRun(
         session.root,
@@ -1089,7 +1236,7 @@ def run_locked_plan(
         bundle.bundle_id,
         plan.plan_hash,
         result.status,
-        len(result.evidence),
+        evidence_sink.record_count,
         kind,
     )
 

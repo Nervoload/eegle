@@ -89,7 +89,10 @@ class Phase7ReleaseIntegrityTests(unittest.TestCase):
             workflow,
         )
         self.assertGreaterEqual(workflow.count("forbidden = ('eegle.analysis'"), 2)
-        self.assertIn('pip install "pylsl>=1.18,<2"', workflow)
+        self.assertIn(
+            'pip install "pylsl>=1.18,<2" "mne>=1.12,<2"',
+            workflow,
+        )
         self.assertIn("tests/fixtures/phase7_native_lsl_smoke.py", workflow)
         self.assertIn("for name in 01-recording 02-event-locked-observation", workflow)
         self.assertIn("publish_testpypi:", workflow)
@@ -101,6 +104,11 @@ class Phase7ReleaseIntegrityTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("outlet.wait_for_consumers", native_smoke)
         self.assertIn('== ("C3", "C4")', native_smoke)
+        self.assertIn("dense_batch_to_mne_raw", native_smoke)
+        self.assertIn('timing_representation == "explicit"', native_smoke)
+        self.assertIn("sparse_events_to_mne_annotations", native_smoke)
+        self.assertIn("dense_windows_to_mne_epochs", native_smoke)
+        self.assertIn("mne_raw_to_replay_inputs", native_smoke)
 
 
 if __name__ == "__main__":

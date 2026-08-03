@@ -1,0 +1,221 @@
+{
+  "schema": "eegle.research_integration_support.v1",
+  "snapshot_date": "2026-08-01",
+  "capabilities": [
+    {
+      "capability_id": "foundation_model.external_plugin",
+      "integration": "foundation_model",
+      "representable": true,
+      "adapter_available": false,
+      "validated": false,
+      "validation_levels": [],
+      "reference_supported": false,
+      "evidence": [
+        "eegle.models.ModelContract",
+        "eegle.plugins.PluginDescriptor"
+      ],
+      "limitations": [
+        "No first-party foundation-model adapter or support-qualified reference is shipped."
+      ]
+    },
+    {
+      "capability_id": "lsl.clock_mapping_observations",
+      "integration": "lsl",
+      "representable": true,
+      "adapter_available": true,
+      "validated": true,
+      "validation_levels": [
+        "unit",
+        "simulated_engine"
+      ],
+      "reference_supported": false,
+      "evidence": [
+        "tests.test_phase7_lsl_integration",
+        "eegle.validation.source_clock_observation"
+      ],
+      "limitations": [
+        "The contract preserves raw device timestamps plus a measured mapping; it does not relabel raw timestamps as boundary-clock time."
+      ]
+    },
+    {
+      "capability_id": "lsl.dense_source",
+      "integration": "lsl",
+      "representable": true,
+      "adapter_available": true,
+      "validated": true,
+      "validation_levels": [
+        "unit",
+        "simulated_engine",
+        "installed_artifact"
+      ],
+      "reference_supported": true,
+      "evidence": [
+        "tests.test_phase7_lsl_integration",
+        "tests/fixtures/phase7_native_lsl_smoke.py",
+        "reference_projects/06-lsl-observe-only"
+      ],
+      "limitations": [
+        "Real EEG observe-only acceptance remains an external Phase 7 gate."
+      ]
+    },
+    {
+      "capability_id": "lsl.metadata_source",
+      "integration": "lsl",
+      "representable": true,
+      "adapter_available": true,
+      "validated": true,
+      "validation_levels": [
+        "unit"
+      ],
+      "reference_supported": false,
+      "evidence": [
+        "tests.test_phase7_lsl_integration"
+      ],
+      "limitations": [
+        "No installed-artifact metadata-stream or published reference-project acceptance is retained."
+      ]
+    },
+    {
+      "capability_id": "lsl.reconnect_packet_loss",
+      "integration": "lsl",
+      "representable": true,
+      "adapter_available": true,
+      "validated": true,
+      "validation_levels": [
+        "unit",
+        "simulated_engine"
+      ],
+      "reference_supported": false,
+      "evidence": [
+        "tests.test_phase7_lsl_integration",
+        "eegle.validation.source_packet_loss",
+        "eegle.validation.source_reconnect"
+      ],
+      "limitations": [
+        "Loss counts are sampling-rate estimates derived from timestamp gaps, not transport-level packet acknowledgements."
+      ]
+    },
+    {
+      "capability_id": "lsl.sparse_marker_source",
+      "integration": "lsl",
+      "representable": true,
+      "adapter_available": true,
+      "validated": true,
+      "validation_levels": [
+        "unit"
+      ],
+      "reference_supported": false,
+      "evidence": [
+        "tests.test_phase7_lsl_integration"
+      ],
+      "limitations": [
+        "No installed-artifact sparse-marker or published reference-project acceptance is retained."
+      ]
+    },
+    {
+      "capability_id": "mne.annotations.sparse_markers",
+      "integration": "mne",
+      "representable": true,
+      "adapter_available": true,
+      "validated": true,
+      "validation_levels": [
+        "unit"
+      ],
+      "reference_supported": false,
+      "evidence": [
+        "tests.test_phase7_mne_bridge.Phase7MneBridgeTests.test_sparse_markers_attach_as_annotations_with_exact_timing_sidecar"
+      ],
+      "limitations": [
+        "MNE annotations use raw-relative onset; exact event identity and availability remain in the EEGle sidecar."
+      ]
+    },
+    {
+      "capability_id": "mne.epochs.admitted_windows",
+      "integration": "mne",
+      "representable": true,
+      "adapter_available": true,
+      "validated": true,
+      "validation_levels": [
+        "unit"
+      ],
+      "reference_supported": false,
+      "evidence": [
+        "tests.test_phase7_mne_bridge.Phase7MneBridgeTests.test_admitted_dense_windows_export_as_epochs_with_lineage_sidecar"
+      ],
+      "limitations": [
+        "EpochsArray is a regular-grid projection; exact admitted input IDs, availability, sequence spans, and window bounds remain in the EEGle sidecar."
+      ]
+    },
+    {
+      "capability_id": "mne.raw.explicit_lsl",
+      "integration": "mne",
+      "representable": true,
+      "adapter_available": true,
+      "validated": true,
+      "validation_levels": [
+        "unit"
+      ],
+      "reference_supported": false,
+      "evidence": [
+        "tests.test_phase7_mne_bridge.Phase7MneBridgeTests.test_lsl_shaped_explicit_timestamps_export_without_attribute_error",
+        "tests/fixtures/phase7_native_lsl_smoke.py"
+      ],
+      "limitations": [
+        "RawArray uses the declared regular grid; explicit source sample times remain in the EEGle sidecar.",
+        "The expanded installed-artifact LSL-to-MNE workflow requires a current remote run record."
+      ]
+    },
+    {
+      "capability_id": "mne.raw.regular_dense",
+      "integration": "mne",
+      "representable": true,
+      "adapter_available": true,
+      "validated": true,
+      "validation_levels": [
+        "unit"
+      ],
+      "reference_supported": false,
+      "evidence": [
+        "tests.test_phase7_mne_bridge.Phase7MneBridgeTests.test_dense_packet_export_scales_units_and_preserves_timing_sidecar"
+      ],
+      "limitations": [
+        "Only voltage-scaled dense signals are accepted by the v1 export bridge."
+      ]
+    },
+    {
+      "capability_id": "mne.replay_inputs.eeg_raw_annotations",
+      "integration": "mne",
+      "representable": true,
+      "adapter_available": true,
+      "validated": true,
+      "validation_levels": [
+        "unit"
+      ],
+      "reference_supported": false,
+      "evidence": [
+        "tests.test_phase7_mne_bridge.Phase7MneBridgeTests.test_mne_raw_and_annotations_become_separate_replay_streams"
+      ],
+      "limitations": [
+        "The caller must supply source-clock and boundary-availability authority; the adapter does not infer them from MNE metadata.",
+        "The v1 replay bridge accepts EEG channels and raw-relative annotations only."
+      ]
+    },
+    {
+      "capability_id": "pyriemann.external_plugin",
+      "integration": "pyriemann",
+      "representable": true,
+      "adapter_available": false,
+      "validated": false,
+      "validation_levels": [],
+      "reference_supported": false,
+      "evidence": [
+        "eegle.models.ModelContract",
+        "eegle.plugins.PluginDescriptor"
+      ],
+      "limitations": [
+        "No first-party pyRiemann adapter or support-qualified reference is shipped."
+      ]
+    }
+  ],
+  "matrix_hash": "sha256:880a00ada5b1d818a3d1b9bdd35e30ad2be108763c2faec956a4111aeb10e310"
+}

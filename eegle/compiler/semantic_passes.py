@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from eegle._domain import ComponentKind
 from eegle.compiler.diagnostics import (
@@ -12,10 +13,11 @@ from eegle.compiler.diagnostics import (
 )
 from eegle.compiler.plan import PlannedModelBinding
 from eegle.plugins.registry import PluginDescriptor
+from eegle.runtime.outcomes import OutcomeUse
 from eegle.specs.deployment import DeploymentSpec
 from eegle.specs.protocol import ProtocolSpec
 from eegle.specs.suite import ComponentSpec, SuiteSpec
-from eegle.runtime.outcomes import OutcomeUse
+from eegle.validation.metrics import validate_protocol_metrics as metric_spec_issues
 
 
 def validate_phases(
@@ -496,6 +498,25 @@ def validate_triggers_and_permissions(
                     "only actuator components may declare action capabilities",
                 )
             )
+
+def validate_acceptance_metrics(
+    protocol: ProtocolSpec,
+    suite: SuiteSpec,
+    resolved: Mapping[str, PluginDescriptor],
+    diagnostics: list[CompilationDiagnostic],
+) -> None:
+    """Reject unsupported or unresolvable protocol metrics before execution."""
+
+    for issue in metric_spec_issues(protocol, suite, resolved):
+        diagnostics.append(
+            _error(
+                issue.code,
+                issue.path,
+                issue.message,
+                **dict(issue.details),
+            )
+        )
+
 
 def _validate_trigger_target(
     path: str,

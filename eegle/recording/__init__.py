@@ -14,10 +14,16 @@ from eegle.recording.bundles import (
     EvidenceBundle,
     EvidenceReader,
     EvidenceWriter,
+    IncrementalEngineCaptureSink,
+    IncrementalEngineEvidenceSink,
     complete_interrupted_finalization,
     persist_engine_run,
 )
-from eegle.recording.evidence import EvidenceBundleManifest, EvidenceRecord, EvidenceStatus
+from eegle.recording.evidence import (
+    EvidenceBundleManifest,
+    EvidenceRecord,
+    EvidenceStatus,
+)
 from eegle.recording.external import (
     ExternalArtifactVerification,
     ExternalArtifactVerifier,
@@ -26,8 +32,8 @@ from eegle.recording.external import (
 )
 from eegle.recording.framing import (
     EvidenceIntegrityError,
-    FramingInspection,
     FramedEvidenceWriter,
+    FramingInspection,
     IntegrityIssue,
     IntegrityIssueCode,
     IntegrityStatus,
@@ -58,7 +64,10 @@ from eegle.recording.policies import (
     export_evidence_bundle,
     read_portable_export,
 )
+from eegle.recording.producers import PredictionArtifactProducer
+from eegle.recording.publications import ArtifactPublication
 from eegle.recording.session import Session, SessionManifest, SessionStatus
+from eegle.recording.sinks import InMemoryEvidenceSink, InMemoryRecordSink
 from eegle.recording.stores import (
     FramedSampleStore,
     SampleStore,
@@ -66,9 +75,6 @@ from eegle.recording.stores import (
     SampleStoreReadResult,
     read_framed_sample_store,
 )
-from eegle.recording.sinks import InMemoryEvidenceSink, InMemoryRecordSink
-from eegle.recording.producers import PredictionArtifactProducer
-from eegle.recording.publications import ArtifactPublication
 from eegle.recording.writer_state import (
     EvidenceWriterState,
     InterruptedRun,
@@ -77,13 +83,12 @@ from eegle.recording.writer_state import (
     read_writer_state,
 )
 
-
 __all__ = [
     "ArtifactEntry",
     "ArtifactLineage",
     "ArtifactManifest",
-    "ArtifactReference",
     "ArtifactPublication",
+    "ArtifactReference",
     "ArtifactStore",
     "BundleIntegrityReport",
     "ComponentStateSnapshot",
@@ -103,11 +108,13 @@ __all__ = [
     "ExternalArtifactVerifier",
     "ExternalReferencePolicy",
     "ExternalVerificationStatus",
+    "FramedEvidenceWriter",
     "FramedSampleStore",
     "FramingInspection",
-    "FramedEvidenceWriter",
     "InMemoryEvidenceSink",
     "InMemoryRecordSink",
+    "IncrementalEngineCaptureSink",
+    "IncrementalEngineEvidenceSink",
     "IntegrityIssue",
     "IntegrityIssueCode",
     "IntegrityStatus",
@@ -138,10 +145,10 @@ __all__ = [
     "export_evidence_bundle",
     "inspect_framed_payloads",
     "iter_framed_payloads",
+    "persist_engine_run",
     "read_evidence_ledger",
     "read_framed_sample_store",
     "read_portable_export",
     "read_writer_state",
     "recover_framed_prefix",
-    "persist_engine_run",
 ]

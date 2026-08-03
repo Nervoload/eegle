@@ -11,9 +11,10 @@ import importlib
 import json
 import math
 from collections import deque
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -191,7 +192,9 @@ def lsl_plugin_descriptors() -> tuple[PluginDescriptor, ...]:
             "max_samples": {"type": "integer", "minimum": 1},
             "reconnect_attempts": {"type": "integer", "minimum": 0},
             "resolve_timeout_seconds": {"type": "number", "minimum": 0},
-            "dejitter": {"type": "boolean"},
+            "timestamp_mode": {"const": "raw_with_mapping"},
+            "clock_observation_timeout_seconds": {"type": "number", "minimum": 0},
+            "dejitter": {"const": False},
             "gap_tolerance": {"type": "number", "minimum": 1},
         },
         "required": ["stream_spec", "selector"],
@@ -278,6 +281,20 @@ class LslSource:
         self._reconnect_attempts = int(self._config.get("reconnect_attempts", 2))
         self._resolve_timeout = float(self._config.get("resolve_timeout_seconds", 1.0))
         self._gap_tolerance = float(self._config.get("gap_tolerance", 1.5))
+        self._timestamp_mode = str(
+            self._config.get("timestamp_mode", "raw_with_mapping")
+        )
+        if self._timestamp_mode != "raw_with_mapping":
+            raise ValueError(
+                "LSL sources support only raw_with_mapping timestamp semantics"
+            )
+        if bool(self._config.get("dejitter", False)):
+            raise ValueError(
+                "raw_with_mapping timestamp semantics cannot enable dejitter"
+            )
+        self._clock_observation_timeout = float(
+            self._config.get("clock_observation_timeout_seconds", 1.0)
+        )
         self._pylsl = pylsl_module or _import_pylsl()
         self._inlet: Any | None = None
         self._closed = False
@@ -286,6 +303,7 @@ class LslSource:
         self._last_timestamp: float | None = None
         self._watermark: TimePoint | None = None
         self._pending_metadata: deque[MetadataEvent] = deque()
+        self._pending_observations: deque[tuple[str, Mapping[str, Any]]] = deque()
         self._losses: list[LslPacketLoss] = []
         self._reconnect_count = 0
         self._open()
@@ -318,6 +336,15 @@ class LslSource:
         correction = float(self._inlet.time_correction(timeout=timeout_seconds))
         return LslClockObservation(correction, float(self._pylsl.local_clock()))
 
+    def drain_evidence_observations(
+        self,
+    ) -> tuple[tuple[str, Mapping[str, Any]], ...]:
+        """Return source-boundary observations exactly once for engine evidence."""
+
+        values = tuple(self._pending_observations)
+        self._pending_observations.clear()
+        return values
+
     def read(self) -> DenseSampleBatch | SparseEventBatch | MetadataEvent | None:
         if self._closed:
             return None
@@ -330,10 +357,20 @@ class LslSource:
                     max_samples=self._max_samples,
                 )
                 break
-            except Exception:
+            except Exception as exc:
                 if attempt >= self._reconnect_attempts:
                     raise
                 self._reconnect_count += 1
+                self._pending_observations.append(
+                    (
+                        "source_reconnect",
+                        {
+                            "reconnect_count": self._reconnect_count,
+                            "selector": thaw_json(self._selector),
+                            "error": f"{type(exc).__name__}: {exc}",
+                        },
+                    )
+                )
                 self._close_inlet()
                 self._open()
         if not timestamps:
@@ -429,14 +466,29 @@ class LslSource:
     def _open(self) -> None:
         infos = tuple(self._pylsl.resolve_streams(wait_time=self._resolve_timeout))
         info = select_exact_stream(infos, self._selector)
-        flags = int(getattr(self._pylsl, "proc_clocksync", 0))
-        if bool(self._config.get("dejitter", False)):
-            flags |= int(getattr(self._pylsl, "proc_dejitter", 0))
-            flags |= int(getattr(self._pylsl, "proc_monotonize", 0))
+        # Preserve raw device timestamps. A separately recorded correction
+        # maps them into the boundary clock without destroying source time.
+        flags = 0
         self._inlet = self._pylsl.StreamInlet(
             info,
             recover=True,
             processing_flags=flags,
+        )
+        observation = self.clock_observation(
+            timeout_seconds=self._clock_observation_timeout
+        )
+        self._pending_observations.append(
+            (
+                "source_clock_observation",
+                {
+                    "source_clock_id": self._stream_spec.clock_id,
+                    "target_clock_id": self._boundary_clock_id,
+                    "correction_seconds": observation.correction_seconds,
+                    "measured_at_seconds": observation.measured_at_seconds,
+                    "uncertainty_seconds": observation.uncertainty_seconds,
+                    "timestamp_mode": self._timestamp_mode,
+                },
+            )
         )
 
     def _close_inlet(self) -> None:
@@ -457,9 +509,21 @@ class LslSource:
         gap = timestamp - self._last_timestamp
         if gap <= period * self._gap_tolerance:
             return 0
-        missing = max(1, int(round(gap / period)) - 1)
+        missing = max(1, round(gap / period) - 1)
         self._losses.append(
             LslPacketLoss(period, gap, missing, self._last_timestamp, timestamp)
+        )
+        self._pending_observations.append(
+            (
+                "source_packet_loss",
+                {
+                    "expected_period_seconds": period,
+                    "observed_gap_seconds": gap,
+                    "estimated_missing_samples": missing,
+                    "previous_timestamp": self._last_timestamp,
+                    "current_timestamp": timestamp,
+                },
+            )
         )
         return missing
 
@@ -595,11 +659,19 @@ def detect_lsl(
                 plugin_id=plugin_id,
                 plugin_version=LSL_PLUGIN_VERSION,
                 selector=identity.selector,
-                capabilities=("lsl", content_kind.value, "reconnect", "clock_sync", "packet_loss"),
+                capabilities=(
+                    "lsl",
+                    content_kind.value,
+                    "reconnect",
+                    "clock_mapping",
+                    "raw_timestamps",
+                    "packet_loss",
+                ),
                 config={
                     "stream_spec": stream.to_payload(),
                     "selector": thaw_json(identity.selector),
                     "boundary_clock_id": boundary_clock_id,
+                    "timestamp_mode": "raw_with_mapping",
                 },
                 placement=Placement.IN_PROCESS,
                 source=source,

@@ -42,6 +42,10 @@ acceptance evidence only as classified by the Phase 0 inventory.
 - `replay/`: captured sources, fresh same-engine reruns, equivalence ceilings,
   localized divergence reports, and guarded counterfactual model replacement
   through separately compiled plans.
+- `validation/`: versioned result/observation/evidence-reference schemas, the
+  typed protocol-metric registry, semantic evidence taxonomy, read-only
+  aggregation over existing compiler/runtime/recording/replay authorities,
+  and the hash-verified performance/fault qualification profile.
 - `models/`: framework-neutral contracts, path-free manifests, results,
   canonical state, and deterministic hash-verified package transport. It does
   not own framework environments, training, downloads, or prediction identity.
@@ -51,8 +55,19 @@ acceptance evidence only as classified by the Phase 0 inventory.
   clock mappings, packets, and sources.
 - `integrations/lsl/`: provisional first-party optional LSL source, marker,
   metadata, outlet, and detection plugins; descriptor imports remain pylsl-free.
+- `integrations/mne.py`: dependency-lazy analysis/replay projections with
+  explicit timing and lineage sidecars; it is never the recording authority.
+- `integrations/support.py` and `research_support.json`: typed, hash-verified
+  research capability claims; keep representable/adapter/validated/reference
+  dimensions independent.
 - `integrations/{legacy_sessions,task_environment}.py`: retained legacy
   integration evidence excluded from the wheel and target imports.
+
+Application runs stream semantic evidence and admitted packet capture. Compact
+execution may omit phase details only when no acceptance or operator decision
+requires them; public engine defaults retain inspectable results. Performance
+budgets belong in `validation/qualification_profile.json` with a concrete
+workload, unit, limitation, and executable evidence link.
 
 ## Protected extraction evidence
 

@@ -10,6 +10,7 @@ from eegle._domain import EquivalenceLevel
 from eegle._validation import require_finite
 from eegle.compiler.lock import canonical_hash, canonical_json_bytes
 from eegle.recording.evidence import EvidenceRecord
+from eegle.validation.evidence import REPLAY_COMPARABLE_RECORD_TYPES
 
 
 class ComparableRun(Protocol):
@@ -27,53 +28,7 @@ _RANK = {
     EquivalenceLevel.NON_REPLAYABLE: 4,
 }
 
-_COMPARABLE_RECORDS = frozenset(
-    {
-        "input_admitted",
-        "input_rejected",
-        "packet_produced",
-        "window_produced",
-        "quality_decision",
-        "prediction",
-        "prediction_pending",
-        "prediction_matched",
-        "prediction_expired",
-        "prediction_overflowed",
-        "prediction_pending_at_end",
-        "prediction_cancelled",
-        "outcome_received",
-        "outcome_matched",
-        "outcome_unmatched",
-        "outcome_duplicate",
-        "outcome_rejected",
-        "outcome_use",
-        "outcome_disposition",
-        "adaptation_eligibility",
-        "model_comparison",
-        "trigger_fired",
-        "trigger_cancelled",
-        "trigger_timed_out",
-        "trigger_failed",
-        "trigger_rescheduled",
-        "state_trigger_scheduled",
-        "state_transition",
-        "work",
-        "component_state",
-        "action_request",
-        "authorization_request",
-        "authorization_decision",
-        "authorized_command",
-        "action_disposition",
-        "action_cancellation",
-        "action_receipt",
-        "graph_emission",
-        "phase_started",
-        "phase_finished",
-        "phase_retry",
-        "phase_transition",
-        "artifact_registered",
-    }
-)
+_COMPARABLE_RECORDS = REPLAY_COMPARABLE_RECORD_TYPES
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +108,15 @@ def compare_runs(
     reference_records = _records(reference, policy)
     candidate_records = _records(candidate, policy)
     divergences: list[Divergence] = []
+    if not reference_records and not candidate_records:
+        divergences.append(
+            Divergence(
+                record_index=0,
+                record_type="run",
+                path="$.evidence",
+                message="no comparable evidence records were available",
+            )
+        )
     if len(reference_records) != len(candidate_records):
         divergences.append(
             Divergence(
@@ -319,11 +283,15 @@ def _trace_projection(record: EvidenceRecord) -> Mapping[str, Any]:
             }
         )
     elif record.record_type == "state_trigger_scheduled":
+        trigger = payload["trigger"]
+        trigger_payload = trigger.get("payload", {})
         projected.update(
             {
                 "rule_id": payload["rule_id"],
-                "transition_id": payload["transition_id"],
-                "trigger_id": payload["trigger"]["trigger_id"],
+                "transition_id": payload.get(
+                    "transition_id", trigger_payload.get("transition_id")
+                ),
+                "trigger_id": trigger["trigger_id"],
             }
         )
     elif record.record_type == "action_receipt":
@@ -424,6 +392,16 @@ def _trace_projection(record: EvidenceRecord) -> Mapping[str, Any]:
                 "reason_code": payload.get("reason_code"),
             }
         )
+    elif record.record_type == "model_result_disposition":
+        projected.update(
+            {
+                "component_id": payload["component_id"],
+                "output_port": payload["output_port"],
+                "status": payload["status"],
+                "prediction_id": payload.get("prediction_id"),
+                "reason_code": payload.get("reason_code"),
+            }
+        )
     elif record.record_type == "artifact_registered":
         projected.update(
             {
@@ -445,7 +423,6 @@ def _semantic_projection(record: EvidenceRecord) -> Any:
     if record.record_type == "graph_emission":
         trace.update(
             {
-                "value_hash": payload["value_hash"],
                 "value": _nonnumeric_structure(payload.get("value")),
             }
         )

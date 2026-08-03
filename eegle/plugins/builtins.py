@@ -23,10 +23,14 @@ from eegle.plugins.registry import (
     StateBehavior,
 )
 from eegle.processing.quality import FiniteQualityGate
-from eegle.processing.transforms import CausalSosFilter, IdentityTransform, RetrospectiveSosFilter
+from eegle.processing.transforms import (
+    CausalSosFilter,
+    IdentityTransform,
+    RetrospectiveSosFilter,
+)
 from eegle.processing.windows import ContinuousWindowBuilder, EventWindowBuilder
-from eegle.recording.sinks import InMemoryRecordSink
 from eegle.recording.producers import PredictionArtifactProducer
+from eegle.recording.sinks import InMemoryRecordSink
 from eegle.runtime.builtins import (
     AdaptiveCounter,
     SparseEventOutcomeResolver,
@@ -35,7 +39,6 @@ from eegle.runtime.builtins import (
 from eegle.streams.channels import ContentKind, StreamSpec
 from eegle.streams.packets import DenseSampleBatch, SparseEventBatch
 from eegle.streams.synthetic import PacketSequenceSource
-
 
 _DENSE_PACKET = "eegle.dense_sample_batch.v1"
 _SPARSE_PACKET = "eegle.sparse_event_batch.v1"
@@ -529,7 +532,7 @@ def builtin_plugin_descriptors() -> tuple[PluginDescriptor, ...]:
             plugin_id="eegle.recording.dense_sink",
             version="0.1.0",
             kind=ComponentKind.SINK,
-            config_schema=_empty_schema(),
+            config_schema=_record_sink_schema(),
             input_ports=(PortSpec("records", _DENSE_PACKET, multiple=True),),
             output_ports=(),
             capabilities=PluginCapabilities(
@@ -538,7 +541,9 @@ def builtin_plugin_descriptors() -> tuple[PluginDescriptor, ...]:
                 equivalence=EquivalenceLevel.BITWISE,
                 state_behavior=StateBehavior.RECORD_ONLY,
             ),
-            factory=lambda config: InMemoryRecordSink(),
+            factory=lambda config: InMemoryRecordSink(
+                retention_limit=config.get("retention_limit")
+            ),
             implementation="eegle.recording.sinks:InMemoryRecordSink",
             distribution="eegle",
         ),
@@ -546,7 +551,7 @@ def builtin_plugin_descriptors() -> tuple[PluginDescriptor, ...]:
             plugin_id="eegle.recording.sparse_sink",
             version="0.1.0",
             kind=ComponentKind.SINK,
-            config_schema=_empty_schema(),
+            config_schema=_record_sink_schema(),
             input_ports=(PortSpec("records", _SPARSE_PACKET, multiple=True),),
             output_ports=(),
             capabilities=PluginCapabilities(
@@ -555,7 +560,9 @@ def builtin_plugin_descriptors() -> tuple[PluginDescriptor, ...]:
                 equivalence=EquivalenceLevel.BITWISE,
                 state_behavior=StateBehavior.RECORD_ONLY,
             ),
-            factory=lambda config: InMemoryRecordSink(),
+            factory=lambda config: InMemoryRecordSink(
+                retention_limit=config.get("retention_limit")
+            ),
             implementation="eegle.recording.sinks:InMemoryRecordSink",
             distribution="eegle",
         ),
@@ -566,6 +573,20 @@ def _output_properties() -> dict[str, Any]:
     return {
         "output_stream_id": {"type": "string", "minLength": 1},
         "output_stream_revision": {"type": "integer", "minimum": 1},
+    }
+
+
+def _record_sink_schema() -> dict[str, Any]:
+    return {
+        "$schema": _SCHEMA_BASE,
+        "type": "object",
+        "properties": {
+            "retention_limit": {
+                "type": ["integer", "null"],
+                "minimum": 0,
+            }
+        },
+        "additionalProperties": False,
     }
 
 

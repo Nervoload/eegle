@@ -517,12 +517,13 @@ sources emit the general packet records; corresponding outlets consume those
 records. Discovery captures exact LSL identities, XML channel labels/units,
 rate/format, proposal-ready resource contracts, and an online clock capability.
 Selectors require UID, source ID, or an exact name/type pair and reject zero or
-multiple matches. Inlets use explicit clock-sync flags, optional
-dejitter/monotonization, exact-selector bounded reconnect, and regular-stream
-sequence gaps plus typed packet-loss estimates.
+multiple matches. Inlets preserve raw device timestamps, persist separately
+measured boundary-clock mappings, reconnect the exact selector, and record
+regular-stream sequence gaps plus typed packet-loss estimates.
 
-Four automated tests cover simulated discovery and ambiguity, dense/sparse/
-metadata conversion, clock correction, reconnect, packet loss, outlets,
+Automated tests cover simulated discovery and ambiguity, dense/sparse/metadata
+conversion, raw-clock mapping, reconnect, packet loss, outlets, compiled-engine
+silence/timeout/cancellation and final evidence persistence,
 dependency-blocked imports, descriptor registration, and the same portable
 suite compiling against simulation and LSL deployments with distinct plan
 identity. The live proposal also passes exact preflight, while a changed stream

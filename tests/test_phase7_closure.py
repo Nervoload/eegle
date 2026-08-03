@@ -106,7 +106,8 @@ class Phase7ClosureTests(unittest.TestCase):
         closure = (ROOT / "docs" / "PHASE7_CLOSURE.md").read_text(encoding="utf-8")
         self.assertIn("Phase 7 remains blocked", closure)
         self.assertIn("current closure candidate", closure)
-        self.assertIn("dense capture to\n`RawArray`", closure)
+        self.assertIn("MNE raw, annotation, admitted-window\nepoch", closure)
+        self.assertIn("machine-readable research support\nmatrix", closure)
         self.assertIn("pre-alpha, simulation-first candidate", closure)
 
 

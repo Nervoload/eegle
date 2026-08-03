@@ -43,6 +43,7 @@ from eegle.compiler.plan import (
     PlannedTransition,
 )
 from eegle.compiler.semantic_passes import (
+    validate_acceptance_metrics,
     validate_artifacts,
     validate_phases,
     validate_roles_and_actions,
@@ -290,6 +291,7 @@ def compile_suite(
         planned_model_bindings,
     )
     validate_runtime_policy(suite, diagnostics)
+    validate_acceptance_metrics(protocol, suite, resolved, diagnostics)
     validate_triggers_and_permissions(
         protocol, suite, deployment, resolved, diagnostics
     )

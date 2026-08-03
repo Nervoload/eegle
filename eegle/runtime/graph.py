@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from time import monotonic, sleep
-from typing import Any, Mapping
+from typing import Any
 
 from eegle._domain import ComponentKind, WorkStatus
 from eegle._validation import freeze_json, require_digest, require_identifier, thaw_json
@@ -54,6 +55,7 @@ from eegle.runtime.plan_runtime import (
     RuntimeNode,
 )
 from eegle.runtime.queueing import EventQueue, PendingEmission, QueuedEvent
+from eegle.runtime.retention import PhaseRecordBuffer
 from eegle.runtime.routing import (
     available_time,
     dispatch_component,
@@ -79,6 +81,16 @@ from eegle.runtime.work import (
     failed_work,
 )
 from eegle.streams.clocks import TimePoint
+from eegle.streams.packets import (
+    DenseSampleBatch,
+    MetadataEvent,
+    Packet,
+    SparseEventBatch,
+)
+
+_SOURCE_OBSERVATION_RECORD_TYPES = frozenset(
+    {"source_clock_observation", "source_packet_loss", "source_reconnect"}
+)
 
 
 class GraphRunStatus(str, Enum):
@@ -200,6 +212,10 @@ class PlanGraphExecutor:
         runtime: PlanRuntime,
         *,
         execution_id: str | None = None,
+        evidence_sink: Callable[[EvidenceRecord], None] | None = None,
+        capture_sink: Callable[[Packet], None] | None = None,
+        retain_evidence: bool = True,
+        retain_phase_details: bool = True,
     ) -> None:
         self.runtime = runtime
         self.plan = runtime.plan
@@ -212,6 +228,10 @@ class PlanGraphExecutor:
         if not isinstance(clock_id, str):
             raise ValueError("compiled plan is missing execution_clock_id")
         self.execution_clock_id = require_identifier(clock_id, "execution_clock_id")
+        self._evidence_sink = evidence_sink
+        self._capture_sink = capture_sink
+        self._retain_evidence = bool(retain_evidence)
+        self._retain_phase_details = bool(retain_phase_details)
         if self.plan.graph is None:  # PlanRuntime already enforces this boundary.
             raise ValueError("plan graph executor requires a typed compiled graph")
         targets: dict[tuple[str, str], list[tuple[str, str]]] = {}
@@ -338,9 +358,7 @@ class PlanGraphExecutor:
     ) -> EvidenceRecord:
         """Create an orchestration record in the same deterministic evidence stream."""
 
-        records: list[EvidenceRecord] = []
-        self._emit(records, record_type, payload)
-        return records[0]
+        return self._emit([], record_type, payload)
 
     def snapshot_component_state(self) -> Mapping[str, Any]:
         """Capture executor-owned policy/adapter state at a phase boundary."""
@@ -534,11 +552,23 @@ class PlanGraphExecutor:
             checkpoint_after_inputs = int(checkpoint_after_inputs)
             if checkpoint_after_inputs <= 0:
                 raise ValueError("checkpoint_after_inputs must be positive")
+            if not self._retain_evidence:
+                raise ValueError(
+                    "in-memory phase evidence is required to create an engine checkpoint"
+                )
         active = set(planned_phase.component_ids)
         evidence: list[EvidenceRecord] = []
-        work: list[WorkRecord] = []
-        emissions: list[GraphEmission] = []
-        admitted: list[Any] = []
+        retain_details = (
+            self._retain_phase_details
+            or bool(planned_phase.acceptance_criteria)
+            or any(value.condition == "operator" for value in planned_phase.transitions)
+        )
+        work = PhaseRecordBuffer[WorkRecord](retain_all=retain_details)
+        emissions = PhaseRecordBuffer[GraphEmission](
+            retain_all=retain_details,
+            retain_when=lambda value: isinstance(value.value, ArtifactPublication),
+        )
+        admitted = PhaseRecordBuffer[Any](retain_all=retain_details)
         queue = EventQueue(
             self.max_pending_events,
             reject_newest=self.backpressure == "reject_newest",
@@ -633,6 +663,7 @@ class PlanGraphExecutor:
                         work,
                     )
                 admitted.append(graph_input.value)
+                self._capture_input(graph_input.value)
             if not resumed:
                 self._schedule_phase_triggers(planned_phase, queue, phase_started_time)
             for node in source_nodes:
@@ -640,6 +671,7 @@ class PlanGraphExecutor:
                     node,
                     queue,
                     admission,
+                    evidence,
                 )
 
             idle_cycles = 0
@@ -678,6 +710,7 @@ class PlanGraphExecutor:
                             self.runtime.node(component_id),
                             queue,
                             admission,
+                            evidence,
                         ):
                             progressed = True
                     if progressed:
@@ -712,6 +745,7 @@ class PlanGraphExecutor:
                             self.runtime.node(component_id),
                             queue,
                             admission,
+                            evidence,
                         ):
                             progressed = True
                     if progressed:
@@ -811,6 +845,7 @@ class PlanGraphExecutor:
                     continue
                 if event.kind == "source":
                     admitted.append(event.value)
+                    self._capture_input(event.value)
                     packet_key = (node.component_id, value_id(event.value))
                     rejection = admission.packet_rejections.pop(packet_key, None)
                     rejection_code = admission.packet_rejection_codes.pop(
@@ -874,7 +909,7 @@ class PlanGraphExecutor:
                             if node.component_id in live_source_ids:
                                 admission.incomplete_sources.add(node.component_id)
                             else:
-                                self._poll_source(node, queue, admission)
+                                self._poll_source(node, queue, admission, evidence)
                         continue
                     output_time = self._record_emission(
                         node,
@@ -906,7 +941,7 @@ class PlanGraphExecutor:
                         checkpoint_after_inputs is None
                         and not bool(getattr(node.component, "exhausted", False))
                     ):
-                        self._poll_source(node, queue, admission)
+                        self._poll_source(node, queue, admission, evidence)
                     elif not bool(getattr(node.component, "exhausted", False)):
                         admission.incomplete_sources.add(node.component_id)
                     continue
@@ -1160,9 +1195,9 @@ class PlanGraphExecutor:
             phase_id=planned_phase.phase_id,
             status=status,
             evidence=tuple(evidence),
-            admitted_inputs=tuple(admitted),
-            emissions=tuple(emissions),
-            work=tuple(work),
+            admitted_inputs=admitted.retained,
+            emissions=emissions.retained,
+            work=work.retained,
             artifacts=tuple(
                 value.value
                 for value in emissions
@@ -1208,8 +1243,12 @@ class PlanGraphExecutor:
         node: RuntimeNode,
         queue: EventQueue,
         admission: SourceAdmissionState,
+        evidence: list[EvidenceRecord],
     ) -> bool:
-        admitted = poll_source(node, admission, self._require_execution_time)
+        try:
+            admitted = poll_source(node, admission, self._require_execution_time)
+        finally:
+            self._record_source_observations(node, evidence)
         if admitted is None:
             return False
         packet = admitted.packet
@@ -1262,6 +1301,36 @@ class PlanGraphExecutor:
         )
         return True
 
+    def _record_source_observations(
+        self,
+        node: RuntimeNode,
+        evidence: list[EvidenceRecord],
+    ) -> None:
+        drain = getattr(node.component, "drain_evidence_observations", None)
+        if not callable(drain):
+            return
+        for observation in drain():
+            if not isinstance(observation, tuple) or len(observation) != 2:
+                raise TypeError(
+                    f"source {node.component_id} returned an invalid evidence observation"
+                )
+            record_type, payload = observation
+            if record_type not in _SOURCE_OBSERVATION_RECORD_TYPES:
+                raise ValueError(
+                    f"source {node.component_id} returned unsupported observation "
+                    f"{record_type}"
+                )
+            if not isinstance(payload, Mapping):
+                raise TypeError("source evidence observation payload must be an object")
+            declared_component = payload.get("component_id")
+            if declared_component not in {None, node.component_id}:
+                raise ValueError("source observation component identity mismatch")
+            self._emit(
+                evidence,
+                record_type,
+                {**thaw_json(payload), "component_id": node.component_id},
+            )
+
     def _record_emission(
         self,
         node: RuntimeNode,
@@ -1271,8 +1340,8 @@ class PlanGraphExecutor:
         active: set[str],
         queue: EventQueue,
         evidence: list[EvidenceRecord],
-        emissions: list[GraphEmission],
-        work: list[WorkRecord],
+        emissions: PhaseRecordBuffer[GraphEmission],
+        work: PhaseRecordBuffer[WorkRecord],
         phase_id: str,
     ) -> TimePoint:
         port = next(
@@ -1427,8 +1496,8 @@ class PlanGraphExecutor:
         active: set[str],
         queue: EventQueue,
         evidence: list[EvidenceRecord],
-        emissions: list[GraphEmission],
-        work: list[WorkRecord],
+        emissions: PhaseRecordBuffer[GraphEmission],
+        work: PhaseRecordBuffer[WorkRecord],
         phase_id: str,
         started: TimePoint,
     ) -> None:
@@ -1488,8 +1557,8 @@ class PlanGraphExecutor:
         active: set[str],
         queue: EventQueue,
         evidence: list[EvidenceRecord],
-        emissions: list[GraphEmission],
-        work: list[WorkRecord],
+        emissions: PhaseRecordBuffer[GraphEmission],
+        work: PhaseRecordBuffer[WorkRecord],
         phase_id: str,
     ) -> None:
         outcome = self._action_broker.resolve(
@@ -1531,8 +1600,8 @@ class PlanGraphExecutor:
         active: set[str],
         queue: EventQueue,
         evidence: list[EvidenceRecord],
-        emissions: list[GraphEmission],
-        work: list[WorkRecord],
+        emissions: PhaseRecordBuffer[GraphEmission],
+        work: PhaseRecordBuffer[WorkRecord],
         phase_id: str,
         started: TimePoint,
         input_ids: tuple[str, ...],
@@ -1655,7 +1724,7 @@ class PlanGraphExecutor:
     def _finish_action_work(
         self,
         node: RuntimeNode,
-        work: list[WorkRecord],
+        work: PhaseRecordBuffer[WorkRecord],
         evidence: list[EvidenceRecord],
         started: TimePoint,
         input_ids: tuple[str, ...],
@@ -1681,7 +1750,7 @@ class PlanGraphExecutor:
         queue: EventQueue,
         status: GraphRunStatus,
         evidence: list[EvidenceRecord],
-        work: list[WorkRecord],
+        work: PhaseRecordBuffer[WorkRecord],
     ) -> None:
         seen: set[str] = set()
         for event in queue.events():
@@ -2148,7 +2217,7 @@ class PlanGraphExecutor:
         component_id: str,
         input_id: str,
         evidence: list[EvidenceRecord],
-        work: list[WorkRecord],
+        work: PhaseRecordBuffer[WorkRecord],
     ) -> None:
         evicted = scheduling.evicted_event
         if evicted is None:
@@ -2170,7 +2239,7 @@ class PlanGraphExecutor:
         input_id: str,
         reason_code: str,
         evidence: list[EvidenceRecord],
-        work: list[WorkRecord],
+        work: PhaseRecordBuffer[WorkRecord],
     ) -> None:
         node = self.runtime.node(component_id)
         skipped = WorkRecord(
@@ -2291,7 +2360,7 @@ class PlanGraphExecutor:
         active: set[str],
         queue: EventQueue,
         evidence: list[EvidenceRecord],
-        work: list[WorkRecord],
+        work: PhaseRecordBuffer[WorkRecord],
     ) -> None:
         if not isinstance(trigger, ScheduledTrigger):
             raise TypeError("invalid scheduled trigger event")
@@ -2484,6 +2553,13 @@ class PlanGraphExecutor:
             raise ValueError("graph semantic time moved backwards")
         self._current_time = point
 
+    def _capture_input(self, value: Any) -> None:
+        if self._capture_sink is not None and isinstance(
+            value,
+            (DenseSampleBatch, SparseEventBatch, MetadataEvent),
+        ):
+            self._capture_sink(value)
+
     def _require_execution_time(self, point: TimePoint) -> None:
         if point.clock_id != self.execution_clock_id:
             raise ValueError(
@@ -2495,14 +2571,17 @@ class PlanGraphExecutor:
         target: list[EvidenceRecord],
         record_type: str,
         payload: Mapping[str, Any],
-    ) -> None:
-        target.append(
-            EvidenceRecord(
-                record_id=self._ids.next("evidence"),
-                record_type=record_type,
-                sequence=self._evidence_sequence,
-                emitted_time=self._current_time,
-                payload=payload,
-            )
+    ) -> EvidenceRecord:
+        record = EvidenceRecord(
+            record_id=self._ids.next("evidence"),
+            record_type=record_type,
+            sequence=self._evidence_sequence,
+            emitted_time=self._current_time,
+            payload=payload,
         )
+        if self._evidence_sink is not None:
+            self._evidence_sink(record)
+        if self._retain_evidence:
+            target.append(record)
         self._evidence_sequence += 1
+        return record

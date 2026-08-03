@@ -53,6 +53,7 @@ from eegle.streams import (
     TimePoint,
 )
 from eegle.streams.synthetic import PacketSequenceSource
+from eegle.validation import ValidationStatus, evaluate_metric
 from tests.fixtures.phase5_model_components import (
     compile_phase5_suite as compile_suite,
 )
@@ -1093,7 +1094,7 @@ class Phase5PlanExecutionTests(unittest.TestCase):
         )
         self.assertTrue(any(value.record_type == "phase_retry" for value in run.evidence))
 
-    def test_zero_windows_and_predictions_have_zero_coverage(self) -> None:
+    def test_zero_windows_make_prediction_coverage_insufficient(self) -> None:
         result = GraphPhaseResult(
             execution_id="execution.coverage",
             plan_hash="sha256:" + "0" * 64,
@@ -1105,7 +1106,7 @@ class Phase5PlanExecutionTests(unittest.TestCase):
             work=(),
         )
 
-        observed = ExecutionEngine._measure(
+        observed = evaluate_metric(
             {
                 "measure": "prediction_coverage",
                 "parameters": {
@@ -1116,7 +1117,9 @@ class Phase5PlanExecutionTests(unittest.TestCase):
             result,
         )
 
-        self.assertEqual(observed, 0.0)
+        self.assertEqual(observed.status, ValidationStatus.INSUFFICIENT_EVIDENCE)
+        self.assertIsNone(observed.value)
+        self.assertEqual(observed.evidence_count, 0)
 
     def test_lateness_policy_rejects_or_tolerates_without_stopping_capture(self) -> None:
         deployment = _with_packets(

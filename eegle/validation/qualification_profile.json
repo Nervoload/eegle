@@ -1,0 +1,174 @@
+{
+  "schema": "eegle.performance_fault_qualification.v1",
+  "snapshot_date": "2026-08-01",
+  "performance_budgets": [
+    {
+      "budget_id": "engine.compact.mean_dispatch_latency",
+      "metric": "mean_dispatch_latency",
+      "unit": "seconds_per_packet",
+      "direction": "maximum",
+      "threshold": 0.004,
+      "workload": {
+        "packet_count": 5000,
+        "samples_per_packet": 4,
+        "channel_count": 2,
+        "retention_limit": 0
+      },
+      "evidence": [
+        "tests.test_phase8_performance_faults.Phase8PerformanceQualificationTests.test_compact_long_session_meets_memory_throughput_and_latency_budgets"
+      ],
+      "limitations": [
+        "This is an in-process deterministic simulation budget, not a hard real-time deadline."
+      ]
+    },
+    {
+      "budget_id": "engine.compact.packet_throughput",
+      "metric": "packet_throughput",
+      "unit": "packets_per_second",
+      "direction": "minimum",
+      "threshold": 250.0,
+      "workload": {
+        "packet_count": 5000,
+        "samples_per_packet": 4,
+        "channel_count": 2,
+        "retention_limit": 0
+      },
+      "evidence": [
+        "tests.test_phase8_performance_faults.Phase8PerformanceQualificationTests.test_compact_long_session_meets_memory_throughput_and_latency_budgets"
+      ],
+      "limitations": [
+        "This budget excludes physical transport and durable filesystem latency."
+      ]
+    },
+    {
+      "budget_id": "engine.compact.peak_memory",
+      "metric": "peak_memory",
+      "unit": "mebibytes",
+      "direction": "maximum",
+      "threshold": 2.5,
+      "workload": {
+        "packet_count": 5000,
+        "samples_per_packet": 4,
+        "channel_count": 2,
+        "retention_limit": 0
+      },
+      "evidence": [
+        "tests.test_phase8_performance_faults.Phase8PerformanceQualificationTests.test_compact_long_session_meets_memory_throughput_and_latency_budgets"
+      ],
+      "limitations": [
+        "Measured with Python tracemalloc and excludes allocator memory outside its tracing domain."
+      ]
+    },
+    {
+      "budget_id": "engine.queue.component_count_throughput",
+      "metric": "component_count_query_throughput",
+      "unit": "queries_per_second",
+      "direction": "minimum",
+      "threshold": 200000.0,
+      "workload": {
+        "pending_events": 10000,
+        "query_count": 100000,
+        "component_count": 20
+      },
+      "evidence": [
+        "tests.test_phase8_performance_faults.Phase8PerformanceQualificationTests.test_queue_accounting_is_constant_time_and_backpressure_safe"
+      ],
+      "limitations": [
+        "The budget covers per-component accounting; oldest-component eviction remains linear in queue depth."
+      ]
+    },
+    {
+      "budget_id": "recording.incremental.packet_throughput",
+      "metric": "durable_capture_throughput",
+      "unit": "packets_per_second",
+      "direction": "minimum",
+      "threshold": 40.0,
+      "workload": {
+        "packet_count": 250,
+        "samples_per_packet": 4,
+        "channel_count": 2,
+        "durable": true
+      },
+      "evidence": [
+        "tests.test_phase8_performance_faults.Phase8PerformanceQualificationTests.test_incremental_capture_is_durable_and_bounded"
+      ],
+      "limitations": [
+        "Filesystem synchronization cost varies by host; the threshold is a portability floor, not a throughput claim."
+      ]
+    }
+  ],
+  "fault_scenarios": [
+    {
+      "scenario_id": "bundle.missing_artifact",
+      "expected_outcome": "unrecoverable",
+      "expected_codes": ["artifact_missing"],
+      "evidence": [
+        "tests.test_phase8_performance_faults.Phase8FaultQualificationTests.test_missing_artifact_is_unrecoverable"
+      ],
+      "limitations": []
+    },
+    {
+      "scenario_id": "ledger.checksum_corruption",
+      "expected_outcome": "unrecoverable",
+      "expected_codes": ["checksum_mismatch"],
+      "evidence": [
+        "tests.test_phase8_performance_faults.Phase8FaultQualificationTests.test_corrupt_and_truncated_ledgers_are_distinguished"
+      ],
+      "limitations": []
+    },
+    {
+      "scenario_id": "ledger.truncated_final_frame",
+      "expected_outcome": "recoverable_prefix",
+      "expected_codes": ["truncated_frame_length", "truncated_frame_payload"],
+      "evidence": [
+        "tests.test_phase8_performance_faults.Phase8FaultQualificationTests.test_corrupt_and_truncated_ledgers_are_distinguished"
+      ],
+      "limitations": [
+        "Only the verified prefix is recoverable; no incomplete frame is synthesized."
+      ]
+    },
+    {
+      "scenario_id": "queue.reject_newest",
+      "expected_outcome": "rejected",
+      "expected_codes": ["queue_full"],
+      "evidence": [
+        "tests.test_phase8_performance_faults.Phase8PerformanceQualificationTests.test_queue_accounting_is_constant_time_and_backpressure_safe"
+      ],
+      "limitations": []
+    },
+    {
+      "scenario_id": "source.clock_drift",
+      "expected_outcome": "warning",
+      "expected_codes": ["source.clock_correction_span_seconds"],
+      "evidence": [
+        "tests.test_phase8_performance_faults.Phase8FaultQualificationTests.test_clock_drift_exceeding_compiled_uncertainty_warns"
+      ],
+      "limitations": [
+        "Drift is the observed correction span, not an oscillator model or frequency estimate."
+      ]
+    },
+    {
+      "scenario_id": "source.reconnect",
+      "expected_outcome": "warning",
+      "expected_codes": ["source.reconnect_count"],
+      "evidence": [
+        "tests.test_phase8_performance_faults.Phase8FaultQualificationTests.test_reconnect_and_gap_are_recorded_by_the_compiled_engine"
+      ],
+      "limitations": [
+        "Qualification uses an injected LSL network and does not require EEG hardware."
+      ]
+    },
+    {
+      "scenario_id": "source.silence",
+      "expected_outcome": "timed_out",
+      "expected_codes": ["phase_timeout"],
+      "evidence": [
+        "tests.test_phase8_performance_faults.Phase8FaultQualificationTests.test_source_silence_times_out_without_discarding_final_evidence"
+      ],
+      "limitations": [
+        "Qualification uses deterministic semantic time rather than wall-clock transport delay."
+      ]
+    }
+  ],
+  "profile_hash": "sha256:502fc2f2dc87fecf5930fbdf68d4b76cd8d66c5c897d9af5f7cdaed9cbfec82f"
+}

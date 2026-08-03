@@ -14,7 +14,7 @@ EEG and BCI projects already have strong tools for signal processing, streaming,
 
 EEGle addresses this by compiling portable scientific intent and site-local deployment bindings into an immutable, typed execution plan. The same plan-owned execution model supports simulation, recording, causal model execution, shadow comparison, adaptation, authorized action, evidence capture, replay, and validation.
 
-> **Project status:** EEGle is a pre-alpha, simulation-first candidate under active development. The core compiler, runtime, evidence, replay, authoring, model-package, reference-project, and simulation workflows are implemented. Real EEG acceptance, comprehensive validation, and public-alpha qualification remain in progress.
+> **Project status:** EEGle is a pre-alpha, simulation-first candidate under active development. The core compiler, runtime, evidence, replay, authoring, model-package, reference-project, simulation workflows, and first structured-validation slice are implemented. Real EEG acceptance, broader scientific validation, and public-alpha qualification remain in progress.
 
 ## Key features
 
@@ -27,6 +27,7 @@ EEGle addresses this by compiling portable scientific intent and site-local depl
 - **Model packaging:** path-free manifests, content-addressed artifacts, initial state, synthetic conformance vectors, and guarded replacement replay.
 - **Preflight and rehearsal:** verify an exact deployment and exercise bounded failure scenarios before live operation.
 - **Replay and inspection:** replay captured inputs through the same engine, locate divergence, and inspect privacy-aware session summaries.
+- **Structured validation:** aggregate definition, integrity, timing, causality, execution, model, action, protocol, and replay results without mutating source artifacts.
 - **Observe-only by default:** a policy request cannot become a device command without explicit deployment-owned authorization.
 
 ## How EEGle works
@@ -80,6 +81,7 @@ eegle rehearse first-simulation --session-id session.first.rehearsal
 eegle run first-simulation --session-id session.first.run
 eegle inspect first-simulation
 eegle replay first-simulation
+eegle validate first-simulation --strict
 eegle export first-simulation first-simulation-export
 ```
 
@@ -149,7 +151,7 @@ EEGle is designed to coordinate established scientific packages rather than repl
 
 | Package or standard | Expected use with EEGle | Current status |
 |---|---|---|
-| **MNE-Python** | Loading, preprocessing algorithms, epochs, visualization, statistics, source analysis | Dependency-lazy `DenseSampleBatch` to `RawArray` export bridge shipped; broader workflows pending |
+| **MNE-Python** | Loading, preprocessing algorithms, epochs, visualization, statistics, source analysis | Dependency-lazy raw, annotation, admitted-window epoch, and replay-input adapters shipped with exact EEGle timing/lineage sidecars |
 | **Lab Streaming Layer** | Live EEG, markers, metadata, clock synchronization, and outlets | First-party optional adapter; simulated validation complete, real EEG acceptance pending |
 | **MNE-LSL** | MNE-oriented live acquisition and processing | Complementary; direct reference integration pending |
 | **pyRiemann** | Covariance, tangent-space, Riemannian classifiers, transfer learning | Intended external model adapter and reference project |
@@ -162,7 +164,7 @@ EEGle is designed to coordinate established scientific packages rather than repl
 
 EEGle model packages do not install frameworks, train models, download checkpoints, or serialize executable source. The executable adapter is an independently installed plugin that returns a framework-neutral `ModelResult` through the normal runtime.
 
-See the [plugin workflow](docs/PLUGIN_DEVELOPMENT.md), [MNE export bridge](docs/MNE_INTEGRATION.md), and [LSL support boundary](docs/LSL_INTEGRATION.md) for the current integration contracts and support claims.
+See the [plugin workflow](docs/PLUGIN_DEVELOPMENT.md), [MNE research bridge](docs/MNE_INTEGRATION.md), and [LSL support boundary](docs/LSL_INTEGRATION.md) for the current integration contracts and support claims. The packaged `research_integration_support_matrix()` API reports representability, adapter availability, validation, and reference support independently.
 
 ## Installation
 
@@ -256,9 +258,11 @@ EEGle should normally emit bounded, high-level action intent. Independent deploy
 The immediate milestones are:
 
 1. Complete a retained real EEG observe-only LSL acceptance run.
-2. Close Phase 7 against its gate-to-evidence matrix and stabilize the provisional authoring/operations surface.
-3. Add broader pyRiemann/scikit-learn, BIDS, and PyTorch/Braindecode integration paths.
-4. Expand scientific validation, performance budgets, reports, and fault qualification.
+2. Retain the current installed-artifact record for the expanded LSL→MNE acceptance path.
+3. Add broader pyRiemann, BIDS, and PyTorch/Braindecode integration paths.
+4. Expand the published performance/fault profile to high-channel, sparse,
+   process-proxy, and repeated restart qualification.
+5. Add scientific reports and complete public-alpha release qualification.
 
 The product rule is:
 

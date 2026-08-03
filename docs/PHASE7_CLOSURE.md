@@ -50,11 +50,11 @@ comparison, adaptation, simulated closed-loop action, and the simulation
 deployment of the portable LSL observe-only project.
 
 The release workflow exposes base wheel, sdist, YAML, native `pylsl`
-local-network metadata/packet transport, plugin, and all-reference-project
-failures as independently attributable jobs. The native client is
+local-network metadata/packet transport plus MNE conversion, plugin, and all-
+reference-project failures as independently attributable jobs. The native client is
 `tests/fixtures/phase7_native_lsl_smoke.py`; it runs outside the checkout
 against the installed wheel and confirms exact `C3`/`C4` labels, `uV` units,
-and a two-sample dense packet using `pylsl 1.18.2` locally.
+an explicitly timed two-sample dense packet, and MNE channel/scaling output.
 The default manual workflow stops after those evidence jobs. Its separate
 TestPyPI job requires the explicit `publish_testpypi` input, which defaults to
 false. The package remains a pre-alpha, simulation-first candidate; TestPyPI
@@ -101,7 +101,10 @@ parsing, and `git diff --check` also pass.
 
 The final Phase 7 inventory retains eleven stable-alpha low-level packages and
 four provisional packages (`authoring`, `operations`, `integrations`, and
-`integrations.lsl`). MNE support is deliberately limited to dense capture to
-`RawArray`; annotations, epochs, and replay-input bridges remain Phase 8.
+`integrations.lsl`). Phase 8 now includes MNE raw, annotation, admitted-window
+epoch, and replay-input adapters plus a machine-readable research support
+matrix. Their expanded installed-artifact workflow result remains an external
+Phase 8 qualification record.
+
 Comprehensive validation, research-integration qualification, scale/fault
 budgets, TestPyPI rehearsal, and public-alpha promotion also remain Phase 8.

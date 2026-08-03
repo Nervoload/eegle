@@ -12,7 +12,12 @@
     {
       "metric_id": "metric.coverage",
       "measure": "prediction_coverage",
-      "parameters": {}
+      "parameters": {
+        "prediction_component": "model.primary",
+        "window_component": "window.continuous",
+        "prediction_port": "prediction",
+        "window_port": "windows"
+      }
     }
   ],
   "acceptance": [

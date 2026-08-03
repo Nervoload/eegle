@@ -101,4 +101,9 @@ include = [
   "eegle.runtime*",
   "eegle.specs*",
   "eegle.streams*",
+  "eegle.validation*",
 ]
+
+[tool.setuptools.package-data]
+"eegle.integrations" = ["research_support.json"]
+"eegle.validation" = ["qualification_profile.json"]

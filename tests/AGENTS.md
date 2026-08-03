@@ -106,6 +106,17 @@ broader discovery when touching shared orchestration.
 - `test_phase7_closure.py`: P7-014 complete exit-gate/closure mapping, durable
   evidence paths, exact prior remote-matrix identity, and truthful external
   blocker/support boundaries.
+- `test_phase8_validation.py`: Phase 8 result schemas, metric compilation,
+  insufficient-evidence acceptance, semantic record decoding, terminal model
+  replay taxonomy, real action identity, incremental evidence, interruption
+  finalization, resume, source-health reporting, and the read-only validation
+  service foundation.
+- `test_phase8_research_integrations.py`: packaged support-matrix schema,
+  digest, ordering, and truthful non-overclaim checks.
+- `test_phase8_performance_faults.py`: packaged performance/fault profile,
+  compact long-session memory/throughput/latency, durable incremental capture,
+  queue/backpressure accounting, corrupt/truncated ledgers, missing artifacts,
+  simulated source silence/reconnect/gaps, and clock-drift reporting.
 - `test_source_boundaries.py`: target packages may not import legacy
   application, recipe, worker, task, or analysis modules.
 - `eegle.plugins.testing`: reusable behavioral assertions for independently

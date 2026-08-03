@@ -26,7 +26,6 @@ from eegle.recording import (
 from eegle.replay import BundleReplayRunner, load_recorded_execution
 from eegle.runtime import ArtifactResolver, EngineStatus
 
-
 SESSION_INSPECTION_SCHEMA_ID = "eegle.session_inspection.v1"
 REPLAY_INSPECTION_SCHEMA_ID = "eegle.replay_inspection.v1"
 MODEL_REPLACEMENT_COMPARISON_SCHEMA_ID = (
@@ -1177,6 +1176,7 @@ def _action_projection(records: list[tuple[str, EvidenceRecord]]) -> Mapping[str
     statuses: Counter[str] = Counter()
     rows = []
     fields = (
+        "request_id",
         "action_request_id",
         "authorization_request_id",
         "authorization_decision_id",

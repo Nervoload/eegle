@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import heapq
+from collections import Counter
+from dataclasses import dataclass, field
 from typing import Any
 
 from eegle.streams.clocks import TimePoint
@@ -36,6 +37,8 @@ class EventQueue:
         if self.max_pending_events <= 0:
             raise ValueError("max_pending_events must be positive")
         self._events: list[QueuedEvent] = []
+        self._component_counts: Counter[str] = Counter()
+        self._component_kind_counts: Counter[tuple[str, str]] = Counter()
         self.reject_newest = bool(reject_newest)
 
     def __bool__(self) -> bool:
@@ -52,13 +55,15 @@ class EventQueue:
     def pop(self) -> QueuedEvent:
         if not self._events:
             raise IndexError("cannot pop an empty graph event queue")
-        return heapq.heappop(self._events)
+        value = heapq.heappop(self._events)
+        self._decrement(value)
+        return value
 
     def count_component(self, component_id: str, *, kind: str | None = None) -> int:
-        return sum(
-            value.component_id == component_id
-            and (kind is None or value.kind == kind)
-            for value in self._events
+        return (
+            self._component_counts[component_id]
+            if kind is None
+            else self._component_kind_counts[(component_id, kind)]
         )
 
     def pop_oldest_component(
@@ -82,6 +87,7 @@ class EventQueue:
         if index < len(self._events):
             self._events[index] = last
             heapq.heapify(self._events)
+        self._decrement(selected)
         return selected
 
     def events(self) -> tuple[QueuedEvent, ...]:
@@ -98,4 +104,15 @@ class EventQueue:
                 f"max_pending_events={self.max_pending_events}"
             )
         heapq.heappush(self._events, event)
+        self._component_counts[event.component_id] += 1
+        self._component_kind_counts[(event.component_id, event.kind)] += 1
         return True
+
+    def _decrement(self, event: QueuedEvent) -> None:
+        self._component_counts[event.component_id] -= 1
+        if self._component_counts[event.component_id] == 0:
+            del self._component_counts[event.component_id]
+        key = (event.component_id, event.kind)
+        self._component_kind_counts[key] -= 1
+        if self._component_kind_counts[key] == 0:
+            del self._component_kind_counts[key]

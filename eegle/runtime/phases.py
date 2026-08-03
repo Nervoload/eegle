@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Any, Mapping, Protocol
+from typing import Any, Protocol
 
 from eegle._domain import EquivalenceLevel
 from eegle._validation import require_identifier, thaw_json
 from eegle.compiler.plan import ExecutionPlan, PlannedPhase, PlannedTransition
-from eegle.models.predictions import Prediction
 from eegle.plugins.registry import PluginRegistry
-from eegle.processing.windows import DenseWindow
 from eegle.recording.artifacts import ArtifactReference
 from eegle.recording.evidence import EvidenceRecord
 from eegle.recording.publications import ArtifactPublication
@@ -35,6 +34,8 @@ from eegle.streams.packets import (
     Packet,
     SparseEventBatch,
 )
+from eegle.validation.contracts import ValidationStatus
+from eegle.validation.metrics import evaluate_metric
 
 
 class EngineStatus(str, Enum):
@@ -95,7 +96,23 @@ class AcceptanceResult:
     operator: str
     expected: Any
     observed: Any
-    passed: bool
+    status: ValidationStatus
+    evidence_count: int = 0
+    reason: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "status", ValidationStatus(self.status))
+        count = int(self.evidence_count)
+        if count < 0:
+            raise ValueError("acceptance evidence_count cannot be negative")
+        object.__setattr__(self, "evidence_count", count)
+        if self.status == ValidationStatus.INSUFFICIENT_EVIDENCE:
+            if self.reason is None or not self.reason.strip():
+                raise ValueError("insufficient acceptance evidence requires a reason")
+
+    @property
+    def passed(self) -> bool:
+        return self.status == ValidationStatus.PASS
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -105,6 +122,9 @@ class AcceptanceResult:
             "expected": self.expected,
             "observed": self.observed,
             "passed": self.passed,
+            "status": self.status.value,
+            "evidence_count": self.evidence_count,
+            "reason": self.reason,
         }
 
 
@@ -219,10 +239,21 @@ class ExecutionEngine:
         runtime: PlanRuntime,
         *,
         execution_id: str | None = None,
+        evidence_sink: Callable[[EvidenceRecord], None] | None = None,
+        capture_sink: Callable[[Packet], None] | None = None,
+        retain_evidence: bool = True,
+        retain_phase_details: bool = True,
     ) -> None:
         self.runtime = runtime
         self.plan = runtime.plan
-        self.graph = PlanGraphExecutor(runtime, execution_id=execution_id)
+        self.graph = PlanGraphExecutor(
+            runtime,
+            execution_id=execution_id,
+            evidence_sink=evidence_sink,
+            capture_sink=capture_sink,
+            retain_evidence=retain_evidence,
+            retain_phase_details=retain_phase_details,
+        )
         self._consumed = False
 
     @classmethod
@@ -235,6 +266,10 @@ class ExecutionEngine:
         proxy_factory: ComponentProxyFactory | None = None,
         component_overrides: Mapping[str, Any] | None = None,
         artifact_resolver: ArtifactResolver | None = None,
+        evidence_sink: Callable[[EvidenceRecord], None] | None = None,
+        capture_sink: Callable[[Packet], None] | None = None,
+        retain_evidence: bool = True,
+        retain_phase_details: bool = True,
     ) -> "ExecutionEngine":
         return cls(
             construct_plan_runtime(
@@ -245,6 +280,10 @@ class ExecutionEngine:
                 artifact_resolver=artifact_resolver,
             ),
             execution_id=execution_id,
+            evidence_sink=evidence_sink,
+            capture_sink=capture_sink,
+            retain_evidence=retain_evidence,
+            retain_phase_details=retain_phase_details,
         )
 
     def cancel(self) -> None:
@@ -620,72 +659,29 @@ class ExecutionEngine:
         for criterion_id in phase.acceptance_criteria:
             criterion = criteria[criterion_id]
             metric_id = str(criterion["metric_id"])
-            observed = self._measure(metrics[metric_id], result)
+            observation = evaluate_metric(metrics[metric_id], result)
             operator = str(criterion["operator"])
             expected = criterion["value"]
-            passed = self._compare(operator, observed, expected)
+            if observation.sufficient:
+                passed = self._compare(operator, observation.value, expected)
+                status = (
+                    ValidationStatus.PASS if passed else ValidationStatus.FAIL
+                )
+            else:
+                status = ValidationStatus.INSUFFICIENT_EVIDENCE
             values.append(
                 AcceptanceResult(
                     criterion_id=criterion_id,
                     metric_id=metric_id,
                     operator=operator,
                     expected=expected,
-                    observed=observed,
-                    passed=passed,
+                    observed=thaw_json(observation.value),
+                    status=status,
+                    evidence_count=observation.evidence_count,
+                    reason=observation.reason,
                 )
             )
         return tuple(values)
-
-    @staticmethod
-    def _measure(metric: Mapping[str, Any], result: GraphPhaseResult) -> Any:
-        measure = str(metric["measure"])
-        parameters = metric.get("parameters") or {}
-        if measure == "input_count":
-            return len(result.admitted_inputs)
-        if measure == "emission_count":
-            return len(result.emissions)
-        if measure == "work_count":
-            return len(result.work)
-        if measure == "artifact_count":
-            return len(result.artifacts)
-        if measure == "component_emission_count":
-            component_id = str(parameters["component_id"])
-            port = parameters.get("port")
-            return sum(
-                value.component_id == component_id
-                and (port is None or value.output_port == port)
-                for value in result.emissions
-            )
-        if measure == "work_status_count":
-            status = str(parameters["status"])
-            component_id = parameters.get("component_id")
-            return sum(
-                value.status.value == status
-                and (component_id is None or value.component_id == component_id)
-                for value in result.work
-            )
-        if measure == "prediction_coverage":
-            numerator = str(parameters["prediction_component"])
-            denominator = str(parameters["window_component"])
-            prediction_port = parameters.get("prediction_port")
-            window_port = parameters.get("window_port")
-            predictions = sum(
-                value.component_id == numerator
-                and isinstance(value.value, Prediction)
-                and (
-                    prediction_port is None
-                    or value.output_port == str(prediction_port)
-                )
-                for value in result.emissions
-            )
-            windows = sum(
-                value.component_id == denominator
-                and isinstance(value.value, DenseWindow)
-                and (window_port is None or value.output_port == str(window_port))
-                for value in result.emissions
-            )
-            return 0.0 if windows == 0 else predictions / windows
-        raise ValueError(f"unsupported acceptance metric measure: {measure}")
 
     @staticmethod
     def _compare(operator: str, observed: Any, expected: Any) -> bool:

@@ -45,11 +45,25 @@ class InMemoryRecordSink:
     """Dependency-light observer sink for arbitrary typed runtime records."""
 
     _records: list[Any] = field(default_factory=list)
+    retention_limit: int | None = None
+    total_count: int = 0
+
+    def __post_init__(self) -> None:
+        if self.retention_limit is not None:
+            self.retention_limit = int(self.retention_limit)
+            if self.retention_limit < 0:
+                raise ValueError("record sink retention_limit cannot be negative")
 
     def append(self, record: Any) -> None:
         if not callable(getattr(record, "to_payload", None)):
             raise TypeError("record sink values must expose an explicit to_payload() contract")
-        self._records.append(record)
+        self.total_count += 1
+        if self.retention_limit is None:
+            self._records.append(record)
+        elif self.retention_limit > 0:
+            self._records.append(record)
+            if len(self._records) > self.retention_limit:
+                del self._records[0]
 
     @property
     def records(self) -> tuple[Any, ...]:
