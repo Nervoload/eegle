@@ -17,6 +17,9 @@ The JSON files in this directory are experiment presets. They are loaded by
 - `record_dsart8.json` and `record_dsart32.json`: recording-first two-session
   Dynamic-State SART visit recipes; keep their task protocol identical and put
   montage-specific differences under `hardware.eeg`.
+- `study1_neuracle64.json`: visit-aware proposal candidate built on Dynamic
+  SART for Neuracle 64; unresolved channel, reference/ground/EOG, and physical
+  cue-delivery values must remain explicit live gates rather than guessed defaults.
 
 ## Editing Rules
 

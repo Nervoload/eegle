@@ -6,10 +6,12 @@ import argparse
 import os
 import threading
 from time import monotonic, sleep
+from typing import Any
 
 from eegle.config import load_config
+from eegle.devices.labrecorder_xdf import LabRecorderXdfRecorder
 from eegle.devices.lsl_eeg import LslEegRecorder
-from eegle.session import paths_for_existing_session
+from eegle.session import SessionPaths, paths_for_existing_session
 from eegle.telemetry import Telemetry, telemetry_config_from
 from eegle.workers.common import StatusWriter, install_stop_signal_handlers
 
@@ -34,13 +36,15 @@ def main(argv: list[str] | None = None) -> int:
         status.update("disabled", reason="recorder backend disabled")
         return 0
     if args.backend == "labrecorder_xdf":
-        status.update(
-            "unsupported",
-            reason="LabRecorder/XDF backend is scaffolded but not launched in this pass",
-            xdf_file=str(paths.raw / "recording.xdf"),
-            csv_mirror_file=str(paths.eeg_csv),
+        return _run_labrecorder_xdf(
+            config,
+            paths,
+            status,
+            telemetry,
+            telemetry_config,
+            stop_event,
+            manager_pid,
         )
-        return 2
     if args.backend != "lsl_csv":
         status.update("failed", error=f"recorder backend '{args.backend}' is not implemented")
         return 2
@@ -111,6 +115,97 @@ def main(argv: list[str] | None = None) -> int:
             "recorder.stop",
             level="default",
             message=f"Recorder stopped with status {final_status}",
+            metadata=summary,
+        )
+        status.update(final_status, summary=summary, error=summary.get("error"))
+    return 0 if final_status == "stopped" else 1
+
+
+def _run_labrecorder_xdf(
+    config: dict[str, Any],
+    paths: SessionPaths,
+    status: StatusWriter,
+    telemetry: Telemetry,
+    telemetry_config: dict[str, Any],
+    stop_event: threading.Event,
+    manager_pid: int,
+) -> int:
+    """Run LabRecorder and the existing CSV mirror behind one worker status."""
+    recorder_config = dict(config.get("processes", {}).get("recorder", {}) or {})
+    startup_timeout = float(recorder_config.get("startup_timeout_seconds", 20.0))
+    recorder = LabRecorderXdfRecorder(config, paths, startup_timeout_seconds=startup_timeout)
+    status.update(
+        "starting",
+        xdf_file=str(paths.eeg_xdf),
+        csv_mirror_file=str(paths.eeg_csv),
+        metadata_file=str(paths.xdf_metadata),
+    )
+    telemetry.emit(
+        "lsl.discovery.start",
+        level="default",
+        message="Starting managed LabRecorder/XDF acquisition and CSV mirror",
+        metadata={"backend": "labrecorder_xdf", "xdf_file": str(paths.eeg_xdf)},
+    )
+    try:
+        snapshot = recorder.start()
+    except Exception as exc:
+        snapshot = recorder.snapshot()
+        error = snapshot.get("error") or f"{type(exc).__name__}: {exc}"
+        telemetry.emit(
+            "lsl.discovery.failed",
+            level="default",
+            message=str(error),
+            metadata=snapshot,
+        )
+        status.update("failed", summary=snapshot, error=error)
+        return 1
+    telemetry.emit(
+        "lsl.discovery.complete",
+        level="default",
+        message="Managed LabRecorder/XDF acquisition is recording",
+        metadata=snapshot,
+    )
+    status.update("recording", summary=snapshot)
+    last_update = monotonic()
+    heartbeat_seconds = float(telemetry_config.get("heartbeat_seconds", 5.0))
+    last_health_event = monotonic()
+    stop_reason = "stop_requested"
+    final_status = "failed"
+    try:
+        while not stop_event.is_set():
+            if _manager_process_disappeared(manager_pid):
+                stop_reason = "manager_parent_lost"
+                telemetry.emit(
+                    "recorder.parent_lost",
+                    level="default",
+                    message="Recorder manager process disappeared; finalizing XDF acquisition",
+                    metadata={"manager_pid": manager_pid, "current_parent_pid": os.getppid()},
+                )
+                stop_event.set()
+                break
+            snapshot = recorder.snapshot()
+            if snapshot.get("status") != "recording":
+                status.update("failed", summary=snapshot, error=snapshot.get("error"))
+                return 1
+            if monotonic() - last_update >= 1.0:
+                status.update("recording", summary=snapshot)
+                last_update = monotonic()
+                if monotonic() - last_health_event >= heartbeat_seconds:
+                    telemetry.emit(
+                        "eeg.sample_heartbeat",
+                        level="realtime",
+                        message="XDF recorder and CSV mirror heartbeat",
+                        metadata=snapshot,
+                    )
+                    last_health_event = monotonic()
+            sleep(0.1)
+    finally:
+        summary = recorder.stop(reason=stop_reason)
+        final_status = str(summary.get("status", "failed"))
+        telemetry.emit(
+            "recorder.stop",
+            level="default",
+            message=f"XDF recorder stopped with status {final_status}",
             metadata=summary,
         )
         status.update(final_status, summary=summary, error=summary.get("error"))

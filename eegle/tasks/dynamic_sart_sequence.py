@@ -20,11 +20,7 @@ def build_dynamic_sart_plan(
     smoke_test_override = trial_override is not None and int(trial_override) != config.normal_recipe_trial_count
     if smoke_test_override:
         blocks = _smoke_blocks(int(trial_override), config)
-    explicit_no_go_counts = (
-        None
-        if smoke_test_override or config.planned_no_go_count is None
-        else _distribute_no_go_count(config, blocks, config.planned_no_go_count)
-    )
+    explicit_no_go_counts = _explicit_no_go_counts(config, blocks, smoke_test_override=smoke_test_override)
 
     configuration_hash = _hash_payload(config.payload())
     planned_blocks: list[dict[str, Any]] = []
@@ -55,7 +51,7 @@ def build_dynamic_sart_plan(
             trial["global_trial_index"] = global_trial
             trial["trial"] = global_trial
             trial["planned_onset_offset_seconds"] = planned_offset
-            planned_offset += config.response_window_seconds + float(trial["planned_jitter_seconds"])
+            planned_offset += float(trial["planned_soi_seconds"])
             planned_trials.append(trial)
         block_payload = block.payload(block_index)
         block_payload["block_seed"] = block_seed
@@ -64,6 +60,7 @@ def build_dynamic_sart_plan(
         block_payload["planned_no_go_count"] = sum(int(row["is_no_go"]) for row in block_trials)
         planned_blocks.append(block_payload)
 
+    cue_schedule = _apply_cue_schedule(config, planned_trials, smoke_test_override=smoke_test_override)
     probe_trials = sorted(
         value for value in set(config.thought_probe_after_trials) if config.thought_probes_enabled and value <= len(planned_trials)
     )
@@ -95,6 +92,7 @@ def build_dynamic_sart_plan(
         "requested_trial_override": int(trial_override) if trial_override is not None else None,
         "normal_recipe_trial_count": config.normal_recipe_trial_count,
         "planned_no_go_count": sum(int(row["is_no_go"]) for row in planned_trials),
+        "cue_schedule": cue_schedule,
     }
     sequence_id = _hash_payload(sequence_basis)
     for row in planned_trials:
@@ -125,6 +123,9 @@ def validate_dynamic_sart_plan(plan: dict[str, Any], config: DynamicSartConfig) 
         no_go_positions = [int(row["block_trial_index"]) for row in rows if bool(row["is_no_go"])]
         if not no_go_positions:
             raise ValueError(f"dynamic_sart block {block['block_name']} has no no-go trial")
+        configured_count = block.get("planned_no_go_count")
+        if configured_count is not None and len(no_go_positions) != int(configured_count):
+            raise ValueError(f"dynamic_sart block {block['block_name']} no-go count does not match its contract")
         if no_go_positions[0] <= config.minimum_leading_go_trials:
             raise ValueError(f"dynamic_sart block {block['block_name']} violates the leading-go constraint")
         if no_go_positions[-1] > len(rows) - config.minimum_trailing_go_trials:
@@ -153,6 +154,9 @@ def marker_label(family: str, trial: dict[str, Any] | None = None, **metadata: A
                 "digit": trial.get("digit"),
                 "block": trial.get("block_index"),
                 "phase": trial.get("phase"),
+                "segment": trial.get("study_segment"),
+                "cue_opportunity": 1 if bool(trial.get("cue_opportunity", False)) else None,
+                "cue_assignment": trial.get("cue_assignment"),
                 "practice": int(bool(trial.get("is_practice", False))),
             }
         )
@@ -171,10 +175,14 @@ def _build_block_trials(
     no_go_count_override: int | None = None,
 ) -> list[dict[str, Any]]:
     rng = random.Random(block_seed)
-    no_go_count = (
-        max(1, int(round(block.trials * config.no_go_probability)))
-        if no_go_count_override is None
-        else int(no_go_count_override)
+    no_go_count = int(
+        block.planned_no_go_count
+        if no_go_count_override is None and block.planned_no_go_count is not None
+        else (
+            max(1, int(round(block.trials * config.no_go_probability)))
+            if no_go_count_override is None
+            else no_go_count_override
+        )
     )
     maximum = _maximum_spaced_events(
         block.trials,
@@ -212,6 +220,15 @@ def _build_block_trials(
         digit = config.no_go_digit if is_no_go else assigned_go_digits[go_cursor]
         if not is_no_go:
             go_cursor += 1
+        if config.soi_min_seconds is None:
+            planned_jitter = rng.uniform(
+                config.inter_trial_jitter_min_seconds,
+                config.inter_trial_jitter_max_seconds,
+            )
+            planned_soi = config.response_window_seconds + planned_jitter
+        else:
+            planned_soi = rng.uniform(config.soi_min_seconds, config.soi_max_seconds)
+            planned_jitter = planned_soi - config.response_window_seconds
         rows.append(
             {
                 "schema": PLAN_SCHEMA,
@@ -221,6 +238,7 @@ def _build_block_trials(
                 "block_trial_index": zero_index + 1,
                 "block_name": block.name,
                 "phase": block.phase,
+                "study_segment": block.study_segment,
                 "regime": "standard",
                 "is_practice": False,
                 "master_seed": config.master_seed,
@@ -231,10 +249,12 @@ def _build_block_trials(
                 "expected_action": "withhold" if is_no_go else "press",
                 "planned_stimulus_seconds": config.stimulus_seconds,
                 "planned_response_window_seconds": config.response_window_seconds,
-                "planned_jitter_seconds": rng.uniform(
-                    config.inter_trial_jitter_min_seconds,
-                    config.inter_trial_jitter_max_seconds,
-                ),
+                "planned_jitter_seconds": planned_jitter,
+                "planned_soi_seconds": planned_soi,
+                "cue_opportunity": False,
+                "cue_opportunity_index": None,
+                "cue_randomization_block_index": None,
+                "cue_assignment": None,
                 "planned_break_after_trial": False,
                 "planned_break_minimum_seconds": None,
                 "planned_break_maximum_seconds": None,
@@ -288,6 +308,80 @@ def _smoke_blocks(trials: int, config: DynamicSartConfig) -> tuple[DynamicSartBl
         DynamicSartBlock("support_smoke", "support", support),
         DynamicSartBlock("query_smoke", "query", query),
     )
+
+
+def _explicit_no_go_counts(
+    config: DynamicSartConfig,
+    blocks: tuple[DynamicSartBlock, ...],
+    *,
+    smoke_test_override: bool,
+) -> list[int] | None:
+    if smoke_test_override:
+        return None
+    block_counts = [block.planned_no_go_count for block in blocks]
+    if any(count is not None for count in block_counts):
+        if any(count is None for count in block_counts):
+            raise ValueError("dynamic_sart block-level planned_no_go_count must be configured for every block")
+        counts = [int(count) for count in block_counts if count is not None]
+        if config.planned_no_go_count is not None and sum(counts) != config.planned_no_go_count:
+            raise ValueError("dynamic_sart block-level no-go counts do not match planned_no_go_count")
+        return counts
+    if config.planned_no_go_count is None:
+        return None
+    return _distribute_no_go_count(config, blocks, config.planned_no_go_count)
+
+
+def _apply_cue_schedule(
+    config: DynamicSartConfig,
+    trials: list[dict[str, Any]],
+    *,
+    smoke_test_override: bool,
+) -> dict[str, Any]:
+    cue = dict(config.cue_schedule)
+    if not bool(cue.get("enabled", False)) or smoke_test_override:
+        return {"enabled": False, "opportunities": []}
+    interval = int(cue["opportunity_every_trials"])
+    run_in = int(cue.get("run_in_trials", 0))
+    block_size = int(cue["randomization_block_size"])
+    cues_per_block = int(cue["cues_per_randomization_block"])
+    opportunity_trials = list(range(run_in + interval, len(trials) + 1, interval))
+    rng = random.Random(_derived_seed(config.master_seed, 0, "cue_schedule"))
+    assignments: list[str] = []
+    for _start in range(0, len(opportunity_trials), block_size):
+        block = ["cue"] * cues_per_block + ["no_cue"] * (block_size - cues_per_block)
+        rng.shuffle(block)
+        assignments.extend(block)
+    opportunities = []
+    for opportunity_index, (trial_index, assignment) in enumerate(
+        zip(opportunity_trials, assignments),
+        start=1,
+    ):
+        randomization_block = (opportunity_index - 1) // block_size + 1
+        row = trials[trial_index - 1]
+        row.update(
+            {
+                "cue_opportunity": True,
+                "cue_opportunity_index": opportunity_index,
+                "cue_randomization_block_index": randomization_block,
+                "cue_assignment": assignment,
+            }
+        )
+        opportunities.append(
+            {
+                "opportunity_index": opportunity_index,
+                "trial_index": trial_index,
+                "randomization_block_index": randomization_block,
+                "assignment": assignment,
+            }
+        )
+    return {
+        "enabled": True,
+        "run_in_trials": run_in,
+        "opportunity_every_trials": interval,
+        "randomization_block_size": block_size,
+        "cues_per_randomization_block": cues_per_block,
+        "opportunities": opportunities,
+    }
 
 
 def _spaced_positions(

@@ -39,6 +39,8 @@ class SessionPaths:
     calibration_plot: Path
     eeg_csv: Path
     eeg_metadata: Path
+    eeg_xdf: Path
+    xdf_metadata: Path
     realtime_windows_jsonl: Path
     realtime_decisions_jsonl: Path
     realtime_model_predictions_jsonl: Path
@@ -107,6 +109,8 @@ def create_session(
         calibration_plot=session_dir / "calibration" / "alpha_calibration.svg",
         eeg_csv=session_dir / "raw" / "eeg.csv",
         eeg_metadata=session_dir / "raw" / "eeg_metadata.json",
+        eeg_xdf=session_dir / "raw" / "recording.xdf",
+        xdf_metadata=session_dir / "raw" / "xdf_metadata.json",
         realtime_windows_jsonl=session_dir / "realtime" / "windows.jsonl",
         realtime_decisions_jsonl=session_dir / "realtime" / "decisions.jsonl",
         realtime_model_predictions_jsonl=session_dir / "realtime" / "model_predictions.jsonl",
@@ -229,6 +233,8 @@ def paths_for_existing_session(root: str | Path) -> SessionPaths:
         calibration_plot=session_dir / "calibration" / "alpha_calibration.svg",
         eeg_csv=session_dir / "raw" / "eeg.csv",
         eeg_metadata=session_dir / "raw" / "eeg_metadata.json",
+        eeg_xdf=session_dir / "raw" / "recording.xdf",
+        xdf_metadata=session_dir / "raw" / "xdf_metadata.json",
         realtime_windows_jsonl=session_dir / "realtime" / "windows.jsonl",
         realtime_decisions_jsonl=session_dir / "realtime" / "decisions.jsonl",
         realtime_model_predictions_jsonl=session_dir / "realtime" / "model_predictions.jsonl",

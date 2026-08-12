@@ -50,8 +50,9 @@ labels and their LSL timestamps are flushed to
 `raw/lsl_markers_received_metadata.json`. Post-session validation requires the
 received onset/offset or baseline-boundary sequence and timestamps to match the
 task ledger exactly. This preserves EEG as CSV while providing independent
-runtime receipt evidence. LabRecorder/XDF remains optional and is not managed
-by these recipes.
+runtime receipt evidence. The shared recorder worker now supports managed
+LabRecorder/XDF, but the legacy `dsart8` and `dsart32` recipes intentionally
+remain configured for `lsl_csv`; Study 1 is the first XDF-enabled recipe.
 
 Per-stimulus telemetry is disabled in these recipes. Raw task rows still flush
 incrementally, while the large stimulus manifest checkpoints only at block

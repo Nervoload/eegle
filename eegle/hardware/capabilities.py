@@ -18,6 +18,7 @@ CONSOLE_COMMANDS = (
     "attention8",
     "dsart8",
     "dsart32",
+    "study1",
 )
 
 

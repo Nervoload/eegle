@@ -112,7 +112,7 @@ library, it should grow into a small stream abstraction layer:
 - marker outlets
 - recorder interfaces
 - simulated sources
-- optional LabRecorder/XDF/BIDS exporters
+- the managed LabRecorder/XDF recorder and future BIDS exporters
 
 Readiness: medium. Useful now, but not yet as cleanly decoupled as `core` or
 `models`.

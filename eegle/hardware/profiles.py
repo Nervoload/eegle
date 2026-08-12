@@ -35,11 +35,14 @@ def mapped_channel_names(channel_names: list[str], eeg_config: dict[str, Any]) -
         profile = expected_profile(str(profile_name), eeg_config.get("family"))
     except KeyError:
         return names, "lsl_metadata"
-    if len(profile.channel_names) != len(names):
+    expected_names = [str(value) for value in eeg_config.get("expected_channel_names", [])]
+    physical_names = expected_names or list(profile.channel_names)
+    if len(physical_names) != len(names):
         return names, "lsl_metadata"
     generic = not names or all(_is_generic_channel_name(name) for name in names)
     if generic:
-        return list(profile.channel_names), f"profile:{profile.name}"
+        source = "config:expected_channel_names" if expected_names else f"profile:{profile.name}"
+        return physical_names, source
     return names, "lsl_metadata"
 
 

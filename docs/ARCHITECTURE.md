@@ -157,13 +157,15 @@ data/participants/<participant-id>/sessions/<date>/<experiment-id>/<task>/run-<t
 - `realtime`: task stimulus/response, marker, model, feedback, and EEG health events.
 - `debug`: realtime plus debug diagnostics; `--trace` also writes span records to `logs/debug.jsonl`.
 
-Telemetry augments the canonical experiment files. Stimulus timing still lives in `events/events.jsonl`, `triggers.txt`, stimulus manifests, and marker streams; EEG remains in `raw/` or future XDF/BIDS outputs.
+Telemetry augments the canonical experiment files. Stimulus timing still lives in `events/events.jsonl`, `triggers.txt`, stimulus manifests, and marker streams. EEG remains under `raw/`: legacy recipes use CSV, while Study 1 uses authoritative XDF plus a CSV mirror.
 
 ## Layer 2: Realtime Closed Loop
 
 `eegle.feedback_manager.FeedbackManager` owns the managed Architecture C lifecycle. It can start the recorder before calibration, reconfigure after calibration, launch enabled realtime workers before the task, stop long-running workers after the task, and run offline analysis after recording ends. The current workers are:
 
-- `recorder`: `lsl_csv` is implemented; `labrecorder_xdf` is a configured hook only.
+- `recorder`: `lsl_csv` records directly through pylsl; `labrecorder_xdf`
+  manages LabRecorder through its loopback control socket and retains the CSV
+  recorder as a live health and recovery mirror.
 - `realtime_processor`: reads EEG LSL and marker LSL, maintains raw and processed ring buffers, uses causal online preprocessing, runs marker-locked epochs through a registry-backed `ModelAdapter`, converts predictions through `DecisionPolicy`, and logs/emits explicit task actions. It can also run calibrated posterior alpha measurement continuously and write `realtime/alpha_power.jsonl` while marker-locked epoching remains enabled. Rolling-window decisions remain available as a compatibility path.
 - `dashboard`: optional non-critical localhost HTTP worker that reads session artifacts and displays live classifier status without touching the PsychoPy process.
 - `dashboard` demo mode: an explicitly simulated classroom path that subscribes

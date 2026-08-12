@@ -26,6 +26,7 @@ OPTIONAL_PACKAGES = [
     "matplotlib",
     "mne",
     "pylsl",
+    "pyxdf",
     "psychopy",
     "specparam",
     "sklearn",

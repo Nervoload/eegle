@@ -53,6 +53,7 @@ TRIAL_CSV_FIELDS = (
     "block_trial_index",
     "block_name",
     "phase",
+    "study_segment",
     "regime",
     "is_practice",
     "sequence_id",
@@ -66,6 +67,11 @@ TRIAL_CSV_FIELDS = (
     "planned_stimulus_seconds",
     "planned_response_window_seconds",
     "planned_jitter_seconds",
+    "planned_soi_seconds",
+    "cue_opportunity",
+    "cue_opportunity_index",
+    "cue_randomization_block_index",
+    "cue_assignment",
     "planned_break_after_trial",
     "planned_break_minimum_seconds",
     "planned_break_maximum_seconds",
@@ -139,22 +145,40 @@ class DynamicSartTask:
         self.participant_id = participant_id
         self.task_config = DynamicSartConfig.from_mapping(config.get("tasks", {}).get(TASK_NAME, {}))
 
-    def run(self, paths: SessionPaths | None = None) -> TaskRunResult:
+    def run(
+        self,
+        paths: SessionPaths | None = None,
+        *,
+        marker_outlet: LslMarkerOutlet | NullMarkerOutlet | None = None,
+    ) -> TaskRunResult:
         paths = paths or create_session(self.config, task=TASK_NAME, participant_id=self.participant_id)
         plan = build_dynamic_sart_plan(self.task_config, trial_override=self.trial_override)
         validate_dynamic_sart_plan(plan, self.task_config)
         if self.mode == "dry-run":
-            summary = self._run_dry(paths, plan)
+            summary = self._run_dry(paths, plan, marker_outlet=marker_outlet)
         elif self.mode == "psychopy":
-            summary = self._run_psychopy(paths, plan)
+            summary = self._run_psychopy(paths, plan, marker_outlet=marker_outlet)
         else:
             raise ValueError(f"Unsupported Dynamic SART mode: {self.mode}")
         return TaskRunResult(TASK_NAME, paths.root, self.mode, summary)
 
-    def _run_dry(self, paths: SessionPaths, plan: dict[str, Any]) -> dict[str, Any]:
+    def _run_dry(
+        self,
+        paths: SessionPaths,
+        plan: dict[str, Any],
+        *,
+        marker_outlet: LslMarkerOutlet | NullMarkerOutlet | None = None,
+    ) -> dict[str, Any]:
         participant = _participant_id(paths, self.participant_id)
         telemetry = Telemetry.from_config(self.config, paths, component="task.dynamic_sart")
-        marker_outlet: LslMarkerOutlet | NullMarkerOutlet = NullMarkerOutlet("dynamic_sart dry-run")
+        owns_marker_outlet = marker_outlet is None
+        active_marker_outlet: LslMarkerOutlet | NullMarkerOutlet = (
+            marker_outlet or NullMarkerOutlet("dynamic_sart dry-run")
+        )
+        marker_receipt: LslMarkerReceiptRecorder | None = None
+        require_live_recorder = bool(
+            self.config.get("recording_suite", {}).get("require_live_recorder", False)
+        )
         virtual_time = monotonic()
         task_start = virtual_time
         aborted = False
@@ -167,11 +191,26 @@ class DynamicSartTask:
         primary_error: BaseException | None = None
         summary: dict[str, Any] | None = None
         try:
+            if require_live_recorder:
+                if marker_outlet is None:
+                    active_marker_outlet = _make_marker_outlet(
+                        dict(self.config.get("hardware", {}).get("markers", {}) or {}),
+                        paths,
+                    )
+                marker_receipt = _start_marker_receipt_recorder(active_marker_outlet, paths)
+                settle_seconds = float(
+                    self.config.get("recording_rehearsal", {}).get(
+                        "marker_discovery_settle_seconds",
+                        0.5,
+                    )
+                )
+                if settle_seconds > 0:
+                    sleep(settle_seconds)
             with EventLogger(paths.behavior_csv, paths.events_jsonl, paths.triggers, telemetry, "task.dynamic_sart") as logger:
-                _emit(logger, marker_outlet, marker_label("task_start"), event_type="SYSTEM", timestamp=virtual_time, mode="dry-run", task=TASK_NAME)
+                _emit(logger, active_marker_outlet, marker_label("task_start"), event_type="SYSTEM", timestamp=virtual_time, mode="dry-run", task=TASK_NAME)
                 practice_passed = not self.task_config.practice_enabled
                 if self.task_config.practice_enabled:
-                    _emit(logger, marker_outlet, marker_label("practice_start"), event_type="SYSTEM", timestamp=virtual_time, task=TASK_NAME)
+                    _emit(logger, active_marker_outlet, marker_label("practice_start"), event_type="SYSTEM", timestamp=virtual_time, task=TASK_NAME)
                     for round_index, practice_plan in enumerate(plan["practice_rounds"], start=1):
                         round_records = []
                         for trial in practice_plan:
@@ -180,7 +219,7 @@ class DynamicSartTask:
                                 self.task_config,
                                 store,
                                 logger,
-                                marker_outlet,
+                                active_marker_outlet,
                                 task_start,
                                 virtual_time,
                                 plan_trial_count=len(plan["planned_trials"]),
@@ -194,7 +233,7 @@ class DynamicSartTask:
                             break
                     _emit(
                         logger,
-                        marker_outlet,
+                        active_marker_outlet,
                         marker_label("practice_end"),
                         event_type="SYSTEM",
                         timestamp=virtual_time,
@@ -208,7 +247,7 @@ class DynamicSartTask:
                 if not aborted:
                     virtual_time = _run_dry_countdown(
                         logger,
-                        marker_outlet,
+                        active_marker_outlet,
                         virtual_time,
                         self.task_config.countdown_step_seconds,
                     )
@@ -229,7 +268,7 @@ class DynamicSartTask:
                     block_index = int(block["block_index"])
                     _emit(
                         logger,
-                        marker_outlet,
+                        active_marker_outlet,
                         marker_label("block_start", block=block_index, phase=block["phase"]),
                         event_type="SYSTEM",
                         timestamp=virtual_time,
@@ -250,7 +289,7 @@ class DynamicSartTask:
                             self.task_config,
                             store,
                             logger,
-                            marker_outlet,
+                            active_marker_outlet,
                             task_start,
                             virtual_time,
                             plan_trial_count=len(plan["planned_trials"]),
@@ -262,7 +301,7 @@ class DynamicSartTask:
                             virtual_time = _record_dry_probe(
                                 store,
                                 logger,
-                                marker_outlet,
+                                active_marker_outlet,
                                 record,
                                 self.task_config,
                                 virtual_time,
@@ -274,7 +313,7 @@ class DynamicSartTask:
                             break
                     _emit(
                         logger,
-                        marker_outlet,
+                        active_marker_outlet,
                         marker_label("block_end", block=block_index, phase=block["phase"]),
                         event_type="SYSTEM",
                         timestamp=virtual_time,
@@ -290,7 +329,7 @@ class DynamicSartTask:
                             self.task_config,
                             virtual_time,
                             logger,
-                            marker_outlet,
+                            active_marker_outlet,
                         )
                         support_complete = True
                     if not aborted and bool(block.get("break_after")):
@@ -298,7 +337,7 @@ class DynamicSartTask:
                         break_maximum = float(block.get("maximum_break_seconds", break_minimum))
                         _emit(
                             logger,
-                            marker_outlet,
+                            active_marker_outlet,
                             marker_label("break_start", block=block_index),
                             event_type="SYSTEM",
                             timestamp=virtual_time,
@@ -308,7 +347,7 @@ class DynamicSartTask:
                         virtual_time += break_minimum
                         _emit(
                             logger,
-                            marker_outlet,
+                            active_marker_outlet,
                             marker_label("break_end", block=block_index),
                             event_type="SYSTEM",
                             timestamp=virtual_time,
@@ -322,7 +361,7 @@ class DynamicSartTask:
                 if aborted:
                     _emit(
                         logger,
-                        marker_outlet,
+                        active_marker_outlet,
                         marker_label("abort"),
                         event_type="SYSTEM",
                         timestamp=virtual_time,
@@ -331,7 +370,7 @@ class DynamicSartTask:
                     )
                 _emit(
                     logger,
-                    marker_outlet,
+                    active_marker_outlet,
                     marker_label("task_end"),
                     event_type="SYSTEM",
                     timestamp=virtual_time,
@@ -366,8 +405,22 @@ class DynamicSartTask:
             primary_error = exc
             raise
         finally:
-            critical_cleanup_errors = _close_task_resources(("artifact store", store))
-            cleanup_warnings = _close_task_resources(("marker outlet", marker_outlet))
+            if marker_receipt is not None:
+                drain_seconds = float(
+                    self.config.get("recording_rehearsal", {}).get(
+                        "marker_receipt_drain_seconds",
+                        0.25,
+                    )
+                )
+                if drain_seconds > 0:
+                    sleep(drain_seconds)
+            critical_cleanup_errors = _close_task_resources(
+                ("marker receipt recorder", marker_receipt),
+                ("artifact store", store),
+            )
+            cleanup_warnings = _close_task_resources(
+                ("marker outlet", active_marker_outlet if owns_marker_outlet else None)
+            )
             _attach_cleanup_warnings(summary, telemetry, cleanup_warnings)
             if critical_cleanup_errors:
                 detail = "; ".join(critical_cleanup_errors)
@@ -376,7 +429,13 @@ class DynamicSartTask:
                 else:
                     raise RuntimeError(f"DSART cleanup failed: {detail}")
 
-    def _run_psychopy(self, paths: SessionPaths, plan: dict[str, Any]) -> dict[str, Any]:
+    def _run_psychopy(
+        self,
+        paths: SessionPaths,
+        plan: dict[str, Any],
+        *,
+        marker_outlet: LslMarkerOutlet | NullMarkerOutlet | None = None,
+    ) -> dict[str, Any]:
         ensure_runtime_environment(self.config.get("runtime", {}).get("runtime_cache_dir", ".runtime"))
         from psychopy import core, event, visual
 
@@ -385,7 +444,7 @@ class DynamicSartTask:
         display = dict(self.config.get("hardware", {}).get("display", {}))
         markers = dict(self.config.get("hardware", {}).get("markers", {}))
         telemetry = Telemetry.from_config(self.config, paths, component="task.dynamic_sart")
-        marker_outlet: LslMarkerOutlet | NullMarkerOutlet | None = None
+        owns_marker_outlet = marker_outlet is None
         marker_receipt: LslMarkerReceiptRecorder | None = None
         store: DynamicSartArtifactStore | None = None
         win = None
@@ -403,7 +462,8 @@ class DynamicSartTask:
             stall_timeout_seconds=float(suite_config.get("recorder_stall_timeout_seconds", 5.0)),
         )
         try:
-            marker_outlet = _make_marker_outlet(markers, paths)
+            if marker_outlet is None:
+                marker_outlet = _make_marker_outlet(markers, paths)
             if recorder_monitor.required:
                 marker_receipt = _start_marker_receipt_recorder(marker_outlet, paths)
             store = DynamicSartArtifactStore(paths, plan, self.task_config, participant)
@@ -437,7 +497,8 @@ class DynamicSartTask:
                     visual,
                     keyboard,
                     (
-                        f"A digit from 1 to 9 will appear in the centre of the screen.\n\n"
+                        f"A digit from {min(self.task_config.digits)} to {max(self.task_config.digits)} "
+                        "will appear in the centre of the screen.\n\n"
                         f"Press SPACE for every digit except {self.task_config.no_go_digit}.\n"
                         f"When {self.task_config.no_go_digit} appears, do not press.\n\n"
                         "Respond quickly while remaining accurate.\n\nPress SPACE to continue."
@@ -701,7 +762,7 @@ class DynamicSartTask:
                 ("artifact store", store),
             )
             cleanup_warnings = _close_task_resources(
-                ("marker outlet", marker_outlet),
+                ("marker outlet", marker_outlet if owns_marker_outlet else None),
                 ("PsychoPy window", win),
             )
             _attach_cleanup_warnings(summary, telemetry, cleanup_warnings)
@@ -1055,7 +1116,7 @@ def score_dynamic_sart_trial(
     timing = dict(display_timing or {})
     return {
         **deepcopy(planned),
-        "schema_version": 2,
+        "schema_version": 3,
         "schema": TRIAL_SCHEMA,
         "task_name": TASK_NAME,
         "task_version": TASK_VERSION,
@@ -1300,12 +1361,13 @@ def _simulate_trial(
 ) -> tuple[dict[str, Any], float]:
     stimulus_offset = onset + config.stimulus_seconds
     response_close = onset + config.response_window_seconds
-    next_onset = response_close + float(planned["planned_jitter_seconds"])
+    next_onset = onset + float(planned["planned_soi_seconds"])
     rng = random.Random(int(planned["block_seed"]) ^ abs(int(planned["global_trial_index"])) * 7919)
     events: list[dict[str, Any]] = []
     response_specs: list[tuple[str, float]] = []
     if not force_practice_correct and rng.random() < 0.02:
         events.append(_sim_key_event(store, logger, planned, "space", onset - 0.04, premature=True))
+    _emit_planned_cue(logger, marker_outlet, planned, timestamp=onset)
     onset_label = marker_label("stimulus_onset", planned)
     _emit(logger, marker_outlet, onset_label, timestamp=onset, trial=int(planned["global_trial_index"]), **_marker_metadata(planned))
     drift = max(0.0, int(planned.get("global_trial_index", 0))) / max(1, plan_trial_count)
@@ -1644,6 +1706,7 @@ def _present_psychopy_trial(
     digit = visual.TextStim(win, text=str(planned["digit"]), height=0.22, color="white")
     fixation = visual.TextStim(win, text="+", height=0.08, color="white")
     holder: dict[str, Any] = {}
+    _emit_planned_cue(logger, marker_outlet, planned)
     digit.draw()
     win.callOnFlip(_capture_flip_event, holder, marker_outlet, marker_label("stimulus_onset", planned), planned, timing, "onset")
     win.flip()
@@ -1709,7 +1772,7 @@ def _present_psychopy_trial(
         scheduled_response_window_close_lsl=scheduled_response_close_lsl,
         response_window_close_monotonic=response_close,
         response_window_close_lsl=response_close_lsl,
-        scheduled_next_trial_onset_monotonic=scheduled_response_close + float(planned["planned_jitter_seconds"]),
+        scheduled_next_trial_onset_monotonic=onset + float(planned["planned_soi_seconds"]),
         display_timing=timing,
         time_since_break_seconds=None if last_break_monotonic is None else onset - last_break_monotonic,
         previous_trial_index=previous_experimental,
@@ -1730,8 +1793,8 @@ def _present_psychopy_trial(
         **_marker_metadata(planned),
     )
     upcoming = []
-    jitter_end = scheduled_response_close + float(planned["planned_jitter_seconds"])
-    while monotonic() < jitter_end:
+    next_onset = onset + float(planned["planned_soi_seconds"])
+    while monotonic() < next_onset:
         assigned = int(next_trial["global_trial_index"]) if next_trial is not None else None
         polled = keyboard.poll(
             task_state="INTERTRIAL_INTERVAL",
@@ -2262,12 +2325,49 @@ def _marker_metadata(planned: dict[str, Any]) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "phase": planned.get("phase"),
+        "study_segment": planned.get("study_segment"),
         "practice": bool(planned.get("is_practice")),
         "condition": planned.get("condition"),
         "digit": planned.get("digit"),
         "block": planned.get("block_index"),
         "sequence_id": planned.get("sequence_id"),
+        "cue_opportunity": bool(planned.get("cue_opportunity", False)),
+        "cue_opportunity_index": planned.get("cue_opportunity_index"),
+        "cue_randomization_block_index": planned.get("cue_randomization_block_index"),
+        "cue_assignment": planned.get("cue_assignment"),
     }
+
+
+def _emit_planned_cue(
+    logger: EventLogger,
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet,
+    planned: dict[str, Any],
+    *,
+    timestamp: float | None = None,
+) -> None:
+    """Publish immutable cue assignment markers without claiming physical delivery."""
+    if not bool(planned.get("cue_opportunity", False)):
+        return
+    metadata = _marker_metadata(planned)
+    trial = int(planned["global_trial_index"])
+    _emit(
+        logger,
+        marker_outlet,
+        marker_label("cue_opportunity", planned),
+        timestamp=timestamp,
+        trial=trial,
+        **metadata,
+    )
+    _emit(
+        logger,
+        marker_outlet,
+        marker_label("cue_assigned", planned),
+        timestamp=timestamp,
+        trial=trial,
+        value=str(planned.get("cue_assignment")),
+        delivery_status="not_attempted",
+        **metadata,
+    )
 
 
 def _next_experimental_trial(rows: list[dict[str, Any]], current: int) -> dict[str, Any] | None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +13,7 @@ from eegle.config import load_config
 from eegle.factory import make_task_component
 from eegle.feedback_manager import FeedbackManager
 from eegle.hardware.system import CheckResult
+from eegle.lsl import LslMarkerOutlet, NullMarkerOutlet, session_marker_source_id
 from eegle.preflight import run_preflight, write_preflight_report
 from eegle.session import SessionPaths, create_session
 from eegle.tasks.base import TaskRunResult
@@ -129,6 +131,11 @@ class ForwardExperimentRunner:
                 return result
 
             manager = FeedbackManager(self.config, paths, record_eeg=self.record_eeg)
+            marker_outlet = _prestart_labrecorder_marker_outlet(
+                self.config,
+                paths,
+                recorder_enabled=bool(manager.processes["recorder"]["enabled"]),
+            )
             task_result = None
             calibration_result = None
             task_failure: BaseException | None = None
@@ -179,7 +186,7 @@ class ForwardExperimentRunner:
                         message=f"Starting task {self.task_name}",
                         metadata={"task": self.task_name, "mode": self.task_mode},
                     )
-                    task_result = self._run_task(paths)
+                    task_result = self._run_task(paths, marker_outlet=marker_outlet)
                     self.telemetry.emit(
                         "task.end",
                         level="default",
@@ -196,6 +203,9 @@ class ForwardExperimentRunner:
                     if task_failure is None:
                         raise
                     task_failure.add_note(f"Additional managed-process cleanup error: {cleanup_exc}")
+                finally:
+                    if marker_outlet is not None:
+                        marker_outlet.close()
 
             with self.telemetry.span("analysis", component="experiment", message="Post-session analysis"):
                 analysis = manager.run_offline_analysis()
@@ -259,19 +269,56 @@ class ForwardExperimentRunner:
             )
         return results
 
-    def _run_task(self, paths: SessionPaths) -> TaskRunResult:
+    def _run_task(
+        self,
+        paths: SessionPaths,
+        *,
+        marker_outlet: LslMarkerOutlet | NullMarkerOutlet | None = None,
+    ) -> TaskRunResult:
         components = self.config.get("experiment", {}).get("components", {})
         task_component = components.get("task", self.task_name)
-        return make_task_component(
+        task = make_task_component(
             task_component,
             self.config,
             task_mode=self.task_mode,
             trials=self.trials,
             participant_id=self.participant_id,
-        ).run(paths=paths)
+        )
+        if marker_outlet is not None:
+            parameters = inspect.signature(task.run).parameters
+            if "marker_outlet" not in parameters:
+                raise RuntimeError(
+                    f"task component {task_component!r} does not support the pre-started marker "
+                    "outlet required by managed XDF recording"
+                )
+            return task.run(paths=paths, marker_outlet=marker_outlet)
+        return task.run(paths=paths)
 
     def _write_summary(self, result: ForwardExperimentResult) -> None:
         result.summary_file.parent.mkdir(parents=True, exist_ok=True)
         with result.summary_file.open("w", encoding="utf-8") as handle:
             json.dump(result.as_dict(), handle, indent=2, sort_keys=True)
             handle.write("\n")
+
+
+def _prestart_labrecorder_marker_outlet(
+    config: dict[str, Any],
+    paths: SessionPaths,
+    *,
+    recorder_enabled: bool,
+) -> LslMarkerOutlet | None:
+    recorder = dict(config.get("processes", {}).get("recorder", {}) or {})
+    if not recorder_enabled or str(recorder.get("backend")) != "labrecorder_xdf":
+        return None
+    markers = dict(config.get("hardware", {}).get("markers", {}) or {})
+    try:
+        return LslMarkerOutlet(
+            name=str(markers.get("lsl_stream_name", "EEGleMarkers")),
+            stream_type=str(markers.get("lsl_stream_type", "Markers")),
+            source_id=str(markers.get("source_id") or session_marker_source_id(paths.root)),
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "managed XDF recording requires the run-specific LSL marker outlet "
+            f"before LabRecorder starts: {type(exc).__name__}: {exc}"
+        ) from exc

@@ -8,11 +8,11 @@ from typing import Any
 
 
 TASK_NAME = "dynamic_sart"
-TASK_VERSION = "1.1"
-PLAN_SCHEMA = "eegle.dynamic_sart.plan.v2"
-TRIAL_SCHEMA = "eegle.dynamic_sart.trial.v2"
+TASK_VERSION = "1.2"
+PLAN_SCHEMA = "eegle.dynamic_sart.plan.v3"
+TRIAL_SCHEMA = "eegle.dynamic_sart.trial.v3"
 KEY_EVENT_SCHEMA = "eegle.dynamic_sart.key_event.v1"
-BLOCK_SCHEMA = "eegle.dynamic_sart.block.v2"
+BLOCK_SCHEMA = "eegle.dynamic_sart.block.v3"
 SUPPORT_REFERENCE_SCHEMA = "eegle.dynamic_sart.support_reference.v2"
 LABELS_SCHEMA = "eegle.dynamic_sart.labels.v2"
 LABEL_CONTRACT_SCHEMA = "eegle.dynamic_sart.label_contract.v2"
@@ -39,6 +39,8 @@ class DynamicSartBlock:
     break_after: bool = False
     minimum_break_seconds: float = 30.0
     maximum_break_seconds: float = 30.0
+    study_segment: str | None = None
+    planned_no_go_count: int | None = None
 
     def payload(self, index: int) -> dict[str, Any]:
         return {
@@ -50,6 +52,8 @@ class DynamicSartBlock:
             "break_after": self.break_after,
             "minimum_break_seconds": self.minimum_break_seconds,
             "maximum_break_seconds": self.maximum_break_seconds,
+            "study_segment": self.study_segment,
+            "planned_no_go_count": self.planned_no_go_count,
         }
 
 
@@ -63,6 +67,8 @@ class DynamicSartConfig:
     response_window_seconds: float
     inter_trial_jitter_min_seconds: float
     inter_trial_jitter_max_seconds: float
+    soi_min_seconds: float | None
+    soi_max_seconds: float | None
     minimum_valid_rt_seconds: float
     no_go_probability: float
     planned_no_go_count: int | None
@@ -89,6 +95,7 @@ class DynamicSartConfig:
     allow_stimulation: bool
     countdown_step_seconds: float
     completion_auto_close_seconds: float
+    cue_schedule: dict[str, Any]
     dry_run: dict[str, Any]
 
     @classmethod
@@ -117,6 +124,12 @@ class DynamicSartConfig:
                     break_after=bool(item.get("break_after", False)),
                     minimum_break_seconds=float(item.get("minimum_break_seconds", legacy_break_seconds)),
                     maximum_break_seconds=float(item.get("maximum_break_seconds", legacy_break_seconds)),
+                    study_segment=(
+                        None if item.get("study_segment") is None else str(item.get("study_segment"))
+                    ),
+                    planned_no_go_count=(
+                        None if item.get("planned_no_go_count") is None else int(item["planned_no_go_count"])
+                    ),
                 )
             )
         blocks = tuple(parsed_blocks)
@@ -129,6 +142,8 @@ class DynamicSartConfig:
             response_window_seconds=float(raw.get("response_window_seconds", 1.15)),
             inter_trial_jitter_min_seconds=float(raw.get("inter_trial_jitter_min_seconds", 0.0)),
             inter_trial_jitter_max_seconds=float(raw.get("inter_trial_jitter_max_seconds", 0.15)),
+            soi_min_seconds=(None if raw.get("soi_min_seconds") is None else float(raw["soi_min_seconds"])),
+            soi_max_seconds=(None if raw.get("soi_max_seconds") is None else float(raw["soi_max_seconds"])),
             minimum_valid_rt_seconds=float(raw.get("minimum_valid_rt_seconds", 0.10)),
             no_go_probability=float(raw.get("no_go_probability", 1.0 / 9.0)),
             planned_no_go_count=(
@@ -161,6 +176,7 @@ class DynamicSartConfig:
             allow_stimulation=bool(raw.get("allow_stimulation", False)),
             countdown_step_seconds=float(raw.get("countdown_step_seconds", 1.0)),
             completion_auto_close_seconds=float(raw.get("completion_auto_close_seconds", 30.0)),
+            cue_schedule=dict(raw.get("cue_schedule") or {}),
             dry_run=dict(raw.get("dry_run") or {}),
         )
         validate_dynamic_sart_config(config)
@@ -180,6 +196,8 @@ class DynamicSartConfig:
             "response_window_seconds": self.response_window_seconds,
             "inter_trial_jitter_min_seconds": self.inter_trial_jitter_min_seconds,
             "inter_trial_jitter_max_seconds": self.inter_trial_jitter_max_seconds,
+            "soi_min_seconds": self.soi_min_seconds,
+            "soi_max_seconds": self.soi_max_seconds,
             "minimum_valid_rt_seconds": self.minimum_valid_rt_seconds,
             "no_go_probability": self.no_go_probability,
             "planned_no_go_count": self.planned_no_go_count,
@@ -210,6 +228,7 @@ class DynamicSartConfig:
             "allow_stimulation": self.allow_stimulation,
             "countdown_step_seconds": self.countdown_step_seconds,
             "completion_auto_close_seconds": self.completion_auto_close_seconds,
+            "cue_schedule": dict(self.cue_schedule),
             "dry_run": dict(self.dry_run),
         }
 
@@ -243,6 +262,15 @@ def validate_dynamic_sart_config(config: DynamicSartConfig) -> None:
         raise ValueError("tasks.dynamic_sart.minimum_valid_rt_seconds must be less than response_window_seconds")
     if config.inter_trial_jitter_min_seconds > config.inter_trial_jitter_max_seconds:
         raise ValueError("tasks.dynamic_sart jitter minimum must not exceed jitter maximum")
+    if (config.soi_min_seconds is None) != (config.soi_max_seconds is None):
+        raise ValueError("tasks.dynamic_sart soi_min_seconds and soi_max_seconds must be configured together")
+    if config.soi_min_seconds is not None and config.soi_max_seconds is not None:
+        if not math.isfinite(config.soi_min_seconds) or not math.isfinite(config.soi_max_seconds):
+            raise ValueError("tasks.dynamic_sart SOI bounds must be finite")
+        if config.soi_min_seconds < config.response_window_seconds:
+            raise ValueError("tasks.dynamic_sart soi_min_seconds must be at least response_window_seconds")
+        if config.soi_max_seconds < config.soi_min_seconds:
+            raise ValueError("tasks.dynamic_sart soi_max_seconds must be at least soi_min_seconds")
     if not 0.0 < config.no_go_probability < 1.0:
         raise ValueError("tasks.dynamic_sart.no_go_probability must be between zero and one")
     if config.minimum_go_trials_between_no_go < 0:
@@ -263,7 +291,11 @@ def validate_dynamic_sart_config(config: DynamicSartConfig) -> None:
         if config.planned_no_go_count > maximum_total:
             raise ValueError("tasks.dynamic_sart.planned_no_go_count is infeasible for the block spacing constraints")
     for block in config.blocks:
-        requested = max(1, int(round(block.trials * config.no_go_probability)))
+        requested = (
+            int(block.planned_no_go_count)
+            if block.planned_no_go_count is not None
+            else max(1, int(round(block.trials * config.no_go_probability)))
+        )
         if block.break_after:
             for name, seconds in (
                 ("minimum_break_seconds", block.minimum_break_seconds),
@@ -283,6 +315,10 @@ def validate_dynamic_sart_config(config: DynamicSartConfig) -> None:
         if requested > maximum:
             raise ValueError(
                 f"tasks.dynamic_sart.blocks[{block.name}] no-go count is infeasible for the spacing constraint"
+            )
+        if requested < 1 or requested >= block.trials:
+            raise ValueError(
+                f"tasks.dynamic_sart.blocks[{block.name}].planned_no_go_count must leave go and no-go trials"
             )
     names = [block.name for block in config.blocks]
     if len(names) != len(set(names)):
@@ -334,6 +370,34 @@ def validate_dynamic_sart_config(config: DynamicSartConfig) -> None:
         raise ValueError("tasks.dynamic_sart.allow_stimulation must remain false")
     if not math.isfinite(config.countdown_step_seconds) or config.countdown_step_seconds <= 0:
         raise ValueError("tasks.dynamic_sart.countdown_step_seconds must be finite and positive")
+    _validate_cue_schedule(config)
+
+
+def _validate_cue_schedule(config: DynamicSartConfig) -> None:
+    cue = dict(config.cue_schedule)
+    if not bool(cue.get("enabled", False)):
+        return
+    interval = int(cue.get("opportunity_every_trials", 0))
+    run_in = int(cue.get("run_in_trials", 0))
+    block_size = int(cue.get("randomization_block_size", 0))
+    cues_per_block = int(cue.get("cues_per_randomization_block", -1))
+    if interval < 1:
+        raise ValueError("tasks.dynamic_sart.cue_schedule.opportunity_every_trials must be positive")
+    if run_in < 0:
+        raise ValueError("tasks.dynamic_sart.cue_schedule.run_in_trials must be nonnegative")
+    if block_size < 1:
+        raise ValueError("tasks.dynamic_sart.cue_schedule.randomization_block_size must be positive")
+    if not 0 <= cues_per_block <= block_size:
+        raise ValueError(
+            "tasks.dynamic_sart.cue_schedule.cues_per_randomization_block must fit the randomization block"
+        )
+    opportunities = max(0, (config.normal_recipe_trial_count - run_in) // interval)
+    if opportunities == 0:
+        raise ValueError("tasks.dynamic_sart.cue_schedule does not create any cue opportunities")
+    if opportunities % block_size:
+        raise ValueError(
+            "tasks.dynamic_sart.cue_schedule opportunity count must be divisible by randomization_block_size"
+        )
 
 
 def _maximum_no_go_count(block: DynamicSartBlock, config: DynamicSartConfig) -> int:

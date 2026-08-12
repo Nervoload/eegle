@@ -205,7 +205,7 @@ POSIX-like development shells, not the Windows-native operator path.
 | `eegle evaluate-model` | `python -m eegle.cli evaluate-model` | Score classifier predictions against the stimulus manifest |
 | `eegle replay-classifier` | `python -m eegle.cli replay-classifier` | Replay classifier predictions from captured EEG and markers |
 
-The `alpha8`, `inhibition8`, `classify8`, `attention8`, `dsart8`, and `dsart32` installed scripts
+The `alpha8`, `inhibition8`, `classify8`, `attention8`, `dsart8`, `dsart32`, and `study1` installed scripts
 have equivalent source-module forms. They run the posterior-alpha,
 response-inhibition, participant-specific GO/NO-GO classification, and
 attention-lapse system-test pipelines respectively:
@@ -217,11 +217,13 @@ classify8 --help
 attention8 --help
 dsart8 --help
 dsart32 --help
+study1 --help
 python -m eegle.pipelines.alpha8 --help
 python -m eegle.pipelines.inhibition8 --help
 python -m eegle.pipelines.classify8 --help
 python -m eegle.pipelines.attention8 --help
 python -m eegle.pipelines.dsart_recording --help
+python -m eegle.pipelines.study1 --help
 ```
 
 ### Windows PowerShell Command Forms
@@ -402,6 +404,7 @@ analysis:
 | `configs/forward_dynamic_sart.json` | Formal digit SART with raw recording, support/query phases, strict prestimulus epoch settings, and no active model |
 | `configs/record_dsart8.json` | Two-session 600-trial DSART recording suite for the Enobio 8 dry montage |
 | `configs/record_dsart32.json` | Same two-session DSART suite for the confirmed Enobio 32 wet montage |
+| `configs/study1_neuracle64.json` | Visit-aware Study 1 Dynamic SART candidate for the Neuracle 64 wet system; live channel and cue-delivery gates remain explicit |
 
 Hardware expectations live under `hardware.eeg`. Before collecting data, check
 the configured channel count, sample rate, LSL stream type/name patterns, and
@@ -529,8 +532,8 @@ EEGle is intended to run from one shared Python codebase on macOS, Windows, and
 Linux. The places that need OS-specific handling are setup and operator
 environment details: virtual-environment activation syntax, optional POSIX
 wrappers, PsychoPy display validation, external NIC2 installation, LSL/firewall
-settings, Neuracle acquisition setup, Windows user/cache directories, and
-future LabRecorder launching. Runtime cache setup writes Matplotlib, PsychoPy,
+settings, Neuracle acquisition setup, Windows user/cache directories, and the
+installed LabRecorder executable path. Runtime cache setup writes Matplotlib, PsychoPy,
 and LSL configuration under `.runtime`; on Windows it also redirects
 `USERPROFILE`, `APPDATA`, and `LOCALAPPDATA` for the process so optional GUI
 libraries do not need to write into the real user profile during a run.
@@ -663,10 +666,18 @@ For the observe-only inhibition pipeline, use
 Fz, Cz, Pz, C3, C4, P3, P4, Oz
 ```
 
-LabRecorder/XDF launch is not implemented. EEGle currently records the matched
-LSL EEG stream to its own session output.
+The managed `labrecorder_xdf` backend launches an installed LabRecorder through
+its loopback remote-control socket and writes `raw/recording.xdf`; Study 1 uses
+this backend with the existing `raw/eeg.csv` recorder retained as a safety
+mirror. Other shipped acquisition presets remain on `lsl_csv` unless explicitly
+configured otherwise.
 
 ## Example Neuracle 64-Channel LSL Setup Check
+
+For the guarded Windows x64 Neuracle W64 test sequence—including the supplied
+PowerShell scripts for a visible dry run, Collect/LSL preflight, short XDF task,
+and one-minute-per-condition short Study 1 visit—see
+[`docs/NEURACLE64_WINDOWS_TEST.md`](docs/NEURACLE64_WINDOWS_TEST.md).
 
 This first-pass Neuracle preset runs the same preflight, `lsl_csv` recorder,
 PVT task, and session-output path as the Enobio presets. EEGle does not install

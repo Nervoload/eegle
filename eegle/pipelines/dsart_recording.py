@@ -22,6 +22,8 @@ from typing import Any, Iterable
 from eegle.analysis.dynamic_sart import analyze_dynamic_sart_session
 from eegle.config import load_config, resolve_session_root
 from eegle.devices.lsl_markers import LslMarkerReceiptRecorder
+from eegle.devices.labrecorder_xdf import labrecorder_environment
+from eegle.devices.xdf_integrity import validate_xdf_recording
 from eegle.experiment import ForwardExperimentRunner
 from eegle.feedback_manager import FeedbackManager
 from eegle.hardware.profiles import expected_profile
@@ -652,11 +654,12 @@ def run_recording_preflight(
         )
     eeg = dict(config.get("hardware", {}).get("eeg", {}) or {})
     profile = expected_profile(str(eeg["profile"]), eeg.get("family"))
+    expected_channel_names = list(eeg.get("expected_channel_names") or profile.channel_names)
     probe = next((result.data for result in checks if result.name == "eeg_sample_probe"), {}) or {}
     if record_eeg:
         channel_contract = assess_channel_contract(
             list(probe.get("mapped_channel_names") or []),
-            list(profile.channel_names),
+            expected_channel_names,
             original_names=list(probe.get("original_channel_names") or []),
             mapping_source=probe.get("channel_mapping_source"),
             require_eeg=require_eeg,
@@ -665,7 +668,7 @@ def run_recording_preflight(
         channel_contract = {
             "status": "skip",
             "detail": "EEG channel contract skipped because recording is disabled",
-            "expected_channel_order": list(profile.channel_names),
+            "expected_channel_order": expected_channel_names,
             "observed_channel_order": [],
             "original_device_labels": [],
             "mapping_source": None,
@@ -709,6 +712,25 @@ def run_recording_preflight(
         record_eeg=record_eeg,
     )
     check_payloads.append(storage.__dict__)
+    recorder_backend = str(config.get("processes", {}).get("recorder", {}).get("backend", "lsl_csv"))
+    if record_eeg and recorder_backend == "labrecorder_xdf":
+        try:
+            environment = labrecorder_environment(config)
+        except Exception as exc:
+            xdf_check = CheckResult(
+                "labrecorder_xdf",
+                "fail",
+                f"managed XDF recorder is unavailable: {type(exc).__name__}: {exc}",
+                {},
+            )
+        else:
+            xdf_check = CheckResult(
+                "labrecorder_xdf",
+                "ok",
+                "LabRecorder executable, PyXDF reader, and loopback control port are ready",
+                environment,
+            )
+        check_payloads.append(xdf_check.__dict__)
     identity = CheckResult(
         "visit_identity",
         "ok" if participant_id.strip() and visit_id.strip() else "fail",
@@ -722,7 +744,7 @@ def run_recording_preflight(
     electrode_path: Path | None = None
     if record_eeg:
         electrode_report = _electrode_report(
-            profile.channel_names,
+            expected_channel_names,
             probe,
             recipe=recipe,
             quality_file=electrode_quality_file,
@@ -983,7 +1005,7 @@ def compare_preflights(
         warnings.append("LSL time correction changed by at least 2 ms after the break")
     if changed_channels:
         warnings.append("one or more channel quality statuses changed")
-    return {
+    result = {
         "status": "fail" if failures else ("warning" if warnings else "pass"),
         "initial_preflight_status": initial.get("status"),
         "second_channel_contract_status": second_contract.get("status"),
@@ -998,6 +1020,7 @@ def compare_preflights(
         "warnings": warnings,
         "failures": failures,
     }
+    return result
 
 
 def run_resting_baseline(
@@ -1008,27 +1031,36 @@ def run_resting_baseline(
     preflight: dict[str, Any],
 ) -> dict[str, Any]:
     baseline_config = copy.deepcopy(config)
+    baseline_task = "study1_baseline" if options.recipe == "study1" else "dsart_baseline"
+    recorder_backend = str(
+        baseline_config.get("processes", {}).get("recorder", {}).get("backend", "lsl_csv")
+    )
     baseline_config.setdefault("experiment", {}).update(
         {
-            "experiment_id": f"dsart_visit_{visit_id}",
+            "experiment_id": f"{options.recipe}_visit_{visit_id}",
             "participant_id": options.participant_id,
-            "task": "dsart_baseline",
+            "task": baseline_task,
             "components": {
                 "preflight": "default",
-                "task": "dsart_baseline",
-                "eeg_recorder": "lsl_csv",
+                "task": baseline_task,
+                "eeg_recorder": recorder_backend,
                 "realtime_processor": "disabled",
                 "feedback": "disabled",
                 "analysis": "disabled",
             },
         }
     )
-    _disable_nonrecording_processes(baseline_config)
-    paths = create_session(baseline_config, task="dsart_baseline", participant_id=options.participant_id)
+    _disable_nonrecording_processes(baseline_config, recorder_backend=recorder_backend)
+    paths = create_session(baseline_config, task=baseline_task, participant_id=options.participant_id)
     baseline_config = load_config(paths.parameters)
     _write_json_atomic(paths.logs / "preflight.json", preflight)
     telemetry = Telemetry.from_config(baseline_config, paths, component="dsart.baseline")
     manager = FeedbackManager(baseline_config, paths, record_eeg=options.record_eeg)
+    marker_outlet = _prestart_baseline_marker_outlet(
+        baseline_config,
+        paths,
+        recorder_enabled=bool(manager.processes["recorder"]["enabled"]),
+    )
     result: dict[str, Any] = {
         "schema": BASELINE_SCHEMA,
         "status": "failed",
@@ -1047,6 +1079,7 @@ def run_resting_baseline(
             mode=options.task_mode,
             record_eeg=options.record_eeg,
             telemetry=telemetry,
+            marker_outlet=marker_outlet,
         )
     except KeyboardInterrupt:
         result.update(
@@ -1070,6 +1103,11 @@ def run_resting_baseline(
             manager.stop_after_task()
         except Exception as exc:
             lifecycle_errors.append(f"process shutdown failed: {type(exc).__name__}: {exc}")
+        try:
+            if marker_outlet is not None:
+                marker_outlet.close()
+        except Exception as exc:
+            lifecycle_errors.append(f"marker outlet shutdown failed: {type(exc).__name__}: {exc}")
     try:
         manager_summary = manager.summary()
     except Exception as exc:
@@ -1129,12 +1167,21 @@ def _run_baseline_protocol(
     mode: str,
     record_eeg: bool,
     telemetry: Telemetry,
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet | None = None,
 ) -> dict[str, Any]:
     baseline = dict(config.get("recording_suite", {}).get("baseline", {}) or {})
     eyes_open_seconds = float(baseline.get("eyes_open_seconds", 120.0))
     eyes_closed_seconds = float(baseline.get("eyes_closed_seconds", 120.0))
     if mode == "dry-run":
-        return _run_baseline_dry(paths, telemetry, eyes_open_seconds, eyes_closed_seconds)
+        return _run_baseline_dry(
+            config,
+            paths,
+            telemetry,
+            eyes_open_seconds,
+            eyes_closed_seconds,
+            record_eeg=record_eeg,
+            marker_outlet=marker_outlet,
+        )
     if mode != "psychopy":
         raise ValueError(f"unsupported baseline mode {mode}")
     return _run_baseline_psychopy(
@@ -1144,6 +1191,7 @@ def _run_baseline_protocol(
         eyes_open_seconds,
         eyes_closed_seconds,
         record_eeg=record_eeg,
+        marker_outlet=marker_outlet,
     )
 
 
@@ -1155,25 +1203,85 @@ def _planned_baseline_duration(config: dict[str, Any]) -> float:
 
 
 def _run_baseline_dry(
+    config: dict[str, Any],
     paths: SessionPaths,
     telemetry: Telemetry,
     eyes_open_seconds: float,
     eyes_closed_seconds: float,
+    *,
+    record_eeg: bool,
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet | None = None,
 ) -> dict[str, Any]:
-    outlet: LslMarkerOutlet | NullMarkerOutlet = NullMarkerOutlet("baseline dry-run")
+    owns_marker_outlet = marker_outlet is None
+    outlet: LslMarkerOutlet | NullMarkerOutlet = marker_outlet or NullMarkerOutlet("baseline dry-run")
+    marker_receipt: LslMarkerReceiptRecorder | None = None
     start = monotonic()
     phases = []
-    with EventLogger(paths.behavior_csv, paths.events_jsonl, paths.triggers, telemetry, "dsart.baseline") as logger:
-        current = start
-        for name, duration in (("eyes_open", eyes_open_seconds), ("eyes_closed", eyes_closed_seconds)):
-            phase_start = current
-            phase_end = phase_start + duration
-            start_label = f"dsart_baseline_{name}_start"
-            end_label = f"dsart_baseline_{name}_end"
-            _baseline_mark(logger, outlet, start_label, phase_start, event_type="SYSTEM", phase=name)
-            _baseline_mark(logger, outlet, end_label, phase_end, event_type="SYSTEM", phase=name)
-            phases.append(_baseline_phase_result(name, duration, phase_start, phase_end, None, None, "completed", False))
-            current = phase_end
+    try:
+        if record_eeg:
+            if marker_outlet is None:
+                outlet = _make_marker_outlet(config, paths)
+            marker_receipt = _start_marker_receipt_recorder(outlet, paths)
+            settle_seconds = float(
+                config.get("recording_rehearsal", {}).get(
+                    "marker_discovery_settle_seconds",
+                    0.5,
+                )
+            )
+            if settle_seconds > 0:
+                sleep(settle_seconds)
+        with EventLogger(paths.behavior_csv, paths.events_jsonl, paths.triggers, telemetry, "dsart.baseline") as logger:
+            current = start
+            for name, duration in (("eyes_open", eyes_open_seconds), ("eyes_closed", eyes_closed_seconds)):
+                phase_start = current
+                phase_end = phase_start + duration
+                start_label = f"dsart_baseline_{name}_start"
+                end_label = f"dsart_baseline_{name}_end"
+                start_lsl = _baseline_mark(
+                    logger,
+                    outlet,
+                    start_label,
+                    phase_start,
+                    event_type="SYSTEM",
+                    phase=name,
+                )
+                end_lsl = _baseline_mark(
+                    logger,
+                    outlet,
+                    end_label,
+                    phase_end,
+                    event_type="SYSTEM",
+                    phase=name,
+                )
+                phases.append(
+                    _baseline_phase_result(
+                        name,
+                        duration,
+                        phase_start,
+                        phase_end,
+                        start_lsl,
+                        end_lsl,
+                        "completed",
+                        False,
+                    )
+                )
+                current = phase_end
+    finally:
+        if marker_receipt is not None:
+            drain_seconds = float(
+                config.get("recording_rehearsal", {}).get(
+                    "marker_receipt_drain_seconds",
+                    0.25,
+                )
+            )
+            if drain_seconds > 0:
+                sleep(drain_seconds)
+        failures = _close_resources(
+            ("marker receipt recorder", marker_receipt),
+            ("marker outlet", outlet if owns_marker_outlet else None),
+        )
+        if failures:
+            raise RuntimeError("baseline dry-run cleanup failed: " + "; ".join(failures))
     return {
         "schema": BASELINE_SCHEMA,
         "status": "completed",
@@ -1193,13 +1301,15 @@ def _run_baseline_psychopy(
     eyes_closed_seconds: float,
     *,
     record_eeg: bool = False,
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet | None = None,
 ) -> dict[str, Any]:
     prepare_psychopy_runtime(config.get("runtime", {}).get("runtime_cache_dir", ".runtime"))
     from psychopy import event, visual
 
     display = dict(config.get("hardware", {}).get("display", {}) or {})
     win = None
-    outlet: LslMarkerOutlet | NullMarkerOutlet | None = None
+    owns_marker_outlet = marker_outlet is None
+    outlet: LslMarkerOutlet | NullMarkerOutlet | None = marker_outlet
     marker_receipt: LslMarkerReceiptRecorder | None = None
     phases = []
     aborted = False
@@ -1224,7 +1334,8 @@ def _run_baseline_psychopy(
             allowGUI=bool(display.get("allow_gui", True)),
         )
         clear_psychopy_keys(event)
-        outlet = _make_marker_outlet(config, paths)
+        if marker_outlet is None:
+            outlet = _make_marker_outlet(config, paths)
         if record_eeg:
             marker_receipt = _start_marker_receipt_recorder(outlet, paths)
         with EventLogger(paths.behavior_csv, paths.events_jsonl, paths.triggers, telemetry, "dsart.baseline") as logger:
@@ -1297,7 +1408,7 @@ def _run_baseline_psychopy(
         cleanup_warnings.extend(
             _close_resources(
                 ("marker receipt recorder", marker_receipt),
-                ("marker outlet", outlet),
+                ("marker outlet", outlet if owns_marker_outlet else None),
                 ("PsychoPy window", win),
             )
         )
@@ -1450,7 +1561,7 @@ def _baseline_mark(
     lsl_timestamp: float | None = None,
     event_type: str = "EVENT",
     **metadata: Any,
-) -> None:
+) -> float | None:
     marker_timestamp = lsl_local_clock() if lsl_timestamp is None else lsl_timestamp
     if isinstance(outlet, LslMarkerOutlet) and marker_timestamp is None:
         raise RuntimeError("LSL local clock is unavailable for a required baseline marker")
@@ -1467,6 +1578,7 @@ def _baseline_mark(
         marker_emit_attempted=True,
         **metadata,
     )
+    return marker_timestamp
 
 
 def run_dsart_child_session(
@@ -1589,9 +1701,11 @@ def _run_dsart_child_session_inline(
     child_config.setdefault("runtime", {})["session_root"] = str(
         Path(child_config.get("runtime", {}).get("session_root", "data")).expanduser().resolve()
     )
+    study_segment = child_config.get("recording_suite", {}).get("study_segment")
+    experiment_suffix = str(study_segment or f"session_{session_index}")
     child_config.setdefault("experiment", {}).update(
         {
-            "experiment_id": f"dsart_visit_{visit_id}_session_{session_index}",
+            "experiment_id": f"{options.recipe}_visit_{visit_id}_{experiment_suffix}",
             "participant_id": options.participant_id,
             "task": "dynamic_sart",
         }
@@ -1680,6 +1794,7 @@ def _run_dsart_child_session_inline(
             task_summary,
             sequence_manifest,
             record_eeg=options.record_eeg,
+            task_mode=options.task_mode,
             dynamic_report=dynamic_report,
             analysis_error=analysis_error,
         )
@@ -1872,6 +1987,7 @@ def _child_session_validation(
     stimulus_manifest: dict[str, Any],
     *,
     record_eeg: bool,
+    task_mode: str = "psychopy",
     dynamic_report: dict[str, Any] | None = None,
     analysis_error: str | None = None,
 ) -> dict[str, Any]:
@@ -1921,17 +2037,26 @@ def _child_session_validation(
         warnings.append("software-only run did not record physical EEG")
     epoch_cfg = _load_json(session_dir / "parameters.json") or {}
     epoching = dict(epoch_cfg.get("realtime", {}).get("epoching", {}) or {})
+    suite_config = dict(epoch_cfg.get("recording_suite", {}) or {})
+    epoch_contract = dict(suite_config.get("epoch_contract", {}) or {})
+    expected_tmin = float(epoch_contract.get("tmin_seconds", -2.0))
+    expected_tmax = float(epoch_contract.get("tmax_seconds", -0.05))
     epoching_ready = (
         epoching.get("marker_prefix") == "dynamic_sart_stimulus_onset"
-        and float(epoching.get("tmin_seconds", 0)) == -2.0
-        and float(epoching.get("tmax_seconds", 0)) == -0.05
+        and float(epoching.get("tmin_seconds", 0)) == expected_tmin
+        and float(epoching.get("tmax_seconds", 0)) == expected_tmax
         and epoching.get("timebase") == "lsl"
         and not bool(epoching.get("include_practice_trials", True))
         and epoching.get("data_source") == "raw"
     )
     if not epoching_ready:
         failures.append("strict DSART prestimulus epoch contract is not configured")
-    marker_integrity = _task_marker_integrity(session_dir, epoch_cfg, require_markers=record_eeg)
+    marker_integrity = _task_marker_integrity(
+        session_dir,
+        epoch_cfg,
+        require_markers=record_eeg,
+        require_display_flip=task_mode == "psychopy",
+    )
     failures.extend(marker_integrity["failures"])
     warnings.extend(marker_integrity["warnings"])
     countdown_integrity = _countdown_event_integrity(session_dir)
@@ -2010,6 +2135,7 @@ def _task_marker_integrity(
     parameters: dict[str, Any],
     *,
     require_markers: bool,
+    require_display_flip: bool = True,
 ) -> dict[str, Any]:
     expected_source_id = parameters.get("hardware", {}).get("markers", {}).get("source_id")
     rows = []
@@ -2091,15 +2217,15 @@ def _task_marker_integrity(
         target.append(f"{len(missing_lsl)} stimulus markers lack an LSL timestamp")
     if missing_source:
         target.append(f"{len(missing_source)} stimulus markers lack the run-specific marker source ID")
-    if unscheduled_flip_trials:
+    if require_display_flip and unscheduled_flip_trials:
         target.append(f"{len(unscheduled_flip_trials)} stimulus-onset markers were not captured on a display flip")
     invalid_offset_rows = []
     for row in offset_rows:
         metadata = dict(row.get("metadata") or {})
         if (
             _optional_float(metadata.get("lsl_timestamp")) is None
-            or metadata.get("scheduled_on_flip") is not True
             or not metadata.get("marker_stream_source_id")
+            or (require_display_flip and metadata.get("scheduled_on_flip") is not True)
             or (
                 expected_source_id
                 and str(metadata.get("marker_stream_source_id")) != str(expected_source_id)
@@ -2107,7 +2233,10 @@ def _task_marker_integrity(
         ):
             invalid_offset_rows.append(row.get("trial"))
     if invalid_offset_rows:
-        target.append(f"{len(invalid_offset_rows)} stimulus-offset markers lack required flip/LSL/source metadata")
+        requirement = "flip/LSL/source" if require_display_flip else "LSL/source"
+        target.append(
+            f"{len(invalid_offset_rows)} stimulus-offset markers lack required {requirement} metadata"
+        )
     if expected_source_id and observed_sources and observed_sources != {str(expected_source_id)}:
         target.append("stimulus marker source ID does not match the persisted run-specific source ID")
     if any(second <= first for first, second in zip(onset_lsl_timestamps, onset_lsl_timestamps[1:])):
@@ -2168,7 +2297,12 @@ def _task_marker_integrity(
         "independent_marker_receipt": marker_receipt,
         "failures": failures,
         "warnings": warnings,
-        "transport_loopback_scope": "preflight verifies receipt; task ledger verifies emitted label, flip timestamp, and source identity",
+        "display_flip_required": require_display_flip,
+        "transport_loopback_scope": (
+            "preflight verifies receipt; task ledger verifies emitted label, display-flip timestamp, and source identity"
+            if require_display_flip
+            else "preflight verifies receipt; dry-run task ledger verifies emitted label, LSL timestamp, and source identity"
+        ),
     }
 
 
@@ -2306,7 +2440,7 @@ def _raw_eeg_integrity(session_dir: Path, *, required: bool) -> dict[str, Any]:
             failures.append("raw EEG stream metadata reports an amplitude transformation")
         if list(stream.get("lsl_processing") or []) != []:
             failures.append("raw EEG inlet applied LSL processing despite the source-preserving contract")
-    return {
+    result = {
         "status": "fail" if failures else ("warning" if warnings else "pass"),
         "required": required,
         "raw_file": str(raw_path),
@@ -2319,6 +2453,31 @@ def _raw_eeg_integrity(session_dir: Path, *, required: bool) -> dict[str, Any]:
         "failures": failures,
         "warnings": warnings,
     }
+    recorder_backend = str(
+        parameters.get("processes", {}).get("recorder", {}).get("backend", "lsl_csv")
+    )
+    result["primary_format"] = "xdf" if recorder_backend == "labrecorder_xdf" else "csv"
+    result["primary_file"] = (
+        str(session_dir / "raw" / "recording.xdf")
+        if recorder_backend == "labrecorder_xdf"
+        else str(raw_path)
+    )
+    if recorder_backend == "labrecorder_xdf":
+        xdf = validate_xdf_recording(session_dir, required=required)
+        result["xdf_integrity"] = xdf
+        failures.extend(list(xdf.get("failures") or []))
+        warnings.extend(list(xdf.get("warnings") or []))
+        if failures:
+            result["status"] = "fail"
+        elif warnings:
+            result["status"] = "warning"
+        elif xdf.get("status") == "skipped":
+            result["status"] = "skipped"
+            result["skipped"] = True
+            result["skip_reason"] = xdf.get("skip_reason")
+        else:
+            result["status"] = "pass"
+    return result
 
 
 def _baseline_recording_validation(
@@ -2596,6 +2755,24 @@ def _make_marker_outlet(config: dict[str, Any], paths: SessionPaths) -> LslMarke
         return NullMarkerOutlet(str(exc))
 
 
+def _prestart_baseline_marker_outlet(
+    config: dict[str, Any],
+    paths: SessionPaths,
+    *,
+    recorder_enabled: bool,
+) -> LslMarkerOutlet | None:
+    recorder_cfg = dict(config.get("processes", {}).get("recorder", {}) or {})
+    if not recorder_enabled or str(recorder_cfg.get("backend")) != "labrecorder_xdf":
+        return None
+    outlet = _make_marker_outlet(config, paths)
+    if not isinstance(outlet, LslMarkerOutlet):
+        raise RuntimeError(
+            "managed XDF baseline recording requires the run-specific LSL marker outlet "
+            "before LabRecorder starts"
+        )
+    return outlet
+
+
 def _start_marker_receipt_recorder(
     outlet: LslMarkerOutlet | NullMarkerOutlet,
     paths: SessionPaths,
@@ -2691,9 +2868,15 @@ def _close_resources(*resources: tuple[str, Any]) -> list[str]:
     return warnings
 
 
-def _disable_nonrecording_processes(config: dict[str, Any]) -> None:
+def _disable_nonrecording_processes(
+    config: dict[str, Any],
+    *,
+    recorder_backend: str | None = None,
+) -> None:
     processes = config.setdefault("processes", {})
-    processes.setdefault("recorder", {}).update({"enabled": True, "backend": "lsl_csv"})
+    recorder = processes.setdefault("recorder", {})
+    backend = str(recorder_backend or recorder.get("backend") or "lsl_csv")
+    recorder.update({"enabled": True, "backend": backend})
     processes.setdefault("realtime_processor", {}).update({"enabled": False, "backend": "disabled"})
     processes.setdefault("feedback", {}).update({"enabled": False, "backend": "disabled"})
     processes.setdefault("dashboard", {}).update({"enabled": False})

@@ -24,7 +24,37 @@ from eegle.runtime import _disable_psychopy_glfw, ensure_runtime_environment, re
 from eegle.session import create_session
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 class PortabilityTests(unittest.TestCase):
+    def test_neuracle_windows_operator_kit_uses_activation_independent_commands(self) -> None:
+        scripts = ROOT / "scripts" / "windows" / "neuracle64"
+        expected = {
+            "00-Setup.ps1",
+            "01-DryRun-Task.ps1",
+            "02-Test-NeuracleLsl.ps1",
+            "03-Run-EEGTaskTest.ps1",
+            "04-Run-FullShortTest.ps1",
+            "Common.ps1",
+        }
+        self.assertEqual({path.name for path in scripts.glob("*.ps1")}, expected)
+        common = (scripts / "Common.ps1").read_text(encoding="utf-8")
+        self.assertIn(r".venv\Scripts\python.exe", common)
+        dry_run = (scripts / "01-DryRun-Task.ps1").read_text(encoding="utf-8")
+        self.assertIn("--task-mode psychopy", dry_run)
+        self.assertIn("--skip-eeg", dry_run)
+        preflight = (scripts / "02-Test-NeuracleLsl.ps1").read_text(encoding="utf-8")
+        self.assertIn("--confirm-cap-contract", preflight)
+        self.assertIn("--preflight-only", preflight)
+        short_task = (scripts / "03-Run-EEGTaskTest.ps1").read_text(encoding="utf-8")
+        self.assertIn("--preflight-only", short_task)
+        self.assertIn("--require-eeg", short_task)
+        full = (scripts / "04-Run-FullShortTest.ps1").read_text(encoding="utf-8")
+        self.assertIn('"--smoke"', full)
+        self.assertIn('"--include-practice"', full)
+        self.assertIn('"--baseline-seconds"', full)
+
     def test_primary_cli_name_and_setup_check_command_are_clear(self) -> None:
         parser = build_parser()
         self.assertEqual(parser.prog, "eegle")

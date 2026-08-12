@@ -1,0 +1,227 @@
+{
+  "runtime": {
+    "project_name": "eegle",
+    "session_root": "data",
+    "runtime_cache_dir": ".runtime"
+  },
+  "telemetry": {
+    "console_level": "default",
+    "file_level": "default",
+    "trace_enabled": false,
+    "heartbeat_seconds": 5.0
+  },
+  "study1": {
+    "protocol": {
+      "name": "study1_dynamic_sart_v1",
+      "status": "candidate"
+    },
+    "visit_interval_days": [2, 7],
+    "visits": {
+      "1": {"baseline": {"eyes_open_seconds": 120.0, "eyes_closed_seconds": 120.0}},
+      "2": {"baseline": {"eyes_open_seconds": 120.0, "eyes_closed_seconds": 0.0}}
+    },
+    "segments": {
+      "session1_main": {
+        "practice_enabled": true,
+        "blocks": [
+          {"name": "session1_block_1", "phase": "support", "study_segment": "session1_main", "trials": 200, "planned_no_go_count": 30},
+          {"name": "session1_block_2", "phase": "query", "study_segment": "session1_main", "trials": 200, "planned_no_go_count": 30, "break_after": true, "minimum_break_seconds": 30.0, "maximum_break_seconds": 60.0},
+          {"name": "session1_block_3", "phase": "query", "study_segment": "session1_main", "trials": 200, "planned_no_go_count": 30}
+        ],
+        "cue_schedule": {"enabled": false}
+      },
+      "session2_main": {
+        "practice_enabled": false,
+        "blocks": [
+          {"name": "session2_support", "phase": "support", "study_segment": "session2_support", "trials": 200, "planned_no_go_count": 30, "break_after": true, "minimum_break_seconds": 30.0, "maximum_break_seconds": 60.0},
+          {"name": "session2_query_1", "phase": "query", "study_segment": "session2_query", "trials": 200, "planned_no_go_count": 30},
+          {"name": "session2_query_2", "phase": "query", "study_segment": "session2_query", "trials": 200, "planned_no_go_count": 30}
+        ],
+        "cue_schedule": {"enabled": false}
+      },
+      "session2_cue_extension": {
+        "practice_enabled": false,
+        "blocks": [
+          {"name": "session2_cue_1", "phase": "support", "study_segment": "session2_cue_extension", "trials": 200, "planned_no_go_count": 30, "break_after": true, "minimum_break_seconds": 30.0, "maximum_break_seconds": 60.0},
+          {"name": "session2_cue_2", "phase": "query", "study_segment": "session2_cue_extension", "trials": 200, "planned_no_go_count": 30}
+        ],
+        "cue_schedule": {
+          "enabled": true,
+          "run_in_trials": 0,
+          "opportunity_every_trials": 20,
+          "randomization_block_size": 4,
+          "cues_per_randomization_block": 2,
+          "delivery_mode": "assignment_only"
+        }
+      }
+    }
+  },
+  "recording_suite": {
+    "recipe": "study1",
+    "baseline": {
+      "eyes_open_seconds": 120.0,
+      "eyes_closed_seconds": 120.0
+    },
+    "recorder_stall_timeout_seconds": 5.0,
+    "resume_at_completed_phase_boundaries": true,
+    "epoch_contract": {
+      "tmin_seconds": -0.75,
+      "tmax_seconds": -0.10
+    },
+    "session_2": {"repeat_practice": false}
+  },
+  "hardware": {
+    "eeg": {
+      "family": "Neuracle",
+      "profile": "neuracle64",
+      "expected_channel_counts": [64],
+      "expected_channel_names": [],
+      "expected_sample_rate_hz": 1000,
+      "lsl_stream_type": "EEG",
+      "lsl_name_patterns": ["neuracle", "neuracleeeg", "neuracle-eeg", "neuracle_lsl"],
+      "allow_type_only_fallback": false,
+      "stream_timeout_seconds": 5.0,
+      "sample_probe_seconds": 3.0,
+      "required_for_run": true,
+      "raw_sample_mode": "passthrough",
+      "recording_lsl_processing": "source_preserving",
+      "maximum_timestamp_gap_seconds": 0.1,
+      "abort_on_timestamp_gap": true,
+      "minimum_free_bytes_during_recording": 536870912,
+      "disk_check_interval_seconds": 5.0,
+      "mapping_source": "pending-neuracle64-lab-confirmation",
+      "mapping_version": 1,
+      "reference": "pending-lab-confirmation",
+      "ground": "pending-lab-confirmation",
+      "eog_allocation": "pending-lab-confirmation"
+    },
+    "markers": {
+      "lsl_stream_name": "EEGleMarkers",
+      "lsl_stream_type": "Markers",
+      "required_for_realtime": true
+    },
+    "display": {
+      "screen_index": 0,
+      "full_screen": false,
+      "win_type": "pyglet",
+      "allow_gui": true,
+      "size": [1000, 700],
+      "units": "height",
+      "background_color": "black",
+      "photodiode_patch": false,
+      "expected_refresh_rate_hz": 60.0,
+      "fixed_display_latency_ms": 0.0
+    }
+  },
+  "experiment": {
+    "experiment_id": "study1",
+    "participant_id": "example-participant",
+    "task": "dynamic_sart",
+    "mode": "forward",
+    "components": {
+      "preflight": "default",
+      "task": "dynamic_sart",
+      "eeg_recorder": "labrecorder_xdf",
+      "realtime_processor": "disabled",
+      "feedback": "disabled",
+      "analysis": "minimal"
+    },
+    "output_formats": ["xdf", "csv", "jsonl", "triggers_txt", "raw_json"],
+    "procedures": ["preflight", "eeg_recording", "task", "post_analysis"]
+  },
+  "processes": {
+    "recorder": {
+      "enabled": true,
+      "backend": "labrecorder_xdf",
+      "csv_mirror": true,
+      "executable": "LabRecorder.exe",
+      "rcs_port": 22345,
+      "startup_timeout_seconds": 20.0,
+      "shutdown_timeout_seconds": 15.0,
+      "xdf_stall_timeout_seconds": 15.0
+    },
+    "realtime_processor": {"enabled": false, "backend": "disabled", "startup_timeout_seconds": 8.0},
+    "feedback": {"enabled": false, "backend": "disabled"},
+    "dashboard": {"enabled": false, "backend": "http", "host": "127.0.0.1", "port": 8765},
+    "offline_analyzer": {"enabled": false, "backend": "disabled", "timeout_seconds": 180.0}
+  },
+  "tasks": {
+    "dynamic_sart": {
+      "digits": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+      "no_go_digit": 0,
+      "response_keys": ["space"],
+      "escape_keys": ["escape", "q"],
+      "stimulus_seconds": 0.25,
+      "response_window_seconds": 1.75,
+      "inter_trial_jitter_min_seconds": 0.0,
+      "inter_trial_jitter_max_seconds": 0.4,
+      "soi_min_seconds": 1.75,
+      "soi_max_seconds": 2.15,
+      "minimum_valid_rt_seconds": 0.1,
+      "no_go_probability": 0.15,
+      "planned_no_go_count": 90,
+      "minimum_go_trials_between_no_go": 2,
+      "minimum_leading_go_trials": 4,
+      "minimum_trailing_go_trials": 0,
+      "master_seed": 42,
+      "blocks": [
+        {"name": "session1_block_1", "phase": "support", "study_segment": "session1_main", "trials": 200, "planned_no_go_count": 30},
+        {"name": "session1_block_2", "phase": "query", "study_segment": "session1_main", "trials": 200, "planned_no_go_count": 30, "break_after": true, "minimum_break_seconds": 30.0, "maximum_break_seconds": 60.0},
+        {"name": "session1_block_3", "phase": "query", "study_segment": "session1_main", "trials": 200, "planned_no_go_count": 30}
+      ],
+      "cue_schedule": {"enabled": false},
+      "practice": {
+        "enabled": true,
+        "trials_per_round": 30,
+        "no_go_trials": 4,
+        "max_rounds": 3,
+        "go_accuracy": 0.8,
+        "no_go_accuracy": 0.6666666667,
+        "max_anticipatory_response_rate": 0.15,
+        "feedback_seconds": 0.35
+      },
+      "thought_probes": {"enabled": false},
+      "allow_task_adaptation": false,
+      "allow_stimulation": false,
+      "countdown_step_seconds": 1.0,
+      "completion_auto_close_seconds": 30.0
+    }
+  },
+  "realtime": {
+    "enabled": false,
+    "epoching": {
+      "enabled": false,
+      "marker_prefix": "dynamic_sart_stimulus_onset",
+      "tmin_seconds": -0.75,
+      "tmax_seconds": -0.10,
+      "timebase": "lsl",
+      "data_source": "raw",
+      "sample_tolerance_seconds": 0.01,
+      "drop_incomplete": true,
+      "include_practice_trials": false
+    },
+    "preprocessing": {
+      "notch_hz": 60.0,
+      "bandpass_low_hz": 0.5,
+      "bandpass_high_hz": 45.0,
+      "downsample_factor": 1,
+      "reference": "average"
+    },
+    "decision_policy": {
+      "kind": "observe_only",
+      "enabled": false,
+      "allow_task_adaptation": false,
+      "allow_stimulation": false
+    },
+    "feedback": {
+      "mode": "observe_only",
+      "allow_task_adaptation": false,
+      "allow_stimulation": false,
+      "client": {"enabled": false, "backend": "disabled"}
+    }
+  },
+  "analysis": {
+    "erp": {"enabled": false},
+    "reports": {"behavior": true, "raw_eeg_summary": true}
+  }
+}

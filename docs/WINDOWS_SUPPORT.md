@@ -8,7 +8,7 @@ commands, module launches, and explicit hardware checks.
 
 - Package import and public APIs: OS-agnostic Python.
 - CLI commands: installed `eegle`, `alpha8`, `inhibition8`, `classify8`,
-  `attention8`, `dsart8`, and `dsart32` scripts, or module forms.
+  `attention8`, `dsart8`, `dsart32`, and `study1` scripts, or module forms.
 - Worker processes: launched with the current Python executable, `-m`, and
   `shell=False`.
 - Session output: created through `pathlib`, with relative paths documented for
@@ -60,6 +60,14 @@ py -3.10 -m eegle.pipelines.dsart_recording --help
 
 Makefile targets and repository-root `./alpha8` wrappers are POSIX conveniences,
 not the Windows operator path.
+
+## Neuracle W64 / Collect Test Path
+
+Use `docs/NEURACLE64_WINDOWS_TEST.md` for the guarded Windows x64 operator
+sequence: setup, a visible 10-trial no-EEG run, Collect/LSL discovery, physical
+cap-contract confirmation, a 10-20 trial XDF test, and the complete short
+baseline/practice/30-trial test. The supplied PowerShell scripts live under
+`scripts\windows\neuracle64` and call the virtual environment directly.
 
 ## DSART Recording Suites on Restricted Desktops
 

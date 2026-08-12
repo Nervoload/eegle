@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from eegle.factory import make_task_component
 from eegle.realtime.epoching import EpochingConfig, MarkerEvent, load_stimulus_manifest_markers, parse_marker_label, should_epoch_marker
@@ -524,6 +524,108 @@ class DynamicSartTaskTests(unittest.TestCase):
             self.assertEqual(manifest["presented_trial_count"], len(rows))
             self.assertFalse((paths.events / "dynamic_sart_labels.csv").exists())
             self.assertFalse((paths.events / "dynamic_sart_label_contract.json").exists())
+
+    def test_recording_enabled_dry_run_emits_real_marker_contract(self) -> None:
+        class Outlet:
+            name = "EEGleMarkers"
+            stream_type = "Markers"
+            source_id = "dry-run-marker-source"
+
+            def __init__(self) -> None:
+                self.labels = []
+                self.closed = False
+
+            def push(self, label: str, timestamp: float | None = None) -> None:
+                self.labels.append((label, timestamp))
+
+            def close(self) -> None:
+                self.closed = True
+
+        class Receipt:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config()
+            config["recording_suite"] = {"require_live_recorder": True}
+            config["recording_rehearsal"] = {
+                "marker_discovery_settle_seconds": 0.0,
+                "marker_receipt_drain_seconds": 0.0,
+            }
+            outlet = Outlet()
+            receipt = Receipt()
+            paths = create_session(config, task="dynamic_sart", participant_id="unit", root=Path(tmp))
+            with patch(
+                "eegle.tasks.dynamic_sart._make_marker_outlet",
+                return_value=outlet,
+            ) as make_outlet, patch(
+                "eegle.tasks.dynamic_sart._start_marker_receipt_recorder",
+                return_value=receipt,
+            ) as start_receipt, patch(
+                "eegle.tasks.dynamic_sart.lsl_local_clock",
+                return_value=123.0,
+            ):
+                DynamicSartTask(config, mode="dry-run", participant_id="unit").run(paths)
+
+            event_rows = [json.loads(line) for line in paths.events_jsonl.read_text().splitlines()]
+
+        make_outlet.assert_called_once()
+        start_receipt.assert_called_once_with(outlet, paths)
+        self.assertTrue(receipt.closed)
+        self.assertTrue(outlet.closed)
+        self.assertGreater(len(outlet.labels), 2)
+        self.assertTrue(outlet.labels[0][0].startswith("dynamic_sart_task_start"))
+        self.assertTrue(outlet.labels[-1][0].startswith("dynamic_sart_task_end"))
+        emitted_rows = [row for row in event_rows if row["metadata"].get("marker_emit_attempted")]
+        self.assertTrue(emitted_rows)
+        self.assertTrue(
+            all(row["metadata"]["marker_stream_source_id"] == outlet.source_id for row in emitted_rows)
+        )
+
+    def test_recording_dry_run_reuses_prestarted_marker_until_recorder_stops(self) -> None:
+        class Outlet:
+            name = "EEGleMarkers"
+            stream_type = "Markers"
+            source_id = "prestarted-marker-source"
+
+            def __init__(self) -> None:
+                self.closed = False
+
+            def push(self, label: str, timestamp: float | None = None) -> None:
+                return None
+
+            def close(self) -> None:
+                self.closed = True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config()
+            config["recording_suite"] = {"require_live_recorder": True}
+            config["recording_rehearsal"] = {
+                "marker_discovery_settle_seconds": 0.0,
+                "marker_receipt_drain_seconds": 0.0,
+            }
+            outlet = Outlet()
+            receipt = MagicMock()
+            paths = create_session(config, task="dynamic_sart", participant_id="unit", root=Path(tmp))
+            with patch("eegle.tasks.dynamic_sart._make_marker_outlet") as make_outlet, patch(
+                "eegle.tasks.dynamic_sart._start_marker_receipt_recorder",
+                return_value=receipt,
+            ) as start_receipt, patch(
+                "eegle.tasks.dynamic_sart.lsl_local_clock",
+                return_value=123.0,
+            ):
+                DynamicSartTask(config, mode="dry-run", participant_id="unit").run(
+                    paths,
+                    marker_outlet=outlet,
+                )
+
+        make_outlet.assert_not_called()
+        start_receipt.assert_called_once_with(outlet, paths)
+        receipt.close.assert_called_once()
+        self.assertFalse(outlet.closed)
 
     def test_abort_preserves_completed_rows_and_full_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

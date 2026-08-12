@@ -6,7 +6,8 @@
 2. Run `eegle run-forward --config configs/default_experiment.json --task pvt --task-mode dry-run --skip-eeg --allow-missing-eeg` and confirm the BciPy-style session folders are created.
 3. Run `eegle run-forward --config configs/forward_pvt_enobio.json --task pvt --task-mode psychopy --require-eeg` with NIC2 streaming and confirm `raw/eeg.csv` receives samples.
 4. Run PVT in PsychoPy mode with no subject, then with a photodiode timing check.
-5. Decide whether LabRecorder/XDF is the canonical raw recording path or whether BciPy-style CSV should also be produced live.
+5. Keep managed LabRecorder/XDF authoritative for Study 1 while retaining the
+   BciPy-style CSV as its independent live health and recovery mirror.
 6. Validate the managed `FeedbackManager` subprocess lifecycle with NIC2, including recorder status files and realtime worker startup.
 
 ## Task Reproduction
@@ -25,7 +26,9 @@ Preprocessing:
 Processing:
 4. Add model selection: band-power baseline, ERP/RDA, scikit-learn, and later AI model adapters.
 5. Add feedback policy gates and stimulation safety checks.
-6. Promote the `labrecorder_xdf` hook into a real LabRecorder launcher once platform-specific installs and dependencies are confirmed.
+6. Validate the managed `labrecorder_xdf` backend on the Windows x64 Neuracle
+   workstation, including normal completion, operator abort, exact pre-started
+   marker-stream selection, and XDF/CSV parity.
 
 ## Analysis
 

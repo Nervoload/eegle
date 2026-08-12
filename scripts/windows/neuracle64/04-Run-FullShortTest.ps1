@@ -1,0 +1,64 @@
+param(
+    [Parameter(Mandatory = $true)]
+    [string] $Participant,
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(0, 9)]
+    [int] $NoGoDigit,
+    [Parameter(Mandatory = $true)]
+    [string] $Operator,
+    [string] $DataRoot = "",
+    [string] $VisitId = "",
+    [ValidateRange(1, 600)]
+    [int] $BaselineSeconds = 60,
+    [switch] $Resume,
+    [switch] $ConfirmElectrodes
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "Common.ps1")
+
+if (-not $ConfirmElectrodes) {
+    throw "Inspect cap contact/impedance in Collect, then rerun with -ConfirmElectrodes."
+}
+$python = Get-EeglePython
+$config = Get-EegleConfigPath "live"
+Assert-EegleLiveConfig $config
+$resolvedDataRoot = Get-EegleDataRoot $DataRoot
+$env:EEGLE_SESSION_ROOT = $resolvedDataRoot
+if (-not $Resume -and [string]::IsNullOrWhiteSpace($VisitId)) {
+    $VisitId = New-EegleRunId "short-visit1"
+}
+
+Write-Host "Starting the complete short Study 1 test:"
+Write-Host "  full preflight and electrode checks"
+Write-Host "  $BaselineSeconds seconds eyes open"
+Write-Host "  $BaselineSeconds seconds eyes closed"
+Write-Host "  participant practice"
+Write-Host "  30 experimental trials (three 10-trial blocks)"
+Write-Host "Keep Neuracle Collect LSL streaming. EEGle launches/stops LabRecorder."
+
+$arguments = @(
+    "-m", "eegle.pipelines.study1",
+    "--config", $config,
+    "--participant", $Participant,
+    "--visit", "1",
+    "--operator", $Operator,
+    "--task-mode", "psychopy",
+    "--no-go-digit", [string] $NoGoDigit,
+    "--smoke",
+    "--include-practice",
+    "--baseline-seconds", [string] $BaselineSeconds,
+    "--window-size", "1000", "700",
+    "--confirm-electrodes",
+    "--session-root", $resolvedDataRoot,
+    "--lsl-wait", "10"
+)
+if (-not [string]::IsNullOrWhiteSpace($VisitId)) {
+    $arguments += @("--visit-id", $VisitId)
+}
+if ($Resume) {
+    $arguments += "--resume"
+}
+& $python @arguments
+Assert-EegleExit "full short Study 1 test"

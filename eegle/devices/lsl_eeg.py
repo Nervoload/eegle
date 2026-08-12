@@ -565,6 +565,7 @@ def _stream_dict(info: Any) -> dict[str, Any]:
         "channel_count": info.channel_count(),
         "nominal_srate": info.nominal_srate(),
         "source_id": info.source_id(),
+        "hostname": getattr(info, "hostname", lambda: "")(),
     }
 
 

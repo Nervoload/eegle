@@ -366,6 +366,9 @@ class FeedbackManager:
         if worker.process is None:
             return
         failures = []
+        shutdown_timeout = float(
+            dict(self.processes.get(worker.name, {}) or {}).get("shutdown_timeout_seconds", 5.0)
+        )
         if worker.process.poll() is None:
             self.telemetry.emit(
                 "process.stop",
@@ -379,7 +382,7 @@ class FeedbackManager:
                 failures.append(f"cooperative stop request failed: {type(exc).__name__}: {exc}")
             else:
                 try:
-                    worker.process.wait(timeout=5.0)
+                    worker.process.wait(timeout=shutdown_timeout)
                 except subprocess.TimeoutExpired:
                     self.telemetry.emit(
                         "process.timeout",
@@ -393,12 +396,12 @@ class FeedbackManager:
             if worker.process.poll() is None:
                 try:
                     worker.process.terminate()
-                    worker.process.wait(timeout=5.0)
+                    worker.process.wait(timeout=shutdown_timeout)
                 except subprocess.TimeoutExpired:
                     try:
                         worker.process.kill()
                         self._write_forced_status(worker, "killed", "worker did not stop after terminate")
-                        worker.process.wait(timeout=5.0)
+                        worker.process.wait(timeout=shutdown_timeout)
                     except Exception as exc:
                         failures.append(f"forced kill failed: {type(exc).__name__}: {exc}")
                 except Exception as exc:
@@ -406,7 +409,7 @@ class FeedbackManager:
                     if worker.process.poll() is None:
                         try:
                             worker.process.kill()
-                            worker.process.wait(timeout=5.0)
+                            worker.process.wait(timeout=shutdown_timeout)
                         except Exception as kill_exc:
                             failures.append(f"fallback kill failed: {type(kill_exc).__name__}: {kill_exc}")
         try:
@@ -622,7 +625,15 @@ def normalize_processes(config: dict[str, Any], record_eeg: bool = True) -> dict
             "enabled": recorder_enabled,
             "backend": recorder_backend,
             "csv_mirror": bool(recorder.get("csv_mirror", recorder_backend == "lsl_csv")),
-            "startup_timeout_seconds": float(recorder.get("startup_timeout_seconds", 8.0)),
+            "executable": str(recorder.get("executable", "LabRecorder.exe")),
+            "rcs_port": int(recorder.get("rcs_port", 22345)),
+            "startup_timeout_seconds": float(
+                recorder.get("startup_timeout_seconds", 20.0 if recorder_backend == "labrecorder_xdf" else 8.0)
+            ),
+            "shutdown_timeout_seconds": float(
+                recorder.get("shutdown_timeout_seconds", 15.0 if recorder_backend == "labrecorder_xdf" else 5.0)
+            ),
+            "xdf_stall_timeout_seconds": float(recorder.get("xdf_stall_timeout_seconds", 15.0)),
         },
         "realtime_processor": {
             "enabled": realtime_enabled,
