@@ -57,6 +57,7 @@ class PortabilityTests(unittest.TestCase):
         self.assertIn("--require-eeg", short_task)
         self.assertIn("$FullScreen", short_task)
         full = (scripts / "04-Run-FullShortTest.ps1").read_text(encoding="utf-8")
+        self.assertIn("Update-EegleGeneratedLiveConfigs", full)
         self.assertIn('"--smoke"', full)
         self.assertIn('"--include-practice"', full)
         self.assertIn('"--baseline-seconds"', full)

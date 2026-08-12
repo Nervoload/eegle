@@ -22,7 +22,7 @@ from eegle.protocols.study1 import configure_study1_segment, validate_study1_con
 from eegle.realtime.epoching import load_eeg_csv_for_epoching
 from eegle.tasks.dynamic_sart_schema import DynamicSartConfig
 from eegle.tasks.dynamic_sart_sequence import build_dynamic_sart_plan
-from scripts.prepare_neuracle64_windows_config import build_configs
+from scripts.prepare_neuracle64_windows_config import build_configs, refresh_confirmed_configs
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,6 +74,54 @@ class Study1Tests(unittest.TestCase):
         self.assertTrue(live["operator_confirmation"]["confirmed_for_this_generated_config"])
         self.assertIn("neuracle-collect-test", live["hardware"]["eeg"]["lsl_name_patterns"])
         self.assertFalse(live_task["tasks"]["dynamic_sart"]["practice"]["enabled"])
+
+    def test_windows_live_config_refresh_replaces_stale_protocol_values(self) -> None:
+        base = load_config(CONFIG)
+        _display, old_live, _old_live_task = build_configs(
+            base,
+            labrecorder_executable=r"C:\\LabRecorder\\LabRecorder.exe",
+            extra_lsl_name_patterns=["M_73393543_EEG"],
+            confirm_cap_contract=True,
+        )
+        assert old_live is not None
+        old_live["tasks"]["dynamic_sart"].update(
+            {
+                "response_window_seconds": 1.15,
+                "inter_trial_jitter_min_seconds": 0.05,
+                "inter_trial_jitter_max_seconds": 0.15,
+                "soi_min_seconds": 1.20,
+                "soi_max_seconds": 1.30,
+            }
+        )
+        old_live["hardware"]["display"].update(
+            {
+                "wait_blanking": False,
+                "check_refresh_rate": False,
+                "require_refresh_rate_match": False,
+            }
+        )
+
+        _display, refreshed, refreshed_task = refresh_confirmed_configs(base, old_live)
+
+        self.assertFalse(
+            [issue for issue in validate_study1_config(refreshed) if issue["status"] == "fail"]
+        )
+        task = refreshed["tasks"]["dynamic_sart"]
+        self.assertEqual(task["stimulus_seconds"], 0.25)
+        self.assertEqual(task["response_window_seconds"], 1.6)
+        self.assertEqual(task["inter_trial_jitter_min_seconds"], 0.0)
+        self.assertEqual(task["inter_trial_jitter_max_seconds"], 0.0)
+        self.assertEqual(task["soi_min_seconds"], 1.6)
+        self.assertEqual(task["soi_max_seconds"], 1.6)
+        self.assertTrue(refreshed["hardware"]["display"]["wait_blanking"])
+        self.assertTrue(refreshed["hardware"]["display"]["check_refresh_rate"])
+        self.assertTrue(refreshed["hardware"]["display"]["require_refresh_rate_match"])
+        self.assertIn("m_73393543_eeg", refreshed["hardware"]["eeg"]["lsl_name_patterns"])
+        self.assertEqual(
+            refreshed["operator_confirmation"],
+            old_live["operator_confirmation"],
+        )
+        self.assertFalse(refreshed_task["tasks"]["dynamic_sart"]["practice"]["enabled"])
 
     def test_live_contract_preserves_65_values_but_selects_only_59_scalp_channels(self) -> None:
         _display, live, _live_task = build_configs(

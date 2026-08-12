@@ -150,6 +150,53 @@ def build_configs(
     return display, live, live_task
 
 
+def refresh_confirmed_configs(
+    base_config: dict[str, Any],
+    confirmed_config: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Rebuild generated configs while retaining the confirmed hardware facts.
+
+    Runtime configs are deliberately generated artifacts.  When the checked-in
+    protocol changes, carrying the entire old runtime config forward would also
+    carry stale timing or display parameters.  Only operator/hardware facts are
+    migrated into a fresh copy of the current base protocol.
+    """
+
+    confirmation = dict(confirmed_config.get("operator_confirmation") or {})
+    if not bool(confirmation.get("confirmed_for_this_generated_config", False)):
+        raise ValueError("existing live config has no confirmed Neuracle cap contract")
+    recorder = dict(confirmed_config.get("processes", {}).get("recorder", {}) or {})
+    executable = str(recorder.get("executable") or "").strip()
+    if not executable:
+        raise ValueError("existing live config has no LabRecorder executable")
+    required_confirmation = {
+        name: str(confirmation.get(name) or "").strip()
+        for name in ("reference", "ground", "eog_allocation")
+    }
+    missing = [name for name, value in required_confirmation.items() if not value]
+    if missing:
+        raise ValueError(
+            "existing live config is missing confirmed hardware fields: " + ", ".join(missing)
+        )
+    existing_eeg = dict(confirmed_config.get("hardware", {}).get("eeg", {}) or {})
+    existing_patterns = [
+        str(value).strip()
+        for value in existing_eeg.get("lsl_name_patterns", [])
+        if str(value).strip()
+    ]
+    display, live, live_task = build_configs(
+        base_config,
+        labrecorder_executable=executable,
+        reference=required_confirmation["reference"],
+        ground=required_confirmation["ground"],
+        eog_allocation=required_confirmation["eog_allocation"],
+        extra_lsl_name_patterns=existing_patterns,
+        confirm_cap_contract=True,
+    )
+    assert live is not None and live_task is not None
+    return display, live, live_task
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Generate local Windows Neuracle64 operator-test configs",
@@ -164,6 +211,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--eog-allocation", default="ECG, HEOR, HEOL, VEOU, VEOL")
     parser.add_argument("--lsl-name-pattern", action="append", default=[])
     parser.add_argument(
+        "--refresh-confirmed-config",
+        default=None,
+        help=(
+            "Rebuild from the current base protocol while retaining hardware confirmation "
+            "from an existing generated live config"
+        ),
+    )
+    parser.add_argument(
         "--confirm-cap-contract",
         action="store_true",
         help="Attest that Collect's 65 values use the confirmed W64 transport order",
@@ -173,18 +228,30 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.confirm_cap_contract and (not args.live_output or not args.live_task_output):
-        raise SystemExit("--confirm-cap-contract requires --live-output and --live-task-output")
+    if args.refresh_confirmed_config and args.confirm_cap_contract:
+        raise SystemExit("--refresh-confirmed-config cannot be combined with --confirm-cap-contract")
+    if (args.confirm_cap_contract or args.refresh_confirmed_config) and (
+        not args.live_output or not args.live_task_output
+    ):
+        raise SystemExit(
+            "--confirm-cap-contract/--refresh-confirmed-config requires --live-output and --live-task-output"
+        )
     base = load_config(args.base_config)
-    display, live, live_task = build_configs(
-        base,
-        labrecorder_executable=args.labrecorder,
-        reference=args.reference,
-        ground=args.ground,
-        eog_allocation=args.eog_allocation,
-        extra_lsl_name_patterns=args.lsl_name_pattern,
-        confirm_cap_contract=bool(args.confirm_cap_contract),
-    )
+    if args.refresh_confirmed_config:
+        display, live, live_task = refresh_confirmed_configs(
+            base,
+            load_config(args.refresh_confirmed_config),
+        )
+    else:
+        display, live, live_task = build_configs(
+            base,
+            labrecorder_executable=args.labrecorder,
+            reference=args.reference,
+            ground=args.ground,
+            eog_allocation=args.eog_allocation,
+            extra_lsl_name_patterns=args.lsl_name_pattern,
+            confirm_cap_contract=bool(args.confirm_cap_contract),
+        )
     written = [_write_json(Path(args.display_output), display)]
     if live is not None and live_task is not None:
         written.extend(

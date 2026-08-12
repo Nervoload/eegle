@@ -16,7 +16,7 @@ param(
 )
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Warn"
+$ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Common.ps1")
 
 if (-not $ConfirmElectrodes) {
@@ -24,7 +24,7 @@ if (-not $ConfirmElectrodes) {
 }
 $python = Get-EeglePython
 $config = Get-EegleConfigPath "live"
-Assert-EegleLiveConfig $config
+Update-EegleGeneratedLiveConfigs $python $config
 $resolvedDataRoot = Get-EegleDataRoot $DataRoot
 $env:EEGLE_SESSION_ROOT = $resolvedDataRoot
 if (-not $Resume -and [string]::IsNullOrWhiteSpace($VisitId)) {
@@ -37,6 +37,7 @@ Write-Host "  $BaselineSeconds seconds eyes open"
 Write-Host "  $BaselineSeconds seconds eyes closed"
 Write-Host "  participant practice"
 Write-Host "  30 experimental trials (three 10-trial blocks)"
+Write-Host "  fixed timing: 250 ms digit + 1350 ms fixation (1600 ms SOI; no jitter)"
 Write-Host "Keep Neuracle Collect LSL streaming. EEGle launches/stops LabRecorder."
 
 $arguments = @(

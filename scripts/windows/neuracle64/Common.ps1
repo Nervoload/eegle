@@ -79,6 +79,23 @@ function Assert-EegleLiveConfig([string] $Path) {
     Assert-EegleFile $labRecorder "Configured LabRecorder executable"
 }
 
+function Update-EegleGeneratedLiveConfigs([string] $Python, [string] $LiveConfig) {
+    Assert-EegleLiveConfig $LiveConfig
+    $generator = Join-Path $script:EegleRepoRoot "scripts\prepare_neuracle64_windows_config.py"
+    $baseConfig = Join-Path $script:EegleRepoRoot "configs\study1_neuracle64.json"
+    $arguments = @(
+        $generator,
+        "--base-config", $baseConfig,
+        "--display-output", (Get-EegleConfigPath "display"),
+        "--live-output", (Get-EegleConfigPath "live"),
+        "--live-task-output", (Get-EegleConfigPath "live-task"),
+        "--refresh-confirmed-config", $LiveConfig
+    )
+    & $Python @arguments
+    Assert-EegleExit "confirmed live-config protocol refresh"
+    Assert-EegleLiveConfig (Get-EegleConfigPath "live")
+}
+
 function Assert-EegleExit([string] $Operation) {
     if ($LASTEXITCODE -ne 0) {
         throw "$Operation failed with exit code $LASTEXITCODE"

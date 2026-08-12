@@ -248,6 +248,17 @@ for the test; the example uses 3. This command performs:
 4. Dynamic SART practice;
 5. three 10-trial blocks, for 30 experimental trials total.
 
+At launch, the script rebuilds the generated live runtime config from the
+current checked-in Study 1 protocol. It retains the previously confirmed cap
+mapping, LSL name patterns, reference, ground, EOG allocation, and LabRecorder
+path, but replaces stale task/display parameters. The rebuilt config is
+validated before preflight or recording. A protocol/configuration failure or a
+failed hardware preflight prevents the baseline recorder and task from starting.
+
+The short test uses the same timing contract as a genuine Study 1 run: a 250 ms
+digit, 1350 ms post-digit fixation, fixed 1600 ms SOI, no intentional jitter,
+VBlank waiting, and a required measured refresh-rate match.
+
 ```powershell
 $TestId = "systemtest-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
 
