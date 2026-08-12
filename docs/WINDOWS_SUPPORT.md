@@ -68,6 +68,9 @@ sequence: setup, a visible 10-trial no-EEG run, Collect/LSL discovery, physical
 cap-contract confirmation, a 10-20 trial XDF test, and the complete short
 baseline/practice/30-trial test. The supplied PowerShell scripts live under
 `scripts\windows\neuracle64` and call the virtual environment directly.
+When discovery reports zero streams, `05-Diagnose-Lsl.ps1` performs a
+cross-process pylsl loopback and compares EEGle's explicit LSL configuration
+with normal liblsl configuration discovery before any stream-name matching.
 
 ## DSART Recording Suites on Restricted Desktops
 

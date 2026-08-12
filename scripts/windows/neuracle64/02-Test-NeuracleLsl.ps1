@@ -52,15 +52,20 @@ $probe = $report | Where-Object { $_.name -eq "eeg_sample_probe" } | Select-Obje
 if ($null -eq $probe) {
     $lsl = $report | Where-Object { $_.name -eq "lsl" } | Select-Object -First 1
     Write-Host "LSL streams visible to EEGle:"
+    $visibleStreams = @()
     if ($null -ne $lsl -and $null -ne $lsl.data.PSObject.Properties["streams"]) {
-        foreach ($stream in @($lsl.data.streams)) {
+        $visibleStreams = @($lsl.data.streams)
+        foreach ($stream in $visibleStreams) {
             Write-Host "  $($stream.name) | type=$($stream.type) | channels=$($stream.channel_count) | rate=$($stream.nominal_srate) | source=$($stream.source_id)"
         }
     }
     else {
         Write-Host "  none (or LSL discovery itself failed)"
     }
-    throw "No unique matching Neuracle EEG stream could be sampled. Close duplicate streams or rerun with -LslNamePattern using part of Collect's stream name/source ID. Report: $discoveryReport"
+    if ($visibleStreams.Count -eq 0) {
+        throw "Zero LSL streams are visible. -LslNamePattern cannot help until discovery sees at least one outlet. Keep Collect running and run .\scripts\windows\neuracle64\05-Diagnose-Lsl.ps1 -DataRoot `$EegleData, then test visibility independently with LabRecorder's Update button. Report: $discoveryReport"
+    }
+    throw "LSL works, but no unique Neuracle EEG stream matched. Inspect the streams above, close duplicates, or rerun with -LslNamePattern using part of the EEG outlet's name/source ID. Report: $discoveryReport"
 }
 Write-Host "Stream: $($probe.data.stream.name)"
 Write-Host "Source ID: $($probe.data.stream.source_id)"

@@ -5,7 +5,7 @@ Neuracle 64-channel wet system. Neuracle Collect owns the amplifier connection
 and publishes EEG to Lab Streaming Layer (LSL). EEGle owns the task, marker
 stream, managed LabRecorder process, XDF file, and CSV safety mirror.
 
-The five operator PowerShell scripts are under
+The six operator PowerShell scripts are under
 `scripts\windows\neuracle64`:
 
 | Script | Purpose | EEG recorded? |
@@ -15,6 +15,7 @@ The five operator PowerShell scripts are under
 | `02-Test-NeuracleLsl.ps1` | Discover Collect, lock the confirmed cap contract, and run physical preflight | No recording session |
 | `03-Run-EEGTaskTest.ps1` | Full preflight followed by a 10-20 trial recorded task | Yes: XDF + CSV |
 | `04-Run-FullShortTest.ps1` | Preflight, resting controls, practice, and 30 experimental trials | Yes: XDF + CSV |
+| `05-Diagnose-Lsl.ps1` | Separate local pylsl/config failures from a missing external outlet | No |
 
 Run every command below from a 64-bit Windows PowerShell terminal. Do not use
 Git Bash or WSL for the hardware run.
@@ -81,7 +82,7 @@ Python executable directly. To add `eegle.exe` and `study1.exe` to the user
   -AddCommandsToUserPath
 ```
 
-Close and reopen PowerShell after changing the user `PATH`. The five operator `.ps1`
+Close and reopen PowerShell after changing the user `PATH`. The six operator `.ps1`
 scripts still run by repository-relative path, from the repository root.
 
 ## 2. Display-only dry run: 10 trials
@@ -287,6 +288,27 @@ new `$TestId` instead.
 
 ### No matching stream
 
+- If the setup report says that LSL found **zero streams**, a name pattern
+  cannot help yet. Keep Collect running and execute:
+
+  ```powershell
+  .\scripts\windows\neuracle64\05-Diagnose-Lsl.ps1 -DataRoot $EegleData
+  ```
+
+  This starts an outlet in a second Python process, proves whether pylsl can
+  discover and read it, enumerates every external stream, and repeats the check
+  with and without EEGle's explicit `LSLAPICFG`. Reports are written below
+  `$EegleData\system_checks\lsl-diagnostics`.
+- Open the native LabRecorder manually while Collect is running and click
+  **Update**. This is an independent liblsl client. If neither LabRecorder nor
+  the diagnostic sees a Collect EEG outlet, the problem is upstream of EEGle:
+  live waveforms in Collect do not prove that an LSL outlet was enabled.
+- In Collect, locate and explicitly start the setting described by the installed
+  version as an LSL outlet, real-time data interface, data transmission, or
+  secondary-development interface. Confirm that it exports raw EEG rather than
+  only accepting incoming event markers. If the installed Collect build has no
+  EEG LSL-output option, obtain the vendor's LSL-enabled module/bridge or SDK;
+  EEGle cannot subscribe to a stream that Collect has not published.
 - Confirm Collect is actively publishing, not merely connected to the
   amplifier.
 - Confirm LSL type is `EEG`.
@@ -295,6 +317,24 @@ new `$TestId` instead.
 - Close duplicate Collect/LSL outlets.
 - Check Windows Private-network firewall permission for both Collect and the
   `.venv` Python executable.
+- Verify the active lab Ethernet/Wi-Fi connection is marked **Private**, and
+  temporarily disconnect VPNs or disable unused Hyper-V/VMware/VirtualBox
+  adapters during diagnosis. Multiple Windows adapters can route LSL discovery
+  onto the wrong interface.
+
+Interpret the diagnostic as follows:
+
+| Result | Meaning | Next action |
+| --- | --- | --- |
+| Cross-process loopback fails with both configurations | Local pylsl/runtime/firewall problem | Repair the VC++ runtime or reinstall pylsl; allow `.venv\Scripts\python.exe` on Private networks |
+| Loopback works, zero external streams in both runs | Local Python LSL works; Collect is not publishing a visible outlet or is isolated by its own LSL config | Use LabRecorder Update; enable Collect's EEG LSL output; inspect Collect's `lsl_api.cfg`/SessionID |
+| External streams appear only without EEGle's config | Stale or incompatible EEGle `lsl_api.cfg` | Back it up/remove it and rerun `00-Setup.ps1` |
+| Streams appear but none has type `EEG` | LSL works, but the wrong Collect export is enabled | Enable raw EEG output or confirm the actual type with the vendor |
+| An EEG stream appears | Discovery works | Use its exact name/source fragment with `-LslNamePattern` only if normal matching still rejects it |
+
+The warnings about missing `sklearn`, `joblib`, `pyriemann`, `torch`, or
+`onnxruntime` are unrelated to acquisition discovery. They are optional model
+training/inference packages and do not prevent pylsl from seeing an EEG outlet.
 
 ### 64 channels but generic labels
 

@@ -36,6 +36,7 @@ class PortabilityTests(unittest.TestCase):
             "02-Test-NeuracleLsl.ps1",
             "03-Run-EEGTaskTest.ps1",
             "04-Run-FullShortTest.ps1",
+            "05-Diagnose-Lsl.ps1",
             "Common.ps1",
         }
         self.assertEqual({path.name for path in scripts.glob("*.ps1")}, expected)
@@ -54,6 +55,9 @@ class PortabilityTests(unittest.TestCase):
         self.assertIn('"--smoke"', full)
         self.assertIn('"--include-practice"', full)
         self.assertIn('"--baseline-seconds"', full)
+        diagnostics = (scripts / "05-Diagnose-Lsl.ps1").read_text(encoding="utf-8")
+        self.assertIn("eegle.lsl_diagnostics", diagnostics)
+        self.assertIn("--ignore-lsl-config", diagnostics)
 
     def test_primary_cli_name_and_setup_check_command_are_clear(self) -> None:
         parser = build_parser()
@@ -333,6 +337,30 @@ class PortabilityTests(unittest.TestCase):
         self.assertEqual(by_name["lsl"].status, "warn")
         self.assertEqual(by_name["eeg_device"].data["family"], "Enobio")
         self.assertEqual(by_name["eeg_device"].data["profile"], "enobio8_inhibition")
+
+    def test_preflight_warns_when_lsl_works_but_no_outlets_are_visible(self) -> None:
+        config = {
+            "hardware": {
+                "eeg": {
+                    "family": "Neuracle",
+                    "profile": "neuracle64",
+                    "expected_channel_counts": [64],
+                    "expected_sample_rate_hz": 1000,
+                    "lsl_stream_type": "EEG",
+                    "lsl_name_patterns": ["neuracle"],
+                }
+            }
+        }
+        with patch("eegle.preflight.check_packages", return_value=[]), patch(
+            "eegle.preflight.resolve_streams",
+            return_value=([], None),
+        ):
+            results = run_preflight(config, lsl_wait=0, require_eeg=True)
+
+        by_name = {result.name: result for result in results}
+        self.assertEqual(by_name["lsl"].status, "warn")
+        self.assertIn("no visible stream outlets", by_name["lsl"].detail)
+        self.assertEqual(by_name["neuracle_lsl"].status, "fail")
 
     def test_preflight_rejects_multiple_matching_eeg_streams(self) -> None:
         config = {

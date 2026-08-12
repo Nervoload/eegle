@@ -105,7 +105,16 @@ def run_preflight(
         return checks
 
     stream_dicts = [stream.as_dict() for stream in streams]
-    checks.append(CheckResult("lsl", "ok", f"found {len(streams)} streams", {"streams": stream_dicts}))
+    checks.append(
+        CheckResult(
+            "lsl",
+            "ok" if streams else "warn",
+            f"found {len(streams)} streams"
+            if streams
+            else "LSL discovery completed but found no visible stream outlets",
+            {"streams": stream_dicts},
+        )
+    )
     device_check = identify_eeg_device(stream_dicts, eeg)
     checks.append(device_check)
     checks.append(check_realtime_ready(config, stream_dicts, None, device_check, require_eeg=required_for_run))
