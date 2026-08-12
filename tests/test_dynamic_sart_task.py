@@ -8,7 +8,12 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from eegle.factory import make_task_component
-from eegle.psychopy_display import create_psychopy_window, measure_psychopy_refresh_rate
+from eegle.psychopy_display import (
+    _install_pyglet_resize_handler,
+    create_psychopy_window,
+    measure_psychopy_refresh_rate,
+    redraw_psychopy_after_resize,
+)
 from eegle.realtime.epoching import EpochingConfig, MarkerEvent, load_stimulus_manifest_markers, parse_marker_label, should_epoch_marker
 from eegle.realtime.policy import TaskAction
 from eegle.session import create_session
@@ -156,6 +161,58 @@ class DynamicSartTaskTests(unittest.TestCase):
                     "require_refresh_rate_match": True,
                 },
             )
+
+    def test_pending_resize_repaints_without_waiting_for_keyboard_input(self) -> None:
+        stimulus = SimpleNamespace(draw=MagicMock())
+        window = SimpleNamespace(
+            _eegle_resize_redraw_pending=True,
+            flip=MagicMock(),
+        )
+
+        self.assertTrue(redraw_psychopy_after_resize(window, stimulus))
+        stimulus.draw.assert_called_once_with()
+        window.flip.assert_called_once_with()
+        self.assertFalse(window._eegle_resize_redraw_pending)
+
+        self.assertFalse(redraw_psychopy_after_resize(window, stimulus))
+        stimulus.draw.assert_called_once_with()
+        window.flip.assert_called_once_with()
+
+    def test_native_resize_updates_framebuffer_and_requests_repaint(self) -> None:
+        class Handle:
+            def __init__(self) -> None:
+                self.original_calls: list[tuple[int, int]] = []
+
+            def on_resize(self, width: int, height: int) -> str:
+                self.original_calls.append((width, height))
+                return "resized"
+
+            @staticmethod
+            def get_framebuffer_size() -> tuple[int, int]:
+                return 1600, 1200
+
+        handle = Handle()
+        window = SimpleNamespace(
+            winHandle=handle,
+            backend=SimpleNamespace(_frameBufferSize=[1, 1]),
+            clientSize=[1000, 700],
+            fullscr=False,
+            windowedSize=(1000, 700),
+            viewport=None,
+            scissor=None,
+            resetEyeTransform=MagicMock(),
+        )
+        _install_pyglet_resize_handler(window)
+
+        self.assertEqual(handle.on_resize(800, 600), "resized")
+        self.assertEqual(handle.original_calls, [(800, 600)])
+        self.assertEqual(window.clientSize, [800, 600])
+        self.assertEqual(window.backend._frameBufferSize, [1600, 1200])
+        self.assertEqual(window.viewport, (0, 0, 1600, 1200))
+        self.assertEqual(window.scissor, (0, 0, 1600, 1200))
+        self.assertEqual(window.windowedSize, (800, 600))
+        self.assertTrue(window._eegle_resize_redraw_pending)
+        window.resetEyeTransform.assert_called_once_with()
 
     def test_artifact_store_close_attempts_all_handles_before_reporting_failure(self) -> None:
         closed = []

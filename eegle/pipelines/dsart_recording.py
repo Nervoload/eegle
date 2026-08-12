@@ -31,7 +31,11 @@ from eegle.hardware.system import CheckResult
 from eegle.io.events import EventLogger
 from eegle.lsl import LslMarkerOutlet, NullMarkerOutlet, lsl_local_clock, session_marker_source_id
 from eegle.preflight import run_preflight
-from eegle.psychopy_display import create_psychopy_window, measure_psychopy_refresh_rate
+from eegle.psychopy_display import (
+    create_psychopy_window,
+    measure_psychopy_refresh_rate,
+    redraw_psychopy_after_resize,
+)
 from eegle.psychopy_input import clear_psychopy_keys, poll_psychopy_keys
 from eegle.recording_health import RecorderHealthMonitor
 from eegle.runtime import prepare_psychopy_runtime
@@ -1474,8 +1478,9 @@ def _psychopy_baseline_phase(
     recorder_monitor: RecorderHealthMonitor | None = None,
 ) -> dict[str, Any]:
     holder: dict[str, Any] = {}
-    if draw_fixation:
-        visual.TextStim(win, text="+", height=0.12, color="white").draw()
+    fixation = visual.TextStim(win, text="+", height=0.12, color="white") if draw_fixation else None
+    if fixation is not None:
+        fixation.draw()
     win.callOnFlip(_capture_baseline_start, holder, outlet, f"dsart_baseline_{name}_start", name)
     win.flip()
     _log_captured_baseline_start(holder, logger)
@@ -1487,6 +1492,7 @@ def _psychopy_baseline_phase(
     deadline = start + duration
     next_health_check = start
     while monotonic() < deadline:
+        redraw_psychopy_after_resize(win, fixation)
         now = monotonic()
         if recorder_monitor is not None and now >= next_health_check:
             health = recorder_monitor.check()
@@ -2836,6 +2842,7 @@ def _baseline_instruction(
     prompt.draw()
     win.flip()
     while True:
+        redraw_psychopy_after_resize(win, prompt)
         keys = [value.name for value in poll_psychopy_keys(event_module)]
         if any(key in {"escape", "q"} for key in keys):
             return False

@@ -126,6 +126,28 @@ def measure_psychopy_refresh_rate(win: Any, display: dict[str, Any]) -> dict[str
     }
 
 
+def redraw_psychopy_after_resize(win: Any, *stimuli: Any) -> bool:
+    """Repaint the current screen after a native resize event.
+
+    The pyglet resize callback only updates PsychoPy's viewport and records that
+    a repaint is needed.  Flipping from inside the native callback can recurse
+    into pyglet's event dispatch, so task polling loops consume the request at a
+    safe point instead.  This repaint deliberately does not schedule task
+    markers or change the logical task state.
+    """
+
+    if not bool(getattr(win, "_eegle_resize_redraw_pending", False)):
+        return False
+    # Clear before flipping.  If another resize arrives during the flip, its
+    # repaint request remains pending for the next polling iteration.
+    win._eegle_resize_redraw_pending = False
+    for stimulus in stimuli:
+        if stimulus is not None:
+            stimulus.draw()
+    win.flip()
+    return True
+
+
 @contextmanager
 def _pyglet_resizable_constructor() -> Iterator[None]:
     """Temporarily opt PsychoPy's pyglet window into native resizing."""
@@ -152,6 +174,7 @@ def _install_pyglet_resize_handler(win: Any) -> None:
     original = getattr(handle, "on_resize", None)
     if handle is None or backend is None or not callable(original):
         return
+    win._eegle_resize_redraw_pending = False
 
     def on_resize(width: int, height: int) -> Any:
         width = max(1, int(width))
@@ -180,6 +203,7 @@ def _install_pyglet_resize_handler(win: Any) -> None:
             win.resetEyeTransform()
         except Exception:
             pass
+        win._eegle_resize_redraw_pending = True
         return result
 
     handle.on_resize = on_resize

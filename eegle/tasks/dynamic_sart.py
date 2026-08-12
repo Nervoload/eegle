@@ -16,7 +16,11 @@ from eegle.analysis.dynamic_sart_labels import compute_support_reference
 from eegle.devices.lsl_markers import LslMarkerReceiptRecorder
 from eegle.io.events import EventLogger
 from eegle.lsl import LslMarkerOutlet, NullMarkerOutlet, lsl_local_clock, session_marker_source_id
-from eegle.psychopy_display import create_psychopy_window, measure_psychopy_refresh_rate
+from eegle.psychopy_display import (
+    create_psychopy_window,
+    measure_psychopy_refresh_rate,
+    redraw_psychopy_after_resize,
+)
 from eegle.psychopy_input import clear_psychopy_keys, poll_psychopy_keys
 from eegle.realtime.policy import TaskAction
 from eegle.realtime.task_feedback import TaskFeedbackClient
@@ -1595,6 +1599,7 @@ def _present_psychopy_probe(
     selected_key = None
     selected_response = None
     while monotonic() < deadline:
+        redraw_psychopy_after_resize(win, prompt)
         rows = keyboard.poll(
             task_state="PROBE",
             assigned_block=int(anchor["block_index"]),
@@ -1714,6 +1719,7 @@ def _present_psychopy_trial(
     onset_lsl = _optional_float(holder.get("onset_lsl"))
     events = list(premature_events)
     while monotonic() < onset + config.stimulus_seconds:
+        redraw_psychopy_after_resize(win, digit)
         polled = keyboard.poll(
             task_state="STIMULUS_VISIBLE",
             assigned_trial=int(planned["global_trial_index"]),
@@ -1730,6 +1736,7 @@ def _present_psychopy_trial(
     _log_captured_flip_event(holder, logger, "offset")
     scheduled_response_close = onset + config.response_window_seconds
     while monotonic() < scheduled_response_close:
+        redraw_psychopy_after_resize(win, fixation)
         polled = keyboard.poll(
             task_state="RESPONSE_WINDOW_MASK",
             assigned_trial=int(planned["global_trial_index"]),
@@ -1794,6 +1801,7 @@ def _present_psychopy_trial(
     upcoming = []
     next_onset = onset + float(planned["planned_soi_seconds"])
     while monotonic() < next_onset:
+        redraw_psychopy_after_resize(win, fixation)
         assigned = int(next_trial["global_trial_index"]) if next_trial is not None else None
         polled = keyboard.poll(
             task_state="INTERTRIAL_INTERVAL",
@@ -2070,6 +2078,7 @@ def _run_psychopy_countdown(
         _log_captured_countdown_flip(holder, logger)
         deadline = monotonic() + float(step_seconds)
         while monotonic() < deadline:
+            redraw_psychopy_after_resize(win, prompt)
             rows = keyboard.poll(task_state="COUNTDOWN")
             if any(row["is_escape_key"] for row in rows):
                 return False, "escape_abort"
@@ -2097,6 +2106,7 @@ def _show_screen(
     prompt.draw()
     win.flip()
     while True:
+        redraw_psychopy_after_resize(win, prompt)
         rows = keyboard.poll(task_state=state)
         if any(row["is_escape_key"] for row in rows):
             return False
@@ -2137,6 +2147,7 @@ def _show_bounded_break(
     maximum_deadline = started + maximum_seconds
     ignored_early_continue_presses = 0
     while monotonic() < maximum_deadline:
+        redraw_psychopy_after_resize(win, prompt)
         rows = keyboard.poll(task_state="BREAK")
         if any(row["is_escape_key"] for row in rows):
             ended = monotonic()
@@ -2185,6 +2196,7 @@ def _show_timed_text(
     win.flip()
     deadline = monotonic() + max(0.0, seconds)
     while monotonic() < deadline:
+        redraw_psychopy_after_resize(win, prompt)
         rows = keyboard.poll(task_state="PRACTICE_FEEDBACK")
         if any(row["is_escape_key"] for row in rows):
             return False
@@ -2211,6 +2223,7 @@ def _show_completion(
     win.flip()
     deadline = monotonic() + max(0.0, max_wait)
     while monotonic() < deadline:
+        redraw_psychopy_after_resize(win, prompt)
         rows = keyboard.poll(task_state="COMPLETE")
         if any(row["is_response_key"] or row["is_escape_key"] for row in rows):
             return
