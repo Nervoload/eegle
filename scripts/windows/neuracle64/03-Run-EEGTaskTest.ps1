@@ -3,6 +3,7 @@ param(
     [int] $Trials = 20,
     [string] $Participant = "neuracle-eeg-task-test",
     [string] $DataRoot = "",
+    [switch] $FullScreen,
     [switch] $ConfirmElectrodes
 )
 
@@ -35,11 +36,17 @@ Assert-EegleExit "full Neuracle/LSL/electrode/LabRecorder preflight"
 
 Write-Host "Starting $Trials experimental Dynamic SART trials with XDF + CSV recording."
 Write-Host "Keep Neuracle Collect LSL streaming. Do not start LabRecorder manually."
-& $python -m eegle.cli run-forward `
-    --config $config `
-    --task dynamic_sart `
-    --task-mode psychopy `
-    --trials $Trials `
-    --participant $Participant `
-    --require-eeg
+$taskArguments = @(
+    "-m", "eegle.cli", "run-forward",
+    "--config", $config,
+    "--task", "dynamic_sart",
+    "--task-mode", "psychopy",
+    "--trials", [string] $Trials,
+    "--participant", $Participant,
+    "--require-eeg"
+)
+if ($FullScreen) {
+    $taskArguments += "--fullscreen"
+}
+& $python @taskArguments
 Assert-EegleExit "short recorded EEG task"

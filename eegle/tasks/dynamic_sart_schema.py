@@ -139,9 +139,9 @@ class DynamicSartConfig:
             response_keys=tuple(str(item) for item in raw.get("response_keys", ["space"])),
             escape_keys=tuple(str(item) for item in raw.get("escape_keys", ["escape", "q"])),
             stimulus_seconds=float(raw.get("stimulus_seconds", 0.25)),
-            response_window_seconds=float(raw.get("response_window_seconds", 1.15)),
+            response_window_seconds=float(raw.get("response_window_seconds", 1.60)),
             inter_trial_jitter_min_seconds=float(raw.get("inter_trial_jitter_min_seconds", 0.0)),
-            inter_trial_jitter_max_seconds=float(raw.get("inter_trial_jitter_max_seconds", 0.15)),
+            inter_trial_jitter_max_seconds=float(raw.get("inter_trial_jitter_max_seconds", 0.0)),
             soi_min_seconds=(None if raw.get("soi_min_seconds") is None else float(raw["soi_min_seconds"])),
             soi_max_seconds=(None if raw.get("soi_max_seconds") is None else float(raw["soi_max_seconds"])),
             minimum_valid_rt_seconds=float(raw.get("minimum_valid_rt_seconds", 0.10)),
@@ -186,6 +186,12 @@ class DynamicSartConfig:
     def normal_recipe_trial_count(self) -> int:
         return sum(block.trials for block in self.blocks)
 
+    @property
+    def post_digit_fixation_seconds(self) -> float:
+        """Planned fixation duration between digit offset and the next onset."""
+
+        return self.response_window_seconds - self.stimulus_seconds
+
     def payload(self) -> dict[str, Any]:
         return {
             "digits": list(self.digits),
@@ -193,6 +199,7 @@ class DynamicSartConfig:
             "response_keys": list(self.response_keys),
             "escape_keys": list(self.escape_keys),
             "stimulus_seconds": self.stimulus_seconds,
+            "post_digit_fixation_seconds": self.post_digit_fixation_seconds,
             "response_window_seconds": self.response_window_seconds,
             "inter_trial_jitter_min_seconds": self.inter_trial_jitter_min_seconds,
             "inter_trial_jitter_max_seconds": self.inter_trial_jitter_max_seconds,

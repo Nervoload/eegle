@@ -31,9 +31,16 @@
       "full_screen": false,
       "win_type": "pyglet",
       "allow_gui": true,
+      "resizable": true,
+      "size": [1000, 700],
       "units": "height",
       "background_color": "black",
-      "photodiode_patch": false
+      "photodiode_patch": false,
+      "expected_refresh_rate_hz": 60.0,
+      "refresh_rate_tolerance_hz": 2.0,
+      "check_refresh_rate": true,
+      "require_refresh_rate_match": true,
+      "wait_blanking": true
     }
   },
   "experiment": {
@@ -120,9 +127,9 @@
       "response_keys": ["space"],
       "escape_keys": ["escape", "q"],
       "stimulus_seconds": 0.25,
-      "response_window_seconds": 1.15,
+      "response_window_seconds": 1.6,
       "inter_trial_jitter_min_seconds": 0.0,
-      "inter_trial_jitter_max_seconds": 0.15,
+      "inter_trial_jitter_max_seconds": 0.0,
       "minimum_valid_rt_seconds": 0.1,
       "no_go_probability": 0.1111111111,
       "minimum_go_trials_between_no_go": 2,

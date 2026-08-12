@@ -360,10 +360,14 @@ exactly; a mismatch remains a preflight failure.
 
 ### Task window is on the wrong display
 
-The generated configs use screen 0 and a 1000 by 700 window for safe testing.
-Change only the local generated display settings after verifying the correct
-Windows display index. Do not switch to full screen until the abort keys have
-been tested.
+The generated configs use screen 0 and a resizable 1000 by 700 window for safe
+testing. Change only the local generated display settings after verifying the
+correct Windows display index. Add `-FullScreen` to scripts 01, 03, or 04 after
+the abort keys have been tested. At launch, EEGle measures the refresh rate and
+requires it to match the generated config (60 Hz by default, within 2 Hz). If
+Windows is intentionally set to another rate, update
+`hardware.display.expected_refresh_rate_hz` in all three generated JSON files
+before rerunning setup tests.
 
 ### Windows blocks data writes
 

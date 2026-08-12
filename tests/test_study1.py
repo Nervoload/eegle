@@ -43,6 +43,10 @@ class Study1Tests(unittest.TestCase):
         self.assertFalse(display["processes"]["recorder"]["enabled"])
         self.assertEqual(display["experiment"]["components"]["eeg_recorder"], "disabled")
         self.assertFalse(display["tasks"]["dynamic_sart"]["practice"]["enabled"])
+        self.assertTrue(display["hardware"]["display"]["resizable"])
+        self.assertTrue(display["hardware"]["display"]["wait_blanking"])
+        self.assertTrue(display["hardware"]["display"]["require_refresh_rate_match"])
+        self.assertEqual(display["tasks"]["dynamic_sart"]["response_window_seconds"], 1.6)
 
     def test_windows_live_config_requires_and_records_cap_confirmation(self) -> None:
         base = load_config(CONFIG)
@@ -251,7 +255,11 @@ class Study1Tests(unittest.TestCase):
             self.assertEqual(len(plan["planned_blocks"]), block_count)
             self.assertEqual([row["planned_no_go_count"] for row in plan["planned_blocks"]], [30] * block_count)
             self.assertEqual(len(plan["cue_schedule"]["opportunities"]), cue_count)
-            self.assertTrue(all(1.75 <= row["planned_soi_seconds"] <= 2.15 for row in plan["planned_trials"]))
+            self.assertTrue(all(row["planned_soi_seconds"] == 1.6 for row in plan["planned_trials"]))
+            self.assertTrue(all(row["planned_jitter_seconds"] == 0.0 for row in plan["planned_trials"]))
+            self.assertTrue(
+                all(row["planned_post_digit_fixation_seconds"] == 1.35 for row in plan["planned_trials"])
+            )
             self.assertTrue(all(row["digit"] in range(10) for row in plan["planned_trials"]))
             self.assertTrue(all(row["digit"] == 6 for row in plan["planned_trials"] if row["is_no_go"]))
 

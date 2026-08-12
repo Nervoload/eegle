@@ -38,7 +38,7 @@ def analyze_dynamic_sart_session(session_dir: str | Path, config: dict[str, Any]
         return result
 
     minimum_rt = float(task_config.get("minimum_valid_rt_seconds", 0.10))
-    response_window = float(task_config.get("response_window_seconds", 1.15))
+    response_window = float(task_config.get("response_window_seconds", 1.60))
     saved_reference = _load_json(reference_path) or {}
     event_counts = _event_counts(root / "events" / "events.jsonl")
     support_complete_count = event_counts.get("dynamic_sart_support_complete", 0)

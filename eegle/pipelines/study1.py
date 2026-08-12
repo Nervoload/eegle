@@ -80,6 +80,7 @@ class Study1Options:
     include_practice: bool = False
     baseline_seconds: float | None = None
     window_size: tuple[int, int] | None = None
+    full_screen: bool | None = None
     record_eeg: bool = True
     require_eeg: bool = True
     resume: bool = False
@@ -134,6 +135,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--include-practice", action="store_true")
     parser.add_argument("--baseline-seconds", type=float, default=None)
     parser.add_argument("--window-size", type=int, nargs=2, metavar=("WIDTH", "HEIGHT"), default=None)
+    display_mode = parser.add_mutually_exclusive_group()
+    display_mode.add_argument("--fullscreen", dest="full_screen", action="store_true")
+    display_mode.add_argument("--windowed", dest="full_screen", action="store_false")
+    parser.set_defaults(full_screen=None)
     parser.add_argument("--skip-eeg", action="store_true")
     parser.add_argument("--allow-missing-eeg", action="store_true")
     parser.add_argument(
@@ -182,6 +187,7 @@ def _options_from_args(args: argparse.Namespace) -> Study1Options:
         include_practice=bool(args.include_practice),
         baseline_seconds=args.baseline_seconds,
         window_size=None if args.window_size is None else (int(args.window_size[0]), int(args.window_size[1])),
+        full_screen=args.full_screen,
         record_eeg=not bool(args.skip_eeg),
         require_eeg=not bool(args.allow_missing_eeg) and not bool(args.skip_eeg),
         resume=bool(args.resume),
@@ -222,6 +228,8 @@ def run_study1_visit(options: Study1Options) -> dict[str, Any]:
     config["runtime"]["runtime_cache_dir"] = str(_runtime_cache_root(config, output_root))
     if options.window_size is not None:
         config.setdefault("hardware", {}).setdefault("display", {})["size"] = list(options.window_size)
+    if options.full_screen is not None:
+        config.setdefault("hardware", {}).setdefault("display", {})["full_screen"] = bool(options.full_screen)
     _probe_session_root_writable(output_root)
 
     simulator: SimulatedEegOutlet | None = None
@@ -750,6 +758,7 @@ def _new_visit_manifest(
         "include_practice": options.include_practice,
         "baseline": copy.deepcopy(config.get("recording_suite", {}).get("baseline", {})),
         "window_size": list(config.get("hardware", {}).get("display", {}).get("size", [1000, 700])),
+        "full_screen": bool(config.get("hardware", {}).get("display", {}).get("full_screen", False)),
         "visit_interval": interval,
         "warnings": [issue["detail"] for issue in config_issues if issue["status"] == "warn"],
         "failures": [],
@@ -789,6 +798,7 @@ def _validate_resume(
         "include_practice": options.include_practice,
         "baseline": copy.deepcopy(config.get("recording_suite", {}).get("baseline", {})),
         "window_size": list(config.get("hardware", {}).get("display", {}).get("size", [1000, 700])),
+        "full_screen": bool(config.get("hardware", {}).get("display", {}).get("full_screen", False)),
     }
     mismatches = [key for key, value in expected.items() if manifest.get(key) != value]
     if mismatches:
@@ -808,6 +818,7 @@ def _dsart_options(options: Study1Options, *, trials: int) -> DsartRecordingOpti
         include_practice=options.include_practice,
         baseline_seconds=options.baseline_seconds,
         window_size=options.window_size,
+        full_screen=options.full_screen,
         record_eeg=options.record_eeg,
         require_eeg=options.require_eeg,
         resume=options.resume,

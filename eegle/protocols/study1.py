@@ -43,7 +43,9 @@ def study1_protocol() -> ScientificProtocol:
             "no_go_fraction_per_block": 0.15,
             "block_trials": 200,
             "stimulus_seconds": 0.25,
-            "soi_seconds": [1.75, 2.15],
+            "post_digit_fixation_seconds": 1.35,
+            "soi_seconds": 1.60,
+            "intentional_jitter_seconds": 0.0,
             "segments": list(STUDY1_SEGMENTS),
         },
     )
@@ -169,6 +171,25 @@ def validate_study1_config(config: dict[str, Any]) -> list[dict[str, str]]:
     base_task = dict(config.get("tasks", {}).get("dynamic_sart", {}) or {})
     if list(base_task.get("digits") or []) != list(range(10)):
         issues.append(_issue("fail", "Study 1 Dynamic SART digits must be 0 through 9"))
+    if abs(float(base_task.get("stimulus_seconds", 0.0)) - 0.25) > 1e-9:
+        issues.append(_issue("fail", "Study 1 digit duration must be 0.25 seconds"))
+    if abs(float(base_task.get("response_window_seconds", 0.0)) - 1.60) > 1e-9:
+        issues.append(_issue("fail", "Study 1 SOI must be 1.60 seconds (0.25 s digit + 1.35 s fixation)"))
+    if any(
+        abs(float(base_task.get(name, 0.0))) > 1e-9
+        for name in ("inter_trial_jitter_min_seconds", "inter_trial_jitter_max_seconds")
+    ):
+        issues.append(_issue("fail", "Study 1 intentional inter-trial jitter must be disabled"))
+    for name in ("soi_min_seconds", "soi_max_seconds"):
+        if base_task.get(name) is not None and abs(float(base_task[name]) - 1.60) > 1e-9:
+            issues.append(_issue("fail", f"Study 1 {name} must be fixed at 1.60 seconds"))
+    display = dict(config.get("hardware", {}).get("display", {}) or {})
+    if not bool(display.get("wait_blanking", False)):
+        issues.append(_issue("fail", "Study 1 display must wait for VBlank"))
+    if not bool(display.get("check_refresh_rate", False)):
+        issues.append(_issue("fail", "Study 1 display refresh-rate measurement must be enabled"))
+    if not bool(display.get("require_refresh_rate_match", False)):
+        issues.append(_issue("fail", "Study 1 measured refresh rate must match the configured display mode"))
     for name in STUDY1_SEGMENTS:
         try:
             child = configure_study1_segment(config, name, no_go_digit=0, seed=42)
@@ -209,8 +230,8 @@ def _segment_issues(name: str, plan: dict[str, Any]) -> list[dict[str, str]]:
         if int(block.get("trials", 0)) != 200 or int(block.get("planned_no_go_count", 0)) != 30:
             issues.append(_issue("fail", f"{name} blocks must contain 200 trials and 30 no-go trials"))
             break
-    if any(not 1.75 <= float(row.get("planned_soi_seconds", 0.0)) <= 2.15 for row in rows):
-        issues.append(_issue("fail", f"{name} SOIs must remain between 1.75 and 2.15 seconds"))
+    if any(abs(float(row.get("planned_soi_seconds", 0.0)) - 1.60) > 1e-9 for row in rows):
+        issues.append(_issue("fail", f"{name} SOIs must remain fixed at 1.60 seconds"))
     cue = dict(plan.get("cue_schedule") or {})
     if name == "session2_cue_extension":
         opportunities = list(cue.get("opportunities") or [])

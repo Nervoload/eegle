@@ -248,6 +248,7 @@ def _build_block_trials(
                 "is_no_go": is_no_go,
                 "expected_action": "withhold" if is_no_go else "press",
                 "planned_stimulus_seconds": config.stimulus_seconds,
+                "planned_post_digit_fixation_seconds": config.post_digit_fixation_seconds,
                 "planned_response_window_seconds": config.response_window_seconds,
                 "planned_jitter_seconds": planned_jitter,
                 "planned_soi_seconds": planned_soi,

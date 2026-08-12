@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from eegle.factory import make_task_component
+from eegle.psychopy_display import create_psychopy_window, measure_psychopy_refresh_rate
 from eegle.realtime.epoching import EpochingConfig, MarkerEvent, load_stimulus_manifest_markers, parse_marker_label, should_epoch_marker
 from eegle.realtime.policy import TaskAction
 from eegle.session import create_session
@@ -114,6 +115,48 @@ def _key(event_id: str, key: str, timestamp: float, *, response: bool = True, pr
 
 
 class DynamicSartTaskTests(unittest.TestCase):
+    def test_display_creation_supports_fullscreen_and_vblank(self) -> None:
+        visual = SimpleNamespace(Window=MagicMock(return_value=SimpleNamespace()))
+        create_psychopy_window(
+            visual,
+            {
+                "full_screen": True,
+                "size": [1920, 1080],
+                "wait_blanking": True,
+                "resizable": True,
+            },
+        )
+        kwargs = visual.Window.call_args.kwargs
+        self.assertTrue(kwargs["fullscr"])
+        self.assertTrue(kwargs["waitBlanking"])
+        self.assertFalse(kwargs["checkTiming"])
+        self.assertEqual(kwargs["size"], (1920, 1080))
+
+    def test_refresh_measurement_accepts_match_and_rejects_mismatch(self) -> None:
+        window = SimpleNamespace(waitBlanking=True, getActualFrameRate=lambda **_kwargs: 59.94)
+        measured = measure_psychopy_refresh_rate(
+            window,
+            {
+                "expected_refresh_rate_hz": 60.0,
+                "refresh_rate_tolerance_hz": 1.0,
+                "require_refresh_rate_match": True,
+            },
+        )
+        self.assertEqual(measured["status"], "measured")
+        self.assertTrue(measured["refresh_rate_within_tolerance"])
+        self.assertAlmostEqual(window.monitorFramePeriod, 1.0 / 59.94)
+        self.assertAlmostEqual(window.refreshThreshold, (1.0 / 59.94) * 1.2)
+        mismatch = SimpleNamespace(waitBlanking=True, getActualFrameRate=lambda **_kwargs: 120.0)
+        with self.assertRaisesRegex(RuntimeError, "measured refresh 120.000 Hz"):
+            measure_psychopy_refresh_rate(
+                mismatch,
+                {
+                    "expected_refresh_rate_hz": 60.0,
+                    "refresh_rate_tolerance_hz": 2.0,
+                    "require_refresh_rate_match": True,
+                },
+            )
+
     def test_artifact_store_close_attempts_all_handles_before_reporting_failure(self) -> None:
         closed = []
 
@@ -513,6 +556,9 @@ class DynamicSartTaskTests(unittest.TestCase):
             self.assertEqual(result.summary["experimental_trials"], 24)
             self.assertEqual(sum(not row["is_practice"] for row in rows), 24)
             self.assertTrue(all("planned_jitter_seconds" in row for row in rows))
+            self.assertTrue(all(row["planned_jitter_seconds"] == 0.0 for row in rows))
+            self.assertTrue(all(row["planned_soi_seconds"] == 1.6 for row in rows))
+            self.assertTrue(all(row["planned_post_digit_fixation_seconds"] == 1.35 for row in rows))
             self.assertEqual(events.count("dynamic_sart_support_complete"), 1)
             last_support = max(index for index, value in enumerate(events) if value == "dynamic_sart_trial_complete" and index < events.index("dynamic_sart_support_complete"))
             first_query = next(index for index, value in enumerate(events) if value == "dynamic_sart_stimulus_onset" and index > events.index("dynamic_sart_support_complete"))

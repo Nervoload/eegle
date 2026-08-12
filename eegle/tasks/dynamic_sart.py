@@ -16,6 +16,7 @@ from eegle.analysis.dynamic_sart_labels import compute_support_reference
 from eegle.devices.lsl_markers import LslMarkerReceiptRecorder
 from eegle.io.events import EventLogger
 from eegle.lsl import LslMarkerOutlet, NullMarkerOutlet, lsl_local_clock, session_marker_source_id
+from eegle.psychopy_display import create_psychopy_window, measure_psychopy_refresh_rate
 from eegle.psychopy_input import clear_psychopy_keys, poll_psychopy_keys
 from eegle.realtime.policy import TaskAction
 from eegle.realtime.task_feedback import TaskFeedbackClient
@@ -65,6 +66,7 @@ TRIAL_CSV_FIELDS = (
     "expected_action",
     "stimulus_marker_label",
     "planned_stimulus_seconds",
+    "planned_post_digit_fixation_seconds",
     "planned_response_window_seconds",
     "planned_jitter_seconds",
     "planned_soi_seconds",
@@ -468,16 +470,9 @@ class DynamicSartTask:
                 marker_receipt = _start_marker_receipt_recorder(marker_outlet, paths)
             store = DynamicSartArtifactStore(paths, plan, self.task_config, participant)
             feedback_client = _make_task_feedback_client(self.config, paths)
-            win = visual.Window(
-                fullscr=bool(display.get("full_screen", False)),
-                screen=int(display.get("screen_index", 0)),
-                size=tuple(display.get("size", [1000, 700])),
-                winType=str(display.get("win_type", "pyglet")),
-                units=str(display.get("units", "height")),
-                color=display.get("background_color", "black"),
-                allowGUI=bool(display.get("allow_gui", True)),
-            )
-            timing = _display_timing_config(display, getattr(win, "monitorFramePeriod", None))
+            win = create_psychopy_window(visual, display, title="EEGle Dynamic SART")
+            timing = measure_psychopy_refresh_rate(win, display)
+            store.set_display_timing(timing)
             keyboard = PersistentKeyboardCollector(
                 event,
                 core.Clock(),
@@ -862,6 +857,10 @@ class DynamicSartArtifactStore:
             "support_complete": False,
             "aborted": False,
         }
+
+    def set_display_timing(self, timing: dict[str, Any]) -> None:
+        self.manifest["display_timing"] = deepcopy(timing)
+        _write_json_atomic(self.manifest_path, self.manifest)
 
     def append_trial(self, record: dict[str, Any]) -> None:
         immutable = deepcopy(record)
@@ -2240,20 +2239,6 @@ def _completion_text(paths: SessionPaths, summary: dict[str, Any]) -> str:
         f"Recorded {completed} of {planned} experimental trials.\n"
         f"Session: {paths.root}\n\nPress SPACE to close."
     )
-
-
-def _display_timing_config(display: dict[str, Any], measured_period: Any) -> dict[str, Any]:
-    expected = max(1.0, float(display.get("expected_refresh_rate_hz", 60.0)))
-    period = _optional_float(measured_period)
-    measured = 1.0 / period if period is not None and period > 0 else expected
-    return {
-        "status": "modeled",
-        "expected_refresh_rate_hz": expected,
-        "measured_refresh_rate_hz": measured,
-        "fixed_display_latency_ms": float(display.get("fixed_display_latency_ms", 0.0)),
-        "expected_visual_onset_uncertainty_ms": 500.0 / measured,
-        "photodiode_verification_enabled": bool(display.get("photodiode_patch", False)),
-    }
 
 
 def _make_marker_outlet(markers: dict[str, Any], paths: SessionPaths) -> LslMarkerOutlet | NullMarkerOutlet:

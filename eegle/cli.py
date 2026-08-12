@@ -93,6 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_task.add_argument("--participant", default=None, help="Participant/session id")
     run_task.add_argument("--mode", choices=["dry-run", "psychopy"], default="dry-run")
     run_task.add_argument("--trials", type=int, default=None)
+    _add_display_args(run_task)
     run_task.set_defaults(func=cmd_run_task)
 
     forward = subparsers.add_parser("run-forward", help="Run forward task + optional EEG recording experiment")
@@ -102,6 +103,7 @@ def build_parser() -> argparse.ArgumentParser:
     forward.add_argument("--participant", default=None, help="Participant/session id")
     forward.add_argument("--task-mode", choices=["dry-run", "psychopy"], default="psychopy")
     forward.add_argument("--trials", type=int, default=None)
+    _add_display_args(forward)
     forward.add_argument("--skip-eeg", action="store_true", help="Do not start the LSL EEG recorder")
     forward.add_argument("--require-eeg", action="store_true", help="Fail preflight if no configured EEG LSL stream is found")
     forward.add_argument("--allow-missing-eeg", action="store_true", help="Allow task to run even if no EEG stream is found")
@@ -290,6 +292,7 @@ def cmd_init_session(args: argparse.Namespace, config: dict[str, Any]) -> int:
 
 
 def cmd_run_task(args: argparse.Namespace, config: dict[str, Any]) -> int:
+    _apply_display_overrides(config, args)
     task = args.task or config.get("experiment", {}).get("task", "pvt")
     get_task_spec(task)
     result = make_task_component(task, config, task_mode=args.mode, trials=args.trials, participant_id=args.participant).run()
@@ -298,6 +301,7 @@ def cmd_run_task(args: argparse.Namespace, config: dict[str, Any]) -> int:
 
 
 def cmd_run_forward(args: argparse.Namespace, config: dict[str, Any]) -> int:
+    _apply_display_overrides(config, args)
     task = args.task or config.get("experiment", {}).get("task", "pvt")
     get_task_spec(task)
     require_eeg = None
@@ -363,6 +367,26 @@ def cmd_run_realtime(args: argparse.Namespace, config: dict[str, Any]) -> int:
         )
     )
     return 0
+
+
+def _add_display_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--window-size", type=int, nargs=2, metavar=("WIDTH", "HEIGHT"), default=None)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--fullscreen", dest="full_screen", action="store_true")
+    mode.add_argument("--windowed", dest="full_screen", action="store_false")
+    parser.set_defaults(full_screen=None)
+
+
+def _apply_display_overrides(config: dict[str, Any], args: argparse.Namespace) -> None:
+    display = config.setdefault("hardware", {}).setdefault("display", {})
+    window_size = getattr(args, "window_size", None)
+    if window_size is not None:
+        if any(int(value) <= 0 for value in window_size):
+            raise ValueError("--window-size WIDTH and HEIGHT must be positive")
+        display["size"] = [int(window_size[0]), int(window_size[1])]
+    full_screen = getattr(args, "full_screen", None)
+    if full_screen is not None:
+        display["full_screen"] = bool(full_screen)
 
 
 def cmd_replay_realtime(args: argparse.Namespace, config: dict[str, Any]) -> int:

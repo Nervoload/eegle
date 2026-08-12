@@ -141,10 +141,19 @@ the configured no-repeat-practice rule. These choices and duration overrides
 are recorded in the suite manifest and are never treated as a scientific
 recording.
 
-DSART windows are windowed at 1000 by 700 pixels by default. Use
-`--window-size WIDTH HEIGHT` to choose another launch size. The formal recording
-recipes reject full-screen configuration so an accidental config edit cannot
-restore the failure-prone launch behavior. Keyboard input
+DSART windows are resizable and launch windowed at 1000 by 700 pixels by
+default. Use `--window-size WIDTH HEIGHT` to choose another launch size, or
+`--fullscreen` to use the selected display in full-screen mode. Height-based
+PsychoPy units and a resize-aware viewport keep digits, fixation, and wrapped
+instructions centered when a window is resized. Full-screen mode is recommended
+for participant acquisition after the display and abort keys have been rehearsed.
+
+Before any baseline or DSART trials, PsychoPy waits for vertical blanking and
+measures the actual refresh rate. The formal recipes require it to match
+`hardware.display.expected_refresh_rate_hz` within the configured tolerance;
+an unstable or mismatched display stops before acquisition. The DSART schedule
+is fixed at a 250 ms digit plus 1350 ms post-digit fixation (1600 ms SOI) with
+zero intentional jitter. Keyboard input
 uses the same `psychopy.event` path as the existing Go/No-go task, with one
 shared normalizer for event names and timestamps. Space, Escape, and Q are
 recognized consistently in the baseline, practice, experimental trials,

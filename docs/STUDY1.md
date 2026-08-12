@@ -15,8 +15,11 @@ and resume machinery.
 - Every 200-trial block contains exactly 30 no-go trials.
 - Digits are 0-9. The counterbalanced no-go digit is stored in the participant
   manifest and reused across visits.
-- Stimuli are planned for 250 ms with stimulus-onset intervals sampled from
-  1.75-2.15 seconds before the task starts.
+- Each digit is planned for 250 ms, followed by 1350 ms of fixation. The SOI is
+  fixed at 1600 ms with no intentional jitter.
+- PsychoPy waits for vertical blanking and measures the display refresh rate
+  before acquisition; the run stops if it cannot match the configured display
+  rate within tolerance.
 - The cue extension creates 20 deterministic opportunities, grouped into five
   permuted blocks with two cue and two no-cue assignments in each block.
 

@@ -11,6 +11,7 @@ param(
     [ValidateRange(1, 600)]
     [int] $BaselineSeconds = 60,
     [switch] $Resume,
+    [switch] $FullScreen,
     [switch] $ConfirmElectrodes
 )
 
@@ -59,6 +60,9 @@ if (-not [string]::IsNullOrWhiteSpace($VisitId)) {
 }
 if ($Resume) {
     $arguments += "--resume"
+}
+if ($FullScreen) {
+    $arguments += "--fullscreen"
 }
 & $python @arguments
 Assert-EegleExit "full short Study 1 test"

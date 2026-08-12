@@ -416,9 +416,10 @@ montage. Task and calibration durations also live in the selected config.
 digits 1 through 9, records a response to frequent go digits, and uses one
 fixed configurable digit as the no-go stimulus. The default pilot plan is six
 160-trial blocks: two support blocks followed by four query blocks. Practice is
-criterion based, and the complete behavior-independent plan, seeds, conditions,
-jitter, phase assignments, and marker labels are written before experimental
-execution.
+criterion based. Digits are shown for 250 ms, followed by 1350 ms of fixation,
+for a fixed 1600 ms SOI with zero intentional jitter. The complete
+behavior-independent plan, seeds, conditions, fixed timing, phase assignments,
+and marker labels are written before experimental execution.
 
 The final support block ends with exactly one
 `dynamic_sart_support_complete` event. At that boundary EEGle freezes a

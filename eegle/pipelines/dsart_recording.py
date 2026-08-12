@@ -31,6 +31,7 @@ from eegle.hardware.system import CheckResult
 from eegle.io.events import EventLogger
 from eegle.lsl import LslMarkerOutlet, NullMarkerOutlet, lsl_local_clock, session_marker_source_id
 from eegle.preflight import run_preflight
+from eegle.psychopy_display import create_psychopy_window, measure_psychopy_refresh_rate
 from eegle.psychopy_input import clear_psychopy_keys, poll_psychopy_keys
 from eegle.recording_health import RecorderHealthMonitor
 from eegle.runtime import prepare_psychopy_runtime
@@ -75,6 +76,7 @@ class DsartRecordingOptions:
     baseline_seconds: float | None = None
     break_seconds: float | None = None
     window_size: tuple[int, int] | None = None
+    full_screen: bool | None = None
     record_eeg: bool = True
     require_eeg: bool = True
     resume: bool = False
@@ -153,8 +155,12 @@ def build_parser() -> argparse.ArgumentParser:
         nargs=2,
         metavar=("WIDTH", "HEIGHT"),
         default=None,
-        help="Windowed PsychoPy size in pixels; DSART recipes are not full-screen by default",
+        help="Windowed PsychoPy launch size in pixels",
     )
+    display_mode = parser.add_mutually_exclusive_group()
+    display_mode.add_argument("--fullscreen", dest="full_screen", action="store_true")
+    display_mode.add_argument("--windowed", dest="full_screen", action="store_false")
+    parser.set_defaults(full_screen=None)
     parser.add_argument("--skip-eeg", action="store_true")
     parser.add_argument("--allow-missing-eeg", action="store_true")
     parser.add_argument("--resume", action="store_true")
@@ -196,6 +202,7 @@ def _options_from_args(args: argparse.Namespace) -> DsartRecordingOptions:
         baseline_seconds=args.baseline_seconds,
         break_seconds=args.break_seconds,
         window_size=None if args.window_size is None else (int(args.window_size[0]), int(args.window_size[1])),
+        full_screen=args.full_screen,
         record_eeg=not bool(args.skip_eeg),
         require_eeg=not bool(args.allow_missing_eeg) and not bool(args.skip_eeg),
         resume=bool(args.resume),
@@ -238,6 +245,8 @@ def run_recording_suite(options: DsartRecordingOptions) -> dict[str, Any]:
         )
     if options.window_size is not None:
         config.setdefault("hardware", {}).setdefault("display", {})["size"] = list(options.window_size)
+    if options.full_screen is not None:
+        config.setdefault("hardware", {}).setdefault("display", {})["full_screen"] = bool(options.full_screen)
     output_root = resolve_session_root(config, options.output_root)
     runtime_config = config.setdefault("runtime", {})
     runtime_config["session_root"] = str(output_root)
@@ -526,12 +535,35 @@ def validate_recording_config(config: dict[str, Any], recipe: str) -> list[dict[
         issues.append(_issue("fail", "tasks.dynamic_sart.escape_keys must include escape and q"))
     if float(task.get("countdown_step_seconds", 1.0)) <= 0.0:
         issues.append(_issue("fail", "tasks.dynamic_sart.countdown_step_seconds must be positive"))
+    if abs(float(task.get("stimulus_seconds", 0.0)) - 0.25) > 1e-9:
+        issues.append(_issue("fail", "tasks.dynamic_sart.stimulus_seconds must be 0.25"))
+    if abs(float(task.get("response_window_seconds", 0.0)) - 1.60) > 1e-9:
+        issues.append(
+            _issue(
+                "fail",
+                "tasks.dynamic_sart.response_window_seconds must be 1.60 (0.25 s digit + 1.35 s fixation)",
+            )
+        )
+    if any(
+        abs(float(task.get(name, 0.0))) > 1e-9
+        for name in ("inter_trial_jitter_min_seconds", "inter_trial_jitter_max_seconds")
+    ):
+        issues.append(_issue("fail", "DSART intentional inter-trial jitter must be disabled"))
+    for name in ("soi_min_seconds", "soi_max_seconds"):
+        if task.get(name) is not None and abs(float(task[name]) - 1.60) > 1e-9:
+            issues.append(_issue("fail", f"tasks.dynamic_sart.{name} must be 1.60 when configured"))
     display = dict(config.get("hardware", {}).get("display", {}) or {})
-    if bool(display.get("full_screen", True)):
-        issues.append(_issue("fail", "hardware.display.full_screen must be false for DSART recording"))
     display_size = list(display.get("size", []))
     if len(display_size) != 2 or any(float(value) <= 0.0 for value in display_size):
         issues.append(_issue("fail", "hardware.display.size must contain two positive values"))
+    if not bool(display.get("wait_blanking", False)):
+        issues.append(_issue("fail", "hardware.display.wait_blanking must be true for VBlank synchronization"))
+    if not bool(display.get("check_refresh_rate", False)):
+        issues.append(_issue("fail", "hardware.display.check_refresh_rate must be true"))
+    if not bool(display.get("require_refresh_rate_match", False)):
+        issues.append(_issue("fail", "hardware.display.require_refresh_rate_match must be true"))
+    if float(display.get("expected_refresh_rate_hz", 0.0)) <= 0.0:
+        issues.append(_issue("fail", "hardware.display.expected_refresh_rate_hz must be positive"))
     marker_config = dict(config.get("hardware", {}).get("markers", {}) or {})
     if not bool(marker_config.get("required_for_realtime", False)):
         issues.append(_issue("fail", "hardware.markers.required_for_realtime must be true during acquisition"))
@@ -1320,6 +1352,7 @@ def _run_baseline_psychopy(
     operator_interrupt = False
     failure: str | None = None
     cleanup_warnings: list[str] = []
+    display_timing: dict[str, Any] | None = None
     suite_config = dict(config.get("recording_suite", {}) or {})
     recorder_monitor = RecorderHealthMonitor(
         paths.process_logs / "recorder.status.json",
@@ -1327,15 +1360,8 @@ def _run_baseline_psychopy(
         stall_timeout_seconds=float(suite_config.get("recorder_stall_timeout_seconds", 5.0)),
     )
     try:
-        win = visual.Window(
-            fullscr=bool(display.get("full_screen", False)),
-            screen=int(display.get("screen_index", 0)),
-            size=tuple(display.get("size", [1000, 700])),
-            winType=str(display.get("win_type", "pyglet")),
-            units=str(display.get("units", "height")),
-            color=display.get("background_color", "black"),
-            allowGUI=bool(display.get("allow_gui", True)),
-        )
+        win = create_psychopy_window(visual, display, title="EEGle DSART Baseline")
+        display_timing = measure_psychopy_refresh_rate(win, display)
         clear_psychopy_keys(event)
         if marker_outlet is None:
             outlet = _make_marker_outlet(config, paths)
@@ -1424,6 +1450,7 @@ def _run_baseline_psychopy(
         "planned_duration_seconds": eyes_open_seconds + eyes_closed_seconds,
         "actual_duration_seconds": actual_duration,
         "aborted": aborted,
+        "display_timing": display_timing,
     }
     if failure:
         result["error"] = failure
@@ -2961,6 +2988,7 @@ def _initial_manifest(
             None if options.baseline_seconds is None else float(options.baseline_seconds)
         ),
         "window_size": list(config.get("hardware", {}).get("display", {}).get("size", [1000, 700])),
+        "full_screen": bool(config.get("hardware", {}).get("display", {}).get("full_screen", False)),
         "smoke_test_override": smoke_test_override,
         "session_1_sequence_hash": None,
         "session_2_sequence_hash": None,
@@ -3106,6 +3134,9 @@ def _validate_resume_identity(
             None if options.baseline_seconds is None else float(options.baseline_seconds)
         ),
         "window_size": list(options.window_size) if options.window_size is not None else [1000, 700],
+        "full_screen": (
+            bool(options.full_screen) if options.full_screen is not None else bool(manifest.get("full_screen", False))
+        ),
     }
     mismatches = [key for key, value in expected.items() if manifest.get(key) != value]
     recorded_hash = dict(manifest.get("configuration_hashes") or {}).get("recording_recipe")
@@ -3146,6 +3177,7 @@ def _public_suite_result(manifest: dict[str, Any], manifest_path: Path) -> dict[
         "require_eeg": manifest.get("require_eeg"),
         "baseline_seconds_per_phase": manifest.get("baseline_seconds_per_phase"),
         "window_size": manifest.get("window_size"),
+        "full_screen": manifest.get("full_screen"),
         "smoke_test_override": manifest.get("smoke_test_override"),
         "session_1_sequence_hash": manifest.get("session_1_sequence_hash"),
         "session_2_sequence_hash": manifest.get("session_2_sequence_hash"),

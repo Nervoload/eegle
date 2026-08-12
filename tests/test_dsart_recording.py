@@ -155,6 +155,11 @@ class DsartRecordingTests(unittest.TestCase):
         closed = []
 
         class Window:
+            waitBlanking = True
+
+            def getActualFrameRate(self, **_kwargs) -> float:
+                return 60.0
+
             def close(self) -> None:
                 closed.append("window")
 
@@ -867,6 +872,11 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertEqual(dsart8["realtime"], dsart32["realtime"])
         self.assertFalse(dsart8["hardware"]["display"]["full_screen"])
         self.assertFalse(dsart32["hardware"]["display"]["full_screen"])
+        self.assertTrue(dsart8["hardware"]["display"]["resizable"])
+        self.assertTrue(dsart8["hardware"]["display"]["wait_blanking"])
+        self.assertTrue(dsart8["hardware"]["display"]["require_refresh_rate_match"])
+        self.assertEqual(dsart8["tasks"]["dynamic_sart"]["response_window_seconds"], 1.6)
+        self.assertEqual(dsart8["tasks"]["dynamic_sart"]["inter_trial_jitter_max_seconds"], 0.0)
         suite_8 = copy.deepcopy(dsart8["recording_suite"])
         suite_32 = copy.deepcopy(dsart32["recording_suite"])
         suite_8.pop("recipe")
@@ -896,7 +906,7 @@ class DsartRecordingTests(unittest.TestCase):
 
     def test_recipe_validation_rejects_window_marker_and_epoching_drift(self) -> None:
         mutations = (
-            ("hardware", "display", "full_screen", True),
+            ("hardware", "display", "wait_blanking", False),
             ("hardware", "markers", "required_for_realtime", False),
             ("hardware", "eeg", "raw_sample_mode", "filtered"),
             ("realtime", "epoching", "timebase", "local_received"),
@@ -910,6 +920,11 @@ class DsartRecordingTests(unittest.TestCase):
                 target[path[-1]] = value
                 failures = [row for row in validate_recording_config(config, "dsart8") if row["status"] == "fail"]
                 self.assertTrue(failures)
+
+    def test_recipe_validation_allows_fullscreen_display(self) -> None:
+        config = load_config(CONFIG_8)
+        config["hardware"]["display"]["full_screen"] = True
+        self.assertEqual(validate_recording_config(config, "dsart8"), [])
 
     def test_raw_integrity_rejects_channel_permutation_even_when_values_are_unmodified(self) -> None:
         config = load_config(CONFIG_8)
