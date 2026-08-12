@@ -1,0 +1,43 @@
+(.venv) PS C:\Users\Surettej\Desktop\code\eegle> .\scripts\windows\neuracle64\02-Test-NeuracleLsl.ps1 `                         
+>>   -DiscoverOnly -DataRoot $EegleData
+{
+  "written_configs": [
+    "C:\\Users\\Surettej\\Desktop\\code\\eegle\\.runtime\\windows-neuracle64\\display-only.json"
+  ]
+}
+Discovering the Neuracle Collect LSL stream and probing samples...
+OK    os_support         Windows is supported by the shared Python codebase
+OK    platform           Windows on AMD64
+OK    python             C:\Users\Surettej\Desktop\code\eegle\.venv\Scripts\python.exe
+OK    commands           all EEGle console commands found
+OK    package:numpy      available (2.2.6)
+OK    package:scipy      available (1.15.3)
+OK    package:pandas     available (2.3.3)
+OK    package:matplotlib available (3.10.9)
+OK    package:mne        available (1.12.1)
+OK    package:pylsl      available (1.18.2)
+OK    package:pyxdf      available (1.17.5)
+OK    package:psychopy   available (2026.2.1)
+OK    package:specparam  available (2.0.0rc7)
+WARN  package:sklearn    not importable
+WARN  package:joblib     not importable
+WARN  package:pyriemann  not importable
+WARN  package:torch      not importable
+WARN  package:onnxruntime not importable
+OK    display_ready      PsychoPy is importable; display should be validated with a dry task run
+OK    lsl                found 0 streams
+WARN  eeg_device         Neuracle LSL profile neuracle64; no matching LSL stream detected
+SKIP  realtime_ready     realtime processor disabled
+WARN  training_ready     missing training packages: joblib, sklearn
+FAIL  neuracle_lsl       no Neuracle EEG LSL stream matched
+saved preflight report: C:\Users\Surettej\AppData\Local\EEGle\data\system_checks\collect-discovery\collect-lsl-20260812-134343.json
+LSL streams visible to EEGle:
+No unique matching Neuracle EEG stream could be sampled. Close duplicate streams or rerun with -LslNamePattern using part of Collect's stream 
+name/source ID. Report: C:\Users\Surettej\AppData\Local\EEGle\data\system_checks\collect-discovery\collect-lsl-20260812-134343.json
+At C:\Users\Surettej\Desktop\code\eegle\scripts\windows\neuracle64\02-Test-NeuracleLsl.ps1:63 char:5
++     throw "No unique matching Neuracle EEG stream could be sampled. C ...
++     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (No unique match...812-134343.json:String) [], RuntimeException
+    + FullyQualifiedErrorId : No unique matching Neuracle EEG stream could be sampled. Close duplicate streams or rerun with -LslNamePattern using par 
+   t of Collect's stream name/source ID. Report: C:\Users\Surettej\AppData\Local\EEGle\data\system_checks\collect-discovery\collect-lsl-20260812-1343  
+  43.json
