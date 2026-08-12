@@ -16,7 +16,7 @@ param(
 )
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Warn"
 . (Join-Path $PSScriptRoot "Common.ps1")
 
 if (-not $ConfirmElectrodes) {
