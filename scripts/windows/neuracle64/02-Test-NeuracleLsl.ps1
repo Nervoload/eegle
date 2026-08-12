@@ -76,8 +76,8 @@ Write-Host "Discovery report: $discoveryReport"
 if ($discoveryExitCode -ne 0) {
     throw "Neuracle Collect LSL discovery reported a failed check. Review: $discoveryReport"
 }
-if ([int] $probe.data.stream.channel_count -ne 64) {
-    throw "Collect must expose exactly 64 values for this W64 contract; observed $($probe.data.stream.channel_count)."
+if ([int] $probe.data.stream.channel_count -ne 65) {
+    throw "Collect must expose exactly 65 values for this W65 contract; observed $($probe.data.stream.channel_count)."
 }
 if ([Math]::Abs(([double] $probe.data.stream.nominal_srate) - 1000.0) -ge 1.0) {
     throw "Collect must stream at 1000 Hz for this Study 1 contract; observed $($probe.data.stream.nominal_srate) Hz."
