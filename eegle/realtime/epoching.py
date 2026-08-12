@@ -12,7 +12,7 @@ from typing import Any, Iterable
 import numpy as np
 
 from eegle.eeg_csv import eeg_channel_columns
-from eegle.hardware.profiles import expected_profile
+from eegle.hardware.profiles import analysis_channel_indices, mapped_channel_names
 
 
 DEFAULT_MARKER_PREFIX = "go_nogo_stimulus_onset"
@@ -376,10 +376,14 @@ def load_eeg_csv_for_epoching(
     parameters = _load_json(parameters_path) if parameters_path else {}
     lsl_timestamps = frame["lsl_timestamp"].to_numpy(dtype=float)
     sample_rate = _infer_sample_rate(lsl_timestamps, metadata, parameters)
-    channel_names = _infer_channel_names(channel_columns, parameters)
+    all_channel_names = _infer_channel_names(channel_columns, parameters)
+    eeg_config = dict(parameters.get("hardware", {}).get("eeg", {}) or {})
+    selected_indices = analysis_channel_indices(all_channel_names, eeg_config)
+    channel_names = [all_channel_names[index] for index in selected_indices]
+    selected_columns = [channel_columns[index] for index in selected_indices]
     return EegCsvBundle(
         timestamps=frame[timestamp_column].to_numpy(dtype=float),
-        data=frame[channel_columns].to_numpy(dtype=float),
+        data=frame[selected_columns].to_numpy(dtype=float),
         channel_names=channel_names,
         sample_rate_hz=sample_rate,
         timestamp_column=timestamp_column,
@@ -767,15 +771,9 @@ def _infer_sample_rate(lsl_timestamps: np.ndarray, metadata: dict[str, Any], par
 
 
 def _infer_channel_names(channel_columns: list[str], parameters: dict[str, Any]) -> list[str]:
-    profile_name = parameters.get("hardware", {}).get("eeg", {}).get("profile")
-    if profile_name:
-        try:
-            profile = expected_profile(str(profile_name))
-            if len(profile.channel_names) == len(channel_columns):
-                return list(profile.channel_names)
-        except Exception:
-            pass
-    return [str(column) for column in channel_columns]
+    eeg_config = dict(parameters.get("hardware", {}).get("eeg", {}) or {})
+    names, _source = mapped_channel_names([str(column) for column in channel_columns], eeg_config)
+    return names
 
 
 def _load_json(path: str | Path | None) -> dict[str, Any]:

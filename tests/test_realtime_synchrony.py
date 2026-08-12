@@ -240,15 +240,15 @@ class RealtimeSynchronyTests(unittest.TestCase):
         self.assertIsNone(stream)
 
     def test_eeg_selection_accepts_configured_neuracle_stream(self) -> None:
-        neuracle = _FakeInfo("Neuracle EEG", "EEG", "neuracle-lsl", channel_count=64, nominal_srate=1000.0)
-        unrelated = _FakeInfo("OtherEEG", "EEG", "other-device", channel_count=64, nominal_srate=1000.0)
+        neuracle = _FakeInfo("Neuracle EEG", "EEG", "neuracle-lsl", channel_count=65, nominal_srate=1000.0)
+        unrelated = _FakeInfo("OtherEEG", "EEG", "other-device", channel_count=65, nominal_srate=1000.0)
         pylsl = _FakePylsl([unrelated, neuracle])
         config = {
             "family": "Neuracle",
             "profile": "neuracle64",
             "lsl_stream_type": "EEG",
             "lsl_name_patterns": ["neuracle"],
-            "expected_channel_counts": [64],
+            "expected_channel_counts": [65],
             "expected_sample_rate_hz": 1000,
         }
 

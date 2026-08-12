@@ -12,7 +12,7 @@ from typing import Any
 
 import numpy as np
 
-from eegle.hardware.profiles import expected_profile, mapped_channel_names
+from eegle.hardware.profiles import configured_channel_types, expected_profile, mapped_channel_names
 
 
 def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[str, Any]:
@@ -153,6 +153,7 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
     eeg_info = dict(eeg_loaded.get("info") or {})
     original_labels = _channel_labels(eeg_info, int(eeg_matches[0].get("channel_count") or 0))
     mapped_labels, mapping_source = mapped_channel_names(original_labels, eeg_config)
+    mapped_types = configured_channel_types(mapped_labels, eeg_config)
     expected_labels = list(eeg_config.get("expected_channel_names") or [])
     if not expected_labels and eeg_config.get("profile"):
         try:
@@ -211,6 +212,7 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
         "largest_timestamp_gap_seconds": eeg_stats["largest_timestamp_gap_seconds"],
         "original_channel_names": original_labels,
         "mapped_channel_names": mapped_labels,
+        "mapped_channel_types": mapped_types,
         "channel_mapping_source": mapping_source,
         "synchronized_first_timestamp": None if not eeg_synced.size else float(eeg_synced[0]),
         "synchronized_last_timestamp": None if not eeg_synced.size else float(eeg_synced[-1]),

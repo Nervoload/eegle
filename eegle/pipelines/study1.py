@@ -13,6 +13,14 @@ from typing import Any
 
 from eegle.config import load_config, resolve_session_root
 from eegle.devices.simulated_lsl import SimulatedEegOutlet
+from eegle.hardware.neuracle import (
+    NEURACLE_W64_AUX_CHANNELS,
+    NEURACLE_W64_LSL_CHANNEL_COUNT,
+    NEURACLE_W64_LSL_CHANNEL_TYPES,
+    NEURACLE_W64_LSL_CHANNELS,
+    NEURACLE_W64_PHYSIOLOGICAL_CHANNELS,
+    NEURACLE_W64_TRIGGER_STATUS_CHANNEL,
+)
 from eegle.pipelines.dsart_recording import (
     DsartRecordingOptions,
     _accept_recording_preflight,
@@ -55,16 +63,7 @@ SEGMENT_INDEX = {
 }
 SIMULATED_NEURACLE64_STREAM_NAME = "EEGle-Neuracle64-Simulated"
 SIMULATED_NEURACLE64_SOURCE_ID = "eegle-neuracle64-simulated-source"
-SIMULATED_NEURACLE64_CHANNELS = (
-    "Fpz", "Fp1", "Fp2", "AF3", "AF4", "AF7", "AF8",
-    "Fz", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8",
-    "FCz", "FC1", "FC2", "FC3", "FC4", "FC5", "FC6", "FT7", "FT8",
-    "Cz", "C1", "C2", "C3", "C4", "C5", "C6", "T7", "T8",
-    "CP1", "CP2", "CP3", "CP4", "CP5", "CP6", "TP7", "TP8",
-    "Pz", "P3", "P4", "P5", "P6", "P7", "P8",
-    "POz", "PO3", "PO4", "PO5", "PO6", "PO7", "PO8",
-    "Oz", "O1", "O2", "ECG", "HEOR", "HEOL", "VEOU", "VEOL",
-)
+SIMULATED_NEURACLE64_CHANNELS = NEURACLE_W64_LSL_CHANNELS
 
 
 @dataclass(frozen=True)
@@ -141,7 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--simulate-eeg",
         action="store_true",
         help=(
-            "Publish a clearly labeled synthetic Neuracle-like 64-channel LSL stream while exercising "
+            "Publish a clearly labeled synthetic Neuracle W64 65-value LSL stream while exercising "
             "the real recorder; development-only and valid only with --task-mode dry-run"
         ),
     )
@@ -482,13 +481,20 @@ def _run_configured_study1_visit(
 
 
 def _configure_simulated_eeg_rehearsal(config: dict[str, Any]) -> None:
-    if len(SIMULATED_NEURACLE64_CHANNELS) != 64:
-        raise RuntimeError("internal simulated Neuracle channel contract must contain exactly 64 channels")
+    if len(SIMULATED_NEURACLE64_CHANNELS) != NEURACLE_W64_LSL_CHANNEL_COUNT:
+        raise RuntimeError("internal simulated Neuracle W64 LSL contract must contain exactly 65 values")
     eeg = config.setdefault("hardware", {}).setdefault("eeg", {})
     eeg.update(
         {
-            "expected_channel_counts": [64],
+            "expected_channel_counts": [NEURACLE_W64_LSL_CHANNEL_COUNT],
             "expected_channel_names": list(SIMULATED_NEURACLE64_CHANNELS),
+            "expected_channel_types": list(NEURACLE_W64_LSL_CHANNEL_TYPES),
+            "electrode_channel_names": list(NEURACLE_W64_PHYSIOLOGICAL_CHANNELS),
+            "analysis_excluded_channel_names": [
+                *NEURACLE_W64_AUX_CHANNELS,
+                NEURACLE_W64_TRIGGER_STATUS_CHANNEL,
+            ],
+            "quality_excluded_channel_names": [NEURACLE_W64_TRIGGER_STATUS_CHANNEL],
             "expected_sample_rate_hz": 1000,
             "lsl_stream_type": "EEG",
             "lsl_name_patterns": [SIMULATED_NEURACLE64_STREAM_NAME.lower()],
@@ -498,6 +504,12 @@ def _configure_simulated_eeg_rehearsal(config: dict[str, Any]) -> None:
             "reference": "CPz (rehearsal assumption; verify on live hardware)",
             "ground": "AFz (rehearsal assumption; verify on live hardware)",
             "eog_allocation": "ECG, HEOR, HEOL, VEOU, VEOL (simulated auxiliary order)",
+            "embedded_trigger_channel": {
+                "index": 65,
+                "name": NEURACLE_W64_TRIGGER_STATUS_CHANNEL,
+                "role": "reserved_trigger_status",
+                "observed_without_trigger": "empty",
+            },
             "simulated": True,
             "data_classification": "synthetic_rehearsal_not_participant_data",
         }
@@ -520,7 +532,7 @@ def _start_simulated_eeg_rehearsal(config: dict[str, Any]) -> SimulatedEegOutlet
     simulator = SimulatedEegOutlet(
         name=SIMULATED_NEURACLE64_STREAM_NAME,
         stream_type=str(eeg.get("lsl_stream_type", "EEG")),
-        channel_count=64,
+        channel_count=NEURACLE_W64_LSL_CHANNEL_COUNT,
         sample_rate_hz=float(eeg.get("expected_sample_rate_hz", 1000.0)),
         channel_names=SIMULATED_NEURACLE64_CHANNELS,
         source_id=SIMULATED_NEURACLE64_SOURCE_ID,
@@ -627,8 +639,12 @@ def _validate_live_readiness(config: dict[str, Any], options: Study1Options) -> 
     missing = []
     if options.record_eeg and not options.simulate_eeg:
         eeg = dict(config.get("hardware", {}).get("eeg", {}) or {})
-        if len(list(eeg.get("expected_channel_names") or [])) != 64:
-            missing.append("the exact 64-channel names/order")
+        if len(list(eeg.get("expected_channel_names") or [])) != NEURACLE_W64_LSL_CHANNEL_COUNT:
+            missing.append("the exact 65-value LSL names/order")
+        if len(list(eeg.get("electrode_channel_names") or [])) != len(
+            NEURACLE_W64_PHYSIOLOGICAL_CHANNELS
+        ):
+            missing.append("the exact 64 physical-input names/order")
         for key in ("reference", "ground", "eog_allocation"):
             if str(eeg.get(key, "")).startswith("pending") or not str(eeg.get(key, "")).strip():
                 missing.append(key)

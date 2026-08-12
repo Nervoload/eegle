@@ -131,7 +131,7 @@ First perform discovery only:
   -DataRoot $EegleData
 ```
 
-The result must show one unique EEG stream, 64 values, nominal 1000 Hz, samples
+The result must show one unique EEG stream, 65 values, nominal 1000 Hz, samples
 received, and the raw channel labels supplied by Collect. If the outlet has a
 different name, use a unique fragment from its name or source ID:
 
@@ -147,17 +147,23 @@ Discovery reports are retained below
 
 ### Mandatory cap-contract confirmation
 
-The supplied candidate W64 positional order is 59 scalp values followed by:
+The operator-confirmed W64 positional order is 59 scalp values followed by five
+physical auxiliary inputs and one reserved transport value:
 
 ```text
-60 ECG, 61 HEOR, 62 HEOL, 63 VEOU, 64 VEOL
+60 ECG
+61 HEOR
+62 HEOL
+63 VEOU
+64 VEOL
+65 TRIGGER_STATUS (observed empty without a hardware trigger)
 ```
 
-The candidate dedicated reference is CPz and ground is AFz. These values are
-well supported for the common Neuracle W64 arrangement, but they are not proven
-by generic LSL labels such as `Ch1` through `Ch64`. Before generating a live
-config, compare this order—including channels 61-64—with the actual Collect
-channel table, cap manual, or a known-good recording header.
+The dedicated reference is CPz and ground is AFz. Collect exposes generic LSL
+labels (`ch_001` through `ch_065`), so EEGle maps them positionally to the
+confirmed order. Value 65 is preserved in raw XDF/CSV as `TRIGGER_STATUS` but is
+excluded from electrode quality and derived EEG analysis. ECG/EOG values are
+also preserved raw and excluded from default scalp-EEG analysis.
 
 Only after that physical comparison, generate the local live configs and run
 the full preflight:
@@ -182,14 +188,14 @@ The physical preflight checks:
 
 - exactly one matching Collect EEG stream;
 - live sample delivery;
-- 64 values in the confirmed positional order;
+- 65 values in the confirmed transport order (64 physical inputs plus value 65);
 - a nominal/observed rate compatible with 1000 Hz;
 - a local EEGle marker-stream loopback;
 - PsychoPy availability;
 - writable storage and free space;
 - LabRecorder executable, `pyxdf`, and loopback control-port availability;
-- channel signal/contact summary plus the operator's explicit electrode
-  confirmation.
+- channel signal/contact summary plus the operator's explicit confirmation for
+  the 64 physical inputs.
 
 `-ConfirmElectrodes` means the operator has already inspected cap contact or
 impedance in Collect. It is an attestation, not an impedance measurement read
@@ -336,17 +342,18 @@ The warnings about missing `sklearn`, `joblib`, `pyriemann`, `torch`, or
 `onnxruntime` are unrelated to acquisition discovery. They are optional model
 training/inference packages and do not prevent pylsl from seeing an EEG outlet.
 
-### 64 channels but generic labels
+### Generic channel labels
 
-Generic `Ch1..Ch64` labels establish count, not physical identity. Do not pass
-`-ConfirmCapContract` until the positional order has been checked outside LSL.
-If Collect exposes meaningful labels, they must match the configured order
-exactly; a mismatch is a preflight failure.
+Generic `ch_001..ch_065` labels establish count, not physical identity. The
+confirmed generated config maps them positionally to the 65-value contract. If
+Collect later exposes meaningful labels, they must match the configured order
+exactly; a mismatch remains a preflight failure.
 
 ### LabRecorder gate fails
 
 - Ensure the path points to `LabRecorder.exe` itself.
-- Close every manually running LabRecorder instance.
+- Close every manually running LabRecorder instance and stale
+  `LabRecorder.exe` process in Task Manager.
 - Confirm no other process owns TCP port 22345.
 - Keep Collect streaming before starting EEGle; the managed recorder requires
   both the chosen EEG stream and EEGle's prestarted marker stream.

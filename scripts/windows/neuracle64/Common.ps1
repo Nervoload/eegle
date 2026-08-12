@@ -57,8 +57,14 @@ function Assert-EegleLiveConfig([string] $Path) {
     if (-not $confirmation.confirmed_for_this_generated_config) {
         throw "Live config lacks the required operator cap-contract confirmation: $Path"
     }
-    if (@($config.hardware.eeg.expected_channel_names).Count -ne 64) {
-        throw "Live config must contain exactly 64 expected channel positions: $Path"
+    if (@($config.hardware.eeg.expected_channel_names).Count -ne 65) {
+        throw "Live config must contain exactly 65 expected LSL values: $Path"
+    }
+    if (@($config.hardware.eeg.electrode_channel_names).Count -ne 64) {
+        throw "Live config must contain exactly 64 physical input positions: $Path"
+    }
+    if ([string] $config.hardware.eeg.expected_channel_names[64] -ne "TRIGGER_STATUS") {
+        throw "Live config value 65 must be the reserved TRIGGER_STATUS value: $Path"
     }
     foreach ($field in @("reference", "ground", "eog_allocation")) {
         $value = [string] $config.hardware.eeg.$field

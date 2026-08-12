@@ -1464,6 +1464,21 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertIn("flat_channel", quality["channels"][0]["warnings"])
         self.assertEqual(quality["channels"][1]["status"], "good")
 
+    def test_signal_probe_excludes_reserved_trigger_status_from_quality_warnings(self) -> None:
+        samples = [[float(index), 0.0] for index in range(32)]
+        timestamps = [index / 1000.0 for index in range(32)]
+        quality = _eeg_probe_quality(
+            samples,
+            timestamps,
+            ["O2", "TRIGGER_STATUS"],
+            1000.0,
+            {"quality_excluded_channel_names": ["TRIGGER_STATUS"]},
+        )
+
+        self.assertEqual(quality["channels"][1]["status"], "excluded")
+        self.assertEqual(quality["channels"][1]["warnings"], [])
+        self.assertNotIn("TRIGGER_STATUS", quality["warning_channels"])
+
     def test_sample_contract_rejects_rate_and_timestamp_failures(self) -> None:
         probe = {
             "status": "ok",

@@ -397,14 +397,14 @@ analysis:
 | `configs/default_experiment.json` | Software development and dry runs |
 | `configs/forward_pvt_enobio.json` | PVT with an 8, 22, or 32-channel Enobio stream |
 | `configs/forward_pvt_enobio8.json` | PVT with an 8-channel, 500 Hz Enobio stream |
-| `configs/forward_pvt_neuracle64.json` | PVT with a 64-channel, 1000 Hz Neuracle LSL stream |
+| `configs/forward_pvt_neuracle64.json` | PVT with the 65-value, 1000 Hz Neuracle W64 LSL transport |
 | `configs/forward_go_nogo_enobio8.json` | Go/No-go with the posterior-alpha 8-channel montage |
 | `configs/forward_go_nogo_inhibition8.json` | Observe-only Go/No-go with the inhibition montage |
 | `configs/forward_go_nogo_classifier8.json` | Capture and observe-only GO/NO-GO EEG condition classification |
 | `configs/forward_dynamic_sart.json` | Formal digit SART with raw recording, support/query phases, strict prestimulus epoch settings, and no active model |
 | `configs/record_dsart8.json` | Two-session 600-trial DSART recording suite for the Enobio 8 dry montage |
 | `configs/record_dsart32.json` | Same two-session DSART suite for the confirmed Enobio 32 wet montage |
-| `configs/study1_neuracle64.json` | Visit-aware Study 1 Dynamic SART candidate for the Neuracle 64 wet system; live channel and cue-delivery gates remain explicit |
+| `configs/study1_neuracle64.json` | Visit-aware Study 1 Dynamic SART candidate for the 65-value Neuracle W64 LSL transport; live channel and cue-delivery gates remain explicit |
 
 Hardware expectations live under `hardware.eeg`. Before collecting data, check
 the configured channel count, sample rate, LSL stream type/name patterns, and
@@ -672,7 +672,7 @@ this backend with the existing `raw/eeg.csv` recorder retained as a safety
 mirror. Other shipped acquisition presets remain on `lsl_csv` unless explicitly
 configured otherwise.
 
-## Example Neuracle 64-Channel LSL Setup Check
+## Example Neuracle W64 LSL Setup Check
 
 For the guarded Windows x64 Neuracle W64 test sequence—including the supplied
 PowerShell scripts for a visible dry run, Collect/LSL preflight, short XDF task,
@@ -687,14 +687,15 @@ The shipped preset expects the acquisition computer to publish:
 
 ```text
 type: EEG
-channel count: 64
+channel count: 65 (64 physical inputs + reserved trigger/status value)
 sample rate: 1000 Hz
 name or source id containing: neuracle
 ```
 
-If the lab computer is configured for a different Neuracle channel count or
-sample rate, use `configs/forward_pvt_neuracle64.json` as the starting preset
-and adjust only the `hardware.eeg` expectations before collecting data.
+The observed Collect outlet labels these values generically as `ch_001` through
+`ch_065`; the confirmed Study 1 config maps them positionally. Do not reduce the
+count to 64 or discard value 65 during acquisition. Raw recording preserves all
+65 values while derived EEG analysis excludes ECG, EOG, and `TRIGGER_STATUS`.
 
 Validate stream discovery and sample delivery:
 

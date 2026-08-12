@@ -111,17 +111,36 @@ def validate_study1_config(config: dict[str, Any]) -> list[dict[str, str]]:
     eeg = dict(config.get("hardware", {}).get("eeg", {}) or {})
     if str(eeg.get("family", "")).lower() != "neuracle":
         issues.append(_issue("fail", "Study 1 hardware.eeg.family must be Neuracle"))
-    if eeg.get("profile") != "neuracle64" or list(eeg.get("expected_channel_counts") or []) != [64]:
-        issues.append(_issue("fail", "Study 1 requires the neuracle64 64-channel profile"))
+    if eeg.get("profile") != "neuracle64" or list(eeg.get("expected_channel_counts") or []) != [65]:
+        issues.append(
+            _issue(
+                "fail",
+                "Study 1 requires the Neuracle W64 profile transported as 65 LSL values",
+            )
+        )
     if float(eeg.get("expected_sample_rate_hz", 0.0)) != 1000.0:
         issues.append(_issue("fail", "Study 1 requires a 1000 Hz EEG sampling rate"))
-    if not list(eeg.get("expected_channel_names") or []):
+    channel_names = list(eeg.get("expected_channel_names") or [])
+    if not channel_names:
         issues.append(
             _issue(
                 "warn",
-                "Neuracle 64 channel names/order remain unlocked; live preflight will fail until confirmed",
+                "Neuracle W64 65-value LSL names/order remain unlocked; live preflight will fail until confirmed",
             )
         )
+    else:
+        if len(channel_names) != 65 or channel_names[-1] != "TRIGGER_STATUS":
+            issues.append(
+                _issue(
+                    "fail",
+                    "Study 1 requires 64 physical input labels followed by TRIGGER_STATUS",
+                )
+            )
+        if len(list(eeg.get("electrode_channel_names") or [])) != 64:
+            issues.append(_issue("fail", "Study 1 requires exactly 64 physical input labels"))
+        channel_types = list(eeg.get("expected_channel_types") or [])
+        if len(channel_types) != 65 or str(channel_types[-1]).lower() != "stim":
+            issues.append(_issue("fail", "Study 1 value 65 must have channel type stim"))
     recorder = dict(config.get("processes", {}).get("recorder", {}) or {})
     if not bool(recorder.get("enabled", False)) or recorder.get("backend") != "labrecorder_xdf":
         issues.append(_issue("fail", "Study 1 requires the managed labrecorder_xdf backend"))

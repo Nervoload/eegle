@@ -24,10 +24,11 @@ from eegle.devices.labrecorder_xdf import (
 )
 from eegle.devices.xdf_integrity import validate_xdf_recording
 from eegle.feedback_manager import normalize_processes
+from eegle.hardware.neuracle import NEURACLE_W64_LSL_CHANNELS
 from eegle.session import paths_for_existing_session
 
 
-CHANNELS = [f"E{index:02d}" for index in range(1, 65)]
+CHANNELS = list(NEURACLE_W64_LSL_CHANNELS)
 
 
 class _Mirror:
@@ -53,7 +54,7 @@ class _Mirror:
                 "type": "EEG",
                 "source_id": "neuracle-test",
                 "hostname": "ACQ-PC",
-                "channel_count": 64,
+                "channel_count": 65,
                 "nominal_srate": 1000.0,
             },
         }
@@ -315,7 +316,7 @@ class XdfIntegrityTests(unittest.TestCase):
         root: Path,
         *,
         rate: float = 1000.0,
-        channel_count: int = 64,
+        channel_count: int = 65,
         labels: list[str] | None = None,
         eeg_stamps: list[float] | None = None,
     ) -> tuple[object, Path]:
@@ -326,7 +327,7 @@ class XdfIntegrityTests(unittest.TestCase):
                 "eeg": {
                     "family": "Neuracle",
                     "profile": "neuracle64",
-                    "expected_channel_counts": [64],
+                    "expected_channel_counts": [65],
                     "expected_channel_names": CHANNELS,
                     "expected_sample_rate_hz": 1000.0,
                     "maximum_timestamp_gap_seconds": 0.1,
@@ -356,7 +357,7 @@ class XdfIntegrityTests(unittest.TestCase):
         self,
         *,
         rate: float,
-        channel_count: int = 64,
+        channel_count: int = 65,
         labels: list[str] | None = None,
         eeg_stamps: list[float] | None = None,
     ) -> object:
@@ -415,6 +416,10 @@ class XdfIntegrityTests(unittest.TestCase):
 
             self.assertEqual(result["status"], "pass")
             self.assertEqual(result["eeg"]["sample_count"], 3)
+            self.assertEqual(
+                result["eeg"]["mapped_channel_types"][-6:],
+                ["ecg", "eog", "eog", "eog", "eog", "stim"],
+            )
             self.assertTrue(result["markers"]["sequence_matches_receipt"])
             metadata = json.loads(paths.xdf_metadata.read_text(encoding="utf-8"))
             self.assertEqual(metadata["validation"]["status"], "pass")
@@ -543,7 +548,7 @@ class RealLabRecorderIntegrationTests(unittest.TestCase):
         executable = os.environ["EEGLE_LABRECORDER_EXECUTABLE"]
         with tempfile.TemporaryDirectory() as tmp:
             paths = paths_for_existing_session(tmp)
-            eeg_info = pylsl.StreamInfo("Neuracle Integration", "EEG", 64, 1000, "float32", "eeg-test")
+            eeg_info = pylsl.StreamInfo("Neuracle Integration", "EEG", 65, 1000, "float32", "eeg-test")
             channels = eeg_info.desc().append_child("channels")
             for name in CHANNELS:
                 channels.append_child("channel").append_child_value("label", name)
@@ -551,7 +556,7 @@ class RealLabRecorderIntegrationTests(unittest.TestCase):
             stop = threading.Event()
 
             def publish() -> None:
-                sample = [0.0] * 64
+                sample = [0.0] * 65
                 while not stop.is_set():
                     eeg_outlet.push_sample(sample)
                     time.sleep(0.001)
@@ -565,7 +570,7 @@ class RealLabRecorderIntegrationTests(unittest.TestCase):
                     "eeg": {
                         "family": "Neuracle",
                         "profile": "neuracle64",
-                        "expected_channel_counts": [64],
+                        "expected_channel_counts": [65],
                         "expected_channel_names": CHANNELS,
                         "expected_sample_rate_hz": 1000,
                         "lsl_stream_type": "EEG",

@@ -114,6 +114,9 @@ class SimulatedEegOutlet:
             self._ready.set()
             while not self._stop.is_set():
                 sample = _simulated_sample(sample_index, self.sample_rate_hz, self.channel_count)
+                for index, channel_name in enumerate(self.channel_names):
+                    if _channel_type(channel_name) == "stim":
+                        sample[index] = 0.0
                 outlet.push_sample(sample, timestamp=next_sample_lsl)
                 sample_index += 1
                 self._sample_count = sample_index
@@ -173,4 +176,6 @@ def _channel_type(name: str) -> str:
         return "ECG"
     if normalized in {"HEOR", "HEOL", "VEOU", "VEOL"}:
         return "EOG"
+    if normalized == "TRIGGER_STATUS":
+        return "stim"
     return "EEG"

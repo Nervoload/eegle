@@ -662,6 +662,7 @@ def run_recording_preflight(
             expected_channel_names,
             original_names=list(probe.get("original_channel_names") or []),
             mapping_source=probe.get("channel_mapping_source"),
+            mapping_version=eeg.get("mapping_version"),
             require_eeg=require_eeg,
         )
     else:
@@ -743,8 +744,9 @@ def run_recording_preflight(
 
     electrode_path: Path | None = None
     if record_eeg:
+        electrode_channel_names = list(eeg.get("electrode_channel_names") or expected_channel_names)
         electrode_report = _electrode_report(
-            expected_channel_names,
+            electrode_channel_names,
             probe,
             recipe=recipe,
             quality_file=electrode_quality_file,
@@ -812,6 +814,7 @@ def assess_channel_contract(
     original_names: list[str] | None = None,
     mapping_source: str | None = None,
     require_eeg: bool,
+    mapping_version: int | None = None,
 ) -> dict[str, Any]:
     duplicates = sorted({name for name in observed_names if observed_names.count(name) > 1})
     missing = [name for name in expected_names if name not in observed_names]
@@ -837,7 +840,7 @@ def assess_channel_contract(
         "observed_channel_order": observed_names,
         "original_device_labels": list(original_names or []),
         "mapping_source": mapping_source,
-        "mapping_version": 1,
+        "mapping_version": mapping_version,
         "count_matches": count_matches,
         "order_matches": order_matches,
         "missing_channels": missing,

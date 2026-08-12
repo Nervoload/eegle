@@ -13,7 +13,11 @@ from typing import Any
 import numpy as np
 
 from eegle.eeg_csv import eeg_channel_columns
-from eegle.hardware.profiles import expected_profile
+from eegle.hardware.profiles import (
+    analysis_channel_indices,
+    configured_channel_types,
+    mapped_channel_names,
+)
 
 
 DEFAULT_ERP_CONFIG: dict[str, Any] = {
@@ -272,9 +276,13 @@ def _load_eeg_csv(root: Path, cfg: dict[str, Any], mne: Any) -> EegBundle:
     lsl_timestamps = frame["lsl_timestamp"].to_numpy(dtype=float)
     local_received_times = frame["local_received_time"].to_numpy(dtype=float)
     sample_rate = _infer_sample_rate(lsl_timestamps, metadata, parameters)
-    channel_names = _infer_channel_names(channel_columns, parameters)
-    ch_types = ["stim" if name.upper() in {"TRG", "STI", "STIM"} else "eeg" for name in channel_names]
-    data = frame[channel_columns].to_numpy(dtype=float).T * _unit_scale_to_volts(str(cfg.get("input_units", "microvolts")))
+    all_channel_names = _infer_channel_names(channel_columns, parameters)
+    eeg_config = dict(parameters.get("hardware", {}).get("eeg", {}) or {})
+    selected_indices = analysis_channel_indices(all_channel_names, eeg_config)
+    channel_names = [all_channel_names[index] for index in selected_indices]
+    selected_columns = [channel_columns[index] for index in selected_indices]
+    ch_types = configured_channel_types(channel_names, eeg_config)
+    data = frame[selected_columns].to_numpy(dtype=float).T * _unit_scale_to_volts(str(cfg.get("input_units", "microvolts")))
     info = mne.create_info(channel_names, sample_rate, ch_types=ch_types)
     raw = mne.io.RawArray(data, info, verbose=False)
     try:
@@ -309,15 +317,9 @@ def _infer_sample_rate(lsl_timestamps: np.ndarray, metadata: dict[str, Any], par
 
 
 def _infer_channel_names(channel_columns: list[str], parameters: dict[str, Any]) -> list[str]:
-    profile_name = parameters.get("hardware", {}).get("eeg", {}).get("profile")
-    if profile_name:
-        try:
-            profile = expected_profile(str(profile_name))
-            if len(profile.channel_names) == len(channel_columns):
-                return list(profile.channel_names)
-        except Exception:
-            pass
-    return [str(column) for column in channel_columns]
+    eeg_config = dict(parameters.get("hardware", {}).get("eeg", {}) or {})
+    names, _source = mapped_channel_names([str(column) for column in channel_columns], eeg_config)
+    return names
 
 
 def _unit_scale_to_volts(units: str) -> float:

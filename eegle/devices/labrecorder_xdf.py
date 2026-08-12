@@ -419,7 +419,11 @@ def require_loopback_port_available(port: int) -> None:
     try:
         probe.bind(("127.0.0.1", int(port)))
     except OSError as exc:
-        raise OSError(f"LabRecorder remote-control port 127.0.0.1:{port} is already in use") from exc
+        raise OSError(
+            f"LabRecorder remote-control port 127.0.0.1:{port} is already in use. "
+            "Close every manually started LabRecorder instance (and any stale EEGle LabRecorder process), "
+            "then rerun the preflight."
+        ) from exc
     finally:
         probe.close()
 

@@ -74,8 +74,17 @@
     "eeg": {
       "family": "Neuracle",
       "profile": "neuracle64",
-      "expected_channel_counts": [64],
+      "expected_channel_counts": [65],
       "expected_channel_names": [],
+      "electrode_channel_names": [],
+      "analysis_excluded_channel_names": ["ECG", "HEOR", "HEOL", "VEOU", "VEOL", "TRIGGER_STATUS"],
+      "quality_excluded_channel_names": ["TRIGGER_STATUS"],
+      "embedded_trigger_channel": {
+        "index": 65,
+        "name": "TRIGGER_STATUS",
+        "role": "reserved_trigger_status",
+        "observed_without_trigger": "empty"
+      },
       "expected_sample_rate_hz": 1000,
       "lsl_stream_type": "EEG",
       "lsl_name_patterns": ["neuracle", "neuracleeeg", "neuracle-eeg", "neuracle_lsl"],

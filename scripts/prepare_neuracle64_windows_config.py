@@ -9,6 +9,13 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from eegle.config import load_config
+from eegle.hardware.neuracle import (
+    NEURACLE_W64_AUX_CHANNELS,
+    NEURACLE_W64_LSL_CHANNEL_COUNT,
+    NEURACLE_W64_LSL_CHANNEL_TYPES,
+    NEURACLE_W64_PHYSIOLOGICAL_CHANNELS,
+    NEURACLE_W64_TRIGGER_STATUS_CHANNEL,
+)
 from eegle.pipelines.study1 import SIMULATED_NEURACLE64_CHANNELS
 from eegle.protocols.study1 import validate_study1_config
 
@@ -56,10 +63,10 @@ def build_configs(
         return display, None, None
     if not str(labrecorder_executable or "").strip():
         raise ValueError("labrecorder_executable is required when confirming the live cap contract")
-    if len(SIMULATED_NEURACLE64_CHANNELS) != 64:
-        raise RuntimeError("the candidate Neuracle W64 order must contain exactly 64 unique positions")
-    if len(set(SIMULATED_NEURACLE64_CHANNELS)) != 64:
-        raise RuntimeError("the candidate Neuracle W64 order contains duplicate positions")
+    if len(SIMULATED_NEURACLE64_CHANNELS) != NEURACLE_W64_LSL_CHANNEL_COUNT:
+        raise RuntimeError("the observed Neuracle W64 LSL order must contain exactly 65 unique values")
+    if len(set(SIMULATED_NEURACLE64_CHANNELS)) != NEURACLE_W64_LSL_CHANNEL_COUNT:
+        raise RuntimeError("the observed Neuracle W64 LSL order contains duplicate labels")
     for label, value in (
         ("reference", reference),
         ("ground", ground),
@@ -78,8 +85,21 @@ def build_configs(
     eeg.update(
         {
             "expected_channel_names": list(SIMULATED_NEURACLE64_CHANNELS),
-            "mapping_source": "operator_confirmed_user_supplied_neuracle_w64_position_order",
-            "mapping_version": 2,
+            "expected_channel_types": list(NEURACLE_W64_LSL_CHANNEL_TYPES),
+            "electrode_channel_names": list(NEURACLE_W64_PHYSIOLOGICAL_CHANNELS),
+            "analysis_excluded_channel_names": [
+                *NEURACLE_W64_AUX_CHANNELS,
+                NEURACLE_W64_TRIGGER_STATUS_CHANNEL,
+            ],
+            "quality_excluded_channel_names": [NEURACLE_W64_TRIGGER_STATUS_CHANNEL],
+            "embedded_trigger_channel": {
+                "index": 65,
+                "name": NEURACLE_W64_TRIGGER_STATUS_CHANNEL,
+                "role": "reserved_trigger_status",
+                "observed_without_trigger": "empty",
+            },
+            "mapping_source": "operator_confirmed_neuracle_w64_65_value_lsl_order",
+            "mapping_version": 3,
             "reference": f"operator-confirmed: {reference}",
             "ground": f"operator-confirmed: {ground}",
             "eog_allocation": f"operator-confirmed positional allocation: {eog_allocation}",
@@ -98,15 +118,18 @@ def build_configs(
     live["operator_confirmation"] = {
         "required_before_use": True,
         "confirmed_for_this_generated_config": True,
-        "contract": "Neuracle W64 candidate positional order supplied for this project",
-        "channel_count": 64,
+        "contract": "Neuracle W64 observed 65-value LSL transport order",
+        "lsl_value_count": NEURACLE_W64_LSL_CHANNEL_COUNT,
+        "physical_input_count": len(NEURACLE_W64_PHYSIOLOGICAL_CHANNELS),
+        "embedded_trigger_status_index": 65,
         "sample_rate_hz": 1000,
         "reference": reference,
         "ground": ground,
         "eog_allocation": eog_allocation,
         "warning": (
-            "Use only after the operator verifies that Collect's 64 LSL values follow this exact "
-            "physical position order. Generic Ch1..Ch64 metadata cannot prove the mapping."
+            "Use only after the operator verifies that Collect's 65 LSL values follow this exact "
+            "order: 64 physical inputs followed by the reserved trigger/status value. "
+            "Generic Ch1..Ch65 metadata cannot prove the mapping."
         ),
     }
     issues = validate_study1_config(live)
@@ -143,7 +166,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--confirm-cap-contract",
         action="store_true",
-        help="Attest that Collect's 64 values use the supplied W64 positional order",
+        help="Attest that Collect's 65 values use the confirmed W64 transport order",
     )
     return parser
 

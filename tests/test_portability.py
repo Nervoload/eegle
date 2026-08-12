@@ -48,6 +48,9 @@ class PortabilityTests(unittest.TestCase):
         preflight = (scripts / "02-Test-NeuracleLsl.ps1").read_text(encoding="utf-8")
         self.assertIn("--confirm-cap-contract", preflight)
         self.assertIn("--preflight-only", preflight)
+        self.assertIn("channel_count -ne 65", preflight)
+        common = (scripts / "Common.ps1").read_text(encoding="utf-8")
+        self.assertIn('expected_channel_names[64] -ne "TRIGGER_STATUS"', common)
         short_task = (scripts / "03-Run-EEGTaskTest.ps1").read_text(encoding="utf-8")
         self.assertIn("--preflight-only", short_task)
         self.assertIn("--require-eeg", short_task)
@@ -248,7 +251,7 @@ class PortabilityTests(unittest.TestCase):
                 {
                     "name": "Neuracle EEG",
                     "type": "EEG",
-                    "channel_count": 64,
+                    "channel_count": 65,
                     "nominal_srate": 1000.0,
                     "source_id": "neuracle-lsl",
                 }
@@ -256,7 +259,7 @@ class PortabilityTests(unittest.TestCase):
             {
                 "family": "Neuracle",
                 "profile": "neuracle64",
-                "expected_channel_counts": [64],
+                "expected_channel_counts": [65],
                 "expected_sample_rate_hz": 1000,
                 "lsl_stream_type": "EEG",
                 "lsl_name_patterns": ["neuracle"],
@@ -264,10 +267,10 @@ class PortabilityTests(unittest.TestCase):
         )
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.data["detector"], "neuracle_lsl")
-        self.assertEqual(result.data["matches"][0]["channel_count"], 64)
+        self.assertEqual(result.data["matches"][0]["channel_count"], 65)
 
     def test_neuracle_large_cap_profile_preserves_lsl_channel_labels(self) -> None:
-        labels = [f"NE{index:02d}" for index in range(1, 65)]
+        labels = [f"NE{index:02d}" for index in range(1, 66)]
 
         mapped, source = mapped_eeg_channel_names(labels, {"family": "Neuracle", "profile": "neuracle64"})
 
@@ -280,7 +283,9 @@ class PortabilityTests(unittest.TestCase):
 
         self.assertEqual(eeg["family"], "Neuracle")
         self.assertEqual(eeg["profile"], "neuracle64")
-        self.assertEqual(eeg["expected_channel_counts"], [64])
+        self.assertEqual(eeg["expected_channel_counts"], [65])
+        self.assertEqual(len(eeg["expected_channel_names"]), 65)
+        self.assertEqual(eeg["expected_channel_names"][-1], "TRIGGER_STATUS")
         self.assertEqual(eeg["expected_sample_rate_hz"], 1000)
         self.assertEqual(config["processes"]["recorder"]["backend"], "lsl_csv")
 
@@ -290,7 +295,7 @@ class PortabilityTests(unittest.TestCase):
                 "eeg": {
                     "family": "Neuracle",
                     "profile": "neuracle64",
-                    "expected_channel_counts": [64],
+                    "expected_channel_counts": [65],
                     "expected_sample_rate_hz": 1000,
                     "lsl_stream_type": "EEG",
                     "lsl_name_patterns": ["neuracle"],
@@ -299,7 +304,7 @@ class PortabilityTests(unittest.TestCase):
                 }
             }
         }
-        stream = LslStream("Neuracle EEG", "EEG", 64, 1000.0, "neuracle-lsl")
+        stream = LslStream("Neuracle EEG", "EEG", 65, 1000.0, "neuracle-lsl")
         with patch("eegle.preflight.check_packages", return_value=[]), patch(
             "eegle.preflight.resolve_streams",
             return_value=([stream], None),
@@ -344,7 +349,7 @@ class PortabilityTests(unittest.TestCase):
                 "eeg": {
                     "family": "Neuracle",
                     "profile": "neuracle64",
-                    "expected_channel_counts": [64],
+                    "expected_channel_counts": [65],
                     "expected_sample_rate_hz": 1000,
                     "lsl_stream_type": "EEG",
                     "lsl_name_patterns": ["neuracle"],

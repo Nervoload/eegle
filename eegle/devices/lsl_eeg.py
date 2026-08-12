@@ -15,7 +15,7 @@ from typing import Any
 import numpy as np
 
 from eegle.hardware.eeg_device import matching_eeg_streams
-from eegle.hardware.profiles import mapped_channel_names
+from eegle.hardware.profiles import configured_channel_types, mapped_channel_names
 from eegle.lsl import inlet_time_correction, lsl_processing_flags
 
 
@@ -158,12 +158,14 @@ class LslEegRecorder:
             inlet.open_stream(timeout=self.stream_timeout_seconds)
             raw_channel_labels = _channel_labels(info) or _default_channel_labels(info.channel_count())
             channel_labels, mapping_source = mapped_channel_names(raw_channel_labels, self.eeg_config)
+            channel_types = configured_channel_types(channel_labels, self.eeg_config)
             source_preserving = _source_preserving_recording(self.eeg_config)
             time_correction = inlet_time_correction(inlet)
             stream = dict(stream or {})
             stream.update(
                 {
                     "channel_names": channel_labels,
+                    "channel_types": channel_types,
                     "original_channel_names": raw_channel_labels,
                     "channel_mapping_source": mapping_source,
                     "channel_value_order_changed": False,
@@ -413,6 +415,7 @@ def probe_eeg_stream(eeg_config: dict[str, Any], seconds: float = 2.0, timeout: 
                 last_ts = timestamps[-1]
         raw_channel_names = _channel_labels(info) or _default_channel_labels(info.channel_count())
         channel_names, mapping_source = mapped_channel_names(raw_channel_names, eeg_config)
+        channel_types = configured_channel_types(channel_names, eeg_config)
         quality = _eeg_probe_quality(
             captured_samples,
             captured_timestamps,
@@ -429,6 +432,7 @@ def probe_eeg_stream(eeg_config: dict[str, Any], seconds: float = 2.0, timeout: 
             "probe_seconds": seconds,
             "original_channel_names": raw_channel_names,
             "mapped_channel_names": channel_names,
+            "mapped_channel_types": channel_types,
             "channel_mapping_source": mapping_source,
             "initial_time_correction_seconds": time_correction,
             "recording_timestamp_mode": (
@@ -460,6 +464,9 @@ def _eeg_probe_quality(
     signal_units = str(eeg_config.get("lsl_signal_units") or "native_lsl_units")
     mains_hz = float(quality_config.get("line_noise_hz", 60.0))
     line_ratio_warning = float(quality_config.get("line_noise_ratio_warning", 0.25))
+    quality_excluded = {
+        str(name) for name in eeg_config.get("quality_excluded_channel_names", [])
+    }
     valid_rows = [row for row in samples if len(row) >= len(channel_names)]
     values = np.asarray([row[: len(channel_names)] for row in valid_rows], dtype=float) if valid_rows else np.empty((0, len(channel_names)))
     timestamp_values = np.asarray(timestamps, dtype=float)
@@ -485,6 +492,7 @@ def _eeg_probe_quality(
             warnings.append("extreme_amplitude")
         if line_ratio is not None and line_ratio > line_ratio_warning:
             warnings.append("line_noise")
+        excluded = name in quality_excluded
         channel_results.append(
             {
                 "channel_index": index + 1,
@@ -496,8 +504,9 @@ def _eeg_probe_quality(
                 "line_noise_ratio": line_ratio,
                 "flatline": flat,
                 "extreme_amplitude": extreme,
-                "status": "warning" if warnings else "good",
-                "warnings": warnings,
+                "status": "excluded" if excluded else ("warning" if warnings else "good"),
+                "warnings": [] if excluded else warnings,
+                "quality_exclusion_reason": "nonphysiological_reserved_value" if excluded else None,
             }
         )
     return {
@@ -510,7 +519,9 @@ def _eeg_probe_quality(
         "median_timestamp_step_seconds": float(np.median(timestamp_differences)) if timestamp_differences.size else None,
         "maximum_timestamp_gap_seconds": float(np.max(timestamp_differences)) if timestamp_differences.size else None,
         "channels": channel_results,
-        "warning_channels": [row["channel_name"] for row in channel_results if row["status"] != "good"],
+        "warning_channels": [
+            row["channel_name"] for row in channel_results if row["status"] == "warning"
+        ],
     }
 
 

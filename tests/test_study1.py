@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import importlib.util
 import json
 import tempfile
 import unittest
@@ -8,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from eegle.config import load_config
-from eegle.hardware.profiles import mapped_channel_names
+from eegle.hardware.profiles import analysis_channel_indices, configured_channel_types, mapped_channel_names
 from eegle.pipelines.study1 import (
     SIMULATED_NEURACLE64_CHANNELS,
     Study1Options,
@@ -18,6 +19,7 @@ from eegle.pipelines.study1 import (
     run_study1_visit,
 )
 from eegle.protocols.study1 import configure_study1_segment, validate_study1_config
+from eegle.realtime.epoching import load_eeg_csv_for_epoching
 from eegle.tasks.dynamic_sart_schema import DynamicSartConfig
 from eegle.tasks.dynamic_sart_sequence import build_dynamic_sart_plan
 from scripts.prepare_neuracle64_windows_config import build_configs
@@ -60,12 +62,55 @@ class Study1Tests(unittest.TestCase):
         assert live is not None
         assert live_task is not None
         self.assertEqual(live["hardware"]["eeg"]["expected_channel_names"], list(SIMULATED_NEURACLE64_CHANNELS))
-        self.assertEqual(len(live["hardware"]["eeg"]["expected_channel_names"]), 64)
+        self.assertEqual(len(live["hardware"]["eeg"]["expected_channel_names"]), 65)
+        self.assertEqual(live["hardware"]["eeg"]["expected_channel_names"][-1], "TRIGGER_STATUS")
+        self.assertEqual(len(live["hardware"]["eeg"]["electrode_channel_names"]), 64)
         self.assertEqual(live["processes"]["recorder"]["backend"], "labrecorder_xdf")
         self.assertTrue(live["processes"]["recorder"]["csv_mirror"])
         self.assertTrue(live["operator_confirmation"]["confirmed_for_this_generated_config"])
         self.assertIn("neuracle-collect-test", live["hardware"]["eeg"]["lsl_name_patterns"])
         self.assertFalse(live_task["tasks"]["dynamic_sart"]["practice"]["enabled"])
+
+    def test_live_contract_preserves_65_values_but_selects_only_59_scalp_channels(self) -> None:
+        _display, live, _live_task = build_configs(
+            load_config(CONFIG),
+            labrecorder_executable=r"C:\\LabRecorder\\LabRecorder.exe",
+            confirm_cap_contract=True,
+        )
+        assert live is not None
+        eeg = live["hardware"]["eeg"]
+        names = list(eeg["expected_channel_names"])
+        selected = analysis_channel_indices(names, eeg)
+
+        self.assertEqual(len(names), 65)
+        self.assertEqual(len(selected), 59)
+        self.assertEqual([names[index] for index in selected][-3:], ["Oz", "O1", "O2"])
+        self.assertEqual(configured_channel_types(names, eeg)[-6:], ["ecg", "eog", "eog", "eog", "eog", "stim"])
+
+    @unittest.skipUnless(importlib.util.find_spec("pandas"), "pandas is required for CSV epoch loading")
+    def test_offline_epoch_loading_excludes_auxiliary_and_trigger_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            raw = root / "eeg.csv"
+            parameters = root / "parameters.json"
+            names = list(SIMULATED_NEURACLE64_CHANNELS)
+            raw.write_text(
+                "lsl_timestamp,local_received_time," + ",".join(names) + "\n"
+                + "1.0,1.0," + ",".join("0" for _ in names) + "\n",
+                encoding="utf-8",
+            )
+            _display, live, _live_task = build_configs(
+                load_config(CONFIG),
+                labrecorder_executable=r"C:\\LabRecorder\\LabRecorder.exe",
+                confirm_cap_contract=True,
+            )
+            assert live is not None
+            parameters.write_text(json.dumps(live), encoding="utf-8")
+
+            bundle = load_eeg_csv_for_epoching(raw, parameters_path=parameters)
+
+        self.assertEqual(bundle.data.shape, (1, 59))
+        self.assertEqual(bundle.channel_names[-3:], ["Oz", "O1", "O2"])
 
     def test_preflight_only_runs_physical_gate_without_creating_a_visit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -74,6 +119,8 @@ class Study1Tests(unittest.TestCase):
             config["hardware"]["eeg"].update(
                 {
                     "expected_channel_names": list(SIMULATED_NEURACLE64_CHANNELS),
+                    "expected_channel_types": ["EEG"] * 59 + ["ECG"] + ["EOG"] * 4 + ["stim"],
+                    "electrode_channel_names": list(SIMULATED_NEURACLE64_CHANNELS[:-1]),
                     "reference": "operator-confirmed: CPz",
                     "ground": "operator-confirmed: AFz",
                     "eog_allocation": "operator-confirmed: ECG, HEOR, HEOL, VEOU, VEOL",
@@ -137,14 +184,16 @@ class Study1Tests(unittest.TestCase):
                 )
             )
 
-    def test_simulated_xdf_rehearsal_is_explicit_and_keeps_64_channel_contract(self) -> None:
+    def test_simulated_xdf_rehearsal_uses_observed_65_value_transport_contract(self) -> None:
         config = load_config(CONFIG)
 
         _configure_simulated_eeg_rehearsal(config)
 
         eeg = config["hardware"]["eeg"]
         self.assertEqual(eeg["expected_channel_names"], list(SIMULATED_NEURACLE64_CHANNELS))
-        self.assertEqual(len(eeg["expected_channel_names"]), 64)
+        self.assertEqual(len(eeg["expected_channel_names"]), 65)
+        self.assertEqual(eeg["expected_channel_names"][-1], "TRIGGER_STATUS")
+        self.assertEqual(len(eeg["electrode_channel_names"]), 64)
         self.assertTrue(eeg["simulated"])
         self.assertEqual(eeg["data_classification"], "synthetic_rehearsal_not_participant_data")
         self.assertTrue(config["recording_rehearsal"]["not_participant_data"])
@@ -181,7 +230,7 @@ class Study1Tests(unittest.TestCase):
             [
                 {
                     "status": "warn",
-                    "detail": "Neuracle 64 channel names/order remain unlocked; live preflight will fail until confirmed",
+                    "detail": "Neuracle W64 65-value LSL names/order remain unlocked; live preflight will fail until confirmed",
                 },
                 {
                     "status": "warn",
@@ -272,8 +321,8 @@ class Study1Tests(unittest.TestCase):
             self.assertEqual(assignments.count("no_cue"), 2)
 
     def test_neuracle_generic_labels_use_locked_config_order(self) -> None:
-        expected = [f"E{index}" for index in range(1, 65)]
-        observed = [f"Ch{index}" for index in range(1, 65)]
+        expected = [f"E{index}" for index in range(1, 66)]
+        observed = [f"Ch{index}" for index in range(1, 66)]
         mapped, source = mapped_channel_names(
             observed,
             {

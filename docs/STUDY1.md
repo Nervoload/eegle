@@ -54,10 +54,11 @@ python -m eegle.pipelines.study1 \
 
 `--simulate-eeg` is accepted only with `--task-mode dry-run`, cannot be combined
 with `--skip-eeg` or `--allow-missing-eeg`, and labels the visit as synthetic and
-not participant data. It publishes a 1000 Hz, 64-channel Neuracle-like stream
-using the supplied cap description. The final five auxiliary positions are an
-explicit rehearsal assumption (`ECG`, `HEOR`, `HEOL`, `VEOU`, `VEOL`), not a
-claim about the live amplifier's verified outlet order.
+not participant data. It publishes a 1000 Hz, 65-value Neuracle-like stream
+using the observed live transport contract: 59 scalp EEG channels, `ECG`,
+`HEOR`, `HEOL`, `VEOU`, `VEOL`, and a final empty `TRIGGER_STATUS` value. The
+first 64 values correspond to physical inputs; value 65 is preserved raw but
+excluded from derived EEG analysis.
 
 ## Participant allocation
 
@@ -74,7 +75,7 @@ master seed, participant identity, or protocol hash is rejected.
 
 The candidate configuration cannot yet start live EEG acquisition. Before the
 gate is removed, populate `hardware.eeg.expected_channel_names` with the exact
-64-channel Neuracle outlet order and lock the reference, ground, and EOG roles.
+65-value Neuracle W64 outlet order and lock the reference, ground, and EOG roles.
 
 Cue opportunities, randomization, trial fields, and assignment markers are
 implemented. Physical auditory delivery is still marked `assignment_only`, so

@@ -46,6 +46,42 @@ def mapped_channel_names(channel_names: list[str], eeg_config: dict[str, Any]) -
     return names, "lsl_metadata"
 
 
+def analysis_channel_indices(channel_names: list[str], eeg_config: dict[str, Any]) -> list[int]:
+    """Return raw-channel indices eligible for derived EEG analysis.
+
+    Acquisition always preserves every transmitted value. This selection only
+    removes explicitly declared auxiliary/reserved values from derived EEG data.
+    """
+    excluded = {
+        str(name) for name in eeg_config.get("analysis_excluded_channel_names", [])
+    }
+    return [index for index, name in enumerate(channel_names) if name not in excluded]
+
+
+def configured_channel_types(channel_names: list[str], eeg_config: dict[str, Any]) -> list[str]:
+    """Resolve configured channel roles without changing the raw value order."""
+    expected_names = [str(value) for value in eeg_config.get("expected_channel_names", [])]
+    expected_types = [str(value).lower() for value in eeg_config.get("expected_channel_types", [])]
+    if len(expected_names) == len(expected_types):
+        by_name = dict(zip(expected_names, expected_types))
+    else:
+        by_name = {}
+    result = []
+    for name in channel_names:
+        normalized = str(name).upper()
+        if name in by_name:
+            result.append(by_name[name])
+        elif normalized == "ECG":
+            result.append("ecg")
+        elif normalized in {"HEOR", "HEOL", "VEOU", "VEOL"}:
+            result.append("eog")
+        elif normalized in {"TRIGGER_STATUS", "TRG", "STI", "STIM"}:
+            result.append("stim")
+        else:
+            result.append("eeg")
+    return result
+
+
 def _is_generic_channel_name(name: str) -> bool:
     normalized = str(name).strip().lower()
     if normalized.isdigit():
