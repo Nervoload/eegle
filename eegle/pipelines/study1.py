@@ -88,6 +88,7 @@ class Study1Options:
     record_eeg: bool = True
     require_eeg: bool = True
     resume: bool = False
+    retry_incomplete: bool = False
     output_root: str | Path | None = None
     lsl_wait_seconds: float = 5.0
     electrode_quality_file: str | Path | None = None
@@ -111,6 +112,7 @@ def main(argv: list[str] | None = None) -> int:
             "participant_id": options.participant_id,
             "visit_number": options.visit_number,
             "error": f"{type(exc).__name__}: {exc}",
+            "next_action": _exception_next_action(exc),
         }
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result.get("status") == "completed" else 1
@@ -172,6 +174,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run the full Neuracle/LSL/channel/sample/electrode/LabRecorder gate without creating a visit",
     )
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--retry-incomplete",
+        action="store_true",
+        help=(
+            "Continue this participant's incomplete visit automatically, reusing its visit ID, "
+            "skipping completed phases, and rerunning the failed phase"
+        ),
+    )
     parser.add_argument("--session-root", "--output-root", dest="output_root", default=None)
     parser.add_argument("--lsl-wait", type=float, default=5.0)
     parser.add_argument("--electrode-quality-file", default=None)
@@ -204,6 +214,7 @@ def _options_from_args(args: argparse.Namespace) -> Study1Options:
         record_eeg=not bool(args.skip_eeg),
         require_eeg=not bool(args.allow_missing_eeg) and not bool(args.skip_eeg),
         resume=bool(args.resume),
+        retry_incomplete=bool(args.retry_incomplete),
         output_root=args.output_root,
         lsl_wait_seconds=float(args.lsl_wait),
         electrode_quality_file=args.electrode_quality_file,
@@ -329,11 +340,14 @@ def _run_configured_study1_visit(
     _validate_live_readiness(config, options)
     interval = _visit_interval_check(participant_manifest, options)
 
-    visit_id = _resolve_visit_id(participant_dir, options)
+    visit_id = _resolve_visit_id(participant_dir, participant_manifest, options)
     visit_dir = participant_dir / "visits" / f"visit-{options.visit_number}" / visit_id
     visit_manifest_path = visit_dir / "visit_manifest.json"
-    if visit_manifest_path.exists() and not options.resume:
-        raise FileExistsError(f"Study 1 visit already exists; use --resume: {visit_manifest_path}")
+    if visit_manifest_path.exists() and not _continues_incomplete_visit(options):
+        raise FileExistsError(
+            "Study 1 visit already exists. Rerun the operator script unchanged to retry an "
+            f"incomplete test, or use --resume explicitly: {visit_manifest_path}"
+        )
     visit_dir.mkdir(parents=True, exist_ok=True)
     segment_seeds = {
         phase: derive_session_seed(options.participant_id, phase, SEGMENT_INDEX[phase], options.master_seed)
@@ -376,8 +390,9 @@ def _run_configured_study1_visit(
     active_preflight = _latest_phase_result(manifest, "preflight")
     for phase in VISIT_PHASES[options.visit_number]:
         if _phase_is_complete(manifest, phase):
-            if options.resume:
-                manifest.setdefault("resumed_phases", []).append({"phase": phase, "action": "skipped_completed"})
+            if _continues_incomplete_visit(options):
+                action = "retry_skipped_completed" if options.retry_incomplete else "skipped_completed"
+                manifest.setdefault("resumed_phases", []).append({"phase": phase, "action": action})
                 _write_json_atomic(visit_manifest_path, manifest)
             if phase == "preflight":
                 active_preflight = _latest_phase_result(manifest, phase)
@@ -406,7 +421,7 @@ def _run_configured_study1_visit(
                 )
                 active_preflight = result
                 if result.get("status") == "fail":
-                    raise RuntimeError("Study 1 preflight failed")
+                    raise RuntimeError(_phase_error("Study 1 preflight", result))
                 _accept_recording_preflight(result, dsart_options)
             elif phase == "baseline":
                 if active_preflight is None:
@@ -591,6 +606,8 @@ def _validate_options(options: Study1Options) -> None:
         raise ValueError("--preflight-only requires EEG; do not combine it with --skip-eeg or --allow-missing-eeg")
     if options.preflight_only and options.resume:
         raise ValueError("--preflight-only cannot be combined with --resume")
+    if options.preflight_only and options.retry_incomplete:
+        raise ValueError("--preflight-only cannot be combined with --retry-incomplete")
     if options.preflight_only and options.simulate_eeg:
         raise ValueError("--preflight-only is for the physical EEG system and cannot use --simulate-eeg")
     if options.full_1000 and options.visit_number != 1:
@@ -599,6 +616,8 @@ def _validate_options(options: Study1Options) -> None:
         raise ValueError("--full-1000 cannot be combined with --smoke")
     if options.full_1000 and options.preflight_only:
         raise ValueError("--full-1000 cannot be combined with --preflight-only")
+    if options.resume and options.retry_incomplete:
+        raise ValueError("choose either --resume or --retry-incomplete, not both")
     if options.full_1000 and not options.include_practice:
         raise ValueError("--full-1000 requires --include-practice")
     if (
@@ -702,9 +721,23 @@ def _validate_visit_slot(participant: dict[str, Any], options: Study1Options) ->
     existing = dict(participant.get("visits", {}).get(str(options.visit_number)) or {})
     if not existing:
         return
+    status = str(existing.get("status") or "unknown")
+    if options.retry_incomplete:
+        if status == "completed":
+            raise FileExistsError(
+                f"Study 1 Visit {options.visit_number} is already completed for participant "
+                f"{options.participant_id!r}. Use a new participant/test ID for a new run."
+            )
+        if options.visit_id is not None and existing.get("visit_id") != _safe_token(options.visit_id):
+            raise ValueError(
+                "--visit-id does not match this participant's incomplete visit. Omit --visit-id "
+                f"to retry automatically, or use {existing.get('visit_id')!r}."
+            )
+        return
     if not options.resume:
         raise FileExistsError(
-            f"Study 1 Visit {options.visit_number} already has status={existing.get('status')}; use --resume"
+            f"Study 1 Visit {options.visit_number} already has status={status}. Use "
+            "--retry-incomplete to rerun the failed phase, or --resume with the original visit ID."
         )
     if options.visit_id is not None and existing.get("visit_id") != _safe_token(options.visit_id):
         raise ValueError("--visit-id does not match the participant manifest visit slot")
@@ -714,7 +747,7 @@ def _visit_interval_check(participant: dict[str, Any], options: Study1Options) -
     if options.visit_number == 1:
         return {"status": "not_applicable", "days": None, "override": False}
     existing_visit_two = dict(participant.get("visits", {}).get("2") or {})
-    if options.resume and existing_visit_two.get("manifest_file"):
+    if _continues_incomplete_visit(options) and existing_visit_two.get("manifest_file"):
         existing_manifest = _load_json(Path(str(existing_visit_two["manifest_file"]))) or {}
         recorded = dict(existing_manifest.get("visit_interval") or {})
         if recorded:
@@ -736,7 +769,18 @@ def _visit_interval_check(participant: dict[str, Any], options: Study1Options) -
     }
 
 
-def _resolve_visit_id(participant_dir: Path, options: Study1Options) -> str:
+def _resolve_visit_id(
+    participant_dir: Path,
+    participant: dict[str, Any],
+    options: Study1Options,
+) -> str:
+    if options.retry_incomplete:
+        existing = dict(participant.get("visits", {}).get(str(options.visit_number)) or {})
+        if existing and str(existing.get("status")) != "completed":
+            existing_id = str(existing.get("visit_id") or "").strip()
+            if not existing_id:
+                raise ValueError("incomplete participant visit is missing its visit ID")
+            return _safe_token(existing_id)
     if options.visit_id:
         return _safe_token(options.visit_id)
     visit_root = participant_dir / "visits" / f"visit-{options.visit_number}"
@@ -903,9 +947,15 @@ def _update_participant_visit(
 def _phase_error(label: str, result: dict[str, Any]) -> str:
     detail = result.get("error") or result.get("abort_reason")
     if detail is None:
-        failures = list(dict(result.get("validation") or {}).get("failures") or [])
+        failures = list(result.get("failures") or [])
+        if not failures:
+            failures = list(dict(result.get("validation") or {}).get("failures") or [])
         detail = failures[0] if failures else f"status={result.get('status')}"
     return f"{label} did not complete: {detail}"
+
+
+def _continues_incomplete_visit(options: Study1Options) -> bool:
+    return bool(options.resume or options.retry_incomplete)
 
 
 def _has_recording(manifest: dict[str, Any]) -> bool:
@@ -913,7 +963,7 @@ def _has_recording(manifest: dict[str, Any]) -> bool:
 
 
 def _public_result(manifest: dict[str, Any], path: Path) -> dict[str, Any]:
-    return {
+    result = {
         "schema": manifest.get("schema"),
         "status": manifest.get("status"),
         "participant_id": manifest.get("participant_id"),
@@ -926,6 +976,35 @@ def _public_result(manifest: dict[str, Any], path: Path) -> dict[str, Any]:
         "sequence_hashes": manifest.get("sequence_hashes"),
         "failures": manifest.get("failures"),
     }
+    failures = list(manifest.get("failures") or [])
+    if result["status"] != "completed" and failures:
+        latest = dict(failures[-1])
+        failed_phase = str(latest.get("phase") or "unknown")
+        result["failed_phase"] = failed_phase
+        result["failure_detail"] = latest.get("error")
+        attempts = list(
+            dict(manifest.get("phases", {}).get(failed_phase, {}) or {}).get("attempts") or []
+        )
+        latest_result = dict(attempts[-1].get("result") or {}) if attempts else {}
+        if latest_result.get("session_dir"):
+            result["retained_session_directory"] = latest_result.get("session_dir")
+        result["next_action"] = (
+            "Correct the reported failure, then rerun the same Windows operator command. "
+            "EEGle will reuse this incomplete visit, skip completed phases, and rerun the failed phase."
+        )
+    return result
+
+
+def _exception_next_action(exc: BaseException) -> str:
+    detail = str(exc)
+    if "already completed" in detail:
+        return "Use a new participant/test ID for a new run; completed visits are immutable."
+    if "already has status" in detail or "already exists" in detail:
+        return (
+            "Rerun with --retry-incomplete to reuse the incomplete visit automatically, "
+            "or use --resume with its original visit ID."
+        )
+    return "Correct the reported error and rerun the same command."
 
 
 if __name__ == "__main__":

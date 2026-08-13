@@ -137,6 +137,11 @@ recording begins, and a name-only marker selection can create duplicate XDF
 stream headers. The exact marker source ID and received marker sequence are
 checked after LabRecorder stops.
 
+The run-specific marker outlet is intentionally closed between independently
+recorded phases. Liblsl may log a native `R_EEGleMarkers` transmission-broke
+message while that receiver closes; it is not the Neuracle EEG stream and is
+not itself a validation failure.
+
 Before terminating LabRecorder, the worker waits for file-size settlement and
 for a bounded PyXDF scan to confirm that the finalized file is structurally
 readable. This prevents a partially flushed XDF from being reported as stopped.
@@ -153,6 +158,12 @@ If LabRecorder exits, the XDF stops growing, the CSV mirror stalls, or disk
 space falls below the configured reserve, the shared recorder health gate stops
 the baseline/task. Finalization and validation failures retain both raw files
 but prevent the phase from being marked complete.
+
+For the operator-confirmed Neuracle positional mapping, XDF descriptor names
+may be canonicalized only when the independent source-preserving CSV mirror
+proves the same selected LSL stream identity and unchanged 65-value order.
+Conflicting channel counts, stream identities, meaningful positional labels,
+sample rates, timestamps, or marker receipts remain failures.
 
 BDF, photodiode/audio loopback qualification, and the full modeling suite
 remain separate follow-up work.

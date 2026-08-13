@@ -345,11 +345,18 @@ The current implemented order is eyes open followed by eyes closed. Both phases
 show instructions and emit LSL boundary markers. Keep the participant still and
 do not stop Collect between the baseline and task.
 
-### Resume an interrupted complete short test
+### Retry or resume an interrupted complete short test
 
-Resume uses the same participant, no-go digit, operator, baseline duration, and
-visit identity. Completed phase boundaries are skipped; an interrupted active
-recording is not appended to or overwritten.
+For a failed or interrupted test, first correct the reported cause and rerun the
+same `04-Run-FullShortTest.ps1` command. The launcher now selects
+`--retry-incomplete` by default: it detects the participant's incomplete Visit
+1, reuses the original visit ID, skips completed phases, and reruns the failed
+phase into a new session directory. You do not need to find or rename the old
+folder, and retained XDF/CSV data are never overwritten.
+
+`-Resume` remains available when deliberately resuming with an explicit visit
+identity. It uses the same participant, no-go digit, operator, baseline
+duration, and visit identity:
 
 ```powershell
 .\scripts\windows\neuracle64\04-Run-FullShortTest.ps1 `
@@ -433,6 +440,9 @@ Resume skips completed baseline/task phases but never appends to or overwrites
 an interrupted recording. A participant who completed the run needs a new
 participant/visit identity for another test.
 
+Without `-Resume`, rerunning the same `07-Run-Full.ps1` command automatically
+retries an incomplete full visit in the same way as the short-test launcher.
+
 ## Troubleshooting gates
 
 ### No matching stream
@@ -488,9 +498,35 @@ training/inference packages and do not prevent pylsl from seeing an EEG outlet.
 ### Generic channel labels
 
 Generic `ch_001..ch_065` labels establish count, not physical identity. The
-confirmed generated config maps them positionally to the 65-value contract. If
-Collect later exposes meaningful labels, they must match the configured order
-exactly; a mismatch remains a preflight failure.
+confirmed generated config maps them positionally to the 65-value contract.
+Mixed descriptors are accepted only when every meaningful label agrees with
+its configured position; generic values and common names for the reserved
+trigger/status value are canonicalized by position. A conflicting meaningful
+label still fails.
+
+LabRecorder and the CSV mirror can serialize the same Collect channel
+descriptors differently. If an XDF descriptor does not match the canonical
+name, EEGle accepts the positional XDF order only when all of the following are
+true: the cap mapping was explicitly operator-confirmed, the XDF has exactly 65
+values, the independent CSV mirror stopped cleanly, it recorded the same LSL
+stream identity, and its raw contract proves that channel value order was not
+changed. This produces a validation warning, not a failure. Otherwise the XDF
+fails with the exact mismatching value numbers and observed/expected labels.
+
+### `R_EEGleMarkers` disconnect line at a phase transition
+
+Each baseline/task phase has a unique EEGle marker outlet and independent
+marker receiver. When the phase completes, EEGle deliberately closes them so
+LabRecorder can finalize that phase's XDF. Some Windows liblsl builds print a
+native line such as `R_EEGleMarkers ... Stream transmission broke off;
+re-connecting` during that close. The `R_EEGleMarkers` name identifies the
+short-lived marker receiver, not the Neuracle EEG stream. EEGle does not treat
+this phase-boundary line as an acquisition failure.
+
+A genuine EEG interruption is reported separately by the recorder health gate,
+CSV timestamp-gap validation, XDF timestamp-gap validation, or the selected
+Neuracle stream identity. Do not ignore those failures merely because the
+marker transition message is harmless.
 
 ### LabRecorder gate fails
 

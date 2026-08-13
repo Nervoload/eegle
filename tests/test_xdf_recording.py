@@ -473,6 +473,63 @@ class XdfIntegrityTests(unittest.TestCase):
         self.assertTrue(any("channel count" in failure for failure in count_result["failures"]))
         self.assertEqual(order_result["status"], "fail")
         self.assertTrue(any("labels/order" in failure for failure in order_result["failures"]))
+        self.assertTrue(any("value 1:" in failure for failure in order_result["failures"]))
+
+    def test_xdf_validation_accepts_safe_mixed_generic_and_semantic_labels(self) -> None:
+        mixed = list(CHANNELS)
+        mixed[0] = "ch_001"
+        mixed[-1] = "Trigger"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths, pyxdf = self._session(Path(tmp), labels=mixed)
+            with patch.dict(sys.modules, {"pyxdf": pyxdf}):
+                result = validate_xdf_recording(paths.root, required=True)
+
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["eeg"]["mapped_channel_names"], CHANNELS)
+        self.assertEqual(
+            result["eeg"]["channel_mapping_source"],
+            "config:expected_channel_names:mixed_positional",
+        )
+
+    def test_operator_confirmed_position_and_csv_identity_resolve_xdf_descriptor_difference(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths, pyxdf = self._session(Path(tmp), labels=list(reversed(CHANNELS)))
+            parameters = json.loads(paths.parameters.read_text(encoding="utf-8"))
+            parameters["hardware"]["eeg"]["mapping_source"] = (
+                "operator_confirmed_neuracle_w64_65_value_lsl_order"
+            )
+            paths.parameters.write_text(json.dumps(parameters), encoding="utf-8")
+            (paths.raw / "eeg_metadata.json").write_text(
+                json.dumps(
+                    {
+                        "status": "stopped",
+                        "stream": {
+                            "name": "Neuracle EEG",
+                            "type": "EEG",
+                            "source_id": "eeg-test",
+                            "channel_count": 65,
+                            "channel_names": CHANNELS,
+                            "channel_value_order_changed": False,
+                        },
+                        "raw_sample_contract": {"channel_value_order_modified": False},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(sys.modules, {"pyxdf": pyxdf}):
+                result = validate_xdf_recording(paths.root, required=True)
+
+        self.assertEqual(result["status"], "warning")
+        self.assertEqual(result["failures"], [])
+        self.assertEqual(result["eeg"]["mapped_channel_names"], CHANNELS)
+        self.assertEqual(
+            result["eeg"]["channel_mapping_source"],
+            "operator_confirmed_position+csv_mirror_identity",
+        )
+        self.assertEqual(
+            result["eeg"]["confirmed_positional_mapping_evidence"]["status"],
+            "pass",
+        )
 
     def test_xdf_validation_rejects_timestamp_gap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

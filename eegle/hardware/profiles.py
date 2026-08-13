@@ -43,6 +43,21 @@ def mapped_channel_names(channel_names: list[str], eeg_config: dict[str, Any]) -
     if generic:
         source = "config:expected_channel_names" if expected_names else f"profile:{profile.name}"
         return physical_names, source
+    if names == physical_names:
+        return names, "lsl_metadata"
+    positionally_compatible = all(
+        _is_generic_channel_name(observed)
+        or _channel_names_equal(observed, expected)
+        or _reserved_channel_alias(observed, expected)
+        for observed, expected in zip(names, physical_names)
+    )
+    if positionally_compatible:
+        source = (
+            "config:expected_channel_names:mixed_positional"
+            if expected_names
+            else f"profile:{profile.name}:mixed_positional"
+        )
+        return physical_names, source
     return names, "lsl_metadata"
 
 
@@ -89,3 +104,14 @@ def _is_generic_channel_name(name: str) -> bool:
     if normalized.startswith(("ch_", "channel_")):
         return True
     return re.fullmatch(r"(ch|chan|channel|data|eeg)[-_ ]?\d+", normalized) is not None
+
+
+def _channel_names_equal(observed: str, expected: str) -> bool:
+    return str(observed).strip().casefold() == str(expected).strip().casefold()
+
+
+def _reserved_channel_alias(observed: str, expected: str) -> bool:
+    if str(expected).strip().upper() != "TRIGGER_STATUS":
+        return False
+    normalized = re.sub(r"[-_ ]+", "", str(observed).strip().lower())
+    return normalized in {"trigger", "triggerstatus", "trg", "sti", "stim", "status"}

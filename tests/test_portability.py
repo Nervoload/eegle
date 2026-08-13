@@ -63,6 +63,8 @@ class PortabilityTests(unittest.TestCase):
         self.assertIn('"--smoke"', full)
         self.assertIn('"--include-practice"', full)
         self.assertIn('"--baseline-seconds"', full)
+        self.assertIn('"--retry-incomplete"', full)
+        self.assertIn("R_EEGleMarkers", full)
         self.assertIn("$FullScreen", full)
         diagnostics = (scripts / "05-Diagnose-Lsl.ps1").read_text(encoding="utf-8")
         self.assertIn("eegle.lsl_diagnostics", diagnostics)
@@ -73,6 +75,7 @@ class PortabilityTests(unittest.TestCase):
         self.assertIn('"--full-1000"', complete)
         self.assertIn('"--baseline-seconds", "120"', complete)
         self.assertIn('"--include-practice"', complete)
+        self.assertIn('"--retry-incomplete"', complete)
         self.assertNotIn('"--smoke"', complete)
         self.assertIn("$FullScreen", complete)
 

@@ -98,7 +98,7 @@ function Update-EegleGeneratedLiveConfigs([string] $Python, [string] $LiveConfig
 
 function Assert-EegleExit([string] $Operation) {
     if ($LASTEXITCODE -ne 0) {
-        throw "$Operation failed with exit code $LASTEXITCODE"
+        throw "$Operation stopped without a successful completion (exit code $LASTEXITCODE). Read the EEGle failure_detail and next_action printed immediately above; retained raw/session files are not overwritten."
     }
 }
 

@@ -16,6 +16,7 @@ from eegle.pipelines.study1 import (
     _apply_visit_baseline,
     _configure_simulated_eeg_rehearsal,
     _validate_options,
+    _validate_visit_slot,
     run_study1_visit,
 )
 from eegle.protocols.study1 import (
@@ -520,6 +521,98 @@ class Study1Tests(unittest.TestCase):
         )
         self.assertEqual(mapped, expected)
         self.assertEqual(source, "config:expected_channel_names")
+
+    def test_neuracle_mixed_labels_use_only_positionally_compatible_mapping(self) -> None:
+        expected = list(SIMULATED_NEURACLE64_CHANNELS)
+        observed = list(expected)
+        observed[0] = "ch_001"
+        observed[-1] = "Trigger"
+        config = {
+            "family": "Neuracle",
+            "profile": "neuracle64",
+            "expected_channel_names": expected,
+        }
+
+        mapped, source = mapped_channel_names(observed, config)
+        wrong = list(observed)
+        wrong[10] = "Cz"
+        rejected, rejected_source = mapped_channel_names(wrong, config)
+
+        self.assertEqual(mapped, expected)
+        self.assertEqual(source, "config:expected_channel_names:mixed_positional")
+        self.assertEqual(rejected, wrong)
+        self.assertEqual(rejected_source, "lsl_metadata")
+
+    def test_failed_visit_can_retry_same_participant_without_manual_visit_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            failed_report = {
+                "status": "fail",
+                "failures": ["synthetic preflight failure"],
+                "warnings": [],
+                "channel_contract": {"status": "fail"},
+                "report_file": None,
+                "electrode_quality_file": None,
+            }
+            with patch(
+                "eegle.pipelines.study1.run_recording_preflight",
+                return_value=failed_report,
+            ):
+                failed = run_study1_visit(
+                    Study1Options(
+                        config_path=CONFIG,
+                        participant_id="retry-study1",
+                        visit_number=1,
+                        visit_id="retry-visit-1",
+                        task_mode="dry-run",
+                        no_go_digit=3,
+                        smoke=True,
+                        baseline_seconds=0.0,
+                        record_eeg=False,
+                        require_eeg=False,
+                        output_root=tmp,
+                    )
+                )
+
+            retried = run_study1_visit(
+                Study1Options(
+                    config_path=CONFIG,
+                    participant_id="retry-study1",
+                    visit_number=1,
+                    task_mode="dry-run",
+                    no_go_digit=3,
+                    smoke=True,
+                    baseline_seconds=0.0,
+                    record_eeg=False,
+                    require_eeg=False,
+                    retry_incomplete=True,
+                    output_root=tmp,
+                )
+            )
+
+            manifest = json.loads(Path(retried["manifest_file"]).read_text(encoding="utf-8"))
+
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(failed["failed_phase"], "preflight")
+        self.assertIn("synthetic preflight failure", failed["failure_detail"])
+        self.assertIn("rerun the same Windows operator command", failed["next_action"])
+        self.assertEqual(retried["status"], "completed")
+        self.assertEqual(retried["visit_id"], "retry-visit-1")
+        self.assertEqual(len(manifest["phases"]["preflight"]["attempts"]), 2)
+
+    def test_retry_incomplete_does_not_overwrite_completed_visit(self) -> None:
+        participant = {
+            "visits": {"1": {"status": "completed", "visit_id": "completed-v1"}}
+        }
+        with self.assertRaisesRegex(FileExistsError, "already completed"):
+            _validate_visit_slot(
+                participant,
+                Study1Options(
+                    config_path=CONFIG,
+                    participant_id="unit",
+                    visit_number=1,
+                    retry_incomplete=True,
+                ),
+            )
 
     def test_two_visit_smoke_reuses_participant_assignment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -153,7 +153,6 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
     eeg_info = dict(eeg_loaded.get("info") or {})
     original_labels = _channel_labels(eeg_info, int(eeg_matches[0].get("channel_count") or 0))
     mapped_labels, mapping_source = mapped_channel_names(original_labels, eeg_config)
-    mapped_types = configured_channel_types(mapped_labels, eeg_config)
     expected_labels = list(eeg_config.get("expected_channel_names") or [])
     if not expected_labels and eeg_config.get("profile"):
         try:
@@ -162,6 +161,26 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
             )
         except KeyError:
             expected_labels = []
+    positional_evidence = _confirmed_positional_xdf_evidence(
+        root,
+        selected,
+        eeg_config,
+        expected_labels,
+        observed_count=int(eeg_matches[0].get("channel_count") or 0),
+    )
+    if (
+        expected_labels
+        and mapped_labels != expected_labels
+        and positional_evidence["status"] == "pass"
+    ):
+        mapped_labels = list(expected_labels)
+        mapping_source = "operator_confirmed_position+csv_mirror_identity"
+        warnings.append(
+            "XDF channel descriptor labels differed from the operator-confirmed positional names; "
+            "the canonical 65-value order was retained because the independent source-preserving "
+            "CSV mirror recorded the same LSL stream identity and value order"
+        )
+    mapped_types = configured_channel_types(mapped_labels, eeg_config)
     expected_counts = [int(value) for value in eeg_config.get("expected_channel_counts", [])]
     observed_count = int(eeg_matches[0].get("channel_count") or 0)
     observed_rate = float(eeg_matches[0].get("nominal_srate") or 0.0)
@@ -171,7 +190,11 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
     if expected_rate and abs(observed_rate - expected_rate) >= 1.0:
         failures.append(f"XDF EEG sample rate is {observed_rate:g} Hz; expected {expected_rate:g} Hz")
     if expected_labels and mapped_labels != expected_labels:
-        failures.append("XDF EEG channel labels/order do not map to the configured physical device order")
+        mismatch_detail = _channel_mismatch_detail(original_labels, mapped_labels, expected_labels)
+        failures.append(
+            "XDF EEG channel labels/order do not map to the configured physical device order"
+            f" (mapping={mapping_source}; {mismatch_detail})"
+        )
     eeg_stats = stats[eeg_id]
     if eeg_stats["sample_count"] <= 0:
         failures.append("XDF EEG stream does not contain samples")
@@ -214,6 +237,7 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
         "mapped_channel_names": mapped_labels,
         "mapped_channel_types": mapped_types,
         "channel_mapping_source": mapping_source,
+        "confirmed_positional_mapping_evidence": positional_evidence,
         "synchronized_first_timestamp": None if not eeg_synced.size else float(eeg_synced[0]),
         "synchronized_last_timestamp": None if not eeg_synced.size else float(eeg_synced[-1]),
     }
@@ -299,6 +323,77 @@ def _marker_values(values: Any) -> list[str]:
         else:
             labels.append(str(row))
     return labels
+
+
+def _channel_mismatch_detail(
+    original: list[str],
+    mapped: list[str],
+    expected: list[str],
+    *,
+    limit: int = 6,
+) -> str:
+    mismatches = []
+    for index, expected_name in enumerate(expected):
+        mapped_name = mapped[index] if index < len(mapped) else "<missing>"
+        if mapped_name == expected_name:
+            continue
+        original_name = original[index] if index < len(original) else "<missing>"
+        mismatches.append(
+            f"value {index + 1}: XDF={original_name!r}, mapped={mapped_name!r}, expected={expected_name!r}"
+        )
+        if len(mismatches) >= limit:
+            break
+    if len(mapped) != len(expected):
+        mismatches.append(f"mapped count={len(mapped)}, expected count={len(expected)}")
+    return "; ".join(mismatches) or "labels differ"
+
+
+def _confirmed_positional_xdf_evidence(
+    root: Path,
+    selected_xdf_stream: dict[str, Any],
+    eeg_config: dict[str, Any],
+    expected_labels: list[str],
+    *,
+    observed_count: int,
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    configured_source = str(eeg_config.get("mapping_source") or "")
+    if not configured_source.startswith("operator_confirmed"):
+        reasons.append("device mapping is not operator-confirmed positional")
+    if not expected_labels or observed_count != len(expected_labels):
+        reasons.append("XDF value count does not match the confirmed positional contract")
+    raw_metadata = _load_json(root / "raw" / "eeg_metadata.json") or {}
+    raw_stream = dict(raw_metadata.get("stream") or {})
+    contract = dict(raw_metadata.get("raw_sample_contract") or {})
+    if raw_metadata.get("status") != "stopped":
+        reasons.append("independent CSV mirror did not stop cleanly")
+    if list(raw_stream.get("channel_names") or []) != expected_labels:
+        reasons.append("independent CSV mirror did not retain the canonical channel header")
+    if raw_stream.get("channel_value_order_changed") is not False:
+        reasons.append("independent CSV mirror does not prove source value-order preservation")
+    if contract.get("channel_value_order_modified") is not False:
+        reasons.append("raw sample contract does not prove source value-order preservation")
+    identity_fields = ("name", "type", "source_id", "hostname", "channel_count")
+    identity_mismatches = []
+    for field in identity_fields:
+        selected_value = selected_xdf_stream.get(field)
+        if selected_value in {None, ""}:
+            continue
+        if str(raw_stream.get(field)) != str(selected_value):
+            identity_mismatches.append(field)
+    if identity_mismatches:
+        reasons.append(
+            "XDF and CSV mirror LSL identities differ in " + ", ".join(identity_mismatches)
+        )
+    return {
+        "status": "fail" if reasons else "pass",
+        "configured_mapping_source": configured_source,
+        "xdf_selected_stream": {
+            field: selected_xdf_stream.get(field) for field in identity_fields
+        },
+        "csv_mirror_stream": {field: raw_stream.get(field) for field in identity_fields},
+        "reasons": reasons,
+    }
 
 
 def _channel_labels(info: dict[str, Any], channel_count: int) -> list[str]:

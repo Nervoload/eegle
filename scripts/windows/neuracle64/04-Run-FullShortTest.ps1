@@ -27,9 +27,6 @@ $config = Get-EegleConfigPath "live"
 Update-EegleGeneratedLiveConfigs $python $config
 $resolvedDataRoot = Get-EegleDataRoot $DataRoot
 $env:EEGLE_SESSION_ROOT = $resolvedDataRoot
-if (-not $Resume -and [string]::IsNullOrWhiteSpace($VisitId)) {
-    $VisitId = New-EegleRunId "short-visit1"
-}
 
 Write-Host "Starting the complete short Study 1 test:"
 Write-Host "  full preflight and electrode checks"
@@ -39,6 +36,7 @@ Write-Host "  participant practice"
 Write-Host "  30 experimental trials (three 10-trial blocks)"
 Write-Host "  fixed timing: 250 ms digit + 1350 ms fixation (1600 ms SOI; no jitter)"
 Write-Host "Keep Neuracle Collect LSL streaming. EEGle launches/stops LabRecorder."
+Write-Host "A phase-end liblsl ERR mentioning R_EEGleMarkers is expected when EEGle closes that phase's marker receiver; it is not the Neuracle EEG stream."
 
 $arguments = @(
     "-m", "eegle.pipelines.study1",
@@ -61,6 +59,9 @@ if (-not [string]::IsNullOrWhiteSpace($VisitId)) {
 }
 if ($Resume) {
     $arguments += "--resume"
+}
+else {
+    $arguments += "--retry-incomplete"
 }
 if ($FullScreen) {
     $arguments += "--fullscreen"
