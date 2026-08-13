@@ -14,10 +14,99 @@ from eegle.tasks.dynamic_sart_sequence import build_dynamic_sart_plan, validate_
 
 STUDY1_PROTOCOL_NAME = "study1_dynamic_sart_v1"
 STUDY1_SEGMENTS = ("session1_main", "session2_main", "session2_cue_extension")
+STUDY1_STANDARD_ACQUISITION_PROFILE = "proposal_standard_v1"
+STUDY1_FULL_1000_ACQUISITION_PROFILE = "full_1000_support500_query500_v1"
+STUDY1_ACQUISITION_PROFILES = (
+    STUDY1_STANDARD_ACQUISITION_PROFILE,
+    STUDY1_FULL_1000_ACQUISITION_PROFILE,
+)
 
 
-def study1_protocol() -> ScientificProtocol:
+def apply_study1_full_1000_profile(config: dict[str, Any]) -> dict[str, Any]:
+    """Return a Study 1 Visit 1 config with four leakage-safe 250-trial sections."""
+
+    result = copy.deepcopy(config)
+    study = result.setdefault("study1", {})
+    study["acquisition_profile"] = STUDY1_FULL_1000_ACQUISITION_PROFILE
+    segment = study.setdefault("segments", {}).setdefault("session1_main", {})
+    segment.update(
+        {
+            "practice_enabled": True,
+            "practice_ready_confirmation": True,
+            "blocks": [
+                {
+                    "name": "full_section_1_support",
+                    "phase": "support",
+                    "study_segment": "session1_main",
+                    "trials": 250,
+                    "planned_no_go_count": 38,
+                    "break_after": True,
+                    "minimum_break_seconds": 30.0,
+                    "maximum_break_seconds": 60.0,
+                },
+                {
+                    "name": "full_section_2_support",
+                    "phase": "support",
+                    "study_segment": "session1_main",
+                    "trials": 250,
+                    "planned_no_go_count": 37,
+                    "break_after": True,
+                    "minimum_break_seconds": 30.0,
+                    "maximum_break_seconds": 60.0,
+                },
+                {
+                    "name": "full_section_3_query",
+                    "phase": "query",
+                    "study_segment": "session1_main",
+                    "trials": 250,
+                    "planned_no_go_count": 38,
+                    "break_after": True,
+                    "minimum_break_seconds": 30.0,
+                    "maximum_break_seconds": 60.0,
+                },
+                {
+                    "name": "full_section_4_query",
+                    "phase": "query",
+                    "study_segment": "session1_main",
+                    "trials": 250,
+                    "planned_no_go_count": 37,
+                    "break_after": False,
+                },
+            ],
+            "cue_schedule": {"enabled": False},
+        }
+    )
+    suite = result.setdefault("recording_suite", {})
+    suite["acquisition_profile"] = STUDY1_FULL_1000_ACQUISITION_PROFILE
+    return result
+
+
+def study1_protocol(
+    acquisition_profile: str | None = None,
+) -> ScientificProtocol:
     """Return the machine-readable scientific declaration used by the acquisition pipeline."""
+    full_1000 = acquisition_profile == STUDY1_FULL_1000_ACQUISITION_PROFILE
+    metadata = {
+        "observe_only": True,
+        "allow_task_adaptation": False,
+        "allow_stimulation": False,
+        "visit_interval_days": [2, 7],
+        "digits": list(range(10)),
+        "no_go_fraction_per_block": 0.15,
+        "block_trials": 250 if full_1000 else 200,
+        "stimulus_seconds": 0.25,
+        "post_digit_fixation_seconds": 1.35,
+        "soi_seconds": 1.60,
+        "intentional_jitter_seconds": 0.0,
+        "segments": list(STUDY1_SEGMENTS),
+    }
+    if full_1000:
+        metadata.update(
+            {
+                "acquisition_profile": STUDY1_FULL_1000_ACQUISITION_PROFILE,
+                "break_after_trials": [250, 500, 750],
+            }
+        )
     return ScientificProtocol(
         name=STUDY1_PROTOCOL_NAME,
         task="dynamic_sart",
@@ -28,26 +117,23 @@ def study1_protocol() -> ScientificProtocol:
             ProtocolTarget(
                 "attention_lapse_binary",
                 positive=("slow_go_rt", "omission_error", "commission_error"),
-                metadata={"support_trials": 200, "query_trials": 400},
+                metadata={
+                    "support_trials": 500 if full_1000 else 200,
+                    "query_trials": 500 if full_1000 else 400,
+                },
             ),
         ),
-        splits=("visit_1_visit_2", "session2_support_query", "practice_excluded"),
+        splits=(
+            (
+                "visit1_trials_1_500_support_501_1000_query",
+                "practice_excluded",
+            )
+            if full_1000
+            else ("visit_1_visit_2", "session2_support_query", "practice_excluded")
+        ),
         baselines=("behavior_only", "eeg_residual"),
         metrics=("brier_score", "auprc", "roc_auc", "ece"),
-        metadata={
-            "observe_only": True,
-            "allow_task_adaptation": False,
-            "allow_stimulation": False,
-            "visit_interval_days": [2, 7],
-            "digits": list(range(10)),
-            "no_go_fraction_per_block": 0.15,
-            "block_trials": 200,
-            "stimulus_seconds": 0.25,
-            "post_digit_fixation_seconds": 1.35,
-            "soi_seconds": 1.60,
-            "intentional_jitter_seconds": 0.0,
-            "segments": list(STUDY1_SEGMENTS),
-        },
+        metadata=metadata,
     )
 
 
@@ -89,6 +175,13 @@ def configure_study1_segment(
     task.setdefault("practice", {})["enabled"] = bool(
         segment.get("practice_enabled", False) and (include_practice or not smoke)
     )
+    require_ready_confirmation = bool(
+        segment.get("practice_ready_confirmation", False) and task["practice"]["enabled"]
+    )
+    if require_ready_confirmation:
+        task["practice"]["require_ready_confirmation"] = True
+    else:
+        task["practice"].pop("require_ready_confirmation", None)
     suite = result.setdefault("recording_suite", {})
     suite["recipe"] = "study1"
     suite["study_segment"] = segment_name
@@ -104,6 +197,17 @@ def validate_study1_config(config: dict[str, Any]) -> list[dict[str, str]]:
     """Validate proposal-defining invariants without requiring live hardware."""
     issues: list[dict[str, str]] = []
     study = dict(config.get("study1") or {})
+    acquisition_profile = str(
+        study.get("acquisition_profile") or STUDY1_STANDARD_ACQUISITION_PROFILE
+    )
+    if acquisition_profile not in STUDY1_ACQUISITION_PROFILES:
+        issues.append(
+            _issue(
+                "fail",
+                "study1.acquisition_profile must be one of "
+                + ", ".join(STUDY1_ACQUISITION_PROFILES),
+            )
+        )
     protocol = dict(study.get("protocol") or {})
     if str(protocol.get("name")) != STUDY1_PROTOCOL_NAME:
         issues.append(_issue("fail", f"study1.protocol.name must be {STUDY1_PROTOCOL_NAME}"))
@@ -196,15 +300,59 @@ def validate_study1_config(config: dict[str, Any]) -> list[dict[str, str]]:
             parsed = DynamicSartConfig.from_mapping(child["tasks"]["dynamic_sart"])
             plan = build_dynamic_sart_plan(parsed)
             validate_dynamic_sart_plan(plan, parsed)
-            issues.extend(_segment_issues(name, plan))
+            issues.extend(_segment_issues(name, plan, acquisition_profile=acquisition_profile))
+            if (
+                acquisition_profile == STUDY1_FULL_1000_ACQUISITION_PROFILE
+                and name == "session1_main"
+            ):
+                if not parsed.practice_enabled:
+                    issues.append(_issue("fail", "full 1000 profile must enable practice"))
+                if not parsed.practice_require_ready_confirmation:
+                    issues.append(
+                        _issue(
+                            "fail",
+                            "full 1000 profile must require participant confirmation after practice",
+                        )
+                    )
+                if (
+                    parsed.practice_trials_per_round,
+                    parsed.practice_no_go_trials,
+                    parsed.practice_max_rounds,
+                ) != (30, 4, 3):
+                    issues.append(
+                        _issue(
+                            "fail",
+                            "full 1000 practice must use 30 trials, 4 no-go trials, and at most 3 rounds",
+                        )
+                    )
         except (KeyError, TypeError, ValueError) as exc:
             issues.append(_issue("fail", f"Study 1 segment {name} is invalid: {exc}"))
+    if acquisition_profile == STUDY1_FULL_1000_ACQUISITION_PROFILE:
+        visit_one_baseline = dict(study.get("visits", {}).get("1", {}).get("baseline") or {})
+        if any(
+            abs(float(visit_one_baseline.get(name, 0.0)) - 120.0) > 1e-9
+            for name in ("eyes_open_seconds", "eyes_closed_seconds")
+        ):
+            issues.append(
+                _issue(
+                    "fail",
+                    "full 1000 profile requires 120-second eyes-open and eyes-closed baselines",
+                )
+            )
     return issues
 
 
 def study1_protocol_hash(config: dict[str, Any]) -> str:
+    acquisition_profile = str(
+        config.get("study1", {}).get("acquisition_profile")
+        or STUDY1_STANDARD_ACQUISITION_PROFILE
+    )
     payload = {
-        "declaration": study1_protocol().payload(),
+        "declaration": study1_protocol(
+            acquisition_profile
+            if acquisition_profile == STUDY1_FULL_1000_ACQUISITION_PROFILE
+            else None
+        ).payload(),
         "study1": config.get("study1"),
         "dynamic_sart": config.get("tasks", {}).get("dynamic_sart"),
         "hardware": config.get("hardware"),
@@ -220,9 +368,19 @@ def deterministic_pilot_no_go_digit(participant_id: str, master_seed: int) -> in
     return int.from_bytes(digest[:4], "big", signed=False) % 10
 
 
-def _segment_issues(name: str, plan: dict[str, Any]) -> list[dict[str, str]]:
+def _segment_issues(
+    name: str,
+    plan: dict[str, Any],
+    *,
+    acquisition_profile: str,
+) -> list[dict[str, str]]:
     issues: list[dict[str, str]] = []
     rows = list(plan.get("planned_trials") or [])
+    if (
+        acquisition_profile == STUDY1_FULL_1000_ACQUISITION_PROFILE
+        and name == "session1_main"
+    ):
+        return _full_1000_segment_issues(plan)
     expected_trials = 400 if name == "session2_cue_extension" else 600
     if len(rows) != expected_trials:
         issues.append(_issue("fail", f"{name} must contain {expected_trials} trials"))
@@ -244,6 +402,46 @@ def _segment_issues(name: str, plan: dict[str, Any]) -> list[dict[str, str]]:
                 break
     elif bool(cue.get("enabled", False)):
         issues.append(_issue("fail", f"{name} must remain cue-free"))
+    return issues
+
+
+def _full_1000_segment_issues(plan: dict[str, Any]) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    rows = list(plan.get("planned_trials") or [])
+    blocks = list(plan.get("planned_blocks") or [])
+    if len(rows) != 1000:
+        issues.append(_issue("fail", "full 1000 session1_main must contain exactly 1000 trials"))
+    if [int(block.get("trials", 0)) for block in blocks] != [250, 250, 250, 250]:
+        issues.append(_issue("fail", "full 1000 session1_main must contain four 250-trial sections"))
+    if [str(block.get("phase")) for block in blocks] != ["support", "support", "query", "query"]:
+        issues.append(
+            _issue(
+                "fail",
+                "full 1000 session1_main must use 500 leading support trials then 500 query trials",
+            )
+        )
+    if [int(block.get("planned_no_go_count", 0)) for block in blocks] != [38, 37, 38, 37]:
+        issues.append(
+            _issue(
+                "fail",
+                "full 1000 sections must allocate no-go counts [38, 37, 38, 37]",
+            )
+        )
+    if [bool(block.get("break_after", False)) for block in blocks] != [True, True, True, False]:
+        issues.append(_issue("fail", "full 1000 session1_main must break after trials 250, 500, and 750"))
+    for block in blocks[:3]:
+        if (
+            abs(float(block.get("minimum_break_seconds", 0.0)) - 30.0) > 1e-9
+            or abs(float(block.get("maximum_break_seconds", 0.0)) - 60.0) > 1e-9
+        ):
+            issues.append(_issue("fail", "full 1000 breaks must allow continuation from 30 to 60 seconds"))
+            break
+    if sum(int(block.get("planned_no_go_count", 0)) for block in blocks) != 150:
+        issues.append(_issue("fail", "full 1000 session1_main must contain exactly 150 no-go trials"))
+    if any(abs(float(row.get("planned_soi_seconds", 0.0)) - 1.60) > 1e-9 for row in rows):
+        issues.append(_issue("fail", "full 1000 session1_main SOIs must remain fixed at 1.60 seconds"))
+    if bool(dict(plan.get("cue_schedule") or {}).get("enabled", False)):
+        issues.append(_issue("fail", "full 1000 session1_main must remain cue-free"))
     return issues
 
 

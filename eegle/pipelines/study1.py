@@ -41,7 +41,10 @@ from eegle.pipelines.dsart_recording import (
     run_resting_baseline,
 )
 from eegle.protocols.study1 import (
+    STUDY1_FULL_1000_ACQUISITION_PROFILE,
     STUDY1_PROTOCOL_NAME,
+    STUDY1_STANDARD_ACQUISITION_PROFILE,
+    apply_study1_full_1000_profile,
     configure_study1_segment,
     deterministic_pilot_no_go_digit,
     study1_protocol_hash,
@@ -77,6 +80,7 @@ class Study1Options:
     master_seed: int = 42
     no_go_digit: int | None = None
     smoke: bool = False
+    full_1000: bool = False
     include_practice: bool = False
     baseline_seconds: float | None = None
     window_size: tuple[int, int] | None = None
@@ -132,6 +136,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Counterbalanced participant allocation; required when creating a live participant",
     )
     parser.add_argument("--smoke", action="store_true", help="Run every visit phase with shortened block contracts")
+    parser.add_argument(
+        "--full-1000",
+        action="store_true",
+        help=(
+            "Run the complete Visit 1 profile: four 250-trial sections, support trials 1-500, "
+            "query trials 501-1000, and breaks after trials 250, 500, and 750"
+        ),
+    )
     parser.add_argument("--include-practice", action="store_true")
     parser.add_argument("--baseline-seconds", type=float, default=None)
     parser.add_argument("--window-size", type=int, nargs=2, metavar=("WIDTH", "HEIGHT"), default=None)
@@ -184,6 +196,7 @@ def _options_from_args(args: argparse.Namespace) -> Study1Options:
         master_seed=int(args.master_seed),
         no_go_digit=args.no_go_digit,
         smoke=bool(args.smoke),
+        full_1000=bool(args.full_1000),
         include_practice=bool(args.include_practice),
         baseline_seconds=args.baseline_seconds,
         window_size=None if args.window_size is None else (int(args.window_size[0]), int(args.window_size[1])),
@@ -206,6 +219,8 @@ def _options_from_args(args: argparse.Namespace) -> Study1Options:
 def run_study1_visit(options: Study1Options) -> dict[str, Any]:
     _validate_options(options)
     config = copy.deepcopy(load_config(options.config_path))
+    if options.full_1000:
+        config = apply_study1_full_1000_profile(config)
     config_issues = validate_study1_config(config)
     failures = [issue["detail"] for issue in config_issues if issue["status"] == "fail"]
     if failures:
@@ -578,6 +593,20 @@ def _validate_options(options: Study1Options) -> None:
         raise ValueError("--preflight-only cannot be combined with --resume")
     if options.preflight_only and options.simulate_eeg:
         raise ValueError("--preflight-only is for the physical EEG system and cannot use --simulate-eeg")
+    if options.full_1000 and options.visit_number != 1:
+        raise ValueError("--full-1000 is a Visit 1 acquisition profile")
+    if options.full_1000 and options.smoke:
+        raise ValueError("--full-1000 cannot be combined with --smoke")
+    if options.full_1000 and options.preflight_only:
+        raise ValueError("--full-1000 cannot be combined with --preflight-only")
+    if options.full_1000 and not options.include_practice:
+        raise ValueError("--full-1000 requires --include-practice")
+    if (
+        options.full_1000
+        and options.baseline_seconds is not None
+        and abs(float(options.baseline_seconds) - 120.0) > 1e-9
+    ):
+        raise ValueError("--full-1000 requires --baseline-seconds 120 (or the validated config default)")
     if options.baseline_seconds is not None and options.baseline_seconds < 0:
         raise ValueError("--baseline-seconds must be nonnegative")
     if options.window_size is not None and any(value <= 0 for value in options.window_size):
@@ -618,6 +647,11 @@ def _participant_manifest(
         "schema": STUDY_SCHEMA,
         "protocol_name": STUDY1_PROTOCOL_NAME,
         "protocol_hash": protocol_hash,
+        "acquisition_profile": (
+            STUDY1_FULL_1000_ACQUISITION_PROFILE
+            if options.full_1000
+            else STUDY1_STANDARD_ACQUISITION_PROFILE
+        ),
         "participant_id": options.participant_id,
         "master_seed": options.master_seed,
         "no_go_digit": no_go_digit,
@@ -755,6 +789,11 @@ def _new_visit_manifest(
         "simulate_eeg": options.simulate_eeg,
         "recording_rehearsal": _recording_rehearsal_identity(config),
         "smoke": options.smoke,
+        "full_1000": options.full_1000,
+        "acquisition_profile": str(
+            config.get("study1", {}).get("acquisition_profile")
+            or STUDY1_STANDARD_ACQUISITION_PROFILE
+        ),
         "include_practice": options.include_practice,
         "baseline": copy.deepcopy(config.get("recording_suite", {}).get("baseline", {})),
         "window_size": list(config.get("hardware", {}).get("display", {}).get("size", [1000, 700])),
@@ -800,6 +839,13 @@ def _validate_resume(
         "window_size": list(config.get("hardware", {}).get("display", {}).get("size", [1000, 700])),
         "full_screen": bool(config.get("hardware", {}).get("display", {}).get("full_screen", False)),
     }
+    if options.full_1000:
+        expected.update(
+            {
+                "full_1000": True,
+                "acquisition_profile": STUDY1_FULL_1000_ACQUISITION_PROFILE,
+            }
+        )
     mismatches = [key for key, value in expected.items() if manifest.get(key) != value]
     if mismatches:
         raise ValueError("resume identity does not match existing Study 1 visit: " + ", ".join(mismatches))
@@ -874,6 +920,7 @@ def _public_result(manifest: dict[str, Any], path: Path) -> dict[str, Any]:
         "visit_number": manifest.get("visit_number"),
         "visit_id": manifest.get("visit_id"),
         "manifest_file": str(path),
+        "acquisition_profile": manifest.get("acquisition_profile"),
         "no_go_digit": manifest.get("no_go_digit"),
         "session_directories": manifest.get("session_directories"),
         "sequence_hashes": manifest.get("sequence_hashes"),

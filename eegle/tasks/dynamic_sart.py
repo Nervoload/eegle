@@ -580,6 +580,33 @@ class DynamicSartTask:
                     if not aborted and not practice_passed:
                         aborted = True
                         abort_reason = "practice_criteria_not_met"
+                    elif (
+                        not aborted
+                        and practice_passed
+                        and self.task_config.practice_require_ready_confirmation
+                    ):
+                        _emit(
+                            logger,
+                            marker_outlet,
+                            marker_label("practice_ready_start"),
+                            event_type="SYSTEM",
+                        )
+                        practice_ready = _show_practice_ready(
+                            win,
+                            visual,
+                            keyboard,
+                            self.task_config,
+                        )
+                        _emit(
+                            logger,
+                            marker_outlet,
+                            marker_label("practice_ready_end"),
+                            event_type="SYSTEM",
+                            continued=practice_ready,
+                        )
+                        if not practice_ready:
+                            aborted = True
+                            abort_reason = "practice_ready_abort"
 
                 if not aborted:
                     countdown_ok, countdown_reason = _run_psychopy_countdown(
@@ -1249,6 +1276,26 @@ def _practice_status_text(
         f"Premature-response rate: {float(criteria.get('anticipatory_response_rate', 0.0)):.1%} "
         f"(maximum {float(criteria.get('maximum_anticipatory_response_rate', 0.0)):.1%}).\n\n"
         f"{next_step}"
+    )
+
+
+def _show_practice_ready(
+    win: Any,
+    visual: Any,
+    keyboard: "PersistentKeyboardCollector",
+    config: DynamicSartConfig,
+) -> bool:
+    return _show_screen(
+        win,
+        visual,
+        keyboard,
+        (
+            "Practice complete.\n\n"
+            "The main task will begin after a short countdown.\n\n"
+            "Press SPACE when you are ready to begin."
+        ),
+        state="PRACTICE_READY",
+        allowed_continue=config.response_keys,
     )
 
 

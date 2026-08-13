@@ -78,6 +78,7 @@ class DynamicSartConfig:
     master_seed: int
     blocks: tuple[DynamicSartBlock, ...]
     practice_enabled: bool
+    practice_require_ready_confirmation: bool
     practice_trials_per_round: int
     practice_no_go_trials: int
     practice_max_rounds: int
@@ -155,6 +156,9 @@ class DynamicSartConfig:
             master_seed=int(raw.get("master_seed", 42)),
             blocks=blocks,
             practice_enabled=bool(practice.get("enabled", True)),
+            practice_require_ready_confirmation=bool(
+                practice.get("require_ready_confirmation", False)
+            ),
             practice_trials_per_round=int(practice.get("trials_per_round", 27)),
             practice_no_go_trials=int(practice.get("no_go_trials", 3)),
             practice_max_rounds=int(practice.get("max_rounds", 3)),
@@ -215,6 +219,11 @@ class DynamicSartConfig:
             "blocks": [block.payload(index) for index, block in enumerate(self.blocks, start=1)],
             "practice": {
                 "enabled": self.practice_enabled,
+                **(
+                    {"require_ready_confirmation": True}
+                    if self.practice_require_ready_confirmation
+                    else {}
+                ),
                 "trials_per_round": self.practice_trials_per_round,
                 "no_go_trials": self.practice_no_go_trials,
                 "max_rounds": self.practice_max_rounds,

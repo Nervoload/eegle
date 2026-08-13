@@ -23,6 +23,30 @@ and resume machinery.
 - The cue extension creates 20 deterministic opportunities, grouped into five
   permuted blocks with two cue and two no-cue assignments in each block.
 
+### Complete 1,000-trial acquisition profile
+
+The Windows complete-run launcher opts Visit 1 into the separately identified
+`full_1000_support500_query500_v1` profile. It does not change the standard
+600-trial proposal profile above. The complete profile requires:
+
+- 120-second eyes-open and 120-second eyes-closed baselines;
+- the standard criterion-gated practice, plus an explicit participant-ready
+  confirmation before the main countdown;
+- four 250-trial sections with breaks after trials 250, 500, and 750;
+- support trials 1-500, followed by held-out query trials 501-1000; and
+- 150 no-go trials allocated `[38, 37, 38, 37]` across the sections.
+
+Support and query are analysis roles, not participant-visible conditions. The
+support reference is frozen after section 2. Keeping all support trials before
+all query trials preserves the temporal holdout and prevents later behavior
+from changing the reference used to label earlier query observations. The 500
+support trials provide 425 planned go trials before behavioral exclusions,
+which exceeds the labeler's preferred 200-valid-go reference threshold.
+
+The profile has its own declaration metadata and changes the protocol hash.
+Resume identity therefore rejects attempts to combine it with a standard or
+smoke Visit 1 recording.
+
 ## Software rehearsal
 
 Run both visits against an approved temporary session root:

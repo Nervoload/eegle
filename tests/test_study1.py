@@ -18,8 +18,16 @@ from eegle.pipelines.study1 import (
     _validate_options,
     run_study1_visit,
 )
-from eegle.protocols.study1 import configure_study1_segment, validate_study1_config
+from eegle.protocols.study1 import (
+    STUDY1_FULL_1000_ACQUISITION_PROFILE,
+    apply_study1_full_1000_profile,
+    configure_study1_segment,
+    study1_protocol,
+    validate_study1_config,
+)
 from eegle.realtime.epoching import load_eeg_csv_for_epoching
+from eegle.session import create_session
+from eegle.tasks.dynamic_sart import DynamicSartTask
 from eegle.tasks.dynamic_sart_schema import DynamicSartConfig
 from eegle.tasks.dynamic_sart_sequence import build_dynamic_sart_plan
 from scripts.prepare_neuracle64_windows_config import build_configs, refresh_confirmed_configs
@@ -341,6 +349,129 @@ class Study1Tests(unittest.TestCase):
             [block["trials"] for block in child["tasks"]["dynamic_sart"]["blocks"]],
             [10, 10, 10],
         )
+
+    def test_full_1000_profile_is_four_sections_with_temporal_support_query_split(self) -> None:
+        base = load_config(CONFIG)
+        original = copy.deepcopy(base)
+
+        full = apply_study1_full_1000_profile(base)
+        failures = [
+            issue["detail"] for issue in validate_study1_config(full) if issue["status"] == "fail"
+        ]
+        child = configure_study1_segment(
+            full,
+            "session1_main",
+            no_go_digit=3,
+            seed=2026,
+            include_practice=True,
+        )
+        parsed = DynamicSartConfig.from_mapping(child["tasks"]["dynamic_sart"])
+        plan = build_dynamic_sart_plan(parsed)
+        blocks = plan["planned_blocks"]
+        trials = plan["planned_trials"]
+
+        self.assertEqual(base, original)
+        self.assertEqual(failures, [])
+        self.assertEqual(
+            full["study1"]["acquisition_profile"],
+            STUDY1_FULL_1000_ACQUISITION_PROFILE,
+        )
+        self.assertEqual([block["trials"] for block in blocks], [250, 250, 250, 250])
+        self.assertEqual(
+            [block["phase"] for block in blocks],
+            ["support", "support", "query", "query"],
+        )
+        self.assertEqual(
+            [block["planned_no_go_count"] for block in blocks],
+            [38, 37, 38, 37],
+        )
+        self.assertEqual(
+            [block["break_after"] for block in blocks],
+            [True, True, True, False],
+        )
+        self.assertEqual(len(trials), 1000)
+        self.assertTrue(all(row["phase"] == "support" for row in trials[:500]))
+        self.assertTrue(all(row["phase"] == "query" for row in trials[500:]))
+        self.assertEqual(sum(row["is_no_go"] for row in trials), 150)
+        self.assertTrue(parsed.practice_enabled)
+        self.assertTrue(parsed.practice_require_ready_confirmation)
+        self.assertEqual(
+            study1_protocol(STUDY1_FULL_1000_ACQUISITION_PROFILE).targets[0].metadata,
+            {"support_trials": 500, "query_trials": 500},
+        )
+
+    def test_full_1000_options_reject_protocol_drift(self) -> None:
+        base = dict(
+            config_path=CONFIG,
+            participant_id="unit",
+            visit_number=1,
+            full_1000=True,
+            include_practice=True,
+            baseline_seconds=120.0,
+        )
+        _validate_options(Study1Options(**base))
+        with self.assertRaisesRegex(ValueError, "cannot be combined with --smoke"):
+            _validate_options(Study1Options(**base, smoke=True))
+        with self.assertRaisesRegex(ValueError, "requires --baseline-seconds 120"):
+            _validate_options(Study1Options(**{**base, "baseline_seconds": 60.0}))
+        with self.assertRaisesRegex(ValueError, "requires --include-practice"):
+            _validate_options(Study1Options(**{**base, "include_practice": False}))
+
+    def test_full_1000_validator_rejects_interleaved_support(self) -> None:
+        full = apply_study1_full_1000_profile(load_config(CONFIG))
+        blocks = full["study1"]["segments"]["session1_main"]["blocks"]
+        blocks[2]["phase"] = "support"
+
+        issues = validate_study1_config(full)
+
+        self.assertTrue(
+            any(
+                issue["status"] == "fail"
+                and (
+                    "support blocks must all precede query blocks" in issue["detail"]
+                    or "500 leading support trials" in issue["detail"]
+                )
+                for issue in issues
+            )
+        )
+
+    def test_full_1000_task_completes_software_dry_execution(self) -> None:
+        full = apply_study1_full_1000_profile(load_config(CONFIG))
+        child = configure_study1_segment(
+            full,
+            "session1_main",
+            no_go_digit=3,
+            seed=2026,
+            include_practice=True,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = create_session(
+                child,
+                task="dynamic_sart",
+                participant_id="full-profile-dry",
+                root=Path(tmp),
+            )
+            result = DynamicSartTask(
+                child,
+                mode="dry-run",
+                participant_id="full-profile-dry",
+            ).run(paths)
+            reference = json.loads(
+                (paths.events / "dynamic_sart_support_reference.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            events = [
+                json.loads(line)["label"].split("__", 1)[0]
+                for line in paths.events_jsonl.read_text(encoding="utf-8").splitlines()
+            ]
+
+        self.assertFalse(result.summary["aborted"])
+        self.assertEqual(result.summary["experimental_trials"], 1000)
+        self.assertEqual(reference["support_trial_budget"], 500)
+        self.assertEqual(reference["support_go_trial_budget"], 425)
+        self.assertEqual(events.count("dynamic_sart_support_complete"), 1)
+        self.assertEqual(events.count("dynamic_sart_break_start"), 3)
 
     def test_protocol_rejects_non_1000_hz_acquisition_contract(self) -> None:
         config = load_config(CONFIG)

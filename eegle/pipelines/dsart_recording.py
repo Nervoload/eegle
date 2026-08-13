@@ -40,6 +40,7 @@ from eegle.psychopy_input import clear_psychopy_keys, poll_psychopy_keys
 from eegle.recording_health import RecorderHealthMonitor
 from eegle.runtime import prepare_psychopy_runtime
 from eegle.session import SessionPaths, create_session
+from eegle.storage_permissions import probe_recording_storage
 from eegle.telemetry import Telemetry
 
 
@@ -61,7 +62,7 @@ PHASE_ORDER = (
     "dsart_session_2",
 )
 DSART8_CHANNELS = ("Fz", "Cz", "Pz", "C3", "C4", "P3", "P4", "Oz")
-_ATOMIC_REPLACE_RETRY_DELAYS_SECONDS = (0.0, 0.01, 0.025, 0.05, 0.1, 0.2, 0.4, 0.8)
+_ATOMIC_REPLACE_RETRY_DELAYS_SECONDS = (0.0, 0.025, 0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 2.0)
 
 
 @dataclass(frozen=True)
@@ -2705,11 +2706,14 @@ def _marker_loopback_check(
 
 def _storage_check(output_root: Path, *, record_eeg: bool = True) -> CheckResult:
     try:
-        output_root.mkdir(parents=True, exist_ok=True)
-        probe = output_root / ".eegle_dsart_write_probe"
-        with probe.open("w", encoding="utf-8") as handle:
-            handle.write("ok\n")
-        probe.unlink(missing_ok=True)
+        probe = probe_recording_storage(output_root)
+        if probe.get("status") != "ok":
+            return CheckResult(
+                "recording_storage",
+                "fail",
+                "recording storage transition probe failed: " + "; ".join(probe.get("failures") or []),
+                probe,
+            )
         usage = shutil.disk_usage(output_root)
         if record_eeg:
             fail_below = 5 * 1024 * 1024 * 1024
@@ -2729,6 +2733,7 @@ def _storage_check(output_root: Path, *, record_eeg: bool = True) -> CheckResult
                 "fail_below_bytes": fail_below,
                 "warn_below_bytes": warn_below,
                 "record_eeg": record_eeg,
+                "transition_probe": probe,
             },
         )
     except Exception as exc:
@@ -2746,34 +2751,30 @@ def _runtime_cache_root(config: dict[str, Any], output_root: Path) -> Path:
 
 
 def _probe_session_root_writable(output_root: Path) -> None:
-    """Fail before acquisition when the selected suite root cannot be updated."""
+    """Fail before acquisition unless parent and task-worker writes both work."""
 
-    probe_dir = output_root / ".eegle_dsart_write_probe"
-    probe_file = probe_dir / f"{os.getpid()}.json"
-    try:
-        _write_json_atomic(probe_file, {"probe": 1})
-        _write_json_atomic(probe_file, {"probe": 2})
-    except OSError as exc:
-        message = _session_root_error_message(output_root, exc)
-        if isinstance(exc, PermissionError):
-            raise PermissionError(message) from exc
-        raise OSError(message) from exc
-    finally:
-        try:
-            probe_file.unlink(missing_ok=True)
-        except OSError:
-            pass
-        try:
-            probe_dir.rmdir()
-        except OSError:
-            pass
+    probe = probe_recording_storage(output_root)
+    if probe.get("status") == "ok":
+        return
+    failures = "; ".join(str(value) for value in probe.get("failures") or [])
+    child = dict(probe.get("child_process") or {})
+    child_hint = ""
+    if child.get("status") == "fail":
+        child_hint = (
+            " The parent process reached the root but the fresh task-worker process did not; "
+            "on BeyondTrust, ask IT to review the PowerShell/Python rule and its child-process policy."
+        )
+    raise PermissionError(
+        _session_root_error_message(output_root, failures or "unknown storage-policy failure")
+        + child_hint
+    )
 
 
-def _session_root_error_message(output_root: Path, exc: OSError) -> str:
+def _session_root_error_message(output_root: Path, detail: object) -> str:
     return (
-        f"DSART session root is not writable by the current Python process: {output_root} "
-        f"({type(exc).__name__}: {exc}). Choose an approved data location with --session-root, "
-        "for example $env:LOCALAPPDATA\\EEGle\\data on Windows, then rerun the same dsart8 or dsart32 command."
+        f"DSART session root is not writable by the EEGle parent/task-worker processes: {output_root} "
+        f"({detail}). Choose one approved data location with --session-root and validate it before recording; "
+        "do not redirect an active visit or automatically fall back between roots."
     )
 
 

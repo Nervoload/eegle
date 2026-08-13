@@ -5,7 +5,7 @@ Neuracle 64-channel wet system. Neuracle Collect owns the amplifier connection
 and publishes EEG to Lab Streaming Layer (LSL). EEGle owns the task, marker
 stream, managed LabRecorder process, XDF file, and CSV safety mirror.
 
-The six operator PowerShell scripts are under
+The eight operator PowerShell scripts are under
 `scripts\windows\neuracle64`:
 
 | Script | Purpose | EEG recorded? |
@@ -16,9 +16,74 @@ The six operator PowerShell scripts are under
 | `03-Run-EEGTaskTest.ps1` | Full preflight followed by a 10-20 trial recorded task | Yes: XDF + CSV |
 | `04-Run-FullShortTest.ps1` | Preflight, resting controls, practice, and 30 experimental trials | Yes: XDF + CSV |
 | `05-Diagnose-Lsl.ps1` | Separate local pylsl/config failures from a missing external outlet | No |
+| `06-Test-StorageAccess.ps1` | Reproduce parent/child recording permission operations without EEG | No |
+| `07-Run-Full.ps1` | Complete two-minute baselines, practice gate, and 1,000-trial task | Yes: XDF + CSV |
 
 Run every command below from a 64-bit Windows PowerShell terminal. Do not use
 Git Bash or WSL for the hardware run.
+
+## Storage permission gate
+
+Use one explicit data root for the whole visit. Do not automatically fall back
+from one folder to another after a visit starts: that can divide raw EEG,
+markers, manifests, and recovery state across different locations.
+
+Before applying the cap, run the storage transition probe against the exact
+folder you plan to use:
+
+```powershell
+$EegleData = Join-Path $env:LOCALAPPDATA "EEGle\data"
+
+.\scripts\windows\neuracle64\06-Test-StorageAccess.ps1 `
+  -DataRoot $EegleData
+```
+
+The probe performs nested directory creation, append, flush, atomic replacement,
+rename, read-back, and deletion. It also launches the same fresh child Python
+process boundary used when the resting baseline transitions to the visual task.
+It creates and removes only a disposable `.eegle_recording_storage_probe`
+directory. The full short and complete runs perform this gate again and stop
+before LabRecorder or the baseline starts if it fails.
+
+On a BeyondTrust-managed computer, elevating PowerShell alone does not prove
+that the task worker will receive the same policy. BeyondTrust evaluates child
+processes, and its application definition has an explicit **Allow child
+processes will match this application definition** option. Run the storage
+probe once from a normal terminal and once from a PowerShell terminal launched
+with the organization's approved BeyondTrust action. If only the latter passes,
+give both probe outputs to IT. Ask them to inspect the rules for:
+
+- the PowerShell executable used to start the script;
+- `.venv\Scripts\python.exe`, including the child Python process;
+- the configured `LabRecorder.exe`;
+- the chosen data directory.
+
+Prefer an IT-provisioned data directory with Modify permission for your normal
+user account over granting administrator privileges to Python. An elevated
+Python interpreter can execute arbitrary code and is a much broader permission
+than EEGle needs. A typical dedicated path is `C:\EEGleData`, but IT must create
+and approve it; the root of `C:\` is not a fallback data directory.
+
+Test an IT-provisioned directory before using it:
+
+```powershell
+$EegleData = "C:\EEGleData"
+
+.\scripts\windows\neuracle64\06-Test-StorageAccess.ps1 `
+  -DataRoot $EegleData
+```
+
+If both the parent and child tests fail, inspect the directory ACL and Windows
+Security **Protection history**. Microsoft Defender Controlled Folder Access
+can block an executable even when NTFS permissions look writable, and enterprise
+policy can add more protected locations. An administrator should allow only the
+required executable paths or approve a dedicated unprotected recording folder.
+Do not disable ransomware protection for a study run.
+
+For a persistent unexplained denial, IT can capture a short Process Monitor
+trace filtered to `python.exe`, `LabRecorder.exe`, and result `ACCESS DENIED`.
+That identifies the exact process, operation, and path instead of guessing from
+the final Python exception.
 
 ## 1. One-time Windows preparation
 
@@ -82,7 +147,7 @@ Python executable directly. To add `eegle.exe` and `study1.exe` to the user
   -AddCommandsToUserPath
 ```
 
-Close and reopen PowerShell after changing the user `PATH`. The six operator `.ps1`
+Close and reopen PowerShell after changing the user `PATH`. The operator `.ps1`
 scripts still run by repository-relative path, from the repository root.
 
 ## 2. Display-only dry run: 10 trials
@@ -300,6 +365,73 @@ recording is not appended to or overwritten.
 
 Do not reuse a completed participant/Visit 1 identity for a new test. Generate a
 new `$TestId` instead.
+
+## 6. Complete 1,000-trial run
+
+Use `07-Run-Full.ps1` only after the dry task, storage probe, LSL preflight, and
+short recorded tests pass. The complete profile is a validated Visit 1
+acquisition contract:
+
+1. full hardware, display, storage, LSL, channel, and LabRecorder preflight;
+2. 120 seconds eyes open;
+3. 120 seconds eyes closed;
+4. 30-trial criterion-gated practice rounds (up to three), followed by a
+   participant-controlled ready screen;
+5. 1,000 experimental trials in four equal 250-trial sections; and
+6. bounded breaks after trials 250, 500, and 750. SPACE continues after 30
+   seconds; the task continues automatically at 60 seconds.
+
+Trials 1-500 (sections 1 and 2) are support and trials 501-1000 (sections 3 and
+4) are held-out query. The task looks identical to the participant on both
+sides of that boundary. EEGle uses support responses to freeze the behavioral
+reaction-time reference after trial 500, then evaluates later query trials
+without updating that reference. Do not interleave new support trials into
+each section: later support would move the reference boundary and leak later
+behavior into query evaluation.
+
+Each section contains either 37 or 38 no-go trials, allocating exactly 150
+no-go trials across the task: `[38, 37, 38, 37]`. At the fixed 1.6-second SOI,
+the experimental trials take about 26 minutes 40 seconds before practice and
+breaks. Plan for at least 33 minutes after preflight for the two baselines, one
+successful practice round, and the minimum breaks, plus instructions and
+participant transitions.
+
+```powershell
+$ParticipantId = "sub-001"
+$VisitId = "$ParticipantId-full-visit1"
+
+.\scripts\windows\neuracle64\07-Run-Full.ps1 `
+  -Participant $ParticipantId `
+  -VisitId $VisitId `
+  -NoGoDigit 3 `
+  -Operator "operator-initials" `
+  -ConfirmElectrodes `
+  -DataRoot $EegleData
+```
+
+The launcher selects the explicit
+`full_1000_support500_query500_v1` acquisition profile. It cannot be combined
+with the smoke profile, a non-120-second baseline override, Visit 2, or skipped
+practice. The profile name and protocol hash are written to the participant and
+visit manifests, preventing an accidental resume with the standard or short
+protocol.
+
+To resume at a completed phase boundary, repeat the exact identity and options:
+
+```powershell
+.\scripts\windows\neuracle64\07-Run-Full.ps1 `
+  -Participant $ParticipantId `
+  -VisitId $VisitId `
+  -NoGoDigit 3 `
+  -Operator "operator-initials" `
+  -Resume `
+  -ConfirmElectrodes `
+  -DataRoot $EegleData
+```
+
+Resume skips completed baseline/task phases but never appends to or overwrites
+an interrupted recording. A participant who completed the run needs a new
+participant/visit identity for another test.
 
 ## Troubleshooting gates
 

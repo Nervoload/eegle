@@ -1,0 +1,70 @@
+param(
+    [Parameter(Mandatory = $true)]
+    [string] $Participant,
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(0, 9)]
+    [int] $NoGoDigit,
+    [Parameter(Mandatory = $true)]
+    [string] $Operator,
+    [string] $DataRoot = "",
+    [string] $VisitId = "",
+    [switch] $Resume,
+    [switch] $FullScreen,
+    [switch] $ConfirmElectrodes
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "Common.ps1")
+
+if (-not $ConfirmElectrodes) {
+    throw "Inspect cap contact/impedance in Collect, then rerun with -ConfirmElectrodes."
+}
+$python = Get-EeglePython
+$config = Get-EegleConfigPath "live"
+Update-EegleGeneratedLiveConfigs $python $config
+$resolvedDataRoot = Get-EegleDataRoot $DataRoot
+$env:EEGLE_SESSION_ROOT = $resolvedDataRoot
+if (-not $Resume -and [string]::IsNullOrWhiteSpace($VisitId)) {
+    $VisitId = New-EegleRunId "full-visit1"
+}
+
+Write-Host "Starting the complete 1,000-trial Study 1 run:"
+Write-Host "  full preflight, storage gate, and electrode checks"
+Write-Host "  120 seconds eyes open"
+Write-Host "  120 seconds eyes closed"
+Write-Host "  criterion-gated participant practice, then a participant-ready confirmation"
+Write-Host "  1,000 experimental trials in four 250-trial sections"
+Write-Host "  trials 1-500 are support; trials 501-1000 are held-out query"
+Write-Host "  breaks after trials 250, 500, and 750 (continue from 30 seconds; automatic at 60)"
+Write-Host "  fixed timing: 250 ms digit + 1350 ms fixation (1600 ms SOI; no jitter)"
+Write-Host "The main task lasts about 26 minutes 40 seconds before practice and breaks."
+Write-Host "Keep Neuracle Collect LSL streaming. EEGle launches/stops LabRecorder."
+
+$arguments = @(
+    "-m", "eegle.pipelines.study1",
+    "--config", $config,
+    "--participant", $Participant,
+    "--visit", "1",
+    "--operator", $Operator,
+    "--task-mode", "psychopy",
+    "--no-go-digit", [string] $NoGoDigit,
+    "--full-1000",
+    "--include-practice",
+    "--baseline-seconds", "120",
+    "--window-size", "1000", "700",
+    "--confirm-electrodes",
+    "--session-root", $resolvedDataRoot,
+    "--lsl-wait", "10"
+)
+if (-not [string]::IsNullOrWhiteSpace($VisitId)) {
+    $arguments += @("--visit-id", $VisitId)
+}
+if ($Resume) {
+    $arguments += "--resume"
+}
+if ($FullScreen) {
+    $arguments += "--fullscreen"
+}
+& $python @arguments
+Assert-EegleExit "complete 1,000-trial Study 1 run"

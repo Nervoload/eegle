@@ -37,6 +37,8 @@ class PortabilityTests(unittest.TestCase):
             "03-Run-EEGTaskTest.ps1",
             "04-Run-FullShortTest.ps1",
             "05-Diagnose-Lsl.ps1",
+            "06-Test-StorageAccess.ps1",
+            "07-Run-Full.ps1",
             "Common.ps1",
         }
         self.assertEqual({path.name for path in scripts.glob("*.ps1")}, expected)
@@ -65,6 +67,14 @@ class PortabilityTests(unittest.TestCase):
         diagnostics = (scripts / "05-Diagnose-Lsl.ps1").read_text(encoding="utf-8")
         self.assertIn("eegle.lsl_diagnostics", diagnostics)
         self.assertIn("--ignore-lsl-config", diagnostics)
+        storage = (scripts / "06-Test-StorageAccess.ps1").read_text(encoding="utf-8")
+        self.assertIn("eegle.storage_permissions", storage)
+        complete = (scripts / "07-Run-Full.ps1").read_text(encoding="utf-8")
+        self.assertIn('"--full-1000"', complete)
+        self.assertIn('"--baseline-seconds", "120"', complete)
+        self.assertIn('"--include-practice"', complete)
+        self.assertNotIn('"--smoke"', complete)
+        self.assertIn("$FullScreen", complete)
 
     def test_primary_cli_name_and_setup_check_command_are_clear(self) -> None:
         parser = build_parser()

@@ -31,6 +31,7 @@ from eegle.pipelines.dsart_recording import (
     _run_dsart_child_session_inline,
     _run_dsart_child_session_isolated,
     _runtime_cache_root,
+    _storage_check,
     _task_marker_integrity,
     _options_from_args,
     _psychopy_baseline_phase,
@@ -50,6 +51,7 @@ from eegle.pipelines.dsart_recording import (
 )
 from eegle.recording_health import RecorderHealthMonitor
 from eegle.session import create_session
+from eegle.storage_permissions import probe_recording_storage
 from eegle.tasks.base import TaskRunResult
 from eegle.tasks.dynamic_sart_schema import DynamicSartConfig
 from eegle.tasks.dynamic_sart_sequence import build_dynamic_sart_plan, validate_dynamic_sart_plan
@@ -561,8 +563,50 @@ class DsartRecordingTests(unittest.TestCase):
                 record_eeg=False,
                 require_eeg=False,
             )
-            with self.assertRaisesRegex(OSError, r"--session-root.*LOCALAPPDATA"):
+            with self.assertRaisesRegex(OSError, r"--session-root.*do not redirect"):
                 run_recording_suite(options)
+
+    def test_recording_storage_probe_exercises_fresh_child_process(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = probe_recording_storage(Path(tmp) / "approved-data")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["parent_operations"]["status"], "ok")
+        self.assertEqual(result["child_process"]["status"], "ok")
+        self.assertEqual(result["child_process"]["return_code"], 0)
+
+    def test_storage_preflight_fails_when_task_worker_cannot_write(self) -> None:
+        probe = {
+            "status": "fail",
+            "output_root": "C:\\EEGleData",
+            "failures": ["fresh child Python process was denied"],
+            "child_process": {"status": "fail", "return_code": 1},
+        }
+        with patch(
+            "eegle.pipelines.dsart_recording.probe_recording_storage",
+            return_value=probe,
+        ):
+            result = _storage_check(Path("C:/EEGleData"), record_eeg=True)
+
+        self.assertEqual(result.status, "fail")
+        self.assertIn("fresh child Python process was denied", result.detail)
+
+    def test_recording_storage_probe_reports_child_policy_denial(self) -> None:
+        denied = SimpleNamespace(
+            returncode=5,
+            stdout="",
+            stderr="PermissionError: enterprise child-process policy denied access",
+        )
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "eegle.storage_permissions.subprocess.run",
+            return_value=denied,
+        ):
+            result = probe_recording_storage(Path(tmp) / "approved-data")
+
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["parent_operations"]["status"], "ok")
+        self.assertEqual(result["child_process"]["status"], "fail")
+        self.assertIn("enterprise child-process policy", result["child_process"]["error"])
 
     def test_atomic_json_write_retries_transient_windows_access_denial(self) -> None:
         original_replace = Path.replace

@@ -28,6 +28,7 @@ from eegle.tasks.dynamic_sart import (
     _practice_status_text,
     _run_psychopy_countdown,
     _show_bounded_break,
+    _show_practice_ready,
     audit_dynamic_sart_action,
     practice_criteria,
     score_dynamic_sart_trial,
@@ -582,6 +583,16 @@ class DynamicSartTaskTests(unittest.TestCase):
         self.assertIn("need 2", repeat)
         self.assertNotIn("will repeat", final)
         self.assertIn("experimental session will not start", final)
+
+    def test_practice_ready_screen_waits_for_explicit_participant_continue(self) -> None:
+        config = DynamicSartConfig.from_mapping(_config()["tasks"]["dynamic_sart"])
+        with patch("eegle.tasks.dynamic_sart._show_screen", return_value=True) as screen:
+            continued = _show_practice_ready(object(), object(), object(), config)
+
+        self.assertTrue(continued)
+        self.assertEqual(screen.call_args.kwargs["state"], "PRACTICE_READY")
+        self.assertEqual(screen.call_args.kwargs["allowed_continue"], ("space",))
+        self.assertIn("Press SPACE when you are ready", screen.call_args.args[3])
 
     def test_completion_text_reports_aborted_task_truthfully(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
