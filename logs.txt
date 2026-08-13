@@ -1,27 +1,227 @@
-(.venv) PS C:\Users\Surettej\Desktop\code\eegle> .\scripts\windows\neuracle64\04-Run-FullShortTest.ps1 `
->>   -Participant "test1" `
+[dsart.baseline] dsart_baseline_eyes_closed_end
+2026-08-13 13:57:59.164 ( 191.945s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
+8.4848  WARNING         Monitor specification not found. Creating a temporary one...
+142.4250        WARNING         No default speaker specified in Preferences / Hardware, using first speaker found: Speakers (Cirrus Logic XU (with APO Extensions))
+[feedback_manager] Feedback manager stopping processes
+[feedback_manager] Stopping recorder
+[feedback_manager] recorder stopped
+[feedback_manager] Feedback manager summary: complete
+{
+  "acquisition_profile": "proposal_standard_v1",
+  "failures": [
+    {
+      "error": "RuntimeError: Study 1 baseline did not complete: XDF EEG channel labels/order do not map to the configured physical device order",
+      "phase": "baseline",
+      "timestamp": "2026-08-13T13:58:03"
+    }
+  ],
+  "manifest_file": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\test9\\visits\\visit-1\\short-visit1-20260813-135441\\visit_manifest.json",
+  "no_go_digit": 3,
+  "participant_id": "test9",
+  "schema": "eegle.study1.visit.v1",
+  "sequence_hashes": {},
+  "session_directories": {},
+  "status": "failed",
+  "visit_id": "short-visit1-20260813-135441",
+  "visit_number": 1
+}
+full short Study 1 test failed with exit code 1
+At C:\Users\Surettej\Desktop\code\eegle\scripts\windows\neuracle64\Common.ps1:101 char:9
++         throw "$Operation failed with exit code $LASTEXITCODE"
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (full short Stud...ith exit code 1:String) [], RuntimeException
+    + FullyQualifiedErrorId : full short Study 1 test failed with exit code 1
+
+
+    (.venv) PS C:\Users\Surettej\Desktop\code\eegle> .\scripts\windows\neuracle64\04-Run-FullShortTest.ps1 `
+>>   -Participant "test9" `
 >>   -ConfirmElectrodes `
 >>   -DataRoot $EegleData `
 >>   -NoGoDigit 3 `
->>   -Operator "john"
+>>   -Operator "john"  
+{            
+  "written_configs": [
+    "C:\\Users\\Surettej\\Desktop\\code\\eegle\\.runtime\\windows-neuracle64\\display-only.json",
+    "C:\\Users\\Surettej\\Desktop\\code\\eegle\\.runtime\\windows-neuracle64\\study1-live.json",
+    "C:\\Users\\Surettej\\Desktop\\code\\eegle\\.runtime\\windows-neuracle64\\short-live-task.json"
+  ]
+}
 Starting the complete short Study 1 test:
   full preflight and electrode checks
   60 seconds eyes open
   60 seconds eyes closed
   participant practice
   30 experimental trials (three 10-trial blocks)
+  fixed timing: 250 ms digit + 1350 ms fixation (1600 ms SOI; no jitter)
 Keep Neuracle Collect LSL streaming. EEGle launches/stops LabRecorder.
+2026-08-13 13:54:47.246 (   0.031s) [        F193FF2A]      netinterfaces.cpp:36    INFO| netif '{50635E82-F596-4DD4-A07E-758006593EC2}' (status: 1, multicast: 1
+2026-08-13 13:54:47.246 (   0.031s) [        F193FF2A]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 9
+2026-08-13 13:54:47.247 (   0.032s) [        F193FF2A]      netinterfaces.cpp:36    INFO| netif '{4D8CF894-7764-40B7-B5F8-52C7C859FBA5}' (status: 2, multicast: 1
+2026-08-13 13:54:47.247 (   0.032s) [        F193FF2A]      netinterfaces.cpp:36    INFO| netif '{8E26F3A3-0C9F-4C70-A709-35E90EC0A844}' (status: 2, multicast: 1
+2026-08-13 13:54:47.247 (   0.032s) [        F193FF2A]      netinterfaces.cpp:36    INFO| netif '{516B0D53-6E22-454D-9CF5-91163C7F8281}' (status: 2, multicast: 1
+2026-08-13 13:54:47.247 (   0.032s) [        F193FF2A]      netinterfaces.cpp:36    INFO| netif '{94A5AEF1-4F4C-4BED-9205-860D4599A3B1}' (status: 1, multicast: 1
+2026-08-13 13:54:47.247 (   0.032s) [        F193FF2A]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 19
+2026-08-13 13:54:47.247 (   0.032s) [        F193FF2A]      netinterfaces.cpp:36    INFO| netif '{ABA8E1FB-58AD-424E-8FC2-3EE30AAB2410}' (status: 2, multicast: 1
+2026-08-13 13:54:47.247 (   0.032s) [        F193FF2A]      netinterfaces.cpp:36    INFO| netif '{999E4E5F-9892-11EE-A20A-806E6F6E6963}' (status: 1, multicast: 1
+2026-08-13 13:54:47.247 (   0.032s) [        F193FF2A]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 1
+2026-08-13 13:54:47.247 (   0.032s) [        F193FF2A]         api_config.cpp:126   INFO| Loaded default config
+2026-08-13 13:55:02.479 (  15.264s) [        F193FF2A]             common.cpp:78    INFO| git:64988c6a14b8dc3b3f270ece58eab4f480bfab43/branch:refs/tags/v1.17.7/build:Release/compiler:MSVC-19.29.30159.0/link:SHARED
+2026-08-13 13:55:08.610 (  21.395s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
 {
-  "error": "ValueError: Study 1 configuration invalid: Study 1 SOI must be 1.60 seconds (0.25 s digit + 1.35 s fixation); Study 1 intentional inter-trial jitter must be disabled; Study 1 soi_min_seconds must be fixed at 1.60 seconds; Study 1 soi_max_seconds must be fixed at 1.60 seconds; Study 1 display must wait for VBlank; Study 1 display refresh-rate measurement must be enabled; Study 1 measured refresh rate must match the configured display mode; session1_main SOIs must remain fixed at 1.60 seconds; session2_main SOIs must remain fixed at 1.60 seconds; session2_cue_extension SOIs must remain fixed at 1.60 seconds",
-  "participant_id": "test1",
+  "dsart_recording_preflight": {
+    "channel_contract": "ok",
+    "electrode_quality_file": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\test9\\visits\\visit-1\\short-visit1-20260813-135441\\preflight\\visit_1_preflight_electrode_quality.json",
+    "phase": "visit_1_preflight",
+    "report_file": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\test9\\visits\\visit-1\\short-visit1-20260813-135441\\preflight\\visit_1_preflight.json",
+    "status": "warning",
+    "warnings": [
+      "not importable",
+      "not importable",
+      "not importable",
+      "not importable",
+      "not importable",
+      "missing training packages: joblib, sklearn",
+      "electrode quality warn; report=C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\test9\\visits\\visit-1\\short-visit1-20260813-135441\\preflight\\visit_1_preflight_electrode_quality.json"
+    ]
+  }
+}
+[feedback_manager] Feedback manager starting enabled processes
+[feedback_manager] Starting recorder
+[feedback_manager] recorder status: recording
+[realtime_processor] realtime_processor disabled
+[dashboard] dashboard disabled
+[dsart.baseline] dsart_baseline_eyes_open_start
+[dsart.baseline] dsart_baseline_eyes_open_end
+[dsart.baseline] dsart_baseline_eyes_closed_start
+[dsart.baseline] dsart_baseline_eyes_closed_end
+2026-08-13 13:57:59.164 ( 191.945s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
+8.4848  WARNING         Monitor specification not found. Creating a temporary one...
+142.4250        WARNING         No default speaker specified in Preferences / Hardware, using first speaker found: Speakers (Cirrus Logic XU (with APO Extensions))
+[feedback_manager] Feedback manager stopping processes
+[feedback_manager] Stopping recorder
+[feedback_manager] recorder stopped
+[feedback_manager] Feedback manager summary: complete
+{
+  "acquisition_profile": "proposal_standard_v1",
+  "failures": [
+    {
+      "error": "RuntimeError: Study 1 baseline did not complete: XDF EEG channel labels/order do not map to the configured physical device order",
+      "phase": "baseline",
+      "timestamp": "2026-08-13T13:58:03"
+    }
+  ],
+  "manifest_file": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\test9\\visits\\visit-1\\short-visit1-20260813-135441\\visit_manifest.json",
+  "no_go_digit": 3,
+  "participant_id": "test9",
   "schema": "eegle.study1.visit.v1",
+  "sequence_hashes": {},
+  "session_directories": {},
   "status": "failed",
+  "visit_id": "short-visit1-20260813-135441",
   "visit_number": 1
 }
 full short Study 1 test failed with exit code 1
-At C:\Users\Surettej\Desktop\code\eegle\scripts\windows\neuracle64\Common.ps1:84 char:9
+At C:\Users\Surettej\Desktop\code\eegle\scripts\windows\neuracle64\Common.ps1:101 char:9
++         throw "$Operation failed with exit code $LASTEXITCODE"
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (full short Stud...ith exit code 1:String) [], RuntimeException
+    + FullyQualifiedErrorId : full short Study 1 test failed with exit code 1
+
+
+
+    ISSUE 2:
+
+    (.venv) PS C:\Users\Surettej\Desktop\code\eegle> .\scripts\windows\neuracle64\04-Run-FullShortTest.ps1 `
+>>   -Participant "test8" `
+>>   -ConfirmElectrodes `
+>>   -DataRoot $EegleData `
+>>   -NoGoDigit 3 `
+>>   -Operator "john"
+{
+  "written_configs": [
+    "C:\\Users\\Surettej\\Desktop\\code\\eegle\\.runtime\\windows-neuracle64\\display-only.json",
+    "C:\\Users\\Surettej\\Desktop\\code\\eegle\\.runtime\\windows-neuracle64\\study1-live.json",
+    "C:\\Users\\Surettej\\Desktop\\code\\eegle\\.runtime\\windows-neuracle64\\short-live-task.json"
+  ]
+}
+Starting the complete short Study 1 test:
+  full preflight and electrode checks
+  60 seconds eyes open
+  60 seconds eyes closed
+  participant practice
+  30 experimental trials (three 10-trial blocks)
+  fixed timing: 250 ms digit + 1350 ms fixation (1600 ms SOI; no jitter)
+Keep Neuracle Collect LSL streaming. EEGle launches/stops LabRecorder.
+2026-08-13 13:51:48.853 (   0.029s) [        9FA4E905]      netinterfaces.cpp:36    INFO| netif '{50635E82-F596-4DD4-A07E-758006593EC2}' (status: 1, multicast: 1
+2026-08-13 13:51:48.853 (   0.029s) [        9FA4E905]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 9
+2026-08-13 13:51:48.853 (   0.029s) [        9FA4E905]      netinterfaces.cpp:36    INFO| netif '{4D8CF894-7764-40B7-B5F8-52C7C859FBA5}' (status: 2, multicast: 1
+2026-08-13 13:51:48.853 (   0.029s) [        9FA4E905]      netinterfaces.cpp:36    INFO| netif '{8E26F3A3-0C9F-4C70-A709-35E90EC0A844}' (status: 2, multicast: 1
+2026-08-13 13:51:48.853 (   0.029s) [        9FA4E905]      netinterfaces.cpp:36    INFO| netif '{516B0D53-6E22-454D-9CF5-91163C7F8281}' (status: 2, multicast: 1
+2026-08-13 13:51:48.853 (   0.029s) [        9FA4E905]      netinterfaces.cpp:36    INFO| netif '{94A5AEF1-4F4C-4BED-9205-860D4599A3B1}' (status: 1, multicast: 1
+2026-08-13 13:51:48.853 (   0.029s) [        9FA4E905]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 19
+2026-08-13 13:51:48.853 (   0.029s) [        9FA4E905]      netinterfaces.cpp:36    INFO| netif '{ABA8E1FB-58AD-424E-8FC2-3EE30AAB2410}' (status: 2, multicast: 1
+2026-08-13 13:51:48.853 (   0.029s) [        9FA4E905]      netinterfaces.cpp:36    INFO| netif '{999E4E5F-9892-11EE-A20A-806E6F6E6963}' (status: 1, multicast: 1
+2026-08-13 13:51:48.853 (   0.029s) [        9FA4E905]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 1
+2026-08-13 13:51:48.853 (   0.029s) [        9FA4E905]         api_config.cpp:126   INFO| Loaded default config
+2026-08-13 13:52:04.067 (  15.242s) [        9FA4E905]             common.cpp:78    INFO| git:64988c6a14b8dc3b3f270ece58eab4f480bfab43/branch:refs/tags/v1.17.7/build:Release/compiler:MSVC-19.29.30159.0/link:SHARED
+2026-08-13 13:52:10.228 (  21.404s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
+{
+  "acquisition_profile": "proposal_standard_v1",
+  "failures": [
+    {
+      "error": "RuntimeError: Study 1 preflight failed",
+      "phase": "preflight",
+      "timestamp": "2026-08-13T13:52:10"
+    }
+  ],
+  "manifest_file": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\test8\\visits\\visit-1\\short-visit1-20260813-135143\\visit_manifest.json",
+  "no_go_digit": 3,
+  "participant_id": "test8",
+  "schema": "eegle.study1.visit.v1",
+  "sequence_hashes": {},
+  "session_directories": {},
+  "status": "failed",
+  "visit_id": "short-visit1-20260813-135143",
+  "visit_number": 1
+}
+full short Study 1 test failed with exit code 1
+At C:\Users\Surettej\Desktop\code\eegle\scripts\windows\neuracle64\Common.ps1:101 char:9
 +         throw "$Operation failed with exit code $LASTEXITCODE"
 +         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     + CategoryInfo          : OperationStopped: (full short Stud...ith exit code 1:String) [], RuntimeException
     + FullyQualifiedErrorId : full short Study 1 test failed with exit code 1
  
+(.venv) PS C:\Users\Surettej\Desktop\code\eegle> .\scripts\windows\neuracle64\04-Run-FullShortTest.ps1 `
+>>   -Participant "test8" `
+>>   -ConfirmElectrodes `
+>>   -DataRoot $EegleData `
+>>   -NoGoDigit 3 `
+>>   -Operator "john"
+{
+  "written_configs": [
+    "C:\\Users\\Surettej\\Desktop\\code\\eegle\\.runtime\\windows-neuracle64\\display-only.json",
+    "C:\\Users\\Surettej\\Desktop\\code\\eegle\\.runtime\\windows-neuracle64\\study1-live.json",
+    "C:\\Users\\Surettej\\Desktop\\code\\eegle\\.runtime\\windows-neuracle64\\short-live-task.json"
+  ]
+}
+Starting the complete short Study 1 test:
+  full preflight and electrode checks
+  60 seconds eyes open
+  60 seconds eyes closed
+  participant practice
+  30 experimental trials (three 10-trial blocks)
+  fixed timing: 250 ms digit + 1350 ms fixation (1600 ms SOI; no jitter)
+Keep Neuracle Collect LSL streaming. EEGle launches/stops LabRecorder.
+{
+  "error": "FileExistsError: Study 1 Visit 1 already has status=failed; use --resume",
+  "participant_id": "test8",
+  "schema": "eegle.study1.visit.v1",
+  "status": "failed",
+  "visit_number": 1
+}
+full short Study 1 test failed with exit code 1
+At C:\Users\Surettej\Desktop\code\eegle\scripts\windows\neuracle64\Common.ps1:101 char:9
++         throw "$Operation failed with exit code $LASTEXITCODE"
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (full short Stud...ith exit code 1:String) [], RuntimeException
+    + FullyQualifiedErrorId : full short Study 1 test failed with exit code 1

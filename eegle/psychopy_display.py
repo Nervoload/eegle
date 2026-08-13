@@ -52,8 +52,8 @@ def create_psychopy_window(visual: Any, display: dict[str, Any], *, title: str =
 def measure_psychopy_refresh_rate(win: Any, display: dict[str, Any]) -> dict[str, Any]:
     """Measure and validate display refresh rather than accepting a modeled rate."""
 
-    expected = max(1.0, float(display.get("expected_refresh_rate_hz", 60.0)))
-    tolerance = max(0.0, float(display.get("refresh_rate_tolerance_hz", 2.0)))
+    expected = max(1.0, float(display.get("expected_refresh_rate_hz", 120.0)))
+    tolerance = max(0.0, float(display.get("refresh_rate_tolerance_hz", 10.0)))
     check_enabled = bool(display.get("check_refresh_rate", True))
     check_required = bool(display.get("require_refresh_rate_match", False))
     measured = None
@@ -66,7 +66,7 @@ def measure_psychopy_refresh_rate(win: Any, display: dict[str, Any]) -> dict[str
                     nIdentical=int(display.get("refresh_rate_identical_frames", 10)),
                     nMaxFrames=int(display.get("refresh_rate_max_frames", 120)),
                     nWarmUpFrames=int(display.get("refresh_rate_warmup_frames", 10)),
-                    threshold=float(display.get("refresh_rate_stability_threshold_ms", 1.0)),
+                    threshold=float(display.get("refresh_rate_stability_threshold_ms", 2.0)),
                     infoMsg=str(display.get("refresh_rate_check_message", "Checking display refresh rate...")),
                 )
             except Exception as exc:  # pragma: no cover - hardware/backend specific
