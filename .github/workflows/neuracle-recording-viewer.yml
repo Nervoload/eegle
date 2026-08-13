@@ -8,6 +8,8 @@ on:
       - scripts/neuracle_xdf_viewer.py
       - scripts/neuracle_xdf_viewer_template.html
       - .github/workflows/neuracle-recording-viewer.yml
+  pull_request:
+    branches: [neuracletest]
   workflow_dispatch:
 
 permissions:
