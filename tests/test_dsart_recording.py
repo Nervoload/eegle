@@ -252,6 +252,7 @@ class DsartRecordingTests(unittest.TestCase):
 
         window = Window()
         visual = SimpleNamespace(TextStim=lambda *_args, **_kwargs: SimpleNamespace(draw=lambda: None))
+        logger = MagicMock()
         with patch("eegle.pipelines.dsart_recording.monotonic", side_effect=[10.0, 10.1, 10.1, 10.3, 10.3]), patch(
             "eegle.pipelines.dsart_recording.lsl_local_clock", return_value=20.0
         ), patch("eegle.pipelines.dsart_recording.poll_psychopy_keys", return_value=[]), patch(
@@ -261,7 +262,7 @@ class DsartRecordingTests(unittest.TestCase):
                 window,
                 visual,
                 SimpleNamespace(),
-                MagicMock(),
+                logger,
                 MagicMock(),
                 name="eyes_open",
                 duration=0.2,
@@ -269,6 +270,8 @@ class DsartRecordingTests(unittest.TestCase):
             )
         self.assertEqual(window.flip_count, 1)
         self.assertEqual(result["completion_status"], "completed")
+        self.assertTrue(logger.mark.call_args_list[0].kwargs["scheduled_on_flip"])
+        self.assertEqual(logger.mark.call_args_list[0].kwargs["lsl_timestamp"], 20.0)
 
     def test_inter_session_break_closes_marker_outlet_on_operator_interrupt(self) -> None:
         class Outlet:
@@ -1113,14 +1116,53 @@ class DsartRecordingTests(unittest.TestCase):
             passed = _marker_receipt_integrity(session, ledger, required=True)
             receipt.write_text(
                 "marker_label,lsl_timestamp,local_received_lsl_timestamp\n"
+                "dynamic_sart_stimulus_onset__trial=1,10.000000000,10.50\n"
+                "dynamic_sart_stimulus_offset__trial=1,10.250000000,10.75\n",
+                encoding="utf-8",
+            )
+            delayed = _marker_receipt_integrity(session, ledger, required=True)
+            receipt.write_text(
+                "marker_label,lsl_timestamp,local_received_lsl_timestamp\n"
+                "dynamic_sart_stimulus_onset__trial=1,10.000000000,9.99\n"
+                "dynamic_sart_stimulus_offset__trial=1,10.250000000,10.24\n",
+                encoding="utf-8",
+            )
+            early = _marker_receipt_integrity(session, ledger, required=True)
+            receipt.write_text(
+                "marker_label,lsl_timestamp,local_received_lsl_timestamp\n"
                 "dynamic_sart_stimulus_offset__trial=1,10.250000000,10.26\n",
                 encoding="utf-8",
             )
             failed = _marker_receipt_integrity(session, ledger, required=True)
 
         self.assertEqual(passed["status"], "pass")
+        self.assertAlmostEqual(passed["maximum_delivery_latency_seconds"], 0.01)
+        self.assertEqual(delayed["status"], "warning")
+        self.assertEqual(delayed["failures"], [])
+        self.assertEqual(delayed["late_delivery_indices"], [1, 2])
+        self.assertEqual(early["status"], "warning")
+        self.assertEqual(early["failures"], [])
+        self.assertEqual(early["negative_delivery_latency_indices"], [1, 2])
         self.assertEqual(failed["status"], "fail")
         self.assertTrue(any("order/count" in row for row in failed["failures"]))
+
+    def test_marker_receipt_drain_records_expected_delivery_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            recorder = LslMarkerReceiptRecorder(
+                "marker-source",
+                root / "markers.csv",
+                root / "markers.json",
+            )
+            recorder._summary.status = "recording"
+            recorder._summary.received_count = 4
+
+            completed = recorder.wait_for_count(4, timeout=0.0)
+            snapshot = recorder.snapshot()
+
+        self.assertTrue(completed)
+        self.assertEqual(snapshot["drain_expected_count"], 4)
+        self.assertTrue(snapshot["drain_completed"])
 
     def test_dry_run_marker_integrity_does_not_require_psychopy_flips(self) -> None:
         source_id = "dry-marker-source"

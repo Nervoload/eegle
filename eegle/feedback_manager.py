@@ -596,6 +596,20 @@ def normalize_processes(config: dict[str, Any], record_eeg: bool = True) -> dict
     recorder_enabled = bool(recorder.get("enabled", recorder_backend not in {"disabled", "none"})) and record_eeg
     if not record_eeg:
         recorder_backend = "disabled"
+    recorder_finalize_timeout = float(
+        recorder.get(
+            "shutdown_timeout_seconds",
+            15.0 if recorder_backend == "labrecorder_xdf" else 5.0,
+        )
+    )
+    recorder_tail_guard = float(recorder.get("tail_guard_seconds", 1.0))
+    recorder_worker_shutdown_timeout = float(
+        recorder.get(
+            "worker_shutdown_timeout_seconds",
+            recorder_finalize_timeout
+            + (recorder_tail_guard + 5.0 if recorder_backend == "labrecorder_xdf" else 0.0),
+        )
+    )
 
     realtime_proc = dict(process_config.get("realtime_processor", {}))
     realtime_component = components.get("realtime_processor", "disabled")
@@ -630,10 +644,12 @@ def normalize_processes(config: dict[str, Any], record_eeg: bool = True) -> dict
             "startup_timeout_seconds": float(
                 recorder.get("startup_timeout_seconds", 20.0 if recorder_backend == "labrecorder_xdf" else 8.0)
             ),
-            "shutdown_timeout_seconds": float(
-                recorder.get("shutdown_timeout_seconds", 15.0 if recorder_backend == "labrecorder_xdf" else 5.0)
-            ),
+            "shutdown_timeout_seconds": recorder_worker_shutdown_timeout,
             "xdf_stall_timeout_seconds": float(recorder.get("xdf_stall_timeout_seconds", 15.0)),
+            "tail_guard_seconds": recorder_tail_guard,
+            "maximum_xdf_tail_shortfall_warning_seconds": float(
+                recorder.get("maximum_xdf_tail_shortfall_warning_seconds", 2.0)
+            ),
         },
         "realtime_processor": {
             "enabled": realtime_enabled,

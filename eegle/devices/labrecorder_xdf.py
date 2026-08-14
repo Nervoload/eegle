@@ -45,6 +45,10 @@ class LabRecorderXdfRecorder:
             2.0,
             float(self.recorder_config.get("xdf_stall_timeout_seconds", 15.0)),
         )
+        self.tail_guard_seconds = max(
+            0.0,
+            float(self.recorder_config.get("tail_guard_seconds", 1.0)),
+        )
         self.rcs_port = int(self.recorder_config.get("rcs_port", 22345))
         self.labrecorder_config = paths.process_logs / "labrecorder.cfg"
         self.labrecorder_stdout = paths.process_logs / "labrecorder.stdout.log"
@@ -164,6 +168,7 @@ class LabRecorderXdfRecorder:
             "xdf_file": str(self.paths.eeg_xdf),
             "xdf_size_bytes": xdf_size,
             "xdf_seconds_since_growth": max(0.0, now - self._last_xdf_growth_at),
+            "tail_guard_seconds": self.tail_guard_seconds,
             "sample_count": int(mirror.get("sample_count") or 0),
             "first_lsl_timestamp": mirror.get("first_lsl_timestamp"),
             "last_lsl_timestamp": mirror.get("last_lsl_timestamp"),
@@ -190,6 +195,11 @@ class LabRecorderXdfRecorder:
         self._stop_reason = reason
         failures: list[str] = []
         if self._process is not None and self._process.poll() is None:
+            if self.tail_guard_seconds > 0:
+                sleep(self.tail_guard_seconds)
+                self._notes.append(
+                    f"kept LabRecorder open for a {self.tail_guard_seconds:.3f}-second marker/EEG tail guard"
+                )
             try:
                 self._send("stop")
             except Exception as exc:

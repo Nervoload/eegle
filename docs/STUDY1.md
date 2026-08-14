@@ -142,7 +142,12 @@ recorded phases. Liblsl may log a native `R_EEGleMarkers` transmission-broke
 message while that receiver closes; it is not the Neuracle EEG stream and is
 not itself a validation failure.
 
-Before terminating LabRecorder, the worker waits for file-size settlement and
+Before phase cleanup, the independent receipt waits for the exact number of
+markers successfully emitted by the task. Baseline starts and Dynamic SART
+stimulus onsets/offsets are captured on their PsychoPy flips; emitted and
+received LSL timestamps, marker order, source identity, and delivery latency are
+persisted and validated. LabRecorder is held open for a one-second tail guard
+before its stop command. The worker then waits for file-size settlement and
 for a bounded PyXDF scan to confirm that the finalized file is structurally
 readable. This prevents a partially flushed XDF from being reported as stopped.
 
@@ -164,6 +169,13 @@ may be canonicalized only when the independent source-preserving CSV mirror
 proves the same selected LSL stream identity and unchanged 65-value order.
 Conflicting channel counts, stream identities, meaningful positional labels,
 sample rates, timestamps, or marker receipts remain failures.
+
+If the synchronized XDF EEG tail precedes the final marker by more than 500 ms
+but no more than two seconds, the phase may continue with a warning only when
+the independent source-preserving CSV mirror and marker receipt jointly prove
+complete coverage from the same EEG stream. This narrow recovery handles a
+LabRecorder final-chunk race without weakening marker parity, EEG gap, stream
+identity, or large-tail failure gates.
 
 BDF, photodiode/audio loopback qualification, and the full modeling suite
 remain separate follow-up work.

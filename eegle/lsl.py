@@ -86,6 +86,7 @@ class LslMarkerOutlet:
         self.name = name
         self.stream_type = stream_type
         self.source_id = source_id
+        self.pushed_count = 0
 
     def push(self, label: str, timestamp: float | None = None) -> None:
         if self._outlet is None:
@@ -94,6 +95,7 @@ class LslMarkerOutlet:
             self._outlet.push_sample([label])
         else:
             self._outlet.push_sample([label], timestamp=timestamp)
+        self.pushed_count += 1
 
     def close(self) -> None:
         # pylsl closes the native outlet when the Python object is released.

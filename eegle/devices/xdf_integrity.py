@@ -23,6 +23,7 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
     metadata = _load_json(metadata_path) or {}
     eeg_config = dict(parameters.get("hardware", {}).get("eeg", {}) or {})
     marker_config = dict(parameters.get("hardware", {}).get("markers", {}) or {})
+    recorder_config = dict(parameters.get("processes", {}).get("recorder", {}) or {})
     failures: list[str] = []
     warnings: list[str] = []
     result: dict[str, Any] = {
@@ -215,14 +216,65 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
 
     eeg_synced = np.asarray(eeg_loaded.get("time_stamps", []), dtype=float)
     marker_synced = np.asarray(marker_loaded.get("time_stamps", []), dtype=float)
+    coverage: dict[str, Any] = {
+        "status": "unavailable",
+        "boundary_tolerance_seconds": 0.5,
+        "end_shortfall_seconds": None,
+        "csv_tail_evidence": None,
+    }
     if eeg_synced.size and marker_synced.size:
         tolerance = 0.5
-        if float(eeg_synced[0]) > float(marker_synced[0]) + tolerance:
-            failures.append("XDF EEG starts after the first required marker")
-        if float(eeg_synced[-1]) < float(marker_synced[-1]) - tolerance:
-            failures.append("XDF EEG ends before the last required marker")
+        first_eeg = float(eeg_synced[0])
+        last_eeg = float(eeg_synced[-1])
+        first_marker = float(marker_synced[0])
+        last_marker = float(marker_synced[-1])
+        start_lag = first_eeg - first_marker
+        end_shortfall = last_marker - last_eeg
+        maximum_warning_shortfall = max(
+            tolerance,
+            float(recorder_config.get("maximum_xdf_tail_shortfall_warning_seconds", 2.0)),
+        )
+        coverage.update(
+            {
+                "status": "pass",
+                "start_lag_seconds": start_lag,
+                "end_shortfall_seconds": max(0.0, end_shortfall),
+                "maximum_warning_shortfall_seconds": maximum_warning_shortfall,
+            }
+        )
+        if start_lag > tolerance:
+            coverage["status"] = "fail"
+            failures.append(
+                "XDF EEG starts after the first required marker "
+                f"by {start_lag:.6f} seconds (limit {tolerance:.3f})"
+            )
+        if end_shortfall > tolerance:
+            tail_evidence = _source_preserving_csv_tail_evidence(
+                root,
+                eeg_matches[0],
+                marker_matches[0],
+                marker_sequence_matches=marker_labels == receipt_labels,
+            )
+            coverage["csv_tail_evidence"] = tail_evidence
+            if tail_evidence["status"] == "pass" and end_shortfall <= maximum_warning_shortfall:
+                coverage["status"] = "warning" if coverage["status"] != "fail" else "fail"
+                warnings.append(
+                    "XDF finalized before its last synchronized marker boundary by "
+                    f"{end_shortfall:.6f} seconds; the complete source-preserving CSV mirror "
+                    "covers the marker with the same EEG stream identity, so the acquisition tail "
+                    "is retained outside the primary XDF"
+                )
+            else:
+                coverage["status"] = "fail"
+                evidence_detail = "; ".join(tail_evidence.get("reasons") or [])
+                failures.append(
+                    "XDF EEG ends before the last required marker "
+                    f"by {end_shortfall:.6f} seconds (warning limit {maximum_warning_shortfall:.3f}; "
+                    f"CSV fallback evidence: {evidence_detail or tail_evidence.get('status')})"
+                )
     else:
         failures.append("XDF lacks synchronized EEG/marker timestamps needed to verify recording coverage")
+        coverage["status"] = "fail"
 
     result["eeg"] = {
         "stream": eeg_matches[0],
@@ -250,6 +302,7 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
         "synchronized_first_timestamp": None if not marker_synced.size else float(marker_synced[0]),
         "synchronized_last_timestamp": None if not marker_synced.size else float(marker_synced[-1]),
     }
+    result["recording_coverage"] = coverage
     result["pyxdf_errors"] = log_messages
     return _finish(result, metadata_path)
 
@@ -396,6 +449,77 @@ def _confirmed_positional_xdf_evidence(
     }
 
 
+def _source_preserving_csv_tail_evidence(
+    root: Path,
+    selected_xdf_stream: dict[str, Any],
+    selected_marker_stream: dict[str, Any],
+    *,
+    marker_sequence_matches: bool,
+) -> dict[str, Any]:
+    """Prove that a short XDF finalization tail exists intact in the CSV mirror."""
+
+    reasons: list[str] = []
+    raw_metadata = _load_json(root / "raw" / "eeg_metadata.json") or {}
+    raw_stream = dict(raw_metadata.get("stream") or {})
+    contract = dict(raw_metadata.get("raw_sample_contract") or {})
+    marker_metadata = _load_json(root / "raw" / "lsl_markers_received_metadata.json") or {}
+    raw_last = _optional_float(raw_metadata.get("last_lsl_timestamp"))
+    marker_last = _optional_float(marker_metadata.get("last_lsl_timestamp"))
+    if raw_metadata.get("status") != "stopped":
+        reasons.append("CSV EEG mirror did not stop cleanly")
+    if int(raw_metadata.get("sample_count") or 0) <= 0:
+        reasons.append("CSV EEG mirror contains no samples")
+    if int(raw_metadata.get("timestamp_gap_count") or 0) != 0:
+        reasons.append("CSV EEG mirror contains timestamp gaps")
+    if int(raw_metadata.get("nonmonotonic_timestamp_count") or 0) != 0:
+        reasons.append("CSV EEG mirror contains nonmonotonic timestamps")
+    if contract.get("source_timestamp_retained") is not True:
+        reasons.append("CSV EEG mirror is not source-preserving")
+    if contract.get("amplitude_samples_modified") is not False:
+        reasons.append("CSV EEG mirror does not prove unmodified amplitudes")
+    if contract.get("channel_value_order_modified") is not False:
+        reasons.append("CSV EEG mirror does not prove unmodified channel order")
+    if marker_metadata.get("status") != "stopped":
+        reasons.append("independent marker receipt did not stop cleanly")
+    if not marker_sequence_matches:
+        reasons.append("XDF and independent marker sequences differ")
+    eeg_hostname = str(selected_xdf_stream.get("hostname") or "").strip()
+    marker_hostname = str(selected_marker_stream.get("hostname") or "").strip()
+    if not eeg_hostname or not marker_hostname:
+        reasons.append("XDF EEG/marker host clock identity is unavailable")
+    elif eeg_hostname != marker_hostname:
+        reasons.append("XDF EEG and marker streams originate from different host clocks")
+    if raw_last is None or marker_last is None:
+        reasons.append("CSV EEG/marker tail timestamps are unavailable")
+    elif raw_last < marker_last:
+        reasons.append(
+            f"CSV EEG mirror ends {marker_last - raw_last:.6f} seconds before the last marker"
+        )
+    identity_fields = ("name", "type", "source_id", "hostname", "channel_count")
+    identity_mismatches = []
+    for field in identity_fields:
+        xdf_value = selected_xdf_stream.get(field)
+        if xdf_value in {None, ""}:
+            continue
+        if str(raw_stream.get(field)) != str(xdf_value):
+            identity_mismatches.append(field)
+    if identity_mismatches:
+        reasons.append(
+            "XDF and CSV EEG identities differ in " + ", ".join(identity_mismatches)
+        )
+    return {
+        "status": "fail" if reasons else "pass",
+        "csv_last_lsl_timestamp": raw_last,
+        "last_marker_lsl_timestamp": marker_last,
+        "xdf_stream": {field: selected_xdf_stream.get(field) for field in identity_fields},
+        "xdf_marker_stream": {
+            field: selected_marker_stream.get(field) for field in identity_fields
+        },
+        "csv_stream": {field: raw_stream.get(field) for field in identity_fields},
+        "reasons": reasons,
+    }
+
+
 def _channel_labels(info: dict[str, Any], channel_count: int) -> list[str]:
     try:
         rows = info["desc"][0]["channels"][0]["channel"]
@@ -413,6 +537,14 @@ def _marker_receipt_labels(path: Path) -> list[str]:
             return [str(row.get("marker_label") or "") for row in csv.DictReader(handle)]
     except OSError:
         return []
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        converted = float(value)
+    except (TypeError, ValueError):
+        return None
+    return converted if np.isfinite(converted) else None
 
 
 def _finish(result: dict[str, Any], metadata_path: Path) -> dict[str, Any]:

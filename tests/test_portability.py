@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -78,6 +79,14 @@ class PortabilityTests(unittest.TestCase):
         self.assertIn('"--retry-incomplete"', complete)
         self.assertNotIn('"--smoke"', complete)
         self.assertIn("$FullScreen", complete)
+        study_config = json.loads((ROOT / "configs" / "study1_neuracle64.json").read_text(encoding="utf-8"))
+        self.assertEqual(study_config["recording_suite"]["marker_receipt_timeout_seconds"], 2.0)
+        self.assertEqual(study_config["processes"]["recorder"]["tail_guard_seconds"], 1.0)
+        self.assertEqual(study_config["processes"]["recorder"]["worker_shutdown_timeout_seconds"], 22.0)
+        self.assertEqual(
+            study_config["processes"]["recorder"]["maximum_xdf_tail_shortfall_warning_seconds"],
+            2.0,
+        )
 
     def test_primary_cli_name_and_setup_check_command_are_clear(self) -> None:
         parser = build_parser()

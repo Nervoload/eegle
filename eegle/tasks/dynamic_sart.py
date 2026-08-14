@@ -412,14 +412,13 @@ class DynamicSartTask:
             raise
         finally:
             if marker_receipt is not None:
-                drain_seconds = float(
-                    self.config.get("recording_rehearsal", {}).get(
-                        "marker_receipt_drain_seconds",
-                        0.25,
-                    )
+                drain_warning = _drain_emitted_markers(
+                    self.config,
+                    active_marker_outlet,
+                    marker_receipt,
                 )
-                if drain_seconds > 0:
-                    sleep(drain_seconds)
+                if drain_warning:
+                    _attach_cleanup_warnings(summary, telemetry, [drain_warning])
             critical_cleanup_errors = _close_task_resources(
                 ("marker receipt recorder", marker_receipt),
                 ("artifact store", store),
@@ -783,6 +782,15 @@ class DynamicSartTask:
             primary_error = exc
             raise
         finally:
+            drain_warnings = []
+            if marker_receipt is not None and marker_outlet is not None:
+                drain_warning = _drain_emitted_markers(
+                    self.config,
+                    marker_outlet,
+                    marker_receipt,
+                )
+                if drain_warning:
+                    drain_warnings.append(drain_warning)
             critical_cleanup_errors = _close_task_resources(
                 ("marker receipt recorder", marker_receipt),
                 ("artifact store", store),
@@ -791,7 +799,7 @@ class DynamicSartTask:
                 ("marker outlet", marker_outlet if owns_marker_outlet else None),
                 ("PsychoPy window", win),
             )
-            _attach_cleanup_warnings(summary, telemetry, cleanup_warnings)
+            _attach_cleanup_warnings(summary, telemetry, [*drain_warnings, *cleanup_warnings])
             if critical_cleanup_errors:
                 detail = "; ".join(critical_cleanup_errors)
                 if primary_error is not None:
@@ -2335,6 +2343,32 @@ def _start_marker_receipt_recorder(
             + str(summary.get("error") or summary.get("status"))
         )
     return recorder
+
+
+def _drain_emitted_markers(
+    config: dict[str, Any],
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet,
+    recorder: LslMarkerReceiptRecorder,
+) -> str | None:
+    """Wait for transport receipt before closing the task's marker subscriber."""
+
+    expected_count = getattr(marker_outlet, "pushed_count", None)
+    if not isinstance(expected_count, int):
+        return None
+    timeout = max(
+        0.0,
+        float(config.get("recording_suite", {}).get("marker_receipt_timeout_seconds", 2.0)),
+    )
+    try:
+        if recorder.wait_for_count(expected_count, timeout=timeout):
+            return None
+        observed = int(recorder.snapshot().get("received_count") or 0)
+        return (
+            "marker receipt drain timed out before shutdown: "
+            f"received {observed} of {expected_count} emitted markers within {timeout:.3f} seconds"
+        )
+    except Exception as exc:
+        return f"marker receipt drain failed: {type(exc).__name__}: {exc}"
 
 
 def _practice_feedback(record: dict[str, Any], no_go_digit: int) -> str:

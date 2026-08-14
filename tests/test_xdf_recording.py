@@ -121,6 +121,7 @@ class ManagedXdfTests(unittest.TestCase):
                     "startup_timeout_seconds": 20.0,
                     "shutdown_timeout_seconds": 15.0,
                     "xdf_stall_timeout_seconds": 15.0,
+                    "tail_guard_seconds": 0.0,
                 }
             },
         }
@@ -132,7 +133,8 @@ class ManagedXdfTests(unittest.TestCase):
         self.assertTrue(normalized["recorder"]["csv_mirror"])
         self.assertEqual(normalized["recorder"]["executable"], "C:/LSL/LabRecorder.exe")
         self.assertEqual(normalized["recorder"]["rcs_port"], 22345)
-        self.assertEqual(normalized["recorder"]["shutdown_timeout_seconds"], 15.0)
+        self.assertEqual(normalized["recorder"]["shutdown_timeout_seconds"], 20.0)
+        self.assertEqual(normalized["recorder"]["tail_guard_seconds"], 0.0)
 
     def test_labrecorder_config_preserves_spaces_and_required_streams(self) -> None:
         with tempfile.TemporaryDirectory(prefix="xdf path ") as tmp:
@@ -214,6 +216,32 @@ class ManagedXdfTests(unittest.TestCase):
             metadata = json.loads(paths.xdf_metadata.read_text(encoding="utf-8"))
             self.assertIn("RequiredStreams=", metadata["labrecorder_config_contents"])
             self.assertEqual(metadata["labrecorder_launch_command"], popen.call_args.args[0])
+
+    def test_recorder_holds_tail_guard_before_sending_labrecorder_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = paths_for_existing_session(tmp)
+            config = self._config("LabRecorder.exe")
+            config["processes"]["recorder"]["tail_guard_seconds"] = 1.0  # type: ignore[index]
+            recorder = LabRecorderXdfRecorder(config, paths)
+            recorder._mirror = _Mirror()  # type: ignore[assignment]
+            recorder._mirror.start()
+            recorder._process = _Process()  # type: ignore[assignment]
+            recorder._rcs_socket = _Socket()  # type: ignore[assignment]
+            recorder._status = "recording"
+            order = []
+            with patch(
+                "eegle.devices.labrecorder_xdf.sleep",
+                side_effect=lambda seconds: order.append(("tail", seconds)),
+            ), patch.object(
+                recorder,
+                "_send",
+                side_effect=lambda command: order.append(("command", command)),
+            ), patch.object(recorder, "_wait_for_xdf_settle"):
+                summary = recorder.stop(reason="unit_test")
+
+        self.assertEqual(order[:2], [("tail", 1.0), ("command", "stop")])
+        self.assertEqual(summary["status"], "stopped")
+        self.assertEqual(summary["tail_guard_seconds"], 1.0)
 
     def test_startup_requires_csv_samples_before_launching_labrecorder(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -539,6 +567,137 @@ class XdfIntegrityTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "fail")
         self.assertTrue(any("timestamp gaps" in failure for failure in result["failures"]))
+
+    def test_short_xdf_finalization_tail_is_warning_when_csv_proves_full_coverage(self) -> None:
+        stamps = [index * 0.05 for index in range(10)]
+        with tempfile.TemporaryDirectory() as tmp:
+            paths, pyxdf = self._session(Path(tmp), eeg_stamps=stamps)
+            streams = list(pyxdf.resolve_streams(str(paths.eeg_xdf)))  # type: ignore[attr-defined]
+            streams[0]["hostname"] = "ACQ-PC"
+            streams[1]["hostname"] = "ACQ-PC"
+            pyxdf.resolve_streams = lambda filename: streams  # type: ignore[attr-defined]
+            (paths.raw / "eeg_metadata.json").write_text(
+                json.dumps(
+                    {
+                        "status": "stopped",
+                        "sample_count": 2000,
+                        "last_lsl_timestamp": 1.1,
+                        "timestamp_gap_count": 0,
+                        "nonmonotonic_timestamp_count": 0,
+                        "stream": {
+                            "name": "Neuracle EEG",
+                            "type": "EEG",
+                            "source_id": "eeg-test",
+                            "hostname": "ACQ-PC",
+                            "channel_count": 65,
+                        },
+                        "raw_sample_contract": {
+                            "source_timestamp_retained": True,
+                            "amplitude_samples_modified": False,
+                            "channel_value_order_modified": False,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (paths.raw / "lsl_markers_received_metadata.json").write_text(
+                json.dumps(
+                    {
+                        "status": "stopped",
+                        "received_count": 2,
+                        "last_lsl_timestamp": 1.0015,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(sys.modules, {"pyxdf": pyxdf}):
+                result = validate_xdf_recording(paths.root, required=True)
+
+        self.assertEqual(result["status"], "warning")
+        self.assertEqual(result["failures"], [])
+        self.assertTrue(any("CSV mirror" in warning for warning in result["warnings"]))
+        self.assertEqual(result["recording_coverage"]["status"], "warning")
+        self.assertEqual(
+            result["recording_coverage"]["csv_tail_evidence"]["status"],
+            "pass",
+        )
+
+    def test_large_xdf_tail_remains_fatal_even_with_complete_csv_evidence(self) -> None:
+        stamps = [index * 0.05 for index in range(10)]
+        with tempfile.TemporaryDirectory() as tmp:
+            paths, pyxdf = self._session(Path(tmp), eeg_stamps=stamps)
+            streams = list(pyxdf.resolve_streams(str(paths.eeg_xdf)))  # type: ignore[attr-defined]
+            streams[0]["hostname"] = "ACQ-PC"
+            streams[1]["hostname"] = "ACQ-PC"
+            pyxdf.resolve_streams = lambda filename: streams  # type: ignore[attr-defined]
+            receipt = paths.raw / "lsl_markers_received.csv"
+            receipt.write_text(
+                "marker_label,lsl_timestamp,local_received_lsl_timestamp\n"
+                "task_start,1.0005,1.0005\n"
+                "task_end,3.0015,3.0015\n",
+                encoding="utf-8",
+            )
+            (paths.raw / "eeg_metadata.json").write_text(
+                json.dumps(
+                    {
+                        "status": "stopped",
+                        "sample_count": 4000,
+                        "last_lsl_timestamp": 3.1,
+                        "timestamp_gap_count": 0,
+                        "nonmonotonic_timestamp_count": 0,
+                        "stream": {
+                            "name": "Neuracle EEG",
+                            "type": "EEG",
+                            "source_id": "eeg-test",
+                            "hostname": "ACQ-PC",
+                            "channel_count": 65,
+                        },
+                        "raw_sample_contract": {
+                            "source_timestamp_retained": True,
+                            "amplitude_samples_modified": False,
+                            "channel_value_order_modified": False,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (paths.raw / "lsl_markers_received_metadata.json").write_text(
+                json.dumps(
+                    {
+                        "status": "stopped",
+                        "received_count": 2,
+                        "last_lsl_timestamp": 3.0015,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            original_load = pyxdf.load_xdf  # type: ignore[attr-defined]
+
+            def load_with_late_marker(*args: object, **kwargs: object) -> object:
+                loaded, header = original_load(*args, **kwargs)
+                loaded[1]["time_stamps"][-1] = 3.0015
+                return loaded, header
+
+            pyxdf.load_xdf = load_with_late_marker  # type: ignore[attr-defined]
+            with patch.dict(sys.modules, {"pyxdf": pyxdf}):
+                result = validate_xdf_recording(paths.root, required=True)
+
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(
+            result["recording_coverage"]["csv_tail_evidence"]["status"],
+            "pass",
+        )
+        self.assertTrue(any("warning limit 2.000" in row for row in result["failures"]))
+
+    def test_xdf_tail_without_complete_csv_evidence_remains_fatal(self) -> None:
+        stamps = [index * 0.05 for index in range(10)]
+        with tempfile.TemporaryDirectory() as tmp:
+            paths, pyxdf = self._session(Path(tmp), eeg_stamps=stamps)
+            with patch.dict(sys.modules, {"pyxdf": pyxdf}):
+                result = validate_xdf_recording(paths.root, required=True)
+
+        self.assertEqual(result["status"], "fail")
+        self.assertTrue(any("CSV fallback evidence" in failure for failure in result["failures"]))
 
     def test_xdf_validation_rejects_nonmonotonic_source_timestamps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

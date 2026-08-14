@@ -63,6 +63,8 @@
       "eyes_closed_seconds": 120.0
     },
     "recorder_stall_timeout_seconds": 5.0,
+    "marker_receipt_timeout_seconds": 2.0,
+    "marker_delivery_latency_warning_seconds": 0.25,
     "resume_at_completed_phase_boundaries": true,
     "epoch_contract": {
       "tmin_seconds": -0.75,
@@ -152,7 +154,10 @@
       "rcs_port": 22345,
       "startup_timeout_seconds": 20.0,
       "shutdown_timeout_seconds": 15.0,
-      "xdf_stall_timeout_seconds": 15.0
+      "worker_shutdown_timeout_seconds": 22.0,
+      "xdf_stall_timeout_seconds": 15.0,
+      "tail_guard_seconds": 1.0,
+      "maximum_xdf_tail_shortfall_warning_seconds": 2.0
     },
     "realtime_processor": {"enabled": false, "backend": "disabled", "startup_timeout_seconds": 8.0},
     "feedback": {"enabled": false, "backend": "disabled"},

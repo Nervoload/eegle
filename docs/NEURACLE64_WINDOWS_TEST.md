@@ -516,12 +516,31 @@ fails with the exact mismatching value numbers and observed/expected labels.
 ### `R_EEGleMarkers` disconnect line at a phase transition
 
 Each baseline/task phase has a unique EEGle marker outlet and independent
-marker receiver. When the phase completes, EEGle deliberately closes them so
-LabRecorder can finalize that phase's XDF. Some Windows liblsl builds print a
+marker receiver. At a phase boundary, EEGle now waits until that receiver has
+seen every successfully emitted marker. LabRecorder then remains open for a
+one-second EEG/marker tail guard before it receives its stop command. Some
+Windows liblsl builds print a
 native line such as `R_EEGleMarkers ... Stream transmission broke off;
 re-connecting` during that close. The `R_EEGleMarkers` name identifies the
 short-lived marker receiver, not the Neuracle EEG stream. EEGle does not treat
 this phase-boundary line as an acquisition failure.
+
+A phase still fails if a marker is missing, duplicated, reordered, has a
+different LSL timestamp at the independent receipt, uses the wrong source ID,
+or if a stimulus/baseline-start marker was not scheduled on its actual display
+flip. Local marker delivery latency is recorded; a delivery taking more than
+250 ms is a warning because the preserved LSL timestamp, rather than arrival
+time, defines alignment.
+
+LabRecorder can occasionally finalize its last buffered EEG chunk slightly
+before the final synchronized XDF marker. A short tail difference of at most two
+seconds is a warning only when the separate source-preserving CSV mirror stopped
+cleanly, has the same EEG stream identity, contains no gaps or timestamp-order
+errors, preserves raw samples/channel order, covers the exact independently
+received final marker, and the XDF marker sequence matches that receipt. This
+means the redundant recording contains the complete data. A larger difference
+or missing corroborating evidence remains a hard failure and reports the exact
+shortfall.
 
 A genuine EEG interruption is reported separately by the recorder health gate,
 CSV timestamp-gap validation, XDF timestamp-gap validation, or the selected

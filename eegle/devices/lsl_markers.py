@@ -8,7 +8,7 @@ import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from time import monotonic_ns, sleep
+from time import monotonic, monotonic_ns, sleep
 from typing import Any
 
 
@@ -21,6 +21,8 @@ class MarkerReceiptSummary:
     received_count: int = 0
     first_lsl_timestamp: float | None = None
     last_lsl_timestamp: float | None = None
+    drain_expected_count: int | None = None
+    drain_completed: bool | None = None
     error: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
@@ -32,6 +34,8 @@ class MarkerReceiptSummary:
             "received_count": self.received_count,
             "first_lsl_timestamp": self.first_lsl_timestamp,
             "last_lsl_timestamp": self.last_lsl_timestamp,
+            "drain_expected_count": self.drain_expected_count,
+            "drain_completed": self.drain_completed,
             "error": self.error,
         }
 
@@ -77,6 +81,20 @@ class LslMarkerReceiptRecorder:
 
     def snapshot(self) -> dict[str, Any]:
         return self._summary.as_dict()
+
+    def wait_for_count(self, expected_count: int, *, timeout: float = 2.0) -> bool:
+        """Wait until every successfully emitted marker has reached this inlet."""
+
+        expected = max(0, int(expected_count))
+        self._summary.drain_expected_count = expected
+        deadline = monotonic() + max(0.0, float(timeout))
+        while self._summary.received_count < expected and monotonic() < deadline:
+            if self._summary.status != "recording":
+                break
+            sleep(0.01)
+        completed = self._summary.received_count >= expected
+        self._summary.drain_completed = completed
+        return completed
 
     def stop(self) -> dict[str, Any]:
         self._stop.set()

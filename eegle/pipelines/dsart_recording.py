@@ -1257,6 +1257,7 @@ def _run_baseline_dry(
     marker_receipt: LslMarkerReceiptRecorder | None = None
     start = monotonic()
     phases = []
+    cleanup_warnings: list[str] = []
     try:
         if record_eeg:
             if marker_outlet is None:
@@ -1308,21 +1309,16 @@ def _run_baseline_dry(
                 current = phase_end
     finally:
         if marker_receipt is not None:
-            drain_seconds = float(
-                config.get("recording_rehearsal", {}).get(
-                    "marker_receipt_drain_seconds",
-                    0.25,
-                )
-            )
-            if drain_seconds > 0:
-                sleep(drain_seconds)
+            drain_warning = _drain_emitted_markers(config, outlet, marker_receipt)
+            if drain_warning:
+                cleanup_warnings.append(drain_warning)
         failures = _close_resources(
             ("marker receipt recorder", marker_receipt),
             ("marker outlet", outlet if owns_marker_outlet else None),
         )
         if failures:
             raise RuntimeError("baseline dry-run cleanup failed: " + "; ".join(failures))
-    return {
+    result = {
         "schema": BASELINE_SCHEMA,
         "status": "completed",
         "mode": "dry-run",
@@ -1331,6 +1327,9 @@ def _run_baseline_dry(
         "actual_duration_seconds": eyes_open_seconds + eyes_closed_seconds,
         "aborted": False,
     }
+    if cleanup_warnings:
+        result["warnings"] = cleanup_warnings
+    return result
 
 
 def _run_baseline_psychopy(
@@ -1439,6 +1438,10 @@ def _run_baseline_psychopy(
     except Exception as exc:
         failure = f"{type(exc).__name__}: {exc}"
     finally:
+        if marker_receipt is not None and outlet is not None:
+            drain_warning = _drain_emitted_markers(config, outlet, marker_receipt)
+            if drain_warning:
+                cleanup_warnings.append(drain_warning)
         cleanup_warnings.extend(
             _close_resources(
                 ("marker receipt recorder", marker_receipt),
@@ -2352,6 +2355,16 @@ def _marker_receipt_integrity(
     csv_path = session_dir / "raw" / "lsl_markers_received.csv"
     metadata_path = session_dir / "raw" / "lsl_markers_received_metadata.json"
     metadata = _load_json(metadata_path) or {}
+    parameters = _load_json(session_dir / "parameters.json") or {}
+    delivery_warning_seconds = max(
+        0.0,
+        float(
+            parameters.get("recording_suite", {}).get(
+                "marker_delivery_latency_warning_seconds",
+                0.25,
+            )
+        ),
+    )
     expected = []
     for row in ledger_rows:
         marker_metadata = dict(row.get("metadata") or {})
@@ -2359,6 +2372,10 @@ def _marker_receipt_integrity(
             {
                 "label": str(row.get("label") or ""),
                 "lsl_timestamp": _optional_float(marker_metadata.get("lsl_timestamp")),
+                "timestamp_advance_seconds": max(
+                    0.0,
+                    float(marker_metadata.get("fixed_display_latency_ms") or 0.0) / 1000.0,
+                ),
             }
         )
     expected_labels = [row["label"] for row in expected]
@@ -2373,6 +2390,9 @@ def _marker_receipt_integrity(
                         {
                             "label": label,
                             "lsl_timestamp": _optional_float(row.get("lsl_timestamp")),
+                            "local_received_lsl_timestamp": _optional_float(
+                                row.get("local_received_lsl_timestamp")
+                            ),
                         }
                     )
     failures = []
@@ -2399,6 +2419,39 @@ def _marker_receipt_integrity(
         target.append(
             f"{len(timestamp_mismatches)} independently received markers do not preserve their emitted LSL timestamp"
         )
+    delivery_latencies = []
+    missing_receipt_times = []
+    negative_latency_indices = []
+    late_delivery_indices = []
+    timestamp_deltas = []
+    for index, (emitted, observed) in enumerate(zip(expected, received), start=1):
+        emitted_timestamp = observed["lsl_timestamp"]
+        received_timestamp = observed["local_received_lsl_timestamp"]
+        if emitted_timestamp is None or received_timestamp is None:
+            missing_receipt_times.append(index)
+            continue
+        timestamp_delta = received_timestamp - emitted_timestamp
+        timestamp_deltas.append(timestamp_delta)
+        latency = timestamp_delta + float(emitted["timestamp_advance_seconds"])
+        delivery_latencies.append(latency)
+        if latency < -0.001:
+            negative_latency_indices.append(index)
+        if latency > delivery_warning_seconds:
+            late_delivery_indices.append(index)
+    if missing_receipt_times:
+        warnings.append(
+            f"{len(missing_receipt_times)} independently received markers lack delivery-time evidence"
+        )
+    if negative_latency_indices:
+        warnings.append(
+            f"{len(negative_latency_indices)} marker receipt times remain earlier than their modeled "
+            "emission timestamp after accounting for configured display latency"
+        )
+    if late_delivery_indices:
+        warnings.append(
+            f"{len(late_delivery_indices)} markers took more than "
+            f"{delivery_warning_seconds:.3f} seconds to reach the independent local receipt inlet"
+        )
     return {
         "status": "fail" if failures else ("warning" if warnings else "pass"),
         "required": required,
@@ -2408,6 +2461,13 @@ def _marker_receipt_integrity(
         "expected_count": len(expected),
         "received_count": len(received),
         "timestamp_mismatch_indices": timestamp_mismatches,
+        "receipt_minus_marker_timestamp_seconds": timestamp_deltas,
+        "delivery_latency_seconds": delivery_latencies,
+        "maximum_delivery_latency_seconds": max(delivery_latencies, default=None),
+        "delivery_latency_warning_seconds": delivery_warning_seconds,
+        "missing_delivery_time_indices": missing_receipt_times,
+        "negative_delivery_latency_indices": negative_latency_indices,
+        "late_delivery_indices": late_delivery_indices,
         "failures": failures,
         "warnings": warnings,
     }
@@ -2539,12 +2599,12 @@ def _baseline_recording_validation(
             failures.append(f"baseline phase {phase.get('phase')} lacks LSL boundary timestamps")
     parameters = _load_json(paths.parameters) or {}
     expected_source_id = parameters.get("hardware", {}).get("markers", {}).get("source_id")
-    expected_labels = {
+    expected_labels = [
         "dsart_baseline_eyes_open_start",
         "dsart_baseline_eyes_open_end",
         "dsart_baseline_eyes_closed_start",
         "dsart_baseline_eyes_closed_end",
-    }
+    ]
     marker_rows = []
     if paths.events_jsonl.exists():
         with paths.events_jsonl.open("r", encoding="utf-8") as handle:
@@ -2555,18 +2615,55 @@ def _baseline_recording_validation(
                     row = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if row.get("label") in expected_labels:
+                if row.get("label") in set(expected_labels):
                     marker_rows.append(row)
     observed_labels = [str(row.get("label")) for row in marker_rows]
     target = failures if record_eeg else warnings
-    if set(observed_labels) != expected_labels or len(observed_labels) != len(expected_labels):
-        target.append("baseline boundary marker ledger is incomplete or duplicated")
+    if observed_labels != expected_labels:
+        target.append("baseline boundary marker ledger is incomplete, duplicated, or out of order")
+    boundary_lsl_timestamps = []
+    unscheduled_start_markers = []
     for row in marker_rows:
         metadata = dict(row.get("metadata") or {})
-        if _optional_float(metadata.get("lsl_timestamp")) is None:
+        lsl_timestamp = _optional_float(metadata.get("lsl_timestamp"))
+        if lsl_timestamp is None:
             target.append(f"baseline marker {row.get('label')} lacks an LSL timestamp")
+        else:
+            boundary_lsl_timestamps.append(lsl_timestamp)
         if expected_source_id and metadata.get("marker_stream_source_id") != expected_source_id:
             target.append(f"baseline marker {row.get('label')} has the wrong source ID")
+        if str(row.get("label") or "").endswith("_start") and metadata.get("scheduled_on_flip") is not True:
+            unscheduled_start_markers.append(str(row.get("label") or ""))
+    if unscheduled_start_markers:
+        target.append("baseline start markers were not captured on their actual display flip")
+    if any(
+        second <= first
+        for first, second in zip(boundary_lsl_timestamps, boundary_lsl_timestamps[1:])
+    ):
+        target.append("baseline boundary LSL timestamps are not strictly increasing")
+    duration_alignment = []
+    for phase in phases:
+        start_monotonic = _optional_float(phase.get("start_monotonic_timestamp"))
+        end_monotonic = _optional_float(phase.get("end_monotonic_timestamp"))
+        start_lsl = _optional_float(phase.get("start_lsl_timestamp"))
+        end_lsl = _optional_float(phase.get("end_lsl_timestamp"))
+        if None in {start_monotonic, end_monotonic, start_lsl, end_lsl}:
+            continue
+        monotonic_duration = float(end_monotonic) - float(start_monotonic)
+        lsl_duration = float(end_lsl) - float(start_lsl)
+        difference = lsl_duration - monotonic_duration
+        duration_alignment.append(
+            {
+                "phase": phase.get("phase"),
+                "monotonic_duration_seconds": monotonic_duration,
+                "lsl_duration_seconds": lsl_duration,
+                "difference_seconds": difference,
+            }
+        )
+        if monotonic_duration <= 0 or lsl_duration <= 0 or abs(difference) > 0.05:
+            target.append(
+                f"baseline phase {phase.get('phase')} has misaligned monotonic/LSL boundary timing"
+            )
     marker_receipt = _marker_receipt_integrity(paths.root, marker_rows, required=record_eeg)
     failures.extend(marker_receipt["failures"])
     warnings.extend(marker_receipt["warnings"])
@@ -2597,6 +2694,12 @@ def _baseline_recording_validation(
         "warnings": warnings,
         "expected_marker_source_id": expected_source_id,
         "marker_labels": observed_labels,
+        "start_markers_scheduled_on_flip": not unscheduled_start_markers,
+        "boundary_lsl_timestamps_strictly_increasing": not any(
+            second <= first
+            for first, second in zip(boundary_lsl_timestamps, boundary_lsl_timestamps[1:])
+        ),
+        "boundary_duration_alignment": duration_alignment,
         "independent_marker_receipt": marker_receipt,
         "raw_integrity": raw,
     }
@@ -2831,6 +2934,32 @@ def _start_marker_receipt_recorder(
             + str(summary.get("error") or summary.get("status"))
         )
     return recorder
+
+
+def _drain_emitted_markers(
+    config: dict[str, Any],
+    outlet: LslMarkerOutlet | NullMarkerOutlet,
+    recorder: LslMarkerReceiptRecorder,
+) -> str | None:
+    """Hold cleanup until the independent inlet has received every emitted marker."""
+
+    expected_count = getattr(outlet, "pushed_count", None)
+    if not isinstance(expected_count, int):
+        return None
+    timeout = max(
+        0.0,
+        float(config.get("recording_suite", {}).get("marker_receipt_timeout_seconds", 2.0)),
+    )
+    try:
+        if recorder.wait_for_count(expected_count, timeout=timeout):
+            return None
+        observed = int(recorder.snapshot().get("received_count") or 0)
+        return (
+            "marker receipt drain timed out before shutdown: "
+            f"received {observed} of {expected_count} emitted markers within {timeout:.3f} seconds"
+        )
+    except Exception as exc:
+        return f"marker receipt drain failed: {type(exc).__name__}: {exc}"
 
 
 def _baseline_instruction(
