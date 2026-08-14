@@ -1,9 +1,10 @@
 (.venv) PS C:\Projects\code\eegle> .\scripts\windows\neuracle64\04-Run-FullShortTest.ps1 `
->>   -Participant "test10" `
+>>   -Participant "test1" ` 
 >>   -ConfirmElectrodes `
 >>   -DataRoot $EegleData `
 >>   -NoGoDigit 3 `
->>   -Operator "john"
+>>   -Operator "john" `
+>>   -BaselineSeconds 10
 {
   "written_configs": [
     "C:\\Projects\\code\\eegle\\.runtime\\windows-neuracle64\\display-only.json",
@@ -13,69 +14,115 @@
 }
 Starting the complete short Study 1 test:
   full preflight and electrode checks
-  60 seconds eyes open
-  60 seconds eyes closed
+  10 seconds eyes open
+  10 seconds eyes closed
   participant practice
   30 experimental trials (three 10-trial blocks)
   fixed timing: 250 ms digit + 1350 ms fixation (1600 ms SOI; no jitter)
 Keep Neuracle Collect LSL streaming. EEGle launches/stops LabRecorder.
 A phase-end liblsl ERR mentioning R_EEGleMarkers is expected when EEGle closes that phase's marker receiver; it is not the Neuracle EEG stream.
 LabRecorder may buffer XDF disk writes; paused XDF file growth is a warning while the independent CSV/LSL recorder is still receiving samples.
-2026-08-14 14:53:57.956 (   0.032s) [        9429826D]      netinterfaces.cpp:36    INFO| netif '{50635E82-F596-4DD4-A07E-758006593EC2}' (status: 1, multicast: 1
-2026-08-14 14:53:57.956 (   0.032s) [        9429826D]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 9
-2026-08-14 14:53:57.956 (   0.032s) [        9429826D]      netinterfaces.cpp:36    INFO| netif '{4D8CF894-7764-40B7-B5F8-52C7C859FBA5}' (status: 2, multicast: 1
-2026-08-14 14:53:57.956 (   0.032s) [        9429826D]      netinterfaces.cpp:36    INFO| netif '{8E26F3A3-0C9F-4C70-A709-35E90EC0A844}' (status: 2, multicast: 1
-2026-08-14 14:53:57.956 (   0.032s) [        9429826D]      netinterfaces.cpp:36    INFO| netif '{94A5AEF1-4F4C-4BED-9205-860D4599A3B1}' (status: 1, multicast: 1
-2026-08-14 14:53:57.957 (   0.032s) [        9429826D]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 19
-2026-08-14 14:53:57.957 (   0.033s) [        9429826D]      netinterfaces.cpp:36    INFO| netif '{ABA8E1FB-58AD-424E-8FC2-3EE30AAB2410}' (status: 2, multicast: 1
-2026-08-14 14:53:57.957 (   0.033s) [        9429826D]      netinterfaces.cpp:36    INFO| netif '{999E4E5F-9892-11EE-A20A-806E6F6E6963}' (status: 1, multicast: 1
-2026-08-14 14:53:57.957 (   0.033s) [        9429826D]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 1
-2026-08-14 14:53:57.957 (   0.033s) [        9429826D]         api_config.cpp:126   INFO| Loaded default config
-2026-08-14 14:53:57.957 (   0.033s) [        9429826D]             common.cpp:78    INFO| git:64988c6a14b8dc3b3f270ece58eab4f480bfab43/branch:refs/tags/v1.17.7/build:Release/compiler:MSVC-19.29.30159.0/link:SHARED
+2026-08-14 15:20:09.869 (   0.030s) [        3E53C539]      netinterfaces.cpp:36    INFO| netif '{50635E82-F596-4DD4-A07E-758006593EC2}' (status: 1, multicast: 1
+2026-08-14 15:20:09.869 (   0.030s) [        3E53C539]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 9
+2026-08-14 15:20:09.869 (   0.030s) [        3E53C539]      netinterfaces.cpp:36    INFO| netif '{4D8CF894-7764-40B7-B5F8-52C7C859FBA5}' (status: 2, multicast: 1
+2026-08-14 15:20:09.869 (   0.030s) [        3E53C539]      netinterfaces.cpp:36    INFO| netif '{8E26F3A3-0C9F-4C70-A709-35E90EC0A844}' (status: 2, multicast: 1
+2026-08-14 15:20:09.869 (   0.030s) [        3E53C539]      netinterfaces.cpp:36    INFO| netif '{94A5AEF1-4F4C-4BED-9205-860D4599A3B1}' (status: 1, multicast: 1
+2026-08-14 15:20:09.869 (   0.030s) [        3E53C539]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 19
+2026-08-14 15:20:09.870 (   0.030s) [        3E53C539]      netinterfaces.cpp:36    INFO| netif '{ABA8E1FB-58AD-424E-8FC2-3EE30AAB2410}' (status: 2, multicast: 1
+2026-08-14 15:20:09.870 (   0.030s) [        3E53C539]      netinterfaces.cpp:36    INFO| netif '{999E4E5F-9892-11EE-A20A-806E6F6E6963}' (status: 1, multicast: 1
+2026-08-14 15:20:09.870 (   0.030s) [        3E53C539]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 1
+2026-08-14 15:20:09.870 (   0.030s) [        3E53C539]         api_config.cpp:126   INFO| Loaded default config
+2026-08-14 15:20:25.079 (  15.240s) [        3E53C539]             common.cpp:78    INFO| git:64988c6a14b8dc3b3f270ece58eab4f480bfab43/branch:refs/tags/v1.17.7/build:Release/compiler:MSVC-19.29.30159.0/link:SHARED
+2026-08-14 15:20:31.120 (  21.280s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
+{
+  "dsart_recording_preflight": {
+    "channel_contract": "ok",
+    "electrode_quality_file": "C:\\Projects\\code\\eegle\\data\\study1\\test1\\visits\\visit-1\\visit-1-20260814T152009\\preflight\\visit_1_preflight_electrode_quality.json",
+    "phase": "visit_1_preflight",
+    "report_file": "C:\\Projects\\code\\eegle\\data\\study1\\test1\\visits\\visit-1\\visit-1-20260814T152009\\preflight\\visit_1_preflight.json",
+    "status": "warning",
+    "warnings": [
+      "not importable",
+      "not importable",
+      "not importable",
+      "not importable",
+      "not importable",
+      "missing training packages: joblib, sklearn",
+      "electrode quality warn; report=C:\\Projects\\code\\eegle\\data\\study1\\test1\\visits\\visit-1\\visit-1-20260814T152009\\preflight\\visit_1_preflight_electrode_quality.json"
+    ]
+  }
+}
 [feedback_manager] Feedback manager starting enabled processes
 [feedback_manager] Starting recorder
 [feedback_manager] recorder status: recording
 [realtime_processor] realtime_processor disabled
 [dashboard] dashboard disabled
 [dsart.baseline] dsart_baseline_eyes_open_start
-[dsart.baseline] dsart_baseline_recorder_warning
 [dsart.baseline] dsart_baseline_eyes_open_end
 [dsart.baseline] dsart_baseline_eyes_closed_start
-[dsart.baseline] dsart_baseline_recorder_warning
 [dsart.baseline] dsart_baseline_eyes_closed_end
-2026-08-14 14:57:57.814 ( 239.885s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
-12.1203         WARNING         Monitor specification not found. Creating a temporary one...
-138.3689        WARNING         No default speaker specified in Preferences / Hardware, using first speaker found: Speakers (Cirrus Logic XU (with APO Extensions))
+2026-08-14 15:21:18.820 (  68.979s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
+7.7940  WARNING         Monitor specification not found. Creating a temporary one...
+33.8436         WARNING         No default speaker specified in Preferences / Hardware, using first speaker found: Speakers (Cirrus Logic XU (with APO Extensions))
 [feedback_manager] Feedback manager stopping processes
 [feedback_manager] Stopping recorder
 [feedback_manager] recorder stopped
 [feedback_manager] Feedback manager summary: complete
+[experiment] Session initialized: C:\Projects\code\eegle\data\participants\test1\sessions\2026-08-14\study1_visit_visit-1-20260814T152009_session1_main\dynamic_sart\run-20260814T152127
+[experiment] Using preflight results accepted by the enclosing pipeline
+[feedback_manager] Feedback manager starting enabled processes
+[feedback_manager] Starting recorder
+[feedback_manager] recorder status: recording
+[realtime_processor] realtime_processor disabled
+[dashboard] dashboard disabled
+[experiment] Starting task dynamic_sart
+[task.dynamic_sart] dynamic_sart_task_start
+[task.dynamic_sart] dynamic_sart_practice_start
+[task.dynamic_sart] dynamic_sart_practice_end
+[task.dynamic_sart] dynamic_sart_countdown_start
+[task.dynamic_sart] dynamic_sart_countdown_end
+[task.dynamic_sart] dynamic_sart_block_start__block=1__phase=support
+[task.dynamic_sart] dynamic_sart_block_end__block=1__phase=support
+[task.dynamic_sart] dynamic_sart_support_complete
+[task.dynamic_sart] dynamic_sart_block_start__block=2__phase=query
+[task.dynamic_sart] dynamic_sart_block_end__block=2__phase=query
+[task.dynamic_sart] dynamic_sart_break_start__block=2
+[task.dynamic_sart] dynamic_sart_break_end__block=2
+[task.dynamic_sart] dynamic_sart_block_start__block=3__phase=query
+[task.dynamic_sart] dynamic_sart_block_end__block=3__phase=query
+[task.dynamic_sart] dynamic_sart_task_end
+2026-08-14 15:23:49.656 ( 141.459s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
+7.8070  WARNING         Monitor specification not found. Creating a temporary one...
+[experiment] Task dynamic_sart ended
+[feedback_manager] Feedback manager stopping processes
+[feedback_manager] Stopping recorder
+[feedback_manager] recorder stopped
+[offline_analyzer] offline_analyzer disabled
+[feedback_manager] Feedback manager summary: complete
+[experiment] Experiment complete: C:\Projects\code\eegle\data\participants\test1\sessions\2026-08-14\study1_visit_visit-1-20260814T152009_session1_main\dynamic_sart\run-20260814T152127
 {
   "acquisition_profile": "proposal_standard_v1",
-  "failed_phase": "baseline",
-  "failure_detail": "RuntimeError: Study 1 baseline did not complete: XDF EEG ends before the last required marker by 871545.418102 seconds (warning limit 2.000; CSV fallback evidence: CSV EEG mirror ends 871541.573758 seconds before the last marker)",
+  "failed_phase": "session1_main",
+  "failure_detail": "RuntimeError: session1_main did not complete: countdown did not finish before the first stimulus onset",
   "failures": [
     {
-      "error": "RuntimeError: Study 1 baseline did not complete: recorder_health_failure",
-      "phase": "baseline",
-      "timestamp": "2026-08-14T14:30:23"
-    },
-    {
-      "error": "RuntimeError: Study 1 baseline did not complete: XDF EEG ends before the last required marker by 871545.418102 seconds (warning limit 2.000; CSV fallback evidence: CSV EEG mirror ends 871541.573758 seconds before the last marker)",
-      "phase": "baseline",
-      "timestamp": "2026-08-14T14:58:03"
+      "error": "RuntimeError: session1_main did not complete: countdown did not finish before the first stimulus onset",
+      "phase": "session1_main",
+      "timestamp": "2026-08-14T15:23:58"
     }
   ],
-  "manifest_file": "C:\\Projects\\code\\eegle\\data\\study1\\test10\\visits\\visit-1\\visit-1-20260814T142721\\visit_manifest.json",
+  "manifest_file": "C:\\Projects\\code\\eegle\\data\\study1\\test1\\visits\\visit-1\\visit-1-20260814T152009\\visit_manifest.json",
   "next_action": "Correct the reported failure, then rerun the same Windows operator command. EEGle will reuse this incomplete visit, skip completed phases, and rerun the failed phase.",
   "no_go_digit": 3,
-  "participant_id": "test10",
-  "retained_session_directory": "C:\\Projects\\code\\eegle\\data\\participants\\test10\\sessions\\2026-08-14\\study1_visit_visit-1-20260814T142721\\study1_baseline\\run-20260814T145357",
+  "participant_id": "test1",
+  "retained_session_directory": "C:\\Projects\\code\\eegle\\data\\participants\\test1\\sessions\\2026-08-14\\study1_visit_visit-1-20260814T152009_session1_main\\dynamic_sart\\run-20260814T152127",
   "schema": "eegle.study1.visit.v1",
   "sequence_hashes": {},
-  "session_directories": {},
-  "status": "failed",
-  "visit_id": "visit-1-20260814T142721",
+  "session_directories": {
+    "baseline": "C:\\Projects\\code\\eegle\\data\\participants\\test1\\sessions\\2026-08-14\\study1_visit_visit-1-20260814T152009\\study1_baseline\\run-20260814T152031"
+  },
+  "status": "partial",
+  "visit_id": "visit-1-20260814T152009",
   "visit_number": 1
 }
 full short Study 1 test stopped without a successful completion (exit code 1). Read the EEGle failure_detail and next_action printed immediately above; 
@@ -86,4 +133,3 @@ At C:\Projects\code\eegle\scripts\windows\neuracle64\Common.ps1:101 char:9
     + CategoryInfo          : OperationStopped: (full short Stud...ot overwritten.:String) [], RuntimeException
     + FullyQualifiedErrorId : full short Study 1 test stopped without a successful completion (exit code 1). Read the EEGle failure_detail and next_act 
    ion printed immediately above; retained raw/session files are not overwritten.
- 
