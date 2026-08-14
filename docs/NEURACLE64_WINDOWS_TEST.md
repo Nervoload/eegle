@@ -532,15 +532,21 @@ flip. Local marker delivery latency is recorded; a delivery taking more than
 250 ms is a warning because the preserved LSL timestamp, rather than arrival
 time, defines alignment.
 
-LabRecorder can occasionally finalize its last buffered EEG chunk slightly
-before the final synchronized XDF marker. A short tail difference of at most two
-seconds is a warning only when the separate source-preserving CSV mirror stopped
-cleanly, has the same EEG stream identity, contains no gaps or timestamp-order
-errors, preserves raw samples/channel order, covers the exact independently
-received final marker, and the XDF marker sequence matches that receipt. This
-means the redundant recording contains the complete data. A larger difference
-or missing corroborating evidence remains a hard failure and reports the exact
-shortfall.
+Collect can publish Neuracle samples with a device/application clock origin that
+differs from the PC-local clock used by EEGle markers. PyXDF may then report a
+large, nearly constant EEG/marker timestamp separation even though both streams
+were recorded together. EEGle does not interpret that cross-origin number as a
+missing EEG tail. It bridges the clocks using the source-preserving CSV EEG
+timestamps and PC-local receipt timestamps, requires exact XDF/receipt marker
+parity, and verifies that the XDF source-time span covers the bridged marker
+interval. A proven clock-origin difference is a warning.
+
+LabRecorder can also finalize its last buffered EEG chunk slightly before the
+final marker. A source-clock shortfall of at most two seconds is a warning only
+when the same clock bridge proves the separate source-preserving CSV mirror is
+complete, gap-free, and from the same EEG stream. A larger source-time
+shortfall, missing corroborating evidence, a real EEG gap, or broken marker
+parity remains a hard failure and reports the exact evidence that failed.
 
 A genuine EEG interruption is reported separately by the recorder health gate,
 CSV timestamp-gap validation, XDF timestamp-gap validation, or the selected

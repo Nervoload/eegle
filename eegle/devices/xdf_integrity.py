@@ -220,7 +220,8 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
         "status": "unavailable",
         "boundary_tolerance_seconds": 0.5,
         "end_shortfall_seconds": None,
-        "csv_tail_evidence": None,
+        "clock_alignment_mode": None,
+        "csv_clock_bridge_evidence": None,
     }
     if eeg_synced.size and marker_synced.size:
         tolerance = 0.5
@@ -237,40 +238,60 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
         coverage.update(
             {
                 "status": "pass",
+                "clock_alignment_mode": "pyxdf_synchronized_timestamps",
                 "start_lag_seconds": start_lag,
                 "end_shortfall_seconds": max(0.0, end_shortfall),
                 "maximum_warning_shortfall_seconds": maximum_warning_shortfall,
             }
         )
-        if start_lag > tolerance:
-            coverage["status"] = "fail"
-            failures.append(
-                "XDF EEG starts after the first required marker "
-                f"by {start_lag:.6f} seconds (limit {tolerance:.3f})"
-            )
-        if end_shortfall > tolerance:
-            tail_evidence = _source_preserving_csv_tail_evidence(
+        if start_lag > tolerance or end_shortfall > tolerance:
+            clock_bridge = _source_preserving_csv_coverage_evidence(
                 root,
                 eeg_matches[0],
                 marker_matches[0],
                 marker_sequence_matches=marker_labels == receipt_labels,
+                xdf_first_source_timestamp=_optional_float(eeg_stats.get("first_timestamp")),
+                xdf_last_source_timestamp=_optional_float(eeg_stats.get("last_timestamp")),
+                boundary_tolerance_seconds=tolerance,
+                maximum_warning_shortfall_seconds=maximum_warning_shortfall,
             )
-            coverage["csv_tail_evidence"] = tail_evidence
-            if tail_evidence["status"] == "pass" and end_shortfall <= maximum_warning_shortfall:
-                coverage["status"] = "warning" if coverage["status"] != "fail" else "fail"
-                warnings.append(
-                    "XDF finalized before its last synchronized marker boundary by "
-                    f"{end_shortfall:.6f} seconds; the complete source-preserving CSV mirror "
-                    "covers the marker with the same EEG stream identity, so the acquisition tail "
-                    "is retained outside the primary XDF"
-                )
+            coverage["csv_clock_bridge_evidence"] = clock_bridge
+            # Retain the former result key for downstream readers while making its
+            # broader clock-bridge role explicit above.
+            coverage["csv_tail_evidence"] = clock_bridge
+            if clock_bridge["status"] in {"pass", "warning"}:
+                coverage["status"] = "warning"
+                coverage["clock_alignment_mode"] = "eeg_source_clock_to_local_receipt_clock_bridge"
+                separation = max(abs(first_marker - first_eeg), abs(last_marker - last_eeg))
+                coverage["synchronized_clock_separation_seconds"] = separation
+                if separation > 60.0:
+                    warnings.append(
+                        "XDF EEG and marker synchronized timestamps have incompatible clock origins "
+                        f"(separation {separation:.6f} seconds). Source-preserving EEG timestamps, "
+                        "PC-local receipt timestamps, and exact marker receipt parity independently "
+                        "prove that the XDF covers the required marker interval"
+                    )
+                else:
+                    source_shortfall = float(clock_bridge.get("xdf_end_shortfall_seconds") or 0.0)
+                    warnings.append(
+                        "PyXDF synchronized EEG/marker boundaries differ, but the independent "
+                        "source-clock/local-receipt bridge verifies recording coverage"
+                        + (
+                            f" with a {source_shortfall:.6f}-second XDF finalization tail retained "
+                            "in the source-preserving CSV mirror"
+                            if source_shortfall > tolerance
+                            else ""
+                        )
+                    )
             else:
                 coverage["status"] = "fail"
-                evidence_detail = "; ".join(tail_evidence.get("reasons") or [])
+                evidence_detail = "; ".join(clock_bridge.get("reasons") or [])
                 failures.append(
-                    "XDF EEG ends before the last required marker "
-                    f"by {end_shortfall:.6f} seconds (warning limit {maximum_warning_shortfall:.3f}; "
-                    f"CSV fallback evidence: {evidence_detail or tail_evidence.get('status')})"
+                    "XDF synchronized EEG/marker boundaries disagree "
+                    f"(start lag {max(0.0, start_lag):.6f} seconds; end shortfall "
+                    f"{max(0.0, end_shortfall):.6f} seconds; warning limit "
+                    f"{maximum_warning_shortfall:.3f}). Independent clock-bridge evidence failed: "
+                    f"{evidence_detail or clock_bridge.get('status')}"
                 )
     else:
         failures.append("XDF lacks synchronized EEG/marker timestamps needed to verify recording coverage")
@@ -449,22 +470,32 @@ def _confirmed_positional_xdf_evidence(
     }
 
 
-def _source_preserving_csv_tail_evidence(
+def _source_preserving_csv_coverage_evidence(
     root: Path,
     selected_xdf_stream: dict[str, Any],
     selected_marker_stream: dict[str, Any],
     *,
     marker_sequence_matches: bool,
+    xdf_first_source_timestamp: float | None,
+    xdf_last_source_timestamp: float | None,
+    boundary_tolerance_seconds: float,
+    maximum_warning_shortfall_seconds: float,
 ) -> dict[str, Any]:
-    """Prove that a short XDF finalization tail exists intact in the CSV mirror."""
+    """Bridge an EEG source clock to PC-local marker receipt without conflating origins."""
 
     reasons: list[str] = []
+    evidence_warnings: list[str] = []
     raw_metadata = _load_json(root / "raw" / "eeg_metadata.json") or {}
     raw_stream = dict(raw_metadata.get("stream") or {})
     contract = dict(raw_metadata.get("raw_sample_contract") or {})
     marker_metadata = _load_json(root / "raw" / "lsl_markers_received_metadata.json") or {}
-    raw_last = _optional_float(raw_metadata.get("last_lsl_timestamp"))
-    marker_last = _optional_float(marker_metadata.get("last_lsl_timestamp"))
+    raw_first_source = _optional_float(raw_metadata.get("first_source_lsl_timestamp"))
+    raw_last_source = _optional_float(raw_metadata.get("last_source_lsl_timestamp"))
+    raw_first_local = _optional_float(raw_metadata.get("first_local_received_lsl_timestamp"))
+    raw_last_local = _optional_float(raw_metadata.get("last_local_received_lsl_timestamp"))
+    marker_span = _marker_receipt_local_span(root / "raw" / "lsl_markers_received.csv")
+    marker_first_local = marker_span[0]
+    marker_last_local = marker_span[1]
     if raw_metadata.get("status") != "stopped":
         reasons.append("CSV EEG mirror did not stop cleanly")
     if int(raw_metadata.get("sample_count") or 0) <= 0:
@@ -481,18 +512,19 @@ def _source_preserving_csv_tail_evidence(
         reasons.append("CSV EEG mirror does not prove unmodified channel order")
     if not marker_sequence_matches:
         reasons.append("XDF and independent marker sequences differ")
-    eeg_hostname = str(selected_xdf_stream.get("hostname") or "").strip()
-    marker_hostname = str(selected_marker_stream.get("hostname") or "").strip()
-    if not eeg_hostname or not marker_hostname:
-        reasons.append("XDF EEG/marker host clock identity is unavailable")
-    elif eeg_hostname != marker_hostname:
-        reasons.append("XDF EEG and marker streams originate from different host clocks")
-    if raw_last is None or marker_last is None:
-        reasons.append("CSV EEG/marker tail timestamps are unavailable")
-    elif raw_last < marker_last:
-        reasons.append(
-            f"CSV EEG mirror ends {marker_last - raw_last:.6f} seconds before the last marker"
-        )
+    required_clock_values = {
+        "CSV first source timestamp": raw_first_source,
+        "CSV last source timestamp": raw_last_source,
+        "CSV first local LSL receipt timestamp": raw_first_local,
+        "CSV last local LSL receipt timestamp": raw_last_local,
+        "first marker local LSL receipt timestamp": marker_first_local,
+        "last marker local LSL receipt timestamp": marker_last_local,
+        "XDF first source timestamp": xdf_first_source_timestamp,
+        "XDF last source timestamp": xdf_last_source_timestamp,
+    }
+    missing_clock_values = [name for name, value in required_clock_values.items() if value is None]
+    if missing_clock_values:
+        reasons.append("clock-bridge timestamps are unavailable: " + ", ".join(missing_clock_values))
     identity_fields = ("name", "type", "source_id", "hostname", "channel_count")
     identity_mismatches = []
     for field in identity_fields:
@@ -505,10 +537,68 @@ def _source_preserving_csv_tail_evidence(
         reasons.append(
             "XDF and CSV EEG identities differ in " + ", ".join(identity_mismatches)
         )
+
+    marker_start_source_estimate: float | None = None
+    marker_end_source_estimate: float | None = None
+    xdf_start_lag: float | None = None
+    xdf_end_shortfall: float | None = None
+    if not missing_clock_values:
+        assert raw_first_source is not None
+        assert raw_last_source is not None
+        assert raw_first_local is not None
+        assert raw_last_local is not None
+        assert marker_first_local is not None
+        assert marker_last_local is not None
+        assert xdf_first_source_timestamp is not None
+        assert xdf_last_source_timestamp is not None
+        if raw_first_local > marker_first_local + boundary_tolerance_seconds:
+            reasons.append(
+                "CSV EEG local receipt begins after the first marker by "
+                f"{raw_first_local - marker_first_local:.6f} seconds"
+            )
+        if raw_last_local < marker_last_local - boundary_tolerance_seconds:
+            reasons.append(
+                "CSV EEG local receipt ends before the last marker by "
+                f"{marker_last_local - raw_last_local:.6f} seconds"
+            )
+        start_clock_offset = raw_first_local - raw_first_source
+        end_clock_offset = raw_last_local - raw_last_source
+        marker_start_source_estimate = marker_first_local - start_clock_offset
+        marker_end_source_estimate = marker_last_local - end_clock_offset
+        xdf_start_lag = xdf_first_source_timestamp - marker_start_source_estimate
+        xdf_end_shortfall = marker_end_source_estimate - xdf_last_source_timestamp
+        if xdf_start_lag > boundary_tolerance_seconds:
+            reasons.append(
+                "XDF EEG source data starts after the first required marker by "
+                f"{xdf_start_lag:.6f} seconds"
+            )
+        if xdf_end_shortfall > maximum_warning_shortfall_seconds:
+            reasons.append(
+                "XDF EEG source data ends before the last required marker by "
+                f"{xdf_end_shortfall:.6f} seconds"
+            )
+        elif xdf_end_shortfall > boundary_tolerance_seconds:
+            evidence_warnings.append(
+                "XDF finalization omitted a short source-data tail of "
+                f"{xdf_end_shortfall:.6f} seconds retained in the CSV mirror"
+            )
+    status = "fail" if reasons else ("warning" if evidence_warnings else "pass")
     return {
-        "status": "fail" if reasons else "pass",
-        "csv_last_lsl_timestamp": raw_last,
-        "last_marker_lsl_timestamp": marker_last,
+        "status": status,
+        "csv_first_source_lsl_timestamp": raw_first_source,
+        "csv_last_source_lsl_timestamp": raw_last_source,
+        "csv_first_local_received_lsl_timestamp": raw_first_local,
+        "csv_last_local_received_lsl_timestamp": raw_last_local,
+        "first_marker_local_received_lsl_timestamp": marker_first_local,
+        "last_marker_local_received_lsl_timestamp": marker_last_local,
+        "estimated_first_marker_source_timestamp": marker_start_source_estimate,
+        "estimated_last_marker_source_timestamp": marker_end_source_estimate,
+        "xdf_first_source_timestamp": xdf_first_source_timestamp,
+        "xdf_last_source_timestamp": xdf_last_source_timestamp,
+        "xdf_start_lag_seconds": None if xdf_start_lag is None else max(0.0, xdf_start_lag),
+        "xdf_end_shortfall_seconds": (
+            None if xdf_end_shortfall is None else max(0.0, xdf_end_shortfall)
+        ),
         "marker_receipt_status": marker_metadata.get("status"),
         "xdf_stream": {field: selected_xdf_stream.get(field) for field in identity_fields},
         "xdf_marker_stream": {
@@ -516,7 +606,25 @@ def _source_preserving_csv_tail_evidence(
         },
         "csv_stream": {field: raw_stream.get(field) for field in identity_fields},
         "reasons": reasons,
+        "warnings": evidence_warnings,
     }
+
+
+def _marker_receipt_local_span(path: Path) -> tuple[float | None, float | None]:
+    first: float | None = None
+    last: float | None = None
+    try:
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                value = _optional_float(row.get("local_received_lsl_timestamp"))
+                if value is None:
+                    continue
+                if first is None:
+                    first = value
+                last = value
+    except OSError:
+        return None, None
+    return first, last
 
 
 def _channel_labels(info: dict[str, Any], channel_count: int) -> list[str]:

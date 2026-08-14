@@ -301,9 +301,10 @@ DSART session 2:
 Both recording recipes are raw pass-through paths: no filtering, resampling,
 re-referencing, artifact rejection, online capture, model process, or dashboard
 runs during acquisition. Original EEG outlet timestamps and their measured LSL
-clock corrections are retained alongside the corrected marker-alignment
-timestamp. See the recording runbook for the exact column and render-path
-contract.
+clock corrections are retained alongside the corrected timestamp. Local
+monotonic and LSL receipt-clock boundaries are retained separately so a device
+clock with a different origin is never mistaken for missing EEG. See the
+recording runbook for the exact column and render-path contract.
 
 ```bash
 dsart8 --participant sub-001 --visit-id visit-20260716 --operator operator-id

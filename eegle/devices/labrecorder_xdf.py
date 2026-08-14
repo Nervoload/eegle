@@ -195,6 +195,16 @@ class LabRecorderXdfRecorder:
             "sample_count": int(mirror.get("sample_count") or 0),
             "first_lsl_timestamp": mirror.get("first_lsl_timestamp"),
             "last_lsl_timestamp": mirror.get("last_lsl_timestamp"),
+            "first_source_lsl_timestamp": mirror.get("first_source_lsl_timestamp"),
+            "last_source_lsl_timestamp": mirror.get("last_source_lsl_timestamp"),
+            "first_local_received_time": mirror.get("first_local_received_time"),
+            "last_local_received_time": mirror.get("last_local_received_time"),
+            "first_local_received_lsl_timestamp": mirror.get(
+                "first_local_received_lsl_timestamp"
+            ),
+            "last_local_received_lsl_timestamp": mirror.get(
+                "last_local_received_lsl_timestamp"
+            ),
             "stream": mirror.get("stream"),
             "csv_mirror": mirror,
             "labrecorder_pid": None if self._process is None else self._process.pid,

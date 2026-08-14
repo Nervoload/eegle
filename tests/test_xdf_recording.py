@@ -585,6 +585,10 @@ class XdfIntegrityTests(unittest.TestCase):
                         "status": "stopped",
                         "sample_count": 2000,
                         "last_lsl_timestamp": 1.1,
+                        "first_source_lsl_timestamp": 0.0,
+                        "last_source_lsl_timestamp": 1.1,
+                        "first_local_received_lsl_timestamp": 0.0,
+                        "last_local_received_lsl_timestamp": 1.1,
                         "timestamp_gap_count": 0,
                         "nonmonotonic_timestamp_count": 0,
                         "stream": {
@@ -622,7 +626,7 @@ class XdfIntegrityTests(unittest.TestCase):
         self.assertEqual(result["recording_coverage"]["status"], "warning")
         self.assertEqual(
             result["recording_coverage"]["csv_tail_evidence"]["status"],
-            "pass",
+            "warning",
         )
 
     def test_large_xdf_tail_remains_fatal_even_with_complete_csv_evidence(self) -> None:
@@ -646,6 +650,10 @@ class XdfIntegrityTests(unittest.TestCase):
                         "status": "stopped",
                         "sample_count": 4000,
                         "last_lsl_timestamp": 3.1,
+                        "first_source_lsl_timestamp": 0.0,
+                        "last_source_lsl_timestamp": 3.1,
+                        "first_local_received_lsl_timestamp": 0.0,
+                        "last_local_received_lsl_timestamp": 3.1,
                         "timestamp_gap_count": 0,
                         "nonmonotonic_timestamp_count": 0,
                         "stream": {
@@ -688,7 +696,7 @@ class XdfIntegrityTests(unittest.TestCase):
         self.assertEqual(result["status"], "fail")
         self.assertEqual(
             result["recording_coverage"]["csv_tail_evidence"]["status"],
-            "pass",
+            "fail",
         )
         self.assertTrue(any("warning limit 2.000" in row for row in result["failures"]))
 
@@ -700,7 +708,119 @@ class XdfIntegrityTests(unittest.TestCase):
                 result = validate_xdf_recording(paths.root, required=True)
 
         self.assertEqual(result["status"], "fail")
-        self.assertTrue(any("CSV fallback evidence" in failure for failure in result["failures"]))
+        self.assertTrue(any("clock-bridge evidence" in failure for failure in result["failures"]))
+
+    def test_large_constant_eeg_marker_clock_offset_is_warning_when_bridge_proves_coverage(self) -> None:
+        eeg_stamps = [100.0, 100.05, 100.1, 100.15, 100.2, 100.25, 100.3]
+        with tempfile.TemporaryDirectory() as tmp:
+            paths, pyxdf = self._session(Path(tmp), eeg_stamps=eeg_stamps)
+            original_load = pyxdf.load_xdf  # type: ignore[attr-defined]
+
+            def load_with_device_clock_offset(*args: object, **kwargs: object) -> object:
+                loaded, header = original_load(*args, **kwargs)
+                loaded[1]["time_stamps"] = np.asarray([871645.05, 871645.25])
+                return loaded, header
+
+            pyxdf.load_xdf = load_with_device_clock_offset  # type: ignore[attr-defined]
+            receipt = paths.raw / "lsl_markers_received.csv"
+            receipt.write_text(
+                "marker_label,lsl_timestamp,local_received_lsl_timestamp\n"
+                "task_start,871645.05,871645.05\n"
+                "task_end,871645.25,871645.25\n",
+                encoding="utf-8",
+            )
+            (paths.raw / "eeg_metadata.json").write_text(
+                json.dumps(
+                    {
+                        "status": "stopped",
+                        "sample_count": 400,
+                        "first_source_lsl_timestamp": 99.9,
+                        "last_source_lsl_timestamp": 100.4,
+                        "first_local_received_lsl_timestamp": 871644.9,
+                        "last_local_received_lsl_timestamp": 871645.4,
+                        "timestamp_gap_count": 0,
+                        "nonmonotonic_timestamp_count": 0,
+                        "stream": {
+                            "name": "Neuracle EEG",
+                            "type": "EEG",
+                            "source_id": "eeg-test",
+                            "channel_count": 65,
+                        },
+                        "raw_sample_contract": {
+                            "source_timestamp_retained": True,
+                            "amplitude_samples_modified": False,
+                            "channel_value_order_modified": False,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(sys.modules, {"pyxdf": pyxdf}):
+                result = validate_xdf_recording(paths.root, required=True)
+
+        self.assertEqual(result["status"], "warning", result)
+        self.assertEqual(result["failures"], [])
+        self.assertEqual(
+            result["recording_coverage"]["clock_alignment_mode"],
+            "eeg_source_clock_to_local_receipt_clock_bridge",
+        )
+        self.assertEqual(
+            result["recording_coverage"]["csv_clock_bridge_evidence"]["status"],
+            "pass",
+        )
+        self.assertTrue(any("incompatible clock origins" in row for row in result["warnings"]))
+
+    def test_clock_bridge_still_rejects_xdf_that_really_starts_after_marker(self) -> None:
+        eeg_stamps = [100.8, 100.85, 100.9, 100.95, 101.0]
+        with tempfile.TemporaryDirectory() as tmp:
+            paths, pyxdf = self._session(Path(tmp), eeg_stamps=eeg_stamps)
+            original_load = pyxdf.load_xdf  # type: ignore[attr-defined]
+
+            def load_with_device_clock_offset(*args: object, **kwargs: object) -> object:
+                loaded, header = original_load(*args, **kwargs)
+                loaded[1]["time_stamps"] = np.asarray([871645.05, 871645.25])
+                return loaded, header
+
+            pyxdf.load_xdf = load_with_device_clock_offset  # type: ignore[attr-defined]
+            (paths.raw / "lsl_markers_received.csv").write_text(
+                "marker_label,lsl_timestamp,local_received_lsl_timestamp\n"
+                "task_start,871645.05,871645.05\n"
+                "task_end,871645.25,871645.25\n",
+                encoding="utf-8",
+            )
+            (paths.raw / "eeg_metadata.json").write_text(
+                json.dumps(
+                    {
+                        "status": "stopped",
+                        "sample_count": 400,
+                        "first_source_lsl_timestamp": 99.9,
+                        "last_source_lsl_timestamp": 101.1,
+                        "first_local_received_lsl_timestamp": 871644.9,
+                        "last_local_received_lsl_timestamp": 871646.1,
+                        "timestamp_gap_count": 0,
+                        "nonmonotonic_timestamp_count": 0,
+                        "stream": {
+                            "name": "Neuracle EEG",
+                            "type": "EEG",
+                            "source_id": "eeg-test",
+                            "channel_count": 65,
+                        },
+                        "raw_sample_contract": {
+                            "source_timestamp_retained": True,
+                            "amplitude_samples_modified": False,
+                            "channel_value_order_modified": False,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(sys.modules, {"pyxdf": pyxdf}):
+                result = validate_xdf_recording(paths.root, required=True)
+
+        self.assertEqual(result["status"], "fail")
+        self.assertTrue(
+            any("starts after the first required marker" in row for row in result["failures"])
+        )
 
     def test_xdf_validation_rejects_nonmonotonic_source_timestamps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

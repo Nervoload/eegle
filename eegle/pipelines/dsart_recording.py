@@ -2314,13 +2314,25 @@ def _task_marker_integrity(
     if overlapping_trials:
         target.append(f"{len(overlapping_trials)} trial response windows overlap the next stimulus")
     raw_metadata = _load_json(session_dir / "raw" / "eeg_metadata.json") or {}
-    raw_first = _optional_float(raw_metadata.get("first_lsl_timestamp"))
-    raw_last = _optional_float(raw_metadata.get("last_lsl_timestamp"))
-    if require_markers and onset_lsl_timestamps:
+    raw_first = _optional_float(raw_metadata.get("first_local_received_time"))
+    raw_last = _optional_float(raw_metadata.get("last_local_received_time"))
+    display_monotonic_timestamps = [
+        value
+        for value in (_optional_float(row.get("timestamp")) for row in display_marker_rows)
+        if value is not None
+    ]
+    if require_markers and display_monotonic_timestamps:
         if raw_first is None or raw_last is None:
-            failures.append("raw EEG metadata lacks the timestamp span needed to verify marker overlap")
-        elif raw_first > min(onset_lsl_timestamps) or raw_last < max(onset_lsl_timestamps):
-            failures.append("raw EEG timestamp span does not cover every stimulus-onset marker")
+            failures.append(
+                "raw EEG metadata lacks the PC-local receipt-time span needed to verify marker overlap"
+            )
+        elif (
+            raw_first > min(display_monotonic_timestamps) + 0.5
+            or raw_last < max(display_monotonic_timestamps) - 0.5
+        ):
+            failures.append(
+                "raw EEG PC-local receipt-time span does not cover every stimulus marker"
+            )
     marker_receipt = _marker_receipt_integrity(session_dir, display_marker_rows, required=require_markers)
     failures.extend(marker_receipt["failures"])
     warnings.extend(marker_receipt["warnings"])
@@ -2342,7 +2354,11 @@ def _task_marker_integrity(
         "onset_lsl_timestamps_strictly_increasing": not any(
             second <= first for first, second in zip(onset_lsl_timestamps, onset_lsl_timestamps[1:])
         ),
-        "raw_eeg_timestamp_span": {"first": raw_first, "last": raw_last},
+        "raw_eeg_local_receipt_monotonic_span": {"first": raw_first, "last": raw_last},
+        "raw_eeg_corrected_lsl_timestamp_span": {
+            "first": _optional_float(raw_metadata.get("first_lsl_timestamp")),
+            "last": _optional_float(raw_metadata.get("last_lsl_timestamp")),
+        },
         "independent_marker_receipt": marker_receipt,
         "failures": failures,
         "warnings": warnings,
@@ -2684,22 +2700,29 @@ def _baseline_recording_validation(
     warnings.extend(raw["warnings"])
     if record_eeg and phases:
         raw_metadata = dict(raw.get("metadata") or {})
-        raw_first = _optional_float(raw_metadata.get("first_lsl_timestamp"))
-        raw_last = _optional_float(raw_metadata.get("last_lsl_timestamp"))
+        raw_first = _optional_float(raw_metadata.get("first_local_received_time"))
+        raw_last = _optional_float(raw_metadata.get("last_local_received_time"))
         phase_starts = [
             value
-            for value in (_optional_float(row.get("start_lsl_timestamp")) for row in phases)
+            for value in (_optional_float(row.get("start_monotonic_timestamp")) for row in phases)
             if value is not None
         ]
         phase_ends = [
             value
-            for value in (_optional_float(row.get("end_lsl_timestamp")) for row in phases)
+            for value in (_optional_float(row.get("end_monotonic_timestamp")) for row in phases)
             if value is not None
         ]
         if raw_first is None or raw_last is None:
-            failures.append("raw EEG metadata lacks the timestamp span needed to verify baseline overlap")
-        elif phase_starts and phase_ends and (raw_first > min(phase_starts) or raw_last < max(phase_ends)):
-            failures.append("raw EEG timestamp span does not cover the complete resting baseline")
+            failures.append(
+                "raw EEG metadata lacks the PC-local receipt-time span needed to verify baseline overlap"
+            )
+        elif phase_starts and phase_ends and (
+            raw_first > min(phase_starts) + 0.5
+            or raw_last < max(phase_ends) - 0.5
+        ):
+            failures.append(
+                "raw EEG PC-local receipt-time span does not cover the complete resting baseline"
+            )
     return {
         "status": "fail" if failures else ("warning" if warnings else "pass"),
         "failures": failures,

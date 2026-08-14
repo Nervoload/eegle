@@ -21,6 +21,8 @@ class MarkerReceiptSummary:
     received_count: int = 0
     first_lsl_timestamp: float | None = None
     last_lsl_timestamp: float | None = None
+    first_local_received_lsl_timestamp: float | None = None
+    last_local_received_lsl_timestamp: float | None = None
     drain_expected_count: int | None = None
     drain_completed: bool | None = None
     error: str | None = None
@@ -34,6 +36,8 @@ class MarkerReceiptSummary:
             "received_count": self.received_count,
             "first_lsl_timestamp": self.first_lsl_timestamp,
             "last_lsl_timestamp": self.last_lsl_timestamp,
+            "first_local_received_lsl_timestamp": self.first_local_received_lsl_timestamp,
+            "last_local_received_lsl_timestamp": self.last_local_received_lsl_timestamp,
             "drain_expected_count": self.drain_expected_count,
             "drain_completed": self.drain_completed,
             "error": self.error,
@@ -152,7 +156,9 @@ class LslMarkerReceiptRecorder:
                     self._summary.received_count += 1
                     if self._summary.first_lsl_timestamp is None:
                         self._summary.first_lsl_timestamp = marker_timestamp
+                        self._summary.first_local_received_lsl_timestamp = local_received
                     self._summary.last_lsl_timestamp = marker_timestamp
+                    self._summary.last_local_received_lsl_timestamp = local_received
             self._summary.status = "stopped"
         except Exception as exc:
             self._summary.status = "failed"

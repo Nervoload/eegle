@@ -28,6 +28,12 @@ class EegRecorderSummary:
     sample_count: int = 0
     first_lsl_timestamp: float | None = None
     last_lsl_timestamp: float | None = None
+    first_source_lsl_timestamp: float | None = None
+    last_source_lsl_timestamp: float | None = None
+    first_local_received_time: float | None = None
+    last_local_received_time: float | None = None
+    first_local_received_lsl_timestamp: float | None = None
+    last_local_received_lsl_timestamp: float | None = None
     duration_seconds: float | None = None
     timestamp_gap_count: int = 0
     largest_timestamp_gap_seconds: float = 0.0
@@ -46,6 +52,12 @@ class EegRecorderSummary:
             "sample_count": self.sample_count,
             "first_lsl_timestamp": self.first_lsl_timestamp,
             "last_lsl_timestamp": self.last_lsl_timestamp,
+            "first_source_lsl_timestamp": self.first_source_lsl_timestamp,
+            "last_source_lsl_timestamp": self.last_source_lsl_timestamp,
+            "first_local_received_time": self.first_local_received_time,
+            "last_local_received_time": self.last_local_received_time,
+            "first_local_received_lsl_timestamp": self.first_local_received_lsl_timestamp,
+            "last_local_received_lsl_timestamp": self.last_local_received_lsl_timestamp,
             "duration_seconds": self.duration_seconds,
             "timestamp_gap_count": self.timestamp_gap_count,
             "largest_timestamp_gap_seconds": self.largest_timestamp_gap_seconds,
@@ -205,6 +217,7 @@ class LslEegRecorder:
                             f"{len(timestamps)} timestamps"
                         )
                     received_at = monotonic()
+                    received_at_lsl = _safe_lsl_local_clock(pylsl)
                     if received_at - last_disk_check >= self.disk_check_interval_seconds:
                         self._check_disk_space()
                         last_disk_check = received_at
@@ -214,7 +227,17 @@ class LslEegRecorder:
                             time_correction = refreshed
                         last_correction_refresh = received_at
                     received_times = _local_received_times_for_chunk(timestamps, received_at)
-                    for sample, source_timestamp, received_time in zip(samples, timestamps, received_times):
+                    received_lsl_times = (
+                        [None] * len(timestamps)
+                        if received_at_lsl is None
+                        else _local_received_times_for_chunk(timestamps, received_at_lsl)
+                    )
+                    for sample, source_timestamp, received_time, received_lsl_time in zip(
+                        samples,
+                        timestamps,
+                        received_times,
+                        received_lsl_times,
+                    ):
                         if len(sample) != len(channel_labels):
                             raise RuntimeError(
                                 f"LSL EEG sample width changed: expected {len(channel_labels)} values, got {len(sample)}"
@@ -256,7 +279,13 @@ class LslEegRecorder:
                         self._summary.sample_count += 1
                         if self._summary.first_lsl_timestamp is None:
                             self._summary.first_lsl_timestamp = corrected_timestamp
+                            self._summary.first_source_lsl_timestamp = source_timestamp
+                            self._summary.first_local_received_time = float(received_time)
+                            self._summary.first_local_received_lsl_timestamp = received_lsl_time
                         self._summary.last_lsl_timestamp = corrected_timestamp
+                        self._summary.last_source_lsl_timestamp = source_timestamp
+                        self._summary.last_local_received_time = float(received_time)
+                        self._summary.last_local_received_lsl_timestamp = received_lsl_time
                     handle.flush()
             self._summary.status = "stopped"
         except Exception as exc:
@@ -297,6 +326,11 @@ class LslEegRecorder:
                 "source_preserving" if _source_preserving_recording(self.eeg_config) else "legacy_processed"
             ),
             "source_timestamp_retained": _source_preserving_recording(self.eeg_config),
+            "local_receipt_monotonic_retained": True,
+            "local_receipt_lsl_clock_retained": (
+                self._summary.first_local_received_lsl_timestamp is not None
+                and self._summary.last_local_received_lsl_timestamp is not None
+            ),
             "initial_time_correction_available": (
                 (self._summary.stream or {}).get("initial_time_correction_seconds") is not None
             ),
@@ -350,6 +384,14 @@ def _local_received_times_for_chunk(timestamps: list[float], received_at: float)
         received.append(estimate)
         previous = estimate
     return received
+
+
+def _safe_lsl_local_clock(pylsl: Any) -> float | None:
+    try:
+        value = float(pylsl.local_clock())
+    except (AttributeError, TypeError, ValueError, RuntimeError):
+        return None
+    return value if np.isfinite(value) else None
 
 
 def _recorded_eeg_row(

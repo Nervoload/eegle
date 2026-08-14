@@ -1260,7 +1260,14 @@ class DsartRecordingTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (session / "raw" / "eeg_metadata.json").write_text(
-                json.dumps({"first_lsl_timestamp": 19.0, "last_lsl_timestamp": 21.0}),
+                json.dumps(
+                    {
+                        "first_lsl_timestamp": 19.0,
+                        "last_lsl_timestamp": 21.0,
+                        "first_local_received_time": 9.0,
+                        "last_local_received_time": 11.0,
+                    }
+                ),
                 encoding="utf-8",
             )
             (session / "raw" / "lsl_markers_received_metadata.json").write_text(
@@ -1317,6 +1324,7 @@ class DsartRecordingTests(unittest.TestCase):
 
         pylsl = ModuleType("pylsl")
         pylsl.StreamInlet = Inlet
+        pylsl.local_clock = lambda: 1000.0
         pylsl.proc_none = 0
         with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules, {"pylsl": pylsl}), patch(
             "eegle.devices.lsl_eeg._select_lsl_info",
@@ -1340,6 +1348,8 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertEqual(summary["timestamp_gap_count"], 1)
         self.assertGreater(summary["estimated_missing_samples"], 0)
         self.assertIn("timestamp gap exceeded", summary["error"])
+        self.assertEqual(summary["first_source_lsl_timestamp"], 1.0)
+        self.assertAlmostEqual(summary["first_local_received_lsl_timestamp"], 999.8)
 
     def test_marker_receipt_recorder_persists_delivered_lsl_sample(self) -> None:
         recorder_holder = {}
@@ -1376,6 +1386,8 @@ class DsartRecordingTests(unittest.TestCase):
 
         self.assertEqual(summary["status"], "stopped")
         self.assertEqual(summary["received_count"], 1)
+        self.assertEqual(summary["first_local_received_lsl_timestamp"], 10.01)
+        self.assertEqual(summary["last_local_received_lsl_timestamp"], 10.01)
         self.assertIn("dynamic_sart_stimulus_onset__trial=1", rows)
 
     def test_full_plan_has_exact_trial_phase_and_no_go_counts(self) -> None:

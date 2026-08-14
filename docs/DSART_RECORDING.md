@@ -23,9 +23,16 @@ the device-provided timestamp is not destroyed. `raw/eeg.csv` retains:
 
 - `source_lsl_timestamp`: the timestamp received from the EEG outlet;
 - `lsl_time_correction_seconds`: the measured remote-to-local LSL correction;
-- `lsl_timestamp`: their sum, used to align EEG with task markers;
+- `lsl_timestamp`: their sum, retained as LSL correction provenance;
 - `local_received_time`: the independent local monotonic receive estimate;
 - followed by untouched EEG sample values.
+
+The metadata also retains first/last source timestamps and first/last receipt
+times in both Python monotonic and PC-local LSL clock domains. Coverage checks
+use local receipt clocks, not an assumed equality between the Neuracle source
+clock and EEGle's marker clock. For XDF, validation bridges source time to local
+receipt time and still requires the selected stream identity and exact marker
+sequence.
 
 Metadata explicitly declares the amplitude and timestamp contract. The suite
 will not accept a live child session if those provenance fields or timestamp
@@ -40,7 +47,7 @@ loop a marker through LSL; post-session validation checks marker/trial parity,
 finite LSL timestamps, and one run-specific source ID.
 Validation also rejects duplicate trial indices, non-increasing stimulus clocks,
 onsets that were not captured on a display flip, invalid onset/offset/response
-ordering, overlapping response windows, and EEG timestamp spans that do not
+ordering, overlapping response windows, and EEG local-receipt spans that do not
 cover the recorded task or baseline markers.
 
 For live baseline and task sessions, a second LSL inlet independently subscribes

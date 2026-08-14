@@ -178,12 +178,19 @@ proves the same selected LSL stream identity and unchanged 65-value order.
 Conflicting channel counts, stream identities, meaningful positional labels,
 sample rates, timestamps, or marker receipts remain failures.
 
-If the synchronized XDF EEG tail precedes the final marker by more than 500 ms
-but no more than two seconds, the phase may continue with a warning only when
-the independent source-preserving CSV mirror and marker receipt jointly prove
-complete coverage from the same EEG stream. This narrow recovery handles a
-LabRecorder final-chunk race without weakening marker parity, EEG gap, stream
-identity, or large-tail failure gates.
+The Neuracle outlet and EEGle marker outlet are not assumed to share an absolute
+clock origin. When PyXDF's synchronized endpoints disagree, validation bridges
+the Neuracle source clock to the PC-local LSL receipt clock recorded by the CSV
+mirror and marker inlet. Exact marker parity and the XDF source-time endpoints
+must then prove coverage. A proven clock-origin difference is a warning, not an
+acquisition failure.
+
+If that source-relative proof finds an XDF EEG tail shortfall greater than 500
+ms but no more than two seconds, the phase may continue with a warning only when
+the independent source-preserving CSV mirror proves complete coverage from the
+same EEG stream. This narrow recovery handles a LabRecorder final-chunk race
+without weakening marker parity, EEG gap, stream identity, or large-tail
+failure gates.
 
 BDF, photodiode/audio loopback qualification, and the full modeling suite
 remain separate follow-up work.
