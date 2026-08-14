@@ -84,6 +84,10 @@ class PortabilityTests(unittest.TestCase):
         self.assertEqual(study_config["processes"]["recorder"]["tail_guard_seconds"], 1.0)
         self.assertEqual(study_config["processes"]["recorder"]["worker_shutdown_timeout_seconds"], 22.0)
         self.assertEqual(
+            study_config["processes"]["recorder"]["xdf_growth_warning_seconds"],
+            15.0,
+        )
+        self.assertEqual(
             study_config["processes"]["recorder"]["maximum_xdf_tail_shortfall_warning_seconds"],
             2.0,
         )

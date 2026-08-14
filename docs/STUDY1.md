@@ -151,6 +151,14 @@ before its stop command. The worker then waits for file-size settlement and
 for a bounded PyXDF scan to confirm that the finalized file is structurally
 readable. This prevents a partially flushed XDF from being reported as stopped.
 
+Live XDF file growth is not itself a liveness gate because LabRecorder may
+buffer Windows disk writes. A 15-second growth pause is logged as a warning
+while the LabRecorder process and source-preserving CSV/LSL mirror remain
+healthy. Recorder heartbeat/read errors are likewise warnings while that CSV
+sample file still advances. Process exit, loss of both status and sample
+progress, LSL sample loss, timestamp discontinuity, and write failures remain
+blocking acquisition failures.
+
 A completed acquisition phase must contain:
 
 - `raw/recording.xdf` and `raw/xdf_metadata.json`;
@@ -159,10 +167,10 @@ A completed acquisition phase must contain:
 - a terminal `logs/processes/recorder.status.json` with status `stopped`; and
 - passing XDF and CSV integrity sections in the session validation output.
 
-If LabRecorder exits, the XDF stops growing, the CSV mirror stalls, or disk
-space falls below the configured reserve, the shared recorder health gate stops
-the baseline/task. Finalization and validation failures retain both raw files
-but prevent the phase from being marked complete.
+If LabRecorder exits, the CSV/LSL mirror stalls, both status and sample-file
+progress disappear, or disk space falls below the configured reserve, the
+shared recorder health gate stops the baseline/task. Finalization and validation
+failures retain both raw files but prevent the phase from being marked complete.
 
 For the operator-confirmed Neuracle positional mapping, XDF descriptor names
 may be canonicalized only when the independent source-preserving CSV mirror

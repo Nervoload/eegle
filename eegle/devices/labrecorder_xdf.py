@@ -41,9 +41,14 @@ class LabRecorderXdfRecorder:
             2.0,
             float(self.recorder_config.get("shutdown_timeout_seconds", 15.0)),
         )
-        self.xdf_stall_timeout_seconds = max(
+        self.xdf_growth_warning_seconds = max(
             2.0,
-            float(self.recorder_config.get("xdf_stall_timeout_seconds", 15.0)),
+            float(
+                self.recorder_config.get(
+                    "xdf_growth_warning_seconds",
+                    self.recorder_config.get("xdf_stall_timeout_seconds", 15.0),
+                )
+            ),
         )
         self.tail_guard_seconds = max(
             0.0,
@@ -76,6 +81,8 @@ class LabRecorderXdfRecorder:
         self._notes: list[str] = []
         self._last_xdf_size = 0
         self._last_xdf_growth_at = monotonic()
+        self._xdf_growth_warning_active = False
+        self._xdf_growth_warning_count = 0
         self._started_at = monotonic()
         self._stop_reason: str | None = None
 
@@ -149,17 +156,30 @@ class LabRecorderXdfRecorder:
         if xdf_size > self._last_xdf_size:
             self._last_xdf_size = xdf_size
             self._last_xdf_growth_at = now
+            if self._xdf_growth_warning_active:
+                self._notes.append("LabRecorder XDF file growth resumed after a buffering interval")
+            self._xdf_growth_warning_active = False
         if self._status == "recording":
             if self._process is None or self._process.poll() is not None:
                 returncode = None if self._process is None else self._process.poll()
                 self._fail(f"LabRecorder exited during acquisition with return code {returncode}")
             elif mirror.get("status") != "recording":
                 self._fail(str(mirror.get("error") or f"CSV mirror status changed to {mirror.get('status')}"))
-            elif now - self._last_xdf_growth_at > self.xdf_stall_timeout_seconds:
-                self._fail(
-                    "XDF file size has not advanced for "
-                    f"{now - self._last_xdf_growth_at:.1f} seconds"
-                )
+            elif now - self._last_xdf_growth_at > self.xdf_growth_warning_seconds:
+                if not self._xdf_growth_warning_active:
+                    self._xdf_growth_warning_active = True
+                    self._xdf_growth_warning_count += 1
+                    self._notes.append(
+                        "LabRecorder XDF file size did not advance for "
+                        f"{now - self._last_xdf_growth_at:.1f} seconds while the process and "
+                        "source-preserving CSV/LSL mirror remained healthy; treating this as "
+                        "buffering until final XDF validation"
+                    )
+        xdf_growth_status = (
+            "buffering_warning"
+            if self._xdf_growth_warning_active
+            else ("finalized" if self._status == "stopped" else "advancing")
+        )
         return {
             "status": self._status,
             "primary_format": "xdf",
@@ -168,6 +188,9 @@ class LabRecorderXdfRecorder:
             "xdf_file": str(self.paths.eeg_xdf),
             "xdf_size_bytes": xdf_size,
             "xdf_seconds_since_growth": max(0.0, now - self._last_xdf_growth_at),
+            "xdf_growth_status": xdf_growth_status,
+            "xdf_growth_warning_count": self._xdf_growth_warning_count,
+            "xdf_growth_warning_seconds": self.xdf_growth_warning_seconds,
             "tail_guard_seconds": self.tail_guard_seconds,
             "sample_count": int(mirror.get("sample_count") or 0),
             "first_lsl_timestamp": mirror.get("first_lsl_timestamp"),
@@ -297,6 +320,12 @@ class LabRecorderXdfRecorder:
                     readable, structure_error = _xdf_is_structurally_readable(self.paths.eeg_xdf)
                     if readable:
                         self._last_xdf_size = size
+                        self._last_xdf_growth_at = monotonic()
+                        if self._xdf_growth_warning_active:
+                            self._notes.append(
+                                "LabRecorder finalized a structurally readable XDF after a buffered-write warning"
+                            )
+                        self._xdf_growth_warning_active = False
                         return
                     stable_polls = 0
             else:

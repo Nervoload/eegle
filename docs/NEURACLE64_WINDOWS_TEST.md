@@ -547,6 +547,22 @@ CSV timestamp-gap validation, XDF timestamp-gap validation, or the selected
 Neuracle stream identity. Do not ignore those failures merely because the
 marker transition message is harmless.
 
+### XDF file-growth warning during a live phase
+
+LabRecorder can buffer XDF chunks on Windows, so the visible `recording.xdf`
+file may remain the same size for 15 seconds or longer even though LabRecorder
+is alive and EEG samples continue to arrive. EEGle records this as an
+`xdf_buffering_warning` and continues whenever the independent source-preserving
+CSV/LSL mirror is advancing. Final XDF structure, timestamps, streams, and
+marker parity are still validated after LabRecorder stops.
+
+The live task stops only when the LabRecorder process exits, the independent
+EEG recorder reports an LSL/write/timestamp failure, or both its heartbeat and
+source-preserving sample file stop advancing. A temporarily stale or unreadable
+status JSON is a warning while the sample file continues to grow. When a real
+health failure occurs, the baseline failure includes the underlying reason
+instead of only `recorder_health_failure`.
+
 ### LabRecorder gate fails
 
 - Ensure the path points to `LabRecorder.exe` itself.

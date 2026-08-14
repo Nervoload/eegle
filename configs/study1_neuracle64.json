@@ -155,7 +155,7 @@
       "startup_timeout_seconds": 20.0,
       "shutdown_timeout_seconds": 15.0,
       "worker_shutdown_timeout_seconds": 22.0,
-      "xdf_stall_timeout_seconds": 15.0,
+      "xdf_growth_warning_seconds": 15.0,
       "tail_guard_seconds": 1.0,
       "maximum_xdf_tail_shortfall_warning_seconds": 2.0
     },

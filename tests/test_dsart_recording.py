@@ -273,6 +273,51 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertTrue(logger.mark.call_args_list[0].kwargs["scheduled_on_flip"])
         self.assertEqual(logger.mark.call_args_list[0].kwargs["lsl_timestamp"], 20.0)
 
+    def test_baseline_health_failure_preserves_the_actual_recorder_reason(self) -> None:
+        callbacks = []
+
+        class Window:
+            def callOnFlip(self, callback, *args) -> None:
+                callbacks.append((callback, args))
+
+            def flip(self) -> None:
+                while callbacks:
+                    callback, args = callbacks.pop(0)
+                    callback(*args)
+
+        monitor = SimpleNamespace(
+            check=lambda: SimpleNamespace(
+                ok=False,
+                warning=False,
+                reason="LabRecorder process exited with code 3",
+                status={"status": "failed"},
+            )
+        )
+        with patch(
+            "eegle.pipelines.dsart_recording.monotonic",
+            side_effect=[10.0, 10.1, 10.1, 10.15],
+        ), patch(
+            "eegle.pipelines.dsart_recording.lsl_local_clock",
+            return_value=20.0,
+        ), patch("eegle.pipelines.dsart_recording.sleep"):
+            result = _psychopy_baseline_phase(
+                Window(),
+                SimpleNamespace(TextStim=lambda *_args, **_kwargs: SimpleNamespace(draw=lambda: None)),
+                SimpleNamespace(),
+                MagicMock(),
+                MagicMock(),
+                name="eyes_open",
+                duration=0.2,
+                draw_fixation=True,
+                recorder_monitor=monitor,
+            )
+
+        self.assertTrue(result["aborted"])
+        self.assertEqual(
+            result["abort_reason"],
+            "recorder_health_failure: LabRecorder process exited with code 3",
+        )
+
     def test_inter_session_break_closes_marker_outlet_on_operator_interrupt(self) -> None:
         class Outlet:
             closed = False
@@ -1114,6 +1159,15 @@ class DsartRecordingTests(unittest.TestCase):
                 encoding="utf-8",
             )
             passed = _marker_receipt_integrity(session, ledger, required=True)
+            (session / "raw" / "lsl_markers_received_metadata.json").write_text(
+                json.dumps({"status": "failed", "received_count": 2}),
+                encoding="utf-8",
+            )
+            unclean_stop = _marker_receipt_integrity(session, ledger, required=True)
+            (session / "raw" / "lsl_markers_received_metadata.json").write_text(
+                json.dumps({"status": "stopped", "received_count": 2}),
+                encoding="utf-8",
+            )
             receipt.write_text(
                 "marker_label,lsl_timestamp,local_received_lsl_timestamp\n"
                 "dynamic_sart_stimulus_onset__trial=1,10.000000000,10.50\n"
@@ -1137,6 +1191,9 @@ class DsartRecordingTests(unittest.TestCase):
 
         self.assertEqual(passed["status"], "pass")
         self.assertAlmostEqual(passed["maximum_delivery_latency_seconds"], 0.01)
+        self.assertEqual(unclean_stop["status"], "warning")
+        self.assertEqual(unclean_stop["failures"], [])
+        self.assertTrue(any("clean stop" in row for row in unclean_stop["warnings"]))
         self.assertEqual(delayed["status"], "warning")
         self.assertEqual(delayed["failures"], [])
         self.assertEqual(delayed["late_delivery_indices"], [1, 2])
@@ -1614,6 +1671,44 @@ class DsartRecordingTests(unittest.TestCase):
             failed = monitor.check()
         self.assertFalse(failed.ok)
         self.assertIn("failed", str(failed.reason))
+
+    def test_recorder_monitor_warns_for_stale_status_while_csv_still_advances(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            status_path = root / "recorder.status.json"
+            raw_path = root / "eeg.csv"
+            raw_path.write_text("header\n", encoding="utf-8")
+            payload = {
+                "status": "recording",
+                "summary": {
+                    "sample_count": 100,
+                    "csv_mirror": {"raw_file": str(raw_path)},
+                },
+            }
+            status_path.write_text(json.dumps(payload), encoding="utf-8")
+            monitor = RecorderHealthMonitor(
+                status_path,
+                required=True,
+                stall_timeout_seconds=1.0,
+                status_stale_seconds=1.0,
+            )
+            self.assertTrue(monitor.check().ok)
+            raw_path.write_text("header\n1,2,3\n", encoding="utf-8")
+            stale_time = status_path.stat().st_mtime - 10.0
+            os.utime(status_path, (stale_time, stale_time))
+
+            warning = monitor.check()
+            repeated = monitor.check()
+            monitor._last_progress_at -= 2.0
+            failed = monitor.check()
+
+        self.assertTrue(warning.ok)
+        self.assertTrue(warning.warning)
+        self.assertIn("still advancing", str(warning.reason))
+        self.assertTrue(repeated.ok)
+        self.assertFalse(repeated.warning)
+        self.assertFalse(failed.ok)
+        self.assertIn("has not advanced", str(failed.reason))
 
     def test_raw_row_preserves_amplitudes_and_both_lsl_timestamps(self) -> None:
         sample = [1.25, -2.5, 3.75]

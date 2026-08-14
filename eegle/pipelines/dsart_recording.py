@@ -1172,9 +1172,6 @@ def run_resting_baseline(
     if lifecycle_errors:
         result.setdefault("warnings", []).extend(lifecycle_errors)
         result["lifecycle_errors"] = lifecycle_errors
-        if options.record_eeg:
-            result["status"] = "failed"
-            result.setdefault("failure_kind", "recorder_lifecycle_failure")
     try:
         baseline_validation = _baseline_recording_validation(paths, result, record_eeg=options.record_eeg)
     except Exception as exc:
@@ -1501,9 +1498,21 @@ def _psychopy_baseline_phase(
         if recorder_monitor is not None and now >= next_health_check:
             health = recorder_monitor.check()
             next_health_check = now + 0.25
-            if not health.ok:
+            if health.ok and bool(getattr(health, "warning", False)):
+                _baseline_mark(
+                    logger,
+                    outlet,
+                    "dsart_baseline_recorder_warning",
+                    now,
+                    lsl_timestamp=lsl_local_clock(),
+                    event_type="SYSTEM",
+                    phase=name,
+                    reason=health.reason,
+                    recorder_status=health.status.get("status"),
+                )
+            elif not health.ok:
                 aborted = True
-                abort_reason = "recorder_health_failure"
+                abort_reason = f"recorder_health_failure: {health.reason}"
                 recorder_status = health.status
                 _baseline_mark(
                     logger,
@@ -2399,7 +2408,10 @@ def _marker_receipt_integrity(
     warnings = []
     target = failures if required else warnings
     if required and metadata.get("status") != "stopped":
-        failures.append("independent marker receipt recorder status is not stopped")
+        warnings.append(
+            "independent marker receipt recorder did not report a clean stop; exact received "
+            "marker count/order/timestamps are validated separately"
+        )
     if not csv_path.exists():
         target.append("independent LSL marker receipt CSV is missing")
     elif [row["label"] for row in received] != expected_labels:

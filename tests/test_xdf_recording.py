@@ -288,7 +288,7 @@ class ManagedXdfTests(unittest.TestCase):
             with self.assertRaisesRegex(FileExistsError, "refusing to overwrite"):
                 recorder.start()
 
-    def test_snapshot_fails_when_xdf_growth_stalls(self) -> None:
+    def test_snapshot_warns_when_xdf_growth_stalls_but_csv_mirror_is_healthy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = paths_for_existing_session(tmp)
             paths.eeg_xdf.write_bytes(b"XDF:test")
@@ -302,8 +302,11 @@ class ManagedXdfTests(unittest.TestCase):
 
             status = recorder.snapshot()
 
-            self.assertEqual(status["status"], "failed")
-            self.assertIn("has not advanced", str(status["error"]))
+            self.assertEqual(status["status"], "recording")
+            self.assertEqual(status["xdf_growth_status"], "buffering_warning")
+            self.assertEqual(status["xdf_growth_warning_count"], 1)
+            self.assertIsNone(status["error"])
+            self.assertTrue(any("buffering" in note for note in status["notes"]))
 
     def test_snapshot_fails_when_labrecorder_exits(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

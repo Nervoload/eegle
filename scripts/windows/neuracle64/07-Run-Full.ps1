@@ -38,6 +38,7 @@ Write-Host "  fixed timing: 250 ms digit + 1350 ms fixation (1600 ms SOI; no jit
 Write-Host "The main task lasts about 26 minutes 40 seconds before practice and breaks."
 Write-Host "Keep Neuracle Collect LSL streaming. EEGle launches/stops LabRecorder."
 Write-Host "A phase-end liblsl ERR mentioning R_EEGleMarkers is expected when EEGle closes that phase's marker receiver; it is not the Neuracle EEG stream."
+Write-Host "LabRecorder may buffer XDF disk writes; paused XDF file growth is a warning while the independent CSV/LSL recorder is still receiving samples."
 
 $arguments = @(
     "-m", "eegle.pipelines.study1",

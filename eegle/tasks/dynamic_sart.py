@@ -2006,6 +2006,17 @@ def _recorder_health_gate(
 ) -> bool:
     health = monitor.check()
     if health.ok:
+        if bool(getattr(health, "warning", False)):
+            _emit(
+                logger,
+                marker_outlet,
+                marker_label("recorder_warning", trial),
+                event_type="SYSTEM",
+                trial=None if trial is None else int(trial.get("global_trial_index", 0)),
+                reason=health.reason,
+                recorder_status=health.status.get("status"),
+                recorder_summary=health.status.get("summary"),
+            )
         return True
     _emit(
         logger,

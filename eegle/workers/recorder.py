@@ -169,6 +169,7 @@ def _run_labrecorder_xdf(
     last_update = monotonic()
     heartbeat_seconds = float(telemetry_config.get("heartbeat_seconds", 5.0))
     last_health_event = monotonic()
+    last_xdf_growth_status = str(snapshot.get("xdf_growth_status") or "advancing")
     stop_reason = "stop_requested"
     final_status = "failed"
     try:
@@ -187,6 +188,26 @@ def _run_labrecorder_xdf(
             if snapshot.get("status") != "recording":
                 status.update("failed", summary=snapshot, error=snapshot.get("error"))
                 return 1
+            xdf_growth_status = str(snapshot.get("xdf_growth_status") or "advancing")
+            if xdf_growth_status != last_xdf_growth_status:
+                if xdf_growth_status == "buffering_warning":
+                    telemetry.emit(
+                        "recorder.xdf_buffering_warning",
+                        level="default",
+                        message=(
+                            "LabRecorder XDF disk growth paused while its process and CSV/LSL "
+                            "mirror remain healthy; recording continues pending final validation"
+                        ),
+                        metadata=snapshot,
+                    )
+                else:
+                    telemetry.emit(
+                        "recorder.xdf_growth_resumed",
+                        level="default",
+                        message="LabRecorder XDF disk growth resumed",
+                        metadata=snapshot,
+                    )
+                last_xdf_growth_status = xdf_growth_status
             if monotonic() - last_update >= 1.0:
                 status.update("recording", summary=snapshot)
                 last_update = monotonic()

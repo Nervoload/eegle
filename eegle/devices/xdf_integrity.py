@@ -479,8 +479,6 @@ def _source_preserving_csv_tail_evidence(
         reasons.append("CSV EEG mirror does not prove unmodified amplitudes")
     if contract.get("channel_value_order_modified") is not False:
         reasons.append("CSV EEG mirror does not prove unmodified channel order")
-    if marker_metadata.get("status") != "stopped":
-        reasons.append("independent marker receipt did not stop cleanly")
     if not marker_sequence_matches:
         reasons.append("XDF and independent marker sequences differ")
     eeg_hostname = str(selected_xdf_stream.get("hostname") or "").strip()
@@ -511,6 +509,7 @@ def _source_preserving_csv_tail_evidence(
         "status": "fail" if reasons else "pass",
         "csv_last_lsl_timestamp": raw_last,
         "last_marker_lsl_timestamp": marker_last,
+        "marker_receipt_status": marker_metadata.get("status"),
         "xdf_stream": {field: selected_xdf_stream.get(field) for field in identity_fields},
         "xdf_marker_stream": {
             field: selected_marker_stream.get(field) for field in identity_fields

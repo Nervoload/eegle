@@ -645,7 +645,12 @@ def normalize_processes(config: dict[str, Any], record_eeg: bool = True) -> dict
                 recorder.get("startup_timeout_seconds", 20.0 if recorder_backend == "labrecorder_xdf" else 8.0)
             ),
             "shutdown_timeout_seconds": recorder_worker_shutdown_timeout,
-            "xdf_stall_timeout_seconds": float(recorder.get("xdf_stall_timeout_seconds", 15.0)),
+            "xdf_growth_warning_seconds": float(
+                recorder.get(
+                    "xdf_growth_warning_seconds",
+                    recorder.get("xdf_stall_timeout_seconds", 15.0),
+                )
+            ),
             "tail_guard_seconds": recorder_tail_guard,
             "maximum_xdf_tail_shortfall_warning_seconds": float(
                 recorder.get("maximum_xdf_tail_shortfall_warning_seconds", 2.0)
