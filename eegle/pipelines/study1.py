@@ -24,6 +24,7 @@ from eegle.hardware.neuracle import (
 from eegle.pipelines.dsart_recording import (
     DsartRecordingOptions,
     _accept_recording_preflight,
+    _accept_post_recording_warnings,
     _complete_phase,
     _fail_phase,
     _latest_phase_result,
@@ -429,6 +430,7 @@ def _run_configured_study1_visit(
                 result = run_resting_baseline(config, dsart_options, visit_id=visit_id, preflight=active_preflight)
                 if result.get("status") != "completed":
                     raise RuntimeError(_phase_error("Study 1 baseline", result))
+                _accept_post_recording_warnings(result, dsart_options, "Study 1 baseline")
                 manifest.setdefault("session_directories", {})["baseline"] = result.get("session_dir")
             else:
                 if active_preflight is None:
@@ -464,6 +466,7 @@ def _run_configured_study1_visit(
                 result["study_segment"] = phase
                 if result.get("status") != "completed":
                     raise RuntimeError(_phase_error(phase, result))
+                _accept_post_recording_warnings(result, dsart_options, phase)
                 manifest.setdefault("session_directories", {})[phase] = result.get("session_dir")
                 manifest.setdefault("sequence_hashes", {})[phase] = result.get("sequence_hash")
             _complete_phase(manifest, phase, result)

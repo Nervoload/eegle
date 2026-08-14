@@ -251,7 +251,12 @@ def validate_study1_config(config: dict[str, Any]) -> list[dict[str, str]]:
     if not bool(recorder.get("enabled", False)) or recorder.get("backend") != "labrecorder_xdf":
         issues.append(_issue("fail", "Study 1 requires the managed labrecorder_xdf backend"))
     if not bool(recorder.get("csv_mirror", False)):
-        issues.append(_issue("fail", "Study 1 managed XDF acquisition requires csv_mirror=true"))
+        issues.append(
+            _issue(
+                "warn",
+                "Study 1 CSV safety mirror is disabled; authoritative XDF acquisition remains available",
+            )
+        )
     if not str(recorder.get("executable", "")).strip():
         issues.append(_issue("fail", "Study 1 processes.recorder.executable must be configured"))
     try:

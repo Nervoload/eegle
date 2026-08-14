@@ -63,6 +63,11 @@ class RecorderHealthMonitor:
         except OSError:
             status_age = float("inf")
         summary = dict(payload.get("summary", {}) or {})
+        csv_mirror = dict(summary.get("csv_mirror") or {})
+        xdf_with_degraded_mirror = (
+            summary.get("primary_format") == "xdf"
+            and csv_mirror.get("status") not in {None, "recording"}
+        )
         try:
             sample_count = int(summary.get("sample_count", 0))
         except (TypeError, ValueError):
@@ -78,7 +83,7 @@ class RecorderHealthMonitor:
             self._last_sample_count = sample_count
             self._last_data_file_size = data_file_size
             self._last_progress_at = now
-        elif now - self._last_progress_at > self.stall_timeout_seconds:
+        elif now - self._last_progress_at > self.stall_timeout_seconds and not xdf_with_degraded_mirror:
             if read_problem or status_age > self.status_stale_seconds:
                 reason = (
                     f"recorder heartbeat/status is unavailable and the source-preserving EEG file "
@@ -94,6 +99,15 @@ class RecorderHealthMonitor:
                 reason,
                 payload,
             )
+        if xdf_with_degraded_mirror and not read_problem and status_age <= self.status_stale_seconds:
+            warning_kind = "csv_mirror_degraded"
+            is_new = warning_kind != self._active_warning_kind
+            self._active_warning_kind = warning_kind
+            reason = str(
+                summary.get("csv_mirror_warning")
+                or "CSV mirror is degraded; authoritative XDF acquisition continues"
+            )
+            return RecordingHealth(True, reason if is_new else None, payload, warning=is_new)
         if read_problem or status_age > self.status_stale_seconds:
             warning_kind = "status_read_problem" if read_problem else "stale_heartbeat"
             reason = (
@@ -109,10 +123,15 @@ class RecorderHealthMonitor:
 
 
 def _recorded_data_file_size(summary: dict[str, Any]) -> int | None:
-    """Read progress from the CSV safety recording, never buffered XDF growth."""
+    """Prefer CSV progress, falling back to primary XDF when the mirror is degraded."""
 
     csv_mirror = dict(summary.get("csv_mirror") or {})
-    raw_file = csv_mirror.get("raw_file") or summary.get("raw_file")
+    mirror_healthy = csv_mirror.get("status") in {None, "recording"}
+    raw_file = (
+        csv_mirror.get("raw_file")
+        if mirror_healthy
+        else summary.get("xdf_file") or summary.get("raw_file")
+    )
     if not raw_file:
         return None
     try:

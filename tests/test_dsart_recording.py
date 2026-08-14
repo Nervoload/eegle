@@ -18,18 +18,23 @@ from eegle.hardware.profiles import mapped_channel_names
 from eegle.hardware.system import CheckResult
 from eegle.io.events import EventLogger
 from eegle.experiment import ForwardExperimentResult
+from eegle.lsl import LslMarkerOutlet
 from eegle.pipelines.dsart_recording import (
     DSART8_CHANNELS,
     DsartRecordingOptions,
+    _accept_post_recording_warnings,
+    _accept_recording_preflight,
     _baseline_phase_aborted,
     _baseline_phase_result,
     _child_session_validation,
     _close_resources,
     compare_preflights,
     _configure_practice_policy,
+    _countdown_event_integrity,
     _marker_receipt_integrity,
     _run_dsart_child_session_inline,
     _run_dsart_child_session_isolated,
+    _run_xdf_preflight_probe,
     _runtime_cache_root,
     _storage_check,
     _task_marker_integrity,
@@ -535,6 +540,75 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertIsNone(report["electrode_quality_file"])
         self.assertEqual(report["warnings"], [])
 
+    def test_xdf_preflight_probe_records_and_surfaces_quality_warnings(self) -> None:
+        class NativeOutlet:
+            def push_sample(self, sample, timestamp=None) -> None:
+                return None
+
+        class Receipt:
+            def wait_for_count(self, expected_count: int, *, timeout: float) -> bool:
+                return True
+
+            def stop(self) -> dict[str, object]:
+                return {"status": "stopped", "received_count": 2}
+
+        class Recorder:
+            def start(self) -> dict[str, object]:
+                return {"status": "recording"}
+
+            def stop(self, *, reason: str) -> dict[str, object]:
+                return {
+                    "status": "stopped",
+                    "csv_mirror_warning": "CSV mirror failed; XDF acquisition continued",
+                }
+
+        outlet = object.__new__(LslMarkerOutlet)
+        outlet._outlet = NativeOutlet()
+        outlet.name = "EEGleMarkers"
+        outlet.stream_type = "Markers"
+        outlet.source_id = "xdf-probe-markers"
+        outlet.pushed_count = 0
+        validation = {
+            "status": "warning",
+            "failures": [],
+            "warnings": ["XDF measured EEG rate is 970.0 Hz; expected about 1000 Hz"],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            config = load_config(CONFIG_32)
+            config["processes"]["recorder"].update(
+                {
+                    "backend": "labrecorder_xdf",
+                    "preflight_xdf_probe_seconds": 1.0,
+                }
+            )
+            with patch(
+                "eegle.pipelines.dsart_recording._make_marker_outlet",
+                return_value=outlet,
+            ), patch(
+                "eegle.pipelines.dsart_recording._start_marker_receipt_recorder",
+                return_value=Receipt(),
+            ), patch(
+                "eegle.pipelines.dsart_recording.LabRecorderXdfRecorder",
+                return_value=Recorder(),
+            ), patch(
+                "eegle.pipelines.dsart_recording.validate_xdf_recording",
+                return_value=validation,
+            ), patch(
+                "eegle.pipelines.dsart_recording.lsl_local_clock",
+                side_effect=[1.0, 2.0],
+            ), patch("eegle.pipelines.dsart_recording.sleep"):
+                result = _run_xdf_preflight_probe(
+                    config,
+                    participant_id="unit-xdf-probe",
+                    phase="initial_preflight",
+                    output_dir=Path(tmp),
+                )
+
+        self.assertEqual(result.status, "warn")
+        self.assertIn("measured EEG rate", result.detail)
+        self.assertTrue(any("CSV mirror failed" in row for row in result.data["warnings"]))
+        self.assertTrue(Path(result.data["session_dir"]).name.startswith("run-"))
+
     def test_preflight_comparison_returns_its_quality_result(self) -> None:
         initial = {
             "status": "pass",
@@ -555,6 +629,27 @@ class DsartRecordingTests(unittest.TestCase):
 
         self.assertEqual(comparison["status"], "pass")
         self.assertEqual(comparison["sample_rate_difference_hz"], 0.0)
+
+    def test_preflight_comparison_treats_sample_rate_change_as_warning(self) -> None:
+        initial = {
+            "eeg_probe": {
+                "stream": {"source_id": "eeg-1", "nominal_srate": 1000.0},
+                "quality": {"channels": []},
+            },
+            "channel_contract": {"expected_channel_order": ["E1"]},
+        }
+        comparison = compare_preflights(
+            initial,
+            {
+                "stream": {"source_id": "eeg-1", "nominal_srate": 900.0},
+                "quality": {"channels": []},
+            },
+            {"status": "pass", "expected_channel_order": ["E1"]},
+        )
+
+        self.assertEqual(comparison["status"], "warning")
+        self.assertEqual(comparison["failures"], [])
+        self.assertTrue(any("sample rate changed" in row for row in comparison["warnings"]))
 
     def test_session_root_cli_alias_maps_to_the_suite_output_root(self) -> None:
         args = build_parser().parse_args(
@@ -926,6 +1021,9 @@ class DsartRecordingTests(unittest.TestCase):
             ), patch(
                 "eegle.pipelines.dsart_recording._write_json_atomic",
                 side_effect=PermissionError("policy lock"),
+            ), patch(
+                "eegle.pipelines.dsart_recording._child_session_validation",
+                return_value={"status": "pass", "failures": [], "warnings": []},
             ):
                 result = _run_dsart_child_session_inline(
                     config,
@@ -936,10 +1034,11 @@ class DsartRecordingTests(unittest.TestCase):
                     preflight={"checks": []},
                 )
 
-        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["status"], "completed")
         self.assertEqual(result["session_dir"], str(session))
         self.assertTrue(result["raw_recording_retained"])
-        self.assertEqual(result["failure_kind"], "post_recording_metadata_failure")
+        self.assertNotIn("failure_kind", result)
+        self.assertTrue(any("policy lock" in warning for warning in result["warnings"]))
 
     def test_relative_runtime_cache_follows_the_approved_session_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1139,6 +1238,31 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertEqual(integrity["status"], "fail")
         self.assertIn("managed XDF validation failed", integrity["failures"])
 
+    def test_raw_integrity_keeps_missing_csv_mirror_nonfatal_when_xdf_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp)
+            (session / "raw").mkdir()
+            (session / "parameters.json").write_text(
+                json.dumps(
+                    {
+                        "hardware": {"eeg": {}},
+                        "processes": {"recorder": {"backend": "labrecorder_xdf"}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch(
+                "eegle.pipelines.dsart_recording.validate_xdf_recording",
+                return_value={"status": "pass", "failures": [], "warnings": []},
+            ):
+                integrity = _raw_eeg_integrity(session, required=True)
+
+        self.assertEqual(integrity["failures"], [])
+        self.assertEqual(integrity["status"], "warning")
+        self.assertTrue(
+            any("CSV mirror warning" in warning for warning in integrity["warnings"])
+        )
+
     def test_independent_marker_receipt_must_match_ledger_order_and_timestamps(self) -> None:
         ledger = [
             {"label": "dynamic_sart_stimulus_onset__trial=1", "metadata": {"lsl_timestamp": 10.0}},
@@ -1293,10 +1417,24 @@ class DsartRecordingTests(unittest.TestCase):
                 require_markers=True,
                 require_display_flip=True,
             )
+            (session / "raw" / "eeg_metadata.json").unlink()
+            xdf_parameters = copy.deepcopy(parameters)
+            xdf_parameters["processes"] = {
+                "recorder": {"backend": "labrecorder_xdf"}
+            }
+            xdf_without_csv = _task_marker_integrity(
+                session,
+                xdf_parameters,
+                require_markers=True,
+                require_display_flip=False,
+            )
 
         self.assertEqual(dry["status"], "pass", dry)
         self.assertEqual(visual["status"], "fail")
         self.assertTrue(any("display flip" in row for row in visual["failures"]))
+        self.assertEqual(xdf_without_csv["failures"], [])
+        self.assertEqual(xdf_without_csv["status"], "warning")
+        self.assertTrue(any("XDF" in row for row in xdf_without_csv["warnings"]))
 
     def test_raw_recorder_aborts_on_large_source_timestamp_gap(self) -> None:
         class Info:
@@ -1601,12 +1739,23 @@ class DsartRecordingTests(unittest.TestCase):
             (session / "raw" / "eeg_metadata.json").write_text(json.dumps({"status": "stopped"}))
             (session / "parameters.json").write_text(json.dumps(parameters))
             countdown_rows = [
-                {"label": "dynamic_sart_countdown_start", "value": None},
+                {"label": "dynamic_sart_countdown_start", "value": None, "timestamp": 10.0},
                 *[
-                    {"label": f"dynamic_sart_countdown_step__step={index}", "value": value}
+                    {
+                        "label": f"dynamic_sart_countdown_step__step={index}",
+                        "value": value,
+                        "timestamp": 10.0 + index,
+                    }
                     for index, value in enumerate(["5", "4", "3", "2", "1", "GO!"], start=1)
                 ],
-                {"label": "dynamic_sart_countdown_end", "value": None},
+                {"label": "dynamic_sart_countdown_end", "value": None, "timestamp": 17.0},
+                {
+                    "label": "dynamic_sart_stimulus_onset__practice=0",
+                    "value": None,
+                    "timestamp": 17.0,
+                    "trial": 1,
+                    "metadata": {"practice": False, "phase": "support"},
+                },
             ]
             (session / "events" / "events.jsonl").write_text(
                 "".join(json.dumps(row) + "\n" for row in countdown_rows),
@@ -1624,6 +1773,83 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertEqual(validation["status"], "warning")
         self.assertTrue(any("raw recording was retained" in warning for warning in validation["warnings"]))
 
+    def test_countdown_integrity_ignores_practice_onsets_before_countdown(self) -> None:
+        rows = [
+            {
+                "label": "dynamic_sart_stimulus_onset__trial=-1__phase=practice__practice=1",
+                "timestamp": 1.0,
+                "trial": -1,
+                "metadata": {"practice": True, "phase": "practice"},
+            },
+            {
+                "label": "dynamic_sart_stimulus_onset__practice=1",
+                "timestamp": 1.5,
+            },
+            {"label": "dynamic_sart_countdown_start", "timestamp": 2.0},
+            *[
+                {
+                    "label": f"dynamic_sart_countdown_step__step={index}",
+                    "value": value,
+                    "timestamp": 2.0 + index,
+                }
+                for index, value in enumerate(["5", "4", "3", "2", "1", "GO!"], start=1)
+            ],
+            {"label": "dynamic_sart_countdown_end", "timestamp": 9.0},
+            {
+                "label": "dynamic_sart_stimulus_onset__trial=1__phase=support__practice=0",
+                "timestamp": 9.0,
+                "trial": 1,
+                "metadata": {"practice": False, "phase": "support"},
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp)
+            (session / "events").mkdir()
+            (session / "events" / "events.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in rows),
+                encoding="utf-8",
+            )
+            result = _countdown_event_integrity(session)
+
+        self.assertEqual(result["status"], "pass", result)
+        self.assertEqual(result["practice_stimulus_onset_count"], 2)
+        self.assertEqual(result["experimental_stimulus_onset_count"], 1)
+        self.assertTrue(result["event_order_valid"])
+
+    def test_countdown_integrity_rejects_real_experimental_onset_before_end(self) -> None:
+        rows = [
+            {"label": "dynamic_sart_countdown_start", "timestamp": 2.0},
+            *[
+                {
+                    "label": f"dynamic_sart_countdown_step__step={index}",
+                    "value": value,
+                    "timestamp": 2.0 + index,
+                }
+                for index, value in enumerate(["5", "4", "3", "2", "1", "GO!"], start=1)
+            ],
+            {
+                "label": "dynamic_sart_stimulus_onset__trial=1__phase=support__practice=0",
+                "timestamp": 8.5,
+                "trial": 1,
+                "metadata": {"practice": False, "phase": "support"},
+            },
+            {"label": "dynamic_sart_countdown_end", "timestamp": 9.0},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp)
+            (session / "events").mkdir()
+            (session / "events" / "events.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in rows),
+                encoding="utf-8",
+            )
+            result = _countdown_event_integrity(session)
+
+        self.assertEqual(result["status"], "fail")
+        self.assertTrue(
+            any("after the first experimental stimulus" in row for row in result["failures"])
+        )
+        self.assertFalse(result["event_order_valid"])
+
     def test_signal_probe_reports_native_units_and_flat_channels(self) -> None:
         samples = [[0.0, float(index)] for index in range(32)]
         timestamps = [index / 500.0 for index in range(32)]
@@ -1633,6 +1859,75 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertEqual(quality["channels"][0]["status"], "warning")
         self.assertIn("flat_channel", quality["channels"][0]["warnings"])
         self.assertEqual(quality["channels"][1]["status"], "good")
+        self.assertAlmostEqual(quality["effective_sample_rate_hz"], 500.0)
+        self.assertAlmostEqual(quality["sample_fraction_of_expected_from_timestamp_span"], 1.0)
+
+    def test_preflight_warnings_require_explicit_live_operator_acceptance(self) -> None:
+        options = DsartRecordingOptions(
+            recipe="dsart32",
+            config_path=CONFIG_32,
+            participant_id="unit",
+            task_mode="psychopy",
+            trials_per_session=10,
+            record_eeg=True,
+            require_eeg=True,
+            electrodes_confirmed=True,
+        )
+        report = {
+            "phase": "initial_preflight",
+            "status": "warning",
+            "warnings": ["Measured EEG rate is 480 Hz; expected about 500 Hz"],
+            "channel_contract": {"status": "ok"},
+        }
+        with patch("builtins.input", return_value="YES"):
+            _accept_recording_preflight(report, options)
+
+        self.assertTrue(report["operator_acceptance"]["accepted"])
+        self.assertTrue(report["operator_acceptance"]["warnings_accepted"])
+        self.assertEqual(report["operator_acceptance"]["warning_count"], 1)
+
+    def test_post_recording_warnings_require_explicit_live_acceptance(self) -> None:
+        options = DsartRecordingOptions(
+            recipe="dsart32",
+            config_path=CONFIG_32,
+            participant_id="unit",
+            task_mode="psychopy",
+            trials_per_session=10,
+            record_eeg=True,
+            require_eeg=True,
+        )
+        result = {"warnings": ["CSV mirror failed; XDF was retained"]}
+        with patch("builtins.input", return_value="YES"):
+            _accept_post_recording_warnings(result, options, "DSART session 1")
+
+        self.assertTrue(result["operator_warning_acceptance"]["accepted"])
+
+    def test_preflight_acceptance_report_rewrite_failure_is_nonfatal(self) -> None:
+        options = DsartRecordingOptions(
+            recipe="dsart32",
+            config_path=CONFIG_32,
+            participant_id="unit",
+            task_mode="psychopy",
+            trials_per_session=10,
+            record_eeg=True,
+            require_eeg=True,
+            electrodes_confirmed=True,
+        )
+        report = {
+            "phase": "initial_preflight",
+            "status": "warning",
+            "warnings": ["XDF signal quality warning"],
+            "channel_contract": {"status": "ok"},
+            "report_file": "/blocked/preflight.json",
+        }
+        with patch("builtins.input", return_value="YES"), patch(
+            "eegle.pipelines.dsart_recording._write_json_atomic",
+            side_effect=PermissionError("acceptance policy lock"),
+        ):
+            _accept_recording_preflight(report, options)
+
+        self.assertTrue(report["operator_acceptance"]["accepted"])
+        self.assertTrue(report["acceptance_persistence_warnings"])
 
     def test_signal_probe_excludes_reserved_trigger_status_from_quality_warnings(self) -> None:
         samples = [[float(index), 0.0] for index in range(32)]
@@ -1649,7 +1944,7 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertEqual(quality["channels"][1]["warnings"], [])
         self.assertNotIn("TRIGGER_STATUS", quality["warning_channels"])
 
-    def test_sample_contract_rejects_rate_and_timestamp_failures(self) -> None:
+    def test_sample_contract_warns_on_rate_and_timestamp_issues(self) -> None:
         probe = {
             "status": "ok",
             "sample_count": 100,
@@ -1667,9 +1962,20 @@ class DsartRecordingTests(unittest.TestCase):
             {"expected_sample_rate_hz": 500, "sample_probe_seconds": 3.0},
             require_eeg=True,
         )
+        self.assertEqual(result["status"], "warn")
+        self.assertEqual(result["failures"], [])
+        self.assertTrue(any("rate" in warning for warning in result["warnings"]))
+        self.assertTrue(any("strictly increasing" in warning for warning in result["warnings"]))
+
+    def test_sample_contract_still_fails_when_required_stream_has_no_samples(self) -> None:
+        result = assess_sample_probe(
+            {"status": "missing", "sample_count": 0},
+            {"expected_sample_rate_hz": 500, "sample_probe_seconds": 3.0},
+            require_eeg=True,
+        )
+
         self.assertEqual(result["status"], "fail")
-        self.assertTrue(any("sample rate" in failure for failure in result["failures"]))
-        self.assertTrue(any("strictly increasing" in failure for failure in result["failures"]))
+        self.assertTrue(any("did not receive" in failure for failure in result["failures"]))
 
     def test_recorder_monitor_detects_failed_or_stalled_recording(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1721,6 +2027,37 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertFalse(repeated.warning)
         self.assertFalse(failed.ok)
         self.assertIn("has not advanced", str(failed.reason))
+
+    def test_recorder_monitor_does_not_abort_xdf_when_csv_mirror_is_degraded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            status_path = root / "recorder.status.json"
+            xdf_path = root / "recording.xdf"
+            xdf_path.write_bytes(b"XDF:test")
+            status_path.write_text(
+                json.dumps(
+                    {
+                        "status": "recording",
+                        "summary": {
+                            "primary_format": "xdf",
+                            "xdf_file": str(xdf_path),
+                            "sample_count": 0,
+                            "csv_mirror": {"status": "failed"},
+                            "csv_mirror_warning": "CSV mirror failed; XDF acquisition continues",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            monitor = RecorderHealthMonitor(status_path, required=True, stall_timeout_seconds=1.0)
+            first = monitor.check()
+            monitor._last_progress_at -= 2.0
+            second = monitor.check()
+
+        self.assertTrue(first.ok)
+        self.assertTrue(first.warning)
+        self.assertIn("XDF acquisition continues", str(first.reason))
+        self.assertTrue(second.ok)
 
     def test_raw_row_preserves_amplitudes_and_both_lsl_timestamps(self) -> None:
         sample = [1.25, -2.5, 3.75]

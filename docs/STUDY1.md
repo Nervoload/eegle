@@ -128,6 +128,21 @@ On the Windows x64 acquisition computer:
    blocks before acquisition if LabRecorder, PyXDF, the port, or the required
    Neuracle stream is unavailable.
 
+Preflight measures the effective source-timestamp rate and retained sample
+fraction rather than trusting only the stream's declared rate. It also checks
+for non-finite samples, flat or failed channels, long constant runs, repeated
+extrema consistent with clipping, and excessive line noise. These acquisition-
+quality findings are warnings: the operator receives a concise numbered list
+and must type `YES` to continue a live run. Missing required streams, invalid
+channel identity/order, unavailable storage, and an unavailable XDF recorder
+remain blocking setup errors.
+
+When the managed XDF backend is enabled, preflight also launches LabRecorder
+for a separate three-second probe, emits start/end markers, finalizes the file,
+and runs the same bounded XDF integrity scan used after full phases. The probe
+is retained under the visit's `preflight/xdf_recording_probes` directory as
+evidence that the actual XDF storage path—not only the live LSL inlet—worked.
+
 The task process creates the run-specific marker outlet before the recorder
 starts. The recorder worker resolves both required streams to their exact
 `name (hostname)` LabRecorder rows, launches the visible LabRecorder application,
@@ -152,31 +167,44 @@ for a bounded PyXDF scan to confirm that the finalized file is structurally
 readable. This prevents a partially flushed XDF from being reported as stopped.
 
 Live XDF file growth is not itself a liveness gate because LabRecorder may
-buffer Windows disk writes. A 15-second growth pause is logged as a warning
-while the LabRecorder process and source-preserving CSV/LSL mirror remain
-healthy. Recorder heartbeat/read errors are likewise warnings while that CSV
-sample file still advances. Process exit, loss of both status and sample
-progress, LSL sample loss, timestamp discontinuity, and write failures remain
-blocking acquisition failures.
+buffer Windows disk writes. A 15-second growth pause is logged as a warning.
+Recorder heartbeat/read errors are likewise warnings while a recording file
+still advances. A CSV mirror startup, inlet, write, timestamp, or shutdown
+failure is recorded as a warning and does not stop LabRecorder or the task.
+LabRecorder process exit, XDF startup/finalization failure, unavailable storage,
+and loss of required marker/stream structure remain blocking acquisition
+failures.
 
 A completed acquisition phase must contain:
 
 - `raw/recording.xdf` and `raw/xdf_metadata.json`;
-- `raw/eeg.csv` and `raw/eeg_metadata.json`;
 - the independent `raw/lsl_markers_received.csv` receipt;
 - a terminal `logs/processes/recorder.status.json` with status `stopped`; and
-- passing XDF and CSV integrity sections in the session validation output.
+- an XDF integrity section with no structural failures.
 
-If LabRecorder exits, the CSV/LSL mirror stalls, both status and sample-file
-progress disappear, or disk space falls below the configured reserve, the
-shared recorder health gate stops the baseline/task. Finalization and validation
-failures retain both raw files but prevent the phase from being marked complete.
+`raw/eeg.csv` and `raw/eeg_metadata.json` are expected safety-mirror artifacts,
+but their absence or degradation is warning-only when the authoritative XDF is
+valid.
+
+If LabRecorder exits or disk space falls below the configured reserve, the
+shared recorder health gate stops the baseline/task. XDF structural or
+finalization failures retain available raw files but prevent the phase from
+being marked complete. CSV mirror and report-publication failures retain the
+phase as completed with warnings.
 
 For the operator-confirmed Neuracle positional mapping, XDF descriptor names
-may be canonicalized only when the independent source-preserving CSV mirror
-proves the same selected LSL stream identity and unchanged 65-value order.
+may be canonicalized from either corroborating CSV identity/order evidence or
+the stable selected XDF stream identity when the CSV mirror is unavailable.
 Conflicting channel counts, stream identities, meaningful positional labels,
-sample rates, timestamps, or marker receipts remain failures.
+or marker receipts remain failures. Sample-rate, sample-count, timestamp-gap,
+non-finite, flatline, and possible-clipping findings are retained as warnings.
+
+After every baseline or task phase, the bounded XDF scan checks the complete
+stored signal for sample retention, effective rate, timestamp continuity,
+non-finite amplitudes, flat/failed channels, long constant runs, and possible
+clipping. A live operator must explicitly accept any resulting warning list
+before Study 1 advances. Report-copy, report-read, or unexpected validation-
+report exceptions do not invalidate an otherwise retained recording.
 
 The Neuracle outlet and EEGle marker outlet are not assumed to share an absolute
 clock origin. When PyXDF's synchronized endpoints disagree, validation bridges

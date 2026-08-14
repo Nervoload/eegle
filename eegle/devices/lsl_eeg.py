@@ -492,6 +492,18 @@ def probe_eeg_stream(eeg_config: dict[str, Any], seconds: float = 2.0, timeout: 
                 pass
 
 
+def resolve_eeg_stream_identity(eeg_config: dict[str, Any], timeout: float = 5.0) -> dict[str, Any]:
+    """Resolve the configured EEG stream without making a recording inlet authoritative."""
+    try:
+        import pylsl
+    except Exception as exc:
+        raise RuntimeError(f"pylsl is required to resolve the EEG stream: {exc}") from exc
+    info, stream = _select_lsl_info(pylsl, eeg_config, timeout)
+    if info is None or not stream:
+        raise RuntimeError("no unique matching LSL EEG stream was available for LabRecorder")
+    return dict(stream)
+
+
 def _eeg_probe_quality(
     samples: list[list[float]],
     timestamps: list[float],
@@ -506,13 +518,69 @@ def _eeg_probe_quality(
     signal_units = str(eeg_config.get("lsl_signal_units") or "native_lsl_units")
     mains_hz = float(quality_config.get("line_noise_hz", 60.0))
     line_ratio_warning = float(quality_config.get("line_noise_ratio_warning", 0.25))
+    flatline_warning_seconds = max(
+        0.0,
+        float(quality_config.get("flatline_duration_warning_seconds", 1.0)),
+    )
+    clipping_fraction_warning = min(
+        1.0,
+        max(0.0, float(quality_config.get("clipping_fraction_warning", 0.01))),
+    )
+    clipping_minimum_repeated = max(
+        2,
+        int(quality_config.get("clipping_minimum_repeated_samples", 10)),
+    )
     quality_excluded = {
         str(name) for name in eeg_config.get("quality_excluded_channel_names", [])
     }
-    valid_rows = [row for row in samples if len(row) >= len(channel_names)]
+    valid_rows = [row for row in samples if len(row) == len(channel_names)]
+    invalid_sample_row_count = len(samples) - len(valid_rows)
     values = np.asarray([row[: len(channel_names)] for row in valid_rows], dtype=float) if valid_rows else np.empty((0, len(channel_names)))
     timestamp_values = np.asarray(timestamps, dtype=float)
     timestamp_differences = np.diff(timestamp_values) if timestamp_values.size > 1 else np.asarray([], dtype=float)
+    finite_timestamps = timestamp_values[np.isfinite(timestamp_values)]
+    timestamp_span = (
+        float(finite_timestamps[-1] - finite_timestamps[0])
+        if finite_timestamps.size > 1 and finite_timestamps[-1] > finite_timestamps[0]
+        else None
+    )
+    effective_sample_rate = (
+        float((finite_timestamps.size - 1) / timestamp_span)
+        if timestamp_span is not None
+        else None
+    )
+    expected_samples_from_span = (
+        float(timestamp_span * sample_rate_hz + 1.0)
+        if timestamp_span is not None and sample_rate_hz > 0
+        else None
+    )
+    sample_fraction_from_span = (
+        float(finite_timestamps.size / expected_samples_from_span)
+        if expected_samples_from_span
+        else None
+    )
+    gap_warning_samples = max(
+        1.0,
+        float(quality_config.get("maximum_timestamp_gap_samples_warning", 5.0)),
+    )
+    gap_warning_seconds = gap_warning_samples / sample_rate_hz if sample_rate_hz > 0 else None
+    timestamp_gap_warning_count = (
+        int(np.sum(timestamp_differences > gap_warning_seconds))
+        if gap_warning_seconds is not None
+        else 0
+    )
+    estimated_missing_samples = (
+        int(
+            np.sum(
+                np.maximum(
+                    0,
+                    np.rint(timestamp_differences[timestamp_differences > 0] * sample_rate_hz).astype(int) - 1,
+                )
+            )
+        )
+        if sample_rate_hz > 0 and timestamp_differences.size
+        else 0
+    )
     channel_results = []
     for index, name in enumerate(channel_names):
         column = values[:, index] if values.size else np.asarray([], dtype=float)
@@ -525,11 +593,30 @@ def _eeg_probe_quality(
         line_ratio = _line_noise_ratio(finite_values, sample_rate_hz, mains_hz)
         flat = std is not None and std < minimum_std
         extreme = maximum_abs is not None and max_abs is not None and max_abs > maximum_abs
+        longest_constant_run = _longest_constant_run(column)
+        flatline_duration = longest_constant_run / sample_rate_hz if sample_rate_hz > 0 else None
+        long_flatline = bool(
+            flatline_duration is not None
+            and flatline_warning_seconds > 0
+            and flatline_duration >= flatline_warning_seconds
+        )
+        repeated_extremes = _extreme_repeat_count(finite_values)
+        clipping_fraction = _extreme_repeat_fraction(finite_values)
+        clipping = bool(
+            not flat
+            and repeated_extremes >= clipping_minimum_repeated
+            and clipping_fraction is not None
+            and clipping_fraction >= clipping_fraction_warning
+        )
         warnings = []
         if finite_fraction < 1.0:
             warnings.append("non_finite_samples")
         if flat:
             warnings.append("flat_channel")
+        elif long_flatline:
+            warnings.append("flatline_run")
+        if clipping:
+            warnings.append("possible_clipping")
         if extreme:
             warnings.append("extreme_amplitude")
         if line_ratio is not None and line_ratio > line_ratio_warning:
@@ -545,6 +632,11 @@ def _eeg_probe_quality(
                 "maximum_absolute_native_units": max_abs,
                 "line_noise_ratio": line_ratio,
                 "flatline": flat,
+                "longest_constant_run_samples": longest_constant_run,
+                "longest_constant_run_seconds": flatline_duration,
+                "possible_clipping": clipping,
+                "extreme_repeat_count": repeated_extremes,
+                "extreme_repeat_fraction": clipping_fraction,
                 "extreme_amplitude": extreme,
                 "status": "excluded" if excluded else ("warning" if warnings else "good"),
                 "warnings": [] if excluded else warnings,
@@ -553,8 +645,17 @@ def _eeg_probe_quality(
         )
     return {
         "sample_count": int(values.shape[0]),
+        "received_sample_row_count": len(samples),
+        "invalid_sample_row_count": invalid_sample_row_count,
         "channel_count": len(channel_names),
         "sample_rate_hz": sample_rate_hz,
+        "effective_sample_rate_hz": effective_sample_rate,
+        "timestamp_span_seconds": timestamp_span,
+        "expected_sample_count_from_timestamp_span": expected_samples_from_span,
+        "sample_fraction_of_expected_from_timestamp_span": sample_fraction_from_span,
+        "timestamp_gap_warning_threshold_seconds": gap_warning_seconds,
+        "timestamp_gap_warning_count": timestamp_gap_warning_count,
+        "estimated_missing_samples": estimated_missing_samples,
         "signal_units": signal_units,
         "timestamps_finite": bool(timestamp_values.size and np.all(np.isfinite(timestamp_values))),
         "timestamps_strictly_increasing": bool(timestamp_differences.size and np.all(timestamp_differences > 0)),
@@ -565,6 +666,42 @@ def _eeg_probe_quality(
             row["channel_name"] for row in channel_results if row["status"] == "warning"
         ],
     }
+
+
+def _longest_constant_run(values: np.ndarray) -> int:
+    if values.size == 0:
+        return 0
+    finite = np.isfinite(values)
+    same_as_previous = np.zeros(values.size, dtype=bool)
+    if values.size > 1:
+        same_as_previous[1:] = finite[1:] & finite[:-1] & (values[1:] == values[:-1])
+    starts = np.flatnonzero(~same_as_previous)
+    if not starts.size:
+        return 0
+    lengths = np.diff(np.append(starts, values.size))
+    valid_starts = finite[starts]
+    return int(np.max(lengths[valid_starts])) if np.any(valid_starts) else 0
+
+
+def _extreme_repeat_fraction(values: np.ndarray) -> float | None:
+    if values.size == 0:
+        return None
+    minimum = float(np.min(values))
+    maximum = float(np.max(values))
+    if minimum == maximum:
+        return 1.0
+    repeated_extremes = _extreme_repeat_count(values)
+    return float(repeated_extremes / values.size)
+
+
+def _extreme_repeat_count(values: np.ndarray) -> int:
+    if values.size == 0:
+        return 0
+    minimum = float(np.min(values))
+    maximum = float(np.max(values))
+    if minimum == maximum:
+        return int(values.size)
+    return int(np.sum(values == minimum)) + int(np.sum(values == maximum))
 
 
 def _line_noise_ratio(values: np.ndarray, sample_rate_hz: float, mains_hz: float) -> float | None:

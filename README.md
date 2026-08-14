@@ -671,8 +671,11 @@ Fz, Cz, Pz, C3, C4, P3, P4, Oz
 The managed `labrecorder_xdf` backend launches an installed LabRecorder through
 its loopback remote-control socket and writes `raw/recording.xdf`; Study 1 uses
 this backend with the existing `raw/eeg.csv` recorder retained as a safety
-mirror. Other shipped acquisition presets remain on `lsl_csv` unless explicitly
-configured otherwise.
+mirror. A mirror failure is warning-only for this backend; the XDF remains
+authoritative and is checked after each phase for sample retention, timestamps,
+non-finite/flat/clipped signals, stream structure, and marker parity. Other
+shipped acquisition presets remain on `lsl_csv` unless explicitly configured
+otherwise.
 
 ## Example Neuracle W64 LSL Setup Check
 

@@ -484,6 +484,15 @@ class Study1Tests(unittest.TestCase):
             any(issue["status"] == "fail" and "1000 Hz" in issue["detail"] for issue in issues)
         )
 
+    def test_protocol_treats_disabled_csv_mirror_as_warning_for_xdf(self) -> None:
+        config = load_config(CONFIG)
+        config["processes"]["recorder"]["csv_mirror"] = False
+
+        issues = validate_study1_config(config)
+
+        mirror_issues = [issue for issue in issues if "CSV safety mirror" in issue["detail"]]
+        self.assertEqual([issue["status"] for issue in mirror_issues], ["warn"])
+
     def test_cue_assignments_are_two_of_four_and_deterministic(self) -> None:
         config = load_config(CONFIG)
         first_config = configure_study1_segment(

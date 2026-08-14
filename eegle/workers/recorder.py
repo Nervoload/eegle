@@ -195,8 +195,8 @@ def _run_labrecorder_xdf(
                         "recorder.xdf_buffering_warning",
                         level="default",
                         message=(
-                            "LabRecorder XDF disk growth paused while its process and CSV/LSL "
-                            "mirror remain healthy; recording continues pending final validation"
+                            "LabRecorder XDF disk growth paused while its process remains alive; "
+                            "recording continues pending final validation"
                         ),
                         metadata=snapshot,
                     )
@@ -215,7 +215,7 @@ def _run_labrecorder_xdf(
                     telemetry.emit(
                         "eeg.sample_heartbeat",
                         level="realtime",
-                        message="XDF recorder and CSV mirror heartbeat",
+                        message="Managed XDF recorder heartbeat",
                         metadata=snapshot,
                     )
                     last_health_event = monotonic()
