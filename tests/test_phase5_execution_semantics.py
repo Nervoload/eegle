@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from threading import Barrier, Thread
 from types import SimpleNamespace
 
 import eegle.runtime as runtime_surface
@@ -10,6 +11,7 @@ from eegle._domain import (
     EquivalenceLevel,
     ExecutionMode,
 )
+from eegle.operations import RunControl
 from eegle.plugins import (
     PluginCapabilities,
     PluginDescriptor,
@@ -178,6 +180,78 @@ class Phase5ImplementedSemanticAcceptanceTests(unittest.TestCase):
         self.assertEqual(run.status, EngineStatus.CANCELLED)
         self.assertEqual(run.work, ())
         self.assertEqual(run.phase_results[0].emissions, ())
+
+    def test_graceful_completion_drains_finite_work_and_preserves_reason(self) -> None:
+        deployment = _with_packets(
+            _payload("deployment.json"),
+            _dense_packet("batch.graceful", 0.1),
+        )
+        compiled, registry = _compile(_recording_suite(), deployment)
+        engine = ExecutionEngine.from_plan(compiled.plan, registry)
+
+        self.assertTrue(engine.complete("task_complete"))
+        self.assertFalse(engine.cancel("operator_stop"))
+        run = engine.run()
+
+        self.assertEqual(run.status, EngineStatus.COMPLETE)
+        self.assertEqual(run.reason, "task_complete")
+        self.assertTrue(run.work)
+        requests = [
+            value
+            for value in run.evidence
+            if value.record_type == "run_control_requested"
+        ]
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].payload["action"], "complete")
+        self.assertEqual(requests[0].payload["reason"], "task_complete")
+
+    def test_run_control_retains_request_before_operations_attachment(self) -> None:
+        deployment = _with_packets(
+            _payload("deployment.json"),
+            _dense_packet("batch.control", 0.1),
+        )
+        compiled, registry = _compile(_recording_suite(), deployment)
+        engine = ExecutionEngine.from_plan(compiled.plan, registry)
+        control = RunControl()
+
+        self.assertTrue(control.cancel("operator_stop"))
+        self.assertFalse(control.complete("task_complete"))
+        control._attach(engine)
+        self.assertTrue(control.wait_until_attached(0.0))
+        run = engine.run()
+        control._finish()
+
+        self.assertEqual(run.status, EngineStatus.CANCELLED)
+        self.assertEqual(run.reason, "operator_stop")
+        self.assertTrue(control.snapshot.attached)
+        self.assertTrue(control.snapshot.finished)
+
+    def test_run_control_terminal_race_has_exactly_one_winner(self) -> None:
+        control = RunControl()
+        barrier = Barrier(3)
+        results: list[bool] = []
+
+        def request(action: str) -> None:
+            barrier.wait()
+            results.append(
+                control.complete("task_complete")
+                if action == "complete"
+                else control.cancel("operator_stop")
+            )
+
+        workers = [
+            Thread(target=request, args=("complete",)),
+            Thread(target=request, args=("cancel",)),
+        ]
+        for worker in workers:
+            worker.start()
+        barrier.wait()
+        for worker in workers:
+            worker.join()
+
+        self.assertEqual(sorted(results), [False, True])
+        self.assertIn(control.snapshot.action, {"complete", "cancel"})
+        self.assertIn(control.snapshot.reason, {"task_complete", "operator_stop"})
 
     def test_integrated_semantics_are_reexported_as_runtime_api(self) -> None:
         for name in (

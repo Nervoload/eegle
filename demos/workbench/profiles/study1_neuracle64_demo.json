@@ -1,0 +1,170 @@
+{
+  "schema": "eegle.workbench.study1_profile.v1",
+  "profile_id": "study1_neuracle64_demo",
+  "project_id": "study1-neuracle64-demo",
+  "display_name": "Study 1 — DSART",
+  "statement": "Observe causal prestimulus EEG during the Study 1 Dynamic SART task.",
+  "protocol": {
+    "protocol_id": "study1_dynamic_sart_v1",
+    "visit": 1,
+    "execution_mode": "causal",
+    "policy": "observe_only"
+  },
+  "task": {
+    "task_id": "dynamic_sart",
+    "digits": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    "no_go_digit": "participant_specific",
+    "response_keys": ["space"],
+    "escape_keys": ["escape", "q"],
+    "stimulus_seconds": 0.25,
+    "stimulus_onset_interval_seconds": 1.6,
+    "inter_trial_jitter_seconds": 0.0,
+    "minimum_valid_rt_seconds": 0.1,
+    "no_go_probability": 0.15,
+    "minimum_go_trials_between_no_go": 2,
+    "minimum_leading_go_trials": 4,
+    "master_seed": 42
+  },
+  "variants": {
+    "full_study1": {
+      "label": "Full protocol",
+      "scientific_status": "study_protocol",
+      "session_kind": "study1_visit",
+      "baseline": {
+        "eyes_open_seconds": 120.0,
+        "eyes_closed_seconds": 120.0
+      },
+      "practice": {
+        "enabled": true,
+        "trials_per_round": 30,
+        "no_go_trials": 4,
+        "max_rounds": 3,
+        "go_accuracy": 0.8,
+        "no_go_accuracy": 0.6666666667,
+        "max_anticipatory_response_rate": 0.15,
+        "feedback_seconds": 0.35
+      },
+      "blocks": [
+        {
+          "name": "session1_block_1",
+          "phase": "support",
+          "trials": 200,
+          "planned_no_go_count": 30,
+          "break_after_seconds": 0.0
+        },
+        {
+          "name": "session1_block_2",
+          "phase": "query",
+          "trials": 200,
+          "planned_no_go_count": 30,
+          "break_after_seconds": 30.0,
+          "maximum_break_seconds": 60.0
+        },
+        {
+          "name": "session1_block_3",
+          "phase": "query",
+          "trials": 200,
+          "planned_no_go_count": 30,
+          "break_after_seconds": 0.0
+        }
+      ]
+    },
+    "demo_rehearsal": {
+      "label": "Demo rehearsal",
+      "scientific_status": "demonstration_only",
+      "session_kind": "demo_rehearsal",
+      "baseline": {
+        "eyes_open_seconds": 15.0,
+        "eyes_closed_seconds": 15.0
+      },
+      "practice": {
+        "enabled": true,
+        "trials_per_round": 10,
+        "no_go_trials": 2,
+        "max_rounds": 1,
+        "go_accuracy": 0.8,
+        "no_go_accuracy": 0.6666666667,
+        "max_anticipatory_response_rate": 0.15,
+        "feedback_seconds": 0.35
+      },
+      "blocks": [
+        {
+          "name": "demo_support",
+          "phase": "support",
+          "trials": 20,
+          "planned_no_go_count": 3,
+          "break_after_seconds": 0.0
+        },
+        {
+          "name": "demo_query_1",
+          "phase": "query",
+          "trials": 20,
+          "planned_no_go_count": 3,
+          "break_after_seconds": 5.0
+        },
+        {
+          "name": "demo_query_2",
+          "phase": "query",
+          "trials": 20,
+          "planned_no_go_count": 3,
+          "break_after_seconds": 0.0
+        }
+      ]
+    }
+  },
+  "signal": {
+    "signal_id": "eeg",
+    "modality": "eeg",
+    "physiological_value_count": 64,
+    "reserved_value": "TRIGGER_STATUS",
+    "total_value_count": 65,
+    "unit": "uV",
+    "nominal_rate_hz": 1000.0,
+    "clock_id": "device.clock",
+    "mapping_status": "pending_neuracle64_lab_confirmation"
+  },
+  "markers": {
+    "event_id": "markers",
+    "stream_name": "EEGleMarkers",
+    "stream_type": "Markers",
+    "event_kinds": [
+      "dynamic_sart_task_start",
+      "dynamic_sart_task_end",
+      "dynamic_sart_practice_start",
+      "dynamic_sart_practice_end",
+      "dynamic_sart_block_start",
+      "dynamic_sart_block_end",
+      "dynamic_sart_break_start",
+      "dynamic_sart_break_end",
+      "dynamic_sart_stimulus_onset",
+      "dynamic_sart_stimulus_offset",
+      "dynamic_sart_response_window_close",
+      "dynamic_sart_trial_complete",
+      "dynamic_sart_support_complete",
+      "dynamic_sart_abort"
+    ]
+  },
+  "processing": {
+    "chain_id": "source_preserving",
+    "plugin_id": "eegle.processing.identity",
+    "window_id": "prestimulus",
+    "event_kind": "dynamic_sart_stimulus_onset",
+    "window_start_seconds": -0.75,
+    "window_end_seconds": -0.1
+  },
+  "apparatus": {
+    "family": "Neuracle",
+    "profile": "neuracle64",
+    "exact_channel_order": "pending_lab_confirmation",
+    "reference": "pending_lab_confirmation",
+    "ground": "pending_lab_confirmation",
+    "auxiliary_allocation": "pending_lab_confirmation",
+    "stream_selector": "pending_detection_and_review"
+  },
+  "display": {
+    "screen_index": 0,
+    "expected_refresh_rate_hz": 120.0,
+    "refresh_rate_tolerance_hz": 10.0
+  },
+  "default_variant": "demo_rehearsal"
+}

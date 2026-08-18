@@ -789,6 +789,7 @@ def _bundle_projection(reader: EvidenceReader, report: Any) -> Mapping[str, Any]
         "last_complete_sequence": report.last_complete_sequence,
         "equivalence_ceiling": bundle.metadata.get("equivalence_ceiling"),
         "engine_status": bundle.metadata.get("engine_status"),
+        "terminal_reason": bundle.metadata.get("terminal_reason"),
         "execution_capture_count": len(bundle.execution_captures),
         "raw_recording_count": len(bundle.raw_recordings),
         "artifact_count": len(bundle.artifacts),
@@ -885,6 +886,7 @@ def _source_health(records: list[tuple[str, EvidenceRecord]]) -> Mapping[str, An
                 "last_sequence": sequence - 1,
                 "estimated_missing_items": 0,
                 "overlap_or_reorder_count": 0,
+                "event_kind_counts": Counter(),
             },
         )
         expected = int(value["last_sequence"]) + 1
@@ -895,9 +897,16 @@ def _source_health(records: list[tuple[str, EvidenceRecord]]) -> Mapping[str, An
         value["packet_count"] += 1
         value["item_count"] += count
         value["last_sequence"] = max(int(value["last_sequence"]), sequence + count - 1)
+        events = payload.get("events")
+        if isinstance(events, (list, tuple)):
+            kinds = value["event_kind_counts"]
+            for event in events:
+                if isinstance(event, Mapping) and event.get("kind") is not None:
+                    kinds[str(event["kind"])] += 1
     rows = []
     for key in sorted(streams):
         value = streams[key]
+        value["event_kind_counts"] = _counter_payload(value["event_kind_counts"])
         evidence_key = (key[0], key[2])
         value["reconnect_evidence_count"] = reconnects[evidence_key]
         value["loss_evidence_count"] = losses[evidence_key]

@@ -16,6 +16,7 @@ from eegle.operations import (
     SESSION_INSPECTION_SCHEMA_ID,
     ExitCode,
     OperationError,
+    RunControl,
     compile_project,
     create_project,
     diff_projects,
@@ -100,6 +101,52 @@ class Phase7ProjectCliTests(unittest.TestCase):
                     "sessions/session.rehearsal.service",
                     "sessions/session.run.service",
                 ),
+            )
+
+    def test_controlled_completion_and_cancellation_register_inspectable_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "project"
+            create_project(root, project_id="controlled-runs")
+            compile_project(root)
+
+            complete_control = RunControl()
+            complete_control.complete("task_complete")
+            completed = run_project(
+                root,
+                session_id="session.control.complete",
+                control=complete_control,
+            )
+            completed_inspection = inspect_session(completed.session_root)
+            completed_replay = replay_session(completed.session_root)
+
+            self.assertTrue(completed.successful)
+            self.assertEqual(completed.terminal_reason, "task_complete")
+            self.assertEqual(
+                completed_inspection.bundles[0]["terminal_reason"],
+                "task_complete",
+            )
+            self.assertTrue(completed_replay.equivalent)
+
+            cancel_control = RunControl()
+            cancel_control.cancel("operator_stop")
+            cancelled = run_project(
+                root,
+                session_id="session.control.cancel",
+                control=cancel_control,
+            )
+            cancelled_inspection = inspect_session(cancelled.session_root)
+            project = open_project(root)
+
+            self.assertEqual(cancelled.status.value, "cancelled")
+            self.assertEqual(cancelled.terminal_reason, "operator_stop")
+            self.assertTrue(cancelled_inspection.valid)
+            self.assertEqual(
+                cancelled_inspection.bundles[0]["terminal_reason"],
+                "operator_stop",
+            )
+            self.assertIn(
+                "sessions/session.control.cancel",
+                project.manifest.session_uris,
             )
 
     def test_compile_publishes_one_revision_and_failure_preserves_it(self) -> None:

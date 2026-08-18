@@ -73,6 +73,13 @@ Provisional Python names may be refined during Phase 7,
 but the v1 payload schema IDs and assigned exit-code meanings cannot be reused
 for incompatible semantics.
 
+The provisional `eegle.operations.RunControl` is an additive local supervisor
+boundary for a single locked run. It accepts reasoned `complete()` and
+`cancel()` requests before or after internal engine attachment; the first
+terminal request wins. `run_project()`, `run_locked_plan()`, and
+`rehearse_project()` accept it without exporting the engine or changing the
+CLI. `ProjectRun` and session inspection additively project the terminal reason.
+
 ### Internal or source-only
 
 The following are not public contracts:

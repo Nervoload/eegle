@@ -8,10 +8,10 @@ authorization grant.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from importlib import metadata
-import json
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence
@@ -24,6 +24,7 @@ from eegle._validation import freeze_json, require_digest, require_identifier, t
 from eegle.authoring import (
     AuthoredExperiment,
     AuthoringOrigin,
+    ComposedExperiment,
     DeploymentRequirement,
     DeploymentRequirementKind,
     SourceKind,
@@ -53,8 +54,7 @@ from eegle.specs import (
     StorageBinding,
     StreamBinding,
 )
-from eegle.streams import ContentKind, RateModel, StreamSpec
-
+from eegle.streams import ContentKind, StreamSpec
 
 DETECTION_REPORT_SCHEMA_ID = "eegle.detection_report.v1"
 DEPLOYMENT_PROPOSAL_SCHEMA_ID = "eegle.deployment_proposal.v1"
@@ -878,7 +878,7 @@ def detect_capabilities(
 
 
 def propose_deployment(
-    authored: AuthoredExperiment,
+    authored: AuthoredExperiment | ComposedExperiment,
     report: DetectionReport,
     *,
     selection: DeploymentSelection | None = None,
@@ -886,8 +886,8 @@ def propose_deployment(
 ) -> DeploymentProposal:
     """Generate a reviewable deployment while preserving portable intent."""
 
-    if not isinstance(authored, AuthoredExperiment):
-        raise TypeError("deployment proposal requires an AuthoredExperiment")
+    if not isinstance(authored, (AuthoredExperiment, ComposedExperiment)):
+        raise TypeError("deployment proposal requires an authored experiment")
     if not isinstance(report, DetectionReport):
         raise TypeError("deployment proposal requires a DetectionReport")
     selected = selection or DeploymentSelection()
@@ -1084,6 +1084,16 @@ def propose_deployment(
             selected.clock_capabilities.get(requirement.requirement_id),
         )
         pair = (chosen.binding.source_clock, chosen.binding.target_clock)
+        existing_clock = clock_bindings.get(pair)
+        if existing_clock is not None:
+            if existing_clock != chosen.binding:
+                _proposal_error(
+                    ExitCode.REJECTED,
+                    "deployment.clock_conflict",
+                    "Detected clock mappings conflict",
+                    f"Multiple requirements selected incompatible mappings for {pair[0]} to {pair[1]}.",
+                )
+            continue
         clock_bindings[pair] = chosen.binding
         decisions.append(
             _decision(
@@ -1252,16 +1262,35 @@ def signal_contract_from_stream(stream: StreamSpec) -> SignalContract:
     }[stream.content_kind]
     units = {value.channel_id: value.unit for value in stream.channels}
     unique_units = set(units.values())
+    event_kinds = (
+        tuple(str(value) for value in stream.metadata.get("event_kinds", ()))
+        if stream.content_kind == ContentKind.SPARSE_EVENTS
+        else ()
+    )
+    rate_model = (
+        "irregular"
+        if stream.content_kind == ContentKind.SPARSE_EVENTS
+        else stream.rate_model.value
+    )
+    missing_data_policy = (
+        "explicit_validity"
+        if stream.missing_data_policy.value == "validity_mask"
+        else stream.missing_data_policy.value
+    )
     return SignalContract(
         type_id=type_id,
         unit=next(iter(unique_units)) if len(unique_units) == 1 else None,
         channel_count=len(stream.channels) or None,
         nominal_rate_hz=stream.sample_rate_hz,
         content_kind=stream.content_kind.value,
-        rate_model=stream.rate_model.value,
+        rate_model=rate_model,
         channel_ids=tuple(value.channel_id for value in stream.channels),
         units=units,
-        missing_data_policy=stream.missing_data_policy.value,
+        event_kinds=event_kinds,
+        missing_data_policy=missing_data_policy,
+        layout="samples_by_channels"
+        if stream.content_kind == ContentKind.DENSE_SAMPLES
+        else None,
     )
 
 

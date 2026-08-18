@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol, Sequence
 
-from eegle._domain import EquivalenceLevel
+from eegle._domain import ComponentKind, EquivalenceLevel
 from eegle._validation import require_finite
 from eegle.compiler.lock import canonical_hash, canonical_json_bytes
 from eegle.recording.evidence import EvidenceRecord
@@ -175,7 +175,13 @@ def _records(
     result: ComparableRun, policy: EquivalencePolicy
 ) -> tuple[EvidenceRecord, ...]:
     records = tuple(
-        record for record in result.evidence if record.record_type in _COMPARABLE_RECORDS
+        record
+        for record in result.evidence
+        if record.record_type in _COMPARABLE_RECORDS
+        and not (
+            record.record_type == "component_state"
+            and record.payload.get("component_kind") == ComponentKind.SOURCE.value
+        )
     )
     if policy.compare_component_state:
         return records

@@ -403,6 +403,13 @@ def _phase_finished(payload: Mapping[str, Any]) -> None:
             raise ValueError(f"{field} cannot be negative")
 
 
+def _run_control_requested(payload: Mapping[str, Any]) -> None:
+    action = str(payload.get("action") or "")
+    if action not in {"complete", "cancel"}:
+        raise ValueError("run control action must be complete or cancel")
+    _identifiers(payload, "reason")
+
+
 def _phase_transition(payload: Mapping[str, Any]) -> None:
     _identifiers(payload, "source_phase", "target_phase", "condition")
     _time(payload, "transition_time")
@@ -530,6 +537,7 @@ _PAYLOAD_VALIDATORS: Mapping[str, PayloadValidator] = {
     "plan_blocked": lambda payload: _required(payload, "reason"),
     "plan_failure": lambda payload: _required(payload, "reason"),
     "runtime_close_failure": lambda payload: _required(payload, "failures"),
+    "run_control_requested": _run_control_requested,
     "source_clock_observation": _clock_observation,
     "source_lateness": _simple_identifiers(
         "component_id", "packet_id", "disposition"
@@ -551,5 +559,10 @@ _PAYLOAD_VALIDATORS: Mapping[str, PayloadValidator] = {
 CURRENT_RUNTIME_RECORD_TYPES = frozenset(_PAYLOAD_VALIDATORS)
 REPLAY_COMPARABLE_RECORD_TYPES = (
     CURRENT_RUNTIME_RECORD_TYPES
-    - {"source_clock_observation", "source_packet_loss", "source_reconnect"}
+    - {
+        "run_control_requested",
+        "source_clock_observation",
+        "source_packet_loss",
+        "source_reconnect",
+    }
 ) | LEGACY_REPLAY_RECORD_TYPES

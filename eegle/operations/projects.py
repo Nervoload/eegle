@@ -64,6 +64,7 @@ from eegle.operations.preflight import (
     preflight,
     rehearsal_fault_outcomes,
 )
+from eegle.operations.run_control import RunControl
 from eegle.plugins import PluginRegistry
 from eegle.recording import (
     EvidenceRecord,
@@ -309,6 +310,7 @@ class ProjectRun:
     status: EngineStatus
     evidence_record_count: int
     kind: str = "run"
+    terminal_reason: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "session_root", Path(self.session_root).expanduser().resolve())
@@ -333,6 +335,7 @@ class ProjectRun:
             "status": self.status.value,
             "successful": self.successful,
             "evidence_record_count": self.evidence_record_count,
+            "terminal_reason": self.terminal_reason,
         }
 
 
@@ -824,6 +827,8 @@ def run_project(
     session_id: str | None = None,
     kind: str = "run",
     evidence_resume_token: str | None = None,
+    control: RunControl | None = None,
+    operator: Any | None = None,
     _registry: PluginRegistry | None = None,
     _supplemental_evidence: tuple[tuple[str, Mapping[str, Any]], ...] = (),
 ) -> ProjectRun:
@@ -862,6 +867,8 @@ def run_project(
         kind=kind,
         registry=_registry,
         evidence_resume_token=evidence_resume_token,
+        control=control,
+        operator=operator,
         supplemental_evidence=_supplemental_evidence,
     )
     session_uri = session_root.relative_to(project.root).as_posix()
@@ -932,6 +939,8 @@ def rehearse_project(
     operator_confirmations: Iterable[str] = (),
     safe_state_reports: Iterable[str] = (),
     available_secret_providers: Iterable[str] = (),
+    control: RunControl | None = None,
+    operator: Any | None = None,
 ) -> ProjectRun:
     """Preflight and execute a simulation lock with fault-containment evidence."""
 
@@ -999,6 +1008,8 @@ def rehearse_project(
         root,
         session_id=session_id,
         kind="rehearsal",
+        control=control,
+        operator=operator,
         _registry=registry,
         _supplemental_evidence=tuple(
             ("rehearsal_fault_outcome", value.to_payload()) for value in scenarios
@@ -1043,6 +1054,8 @@ def run_locked_plan(
     kind: str = "run",
     registry: PluginRegistry | None = None,
     evidence_resume_token: str | None = None,
+    control: RunControl | None = None,
+    operator: Any | None = None,
     supplemental_evidence: tuple[tuple[str, Mapping[str, Any]], ...] = (),
 ) -> ProjectRun:
     """Run a verified plan/lock pair without reading authoring or project state.
@@ -1050,6 +1063,9 @@ def run_locked_plan(
     A supervisor may supply and retain ``evidence_resume_token`` to authorize
     recovery after a process-boundary failure. The token is never persisted.
     """
+
+    if control is not None and not isinstance(control, RunControl):
+        raise TypeError("control must be a RunControl")
 
     try:
         plan = read_plan(plan_path)
@@ -1117,7 +1133,11 @@ def run_locked_plan(
             retain_evidence=False,
             retain_phase_details=False,
         )
-        result = engine.run()
+        if control is not None:
+            control._attach(engine)
+        result = engine.run() if operator is None else engine.run(operator=operator)
+        if control is not None:
+            control._finish()
         if supplemental_evidence:
             emitted = (
                 engine.graph.current_time
@@ -1148,6 +1168,8 @@ def run_locked_plan(
         )
         session.finalize(_session_status(result.status))
     except Exception as exc:
+        if control is not None:
+            control._finish()
         if writer is not None and not writer.closed:
             completed_time = (
                 TimePoint(0.0, str(plan.clock_policy["suite"]["execution_clock_id"]))
@@ -1177,6 +1199,8 @@ def run_locked_plan(
             session.finalize(SessionStatus.FAILED)
         raise
     except BaseException as exc:
+        if control is not None:
+            control._finish()
         # A supervisor-owned secret keeps process-loss evidence resumable.
         # Without one, publish a partial bundle so Ctrl-C never strands an
         # open writer that the caller cannot authorize.
@@ -1238,6 +1262,7 @@ def run_locked_plan(
         result.status,
         evidence_sink.record_count,
         kind,
+        result.reason,
     )
 
 

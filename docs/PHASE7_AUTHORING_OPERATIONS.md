@@ -376,6 +376,17 @@ session creation, while `run_project()` merely resolves those immutable URIs.
 A changed mutable authoring source therefore cannot affect an already compiled
 run.
 
+The additive provisional `RunControl` lets a local process supervisor request
+graceful completion or prompt cancellation without receiving the runtime
+engine. Operations attaches the control only after constructing the locked
+engine. Completion stops further open live-source polling, drains admitted and
+queued work, and returns `complete`; cancellation returns `cancelled` while
+retaining a registered, inspectable partial session. The first terminal request
+wins, including pre-attachment requests. A typed request record and reason are
+persisted in evidence/bundle/project results; the external request and
+source-only lifecycle state are excluded from replay comparison because replay
+substitutes finite recorded sources.
+
 The installed `eegle`/`python -m eegle` adapter exposes `new`, `detect`,
 `compile`, `explain`, `diff`, `graph`, `rehearse`, `run`, `inspect`, and
 `replay`, returns

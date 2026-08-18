@@ -1,0 +1,19 @@
+{
+  "schema": "eegle.workbench.profile_provenance.v1",
+  "profile_id": "study1_neuracle64_demo",
+  "architecture_branch": "split",
+  "architecture_commit": "8105b2f9f1d96a630b7c8b377450fd86254243f9",
+  "source_branch": "neuracletest",
+  "source_commit": "29d9b88f2a6653291e7cf6d9677286a8f9e4b59b",
+  "local_profile_digest": "sha256:571f29861d982f244bffb97cd620e1f5ef7183ae41f4cd959ebdc636ac38fa88",
+  "source_files": [
+    {
+      "path": "eegle/pipelines/study1.py",
+      "git_blob_hash": "b233bd32e4233360e19a2f563edbd969abac6695"
+    },
+    {
+      "path": "configs/study1_neuracle64.json",
+      "git_blob_hash": "397a35120a7ab6bc3779959df30708eef02483c0"
+    }
+  ]
+}

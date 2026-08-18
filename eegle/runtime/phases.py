@@ -286,8 +286,11 @@ class ExecutionEngine:
             retain_phase_details=retain_phase_details,
         )
 
-    def cancel(self) -> None:
-        self.graph.cancel()
+    def cancel(self, reason: str = "cancel_requested") -> bool:
+        return self.graph.cancel(reason)
+
+    def complete(self, reason: str = "completion_requested") -> bool:
+        return self.graph.complete(reason)
 
     def run(
         self,
@@ -452,6 +455,7 @@ class ExecutionEngine:
                 resumed_phase_id = None
                 if result.status == GraphRunStatus.CANCELLED:
                     status = EngineStatus.CANCELLED
+                    reason = result.terminal_reason
                     break
                 if result.status == GraphRunStatus.CHECKPOINTED:
                     status = EngineStatus.CHECKPOINTED
@@ -465,6 +469,14 @@ class ExecutionEngine:
                 if result.status == GraphRunStatus.PARTIAL:
                     status = EngineStatus.PARTIAL
                     reason = f"phase {phase.phase_id} ended without source completion"
+                    break
+                if (
+                    result.status == GraphRunStatus.COMPLETE
+                    and result.terminal_reason is not None
+                ):
+                    status = EngineStatus.COMPLETE
+                    reason = result.terminal_reason
+                    current_phase = None
                     break
                 acceptance_failed = any(
                     not value.passed for value in attempts[-1].acceptance

@@ -409,10 +409,14 @@ class LslSource:
                 ),
             )
         if kind == ContentKind.SPARSE_EVENTS:
+            declared_kinds = tuple(
+                str(value)
+                for value in self._stream_spec.metadata.get("event_kinds", ())
+            )
             events = tuple(
                 SparseEvent(
                     event_id=f"event.{self._stream_spec.stream_id}.{sequence + index}",
-                    kind="lsl_marker",
+                    kind=_marker_event_kind(sample, declared_kinds),
                     event_time=TimePoint(float(timestamp), self._stream_spec.clock_id),
                     source_time=TimePoint(float(timestamp), self._stream_spec.clock_id),
                     received_time=boundary,
@@ -609,7 +613,7 @@ def detect_lsl(
             rate_model = RateModel.REGULAR if identity.nominal_rate_hz > 0 else RateModel.IRREGULAR
             sample_rate = identity.nominal_rate_hz if identity.nominal_rate_hz > 0 else None
             sample_dtype = _numpy_dtype(identity.channel_format)
-            labels, units = _channel_metadata(
+            labels, units, metadata_source = _channel_metadata(
                 pylsl,
                 info,
                 identity.channel_count,
@@ -625,6 +629,22 @@ def detect_lsl(
                 )
                 for index, label in enumerate(labels)
             )
+        else:
+            metadata_source = None
+        event_kinds = (
+            _event_kind_metadata(
+                pylsl,
+                info,
+                timeout_seconds=max(wait, 0.1),
+            )
+            if content_kind == ContentKind.SPARSE_EVENTS
+            else ()
+        )
+        stream_metadata: dict[str, Any] = {"lsl": identity.to_payload()}
+        if metadata_source is not None:
+            stream_metadata["channel_metadata_source"] = metadata_source
+        if event_kinds:
+            stream_metadata["event_kinds"] = list(event_kinds)
         stream = StreamSpec(
             stream_id,
             1,
@@ -636,7 +656,7 @@ def detect_lsl(
             sample_rate,
             sample_dtype,
             MissingDataPolicy.FORBID,
-            metadata={"lsl": identity.to_payload()},
+            metadata=stream_metadata,
         )
         plugin_id = {
             ContentKind.DENSE_SAMPLES: LSL_DENSE_SOURCE_PLUGIN_ID,
@@ -805,12 +825,12 @@ def _channel_metadata(
     default_unit: str,
     *,
     timeout_seconds: float,
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
+) -> tuple[tuple[str, ...], tuple[str, ...], str]:
     labels = [f"CH{index + 1}" for index in range(count)]
     units = [default_unit for _ in range(count)]
     found = _read_channel_metadata(info, labels, units)
     if found == count:
-        return tuple(labels), tuple(units)
+        return tuple(labels), tuple(units), "lsl_descriptor"
 
     # Discovery results contain only LSL's short StreamInfo on native pylsl.
     # Retrieve the full descriptor through a temporary inlet before falling
@@ -820,7 +840,7 @@ def _channel_metadata(
     try:
         inlet = pylsl.StreamInlet(info, recover=True, processing_flags=0)
         full_info = inlet.info(timeout=timeout_seconds)
-        _read_channel_metadata(full_info, labels, units)
+        found = max(found, _read_channel_metadata(full_info, labels, units))
     except (AttributeError, TypeError, RuntimeError):
         pass
     finally:
@@ -828,7 +848,45 @@ def _channel_metadata(
             close = getattr(inlet, "close_stream", None)
             if callable(close):
                 close()
-    return tuple(labels), tuple(units)
+    source = "lsl_descriptor" if found == count else "generated_fallback"
+    return tuple(labels), tuple(units), source
+
+
+def _event_kind_metadata(
+    pylsl: Any,
+    info: Any,
+    *,
+    timeout_seconds: float,
+) -> tuple[str, ...]:
+    values = _read_event_kinds(info)
+    if values:
+        return values
+    inlet = None
+    try:
+        inlet = pylsl.StreamInlet(info, recover=True, processing_flags=0)
+        values = _read_event_kinds(inlet.info(timeout=timeout_seconds))
+    except (AttributeError, TypeError, RuntimeError):
+        return ()
+    finally:
+        if inlet is not None:
+            close = getattr(inlet, "close_stream", None)
+            if callable(close):
+                close()
+    return values
+
+
+def _read_event_kinds(info: Any) -> tuple[str, ...]:
+    try:
+        node = info.desc().child("event_kinds").child("kind")
+        values: list[str] = []
+        while not node.empty():
+            value = str(node.value()).strip()
+            if value and value not in values:
+                values.append(require_identifier(value, "LSL event kind"))
+            node = node.next_sibling("kind")
+        return tuple(values)
+    except (AttributeError, TypeError, ValueError):
+        return ()
 
 
 def _read_channel_metadata(info: Any, labels: list[str], units: list[str]) -> int:
@@ -846,6 +904,15 @@ def _read_channel_metadata(info: Any, labels: list[str], units: list[str]) -> in
         return found
     except (AttributeError, TypeError):
         return 0
+
+
+def _marker_event_kind(sample: Any, declared_kinds: tuple[str, ...]) -> str:
+    value = sample[0] if isinstance(sample, Sequence) and len(sample) == 1 else sample
+    if isinstance(value, str):
+        candidate = value.split("__", 1)[0]
+        if candidate in declared_kinds:
+            return candidate
+    return "lsl_marker"
 
 
 def _library_version(pylsl: Any) -> str | None:

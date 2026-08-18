@@ -120,6 +120,7 @@ from eegle.operations.sessions import (
     replay_session,
     safe_session_export_policy,
 )
+from eegle.operations.run_control import RunControl, RunControlSnapshot
 from eegle.operations.validation import (
     validate_project,
     validate_session,
@@ -185,6 +186,8 @@ __all__ = [
     "RepairKind",
     "RepairOption",
     "ReplayInspection",
+    "RunControl",
+    "RunControlSnapshot",
     "SessionExport",
     "SessionInspection",
     "SessionIssue",

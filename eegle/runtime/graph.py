@@ -6,6 +6,7 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
+from threading import Lock
 from time import monotonic, sleep
 from typing import Any
 
@@ -188,6 +189,7 @@ class GraphPhaseResult:
     artifacts: tuple[ArtifactPublication, ...] = ()
     failure: str | None = None
     checkpoint: EngineCheckpoint | None = None
+    terminal_reason: str | None = None
 
     def emissions_from(self, component_id: str, output_port: str) -> tuple[Any, ...]:
         return tuple(
@@ -341,7 +343,10 @@ class PlanGraphExecutor:
                 "mapping_revisions", {}
             ).items()
         }
-        self._cancel_requested = False
+        self._control_lock = Lock()
+        self._terminal_action: str | None = None
+        self._terminal_reason: str | None = None
+        self._control_recorded = False
         self._fired_state_rules: set[str] = set()
         self._resumed_phase_id: str | None = None
         self._evidence_prefix_digest: str | None = None
@@ -408,7 +413,7 @@ class PlanGraphExecutor:
                         )
                     },
                     "outcome_lifecycle": thaw_json(self._outcomes.snapshot()),
-                    "cancel_requested": self._cancel_requested,
+                    "cancel_requested": self._control_request()[0] == "cancel",
                     "resumed_phase_id": self._resumed_phase_id,
                     "resumed_phase_started_time": (
                         None
@@ -465,7 +470,8 @@ class PlanGraphExecutor:
             ).items()
         }
         self._outcomes.restore(state.get("outcome_lifecycle") or {})
-        self._cancel_requested = bool(state.get("cancel_requested", False))
+        if bool(state.get("cancel_requested", False)):
+            self.cancel("restored_cancel_request")
         resumed_phase_id = state.get("resumed_phase_id")
         self._resumed_phase_id = (
             None
@@ -534,8 +540,38 @@ class PlanGraphExecutor:
         self._require_execution_time(self._resumed_phase_started_time)
         return phase_id
 
-    def cancel(self) -> None:
-        self._cancel_requested = True
+    def cancel(self, reason: str = "cancel_requested") -> bool:
+        return self._request_terminal("cancel", reason)
+
+    def complete(self, reason: str = "completion_requested") -> bool:
+        return self._request_terminal("complete", reason)
+
+    def _request_terminal(self, action: str, reason: str) -> bool:
+        normalized = require_identifier(reason, "run control reason")
+        with self._control_lock:
+            if self._terminal_action is not None:
+                return False
+            self._terminal_action = action
+            self._terminal_reason = normalized
+            return True
+
+    def _control_request(self) -> tuple[str | None, str | None]:
+        with self._control_lock:
+            return self._terminal_action, self._terminal_reason
+
+    def _observe_control_request(
+        self,
+        evidence: list[EvidenceRecord],
+    ) -> tuple[str | None, str | None]:
+        action, reason = self._control_request()
+        if action is not None and not self._control_recorded:
+            self._emit(
+                evidence,
+                "run_control_requested",
+                {"action": action, "reason": reason},
+            )
+            self._control_recorded = True
+        return action, reason
 
     def run_phase(
         self,
@@ -576,6 +612,7 @@ class PlanGraphExecutor:
         admission = SourceAdmissionState()
         status = GraphRunStatus.COMPLETE
         failure: str | None = None
+        terminal_reason: str | None = None
         lifecycle_started: list[RuntimeNode] = []
         checkpoint_requested = False
         checkpoint: EngineCheckpoint | None = None
@@ -666,20 +703,34 @@ class PlanGraphExecutor:
                 self._capture_input(graph_input.value)
             if not resumed:
                 self._schedule_phase_triggers(planned_phase, queue, phase_started_time)
-            for node in source_nodes:
-                self._poll_source(
-                    node,
-                    queue,
-                    admission,
-                    evidence,
-                )
+            action, control_reason = self._observe_control_request(evidence)
+            if action == "cancel":
+                status = GraphRunStatus.CANCELLED
+                terminal_reason = control_reason
+            else:
+                if action == "complete":
+                    terminal_reason = control_reason
+                for node in source_nodes:
+                    self._poll_source(
+                        node,
+                        queue,
+                        admission,
+                        evidence,
+                    )
 
             idle_cycles = 0
             event_count = 0
-            while queue or admission.incomplete_sources:
-                if self._cancel_requested:
+            while status == GraphRunStatus.COMPLETE and (
+                queue or admission.incomplete_sources
+            ):
+                action, control_reason = self._observe_control_request(evidence)
+                if action == "cancel":
                     status = GraphRunStatus.CANCELLED
+                    terminal_reason = control_reason
                     break
+                if action == "complete":
+                    terminal_reason = control_reason
+                    admission.incomplete_sources.difference_update(live_source_ids)
                 if live_wall_deadline is not None and monotonic() >= live_wall_deadline:
                     status = GraphRunStatus.TIMED_OUT
                     failure = (
@@ -696,6 +747,12 @@ class PlanGraphExecutor:
                     )
                     break
                 if not queue:
+                    if action == "complete":
+                        admission.incomplete_sources.difference_update(
+                            live_source_ids
+                        )
+                        if not admission.incomplete_sources:
+                            break
                     if (
                         checkpoint_after_inputs is not None
                         and len(admitted) >= checkpoint_after_inputs
@@ -906,7 +963,10 @@ class PlanGraphExecutor:
                             },
                         )
                         if not bool(getattr(node.component, "exhausted", False)):
-                            if node.component_id in live_source_ids:
+                            if (
+                                node.component_id in live_source_ids
+                                and self._control_request()[0] != "complete"
+                            ):
                                 admission.incomplete_sources.add(node.component_id)
                             else:
                                 self._poll_source(node, queue, admission, evidence)
@@ -933,8 +993,12 @@ class PlanGraphExecutor:
                     )
                     work.append(source_work)
                     self._emit(evidence, "work", source_work.to_payload())
-                    if node.component_id in live_source_ids and not bool(
-                        getattr(node.component, "exhausted", False)
+                    if (
+                        node.component_id in live_source_ids
+                        and self._control_request()[0] != "complete"
+                        and not bool(
+                            getattr(node.component, "exhausted", False)
+                        )
                     ):
                         admission.incomplete_sources.add(node.component_id)
                     elif (
@@ -1205,6 +1269,7 @@ class PlanGraphExecutor:
             ),
             failure=failure,
             checkpoint=checkpoint,
+            terminal_reason=terminal_reason,
         )
 
     def _phase(self, value: PlannedPhase | str) -> PlannedPhase:
@@ -1245,6 +1310,12 @@ class PlanGraphExecutor:
         admission: SourceAdmissionState,
         evidence: list[EvidenceRecord],
     ) -> bool:
+        if (
+            self._control_request()[0] == "complete"
+            and bool(getattr(node.component, "is_live", False))
+        ):
+            admission.incomplete_sources.discard(node.component_id)
+            return False
         try:
             admitted = poll_source(node, admission, self._require_execution_time)
         finally:

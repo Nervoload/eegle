@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from threading import Event, Thread
+from typing import ClassVar
 
 from eegle.authoring import ExperimentBuilder
 from eegle.compiler import compile_suite
@@ -33,6 +35,7 @@ from eegle.operations import (
 from eegle.plugins import PluginRegistry
 from eegle.processing.windows import ContinuousWindowBuilder
 from eegle.recording import EvidenceReader, Session, persist_engine_run
+from eegle.replay import BundleReplayRunner
 from eegle.runtime import EngineStatus, ExecutionEngine
 from eegle.specs import DeploymentSpec, ProtocolSpec, StorageBinding, SuiteSpec
 from eegle.streams import ContentKind, DenseSampleBatch, MetadataEvent, SparseEventBatch
@@ -254,7 +257,7 @@ def _compiled_lsl_recording(*, timeout_seconds: float):
 
 class Phase7LslIntegrationTests(unittest.TestCase):
     def test_discovery_is_typed_exact_and_truthfully_simulation_validated(self) -> None:
-        pylsl, dense, sparse, metadata = _network()
+        pylsl, dense, sparse, _metadata = _network()
         detected = detect_lsl(wait_time=0, pylsl_module=pylsl)
 
         self.assertEqual(detected.support.support_level, LslSupportLevel.SIMULATED_VALIDATED)
@@ -307,7 +310,7 @@ class Phase7LslIntegrationTests(unittest.TestCase):
         self.assertTrue(pylsl.inlets[0].closed)
 
     def test_dense_sparse_metadata_clock_reconnect_and_packet_loss(self) -> None:
-        pylsl, dense, sparse, metadata = _network()
+        pylsl, dense, _sparse, _metadata = _network()
         detected = detect_lsl(wait_time=0, pylsl_module=pylsl)
         by_plugin = {value.plugin_id: value for value in detected.sources}
 
@@ -325,7 +328,7 @@ class Phase7LslIntegrationTests(unittest.TestCase):
         class Context:
             component_id = "window.lsl"
             component_version = "0.1.0"
-            clock_mapping_revisions = {}
+            clock_mapping_revisions: ClassVar[dict[str, str]] = {}
             current_time = first.available_time
 
             def next_id(self, namespace):
@@ -470,7 +473,12 @@ import eegle.operations
 from eegle.integrations.lsl import lsl_plugin_descriptors
 assert len(lsl_plugin_descriptors()) == 6
 """
-        completed = subprocess.run([sys.executable, "-c", code], text=True, capture_output=True)
+        completed = subprocess.run(
+            [sys.executable, "-c", code],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_same_portable_suite_compiles_for_simulation_and_lsl(self) -> None:
@@ -555,6 +563,67 @@ assert len(lsl_plugin_descriptors()) == 6
             if value.check_id.endswith(".available")
         )
         self.assertEqual(identity.status.value, "fail")
+
+    def test_graceful_completion_stops_open_lsl_polling_drains_and_closes(self) -> None:
+        compiled, registry, config = _compiled_lsl_recording(timeout_seconds=10.0)
+        pylsl, _, _, _ = _network()
+        pylsl.clock = -0.02
+        source = LslSource(config, pylsl_module=pylsl)
+        admitted = Event()
+
+        class NotifyingSource:
+            def __getattr__(self, name):
+                return getattr(source, name)
+
+            def read(self):
+                value = source.read()
+                if value is not None:
+                    admitted.set()
+                return value
+
+        engine = ExecutionEngine.from_plan(
+            compiled.plan,
+            registry,
+            component_overrides={"source.neural": NotifyingSource()},
+        )
+        result = []
+        worker = Thread(target=lambda: result.append(engine.run()), daemon=True)
+        worker.start()
+
+        self.assertTrue(admitted.wait(2.0))
+        self.assertTrue(engine.complete("task_complete"))
+        worker.join(3.0)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(
+            result[0].status,
+            EngineStatus.COMPLETE,
+            (result[0].reason, result[0].phase_results),
+        )
+        self.assertEqual(result[0].reason, "task_complete")
+        self.assertTrue(result[0].work)
+        self.assertTrue(pylsl.inlets[-1].closed)
+        self.assertIn(
+            "run_control_requested",
+            [value.record_type for value in result[0].evidence],
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            session = Session.create(
+                Path(directory) / "session",
+                session_id="session.lsl.graceful-complete",
+            )
+            bundle = persist_engine_run(
+                session,
+                result[0],
+                plan=compiled.plan,
+                streams=(source.stream_spec,),
+                bundle_id="bundle.lsl.graceful-complete",
+            )
+            reader = EvidenceReader.open(session, bundle.bundle_id)
+            replayed = BundleReplayRunner(registry).run(reader)
+
+        self.assertEqual(replayed.result.status, EngineStatus.COMPLETE)
+        self.assertTrue(replayed.equivalence.equivalent, replayed.equivalence)
 
     def test_compiled_engine_handles_silence_reconnect_gap_timeout_and_persistence(self) -> None:
         compiled, registry, config = _compiled_lsl_recording(timeout_seconds=0.03)

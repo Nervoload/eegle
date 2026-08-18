@@ -1007,6 +1007,7 @@ def persist_engine_run(
         "engine_status": result.status.value,
         "equivalence_ceiling": equivalence,
         "failure": getattr(result, "failure", None),
+        "terminal_reason": getattr(result, "reason", None),
         "incremental_evidence": evidence_streamed,
         "incremental_capture": capture_streamed,
         "source_observation_requirements": list(
