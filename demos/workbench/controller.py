@@ -18,6 +18,9 @@ from demos.workbench.operations import (
     WorkbenchDetection,
     WorkbenchOperations,
 )
+from demos.workbench.platform_support import (
+    discovery_remediation as _discovery_remediation,
+)
 from demos.workbench.preview import PreviewManager
 from demos.workbench.profile import Study1Profile, load_study1_profile
 from demos.workbench.project import bootstrap_study1_project
@@ -426,6 +429,9 @@ class WorkbenchController(QObject):
             dependency_available=value.lsl.support.dependency_available,
             library_version=value.lsl.support.library_version,
             support_level=value.lsl.support.support_level.value,
+            unavailable_reason=value.lsl.support.unavailable_reason,
+            remediation=tuple(value.lsl.support.remediation),
+            scan_wait_seconds=value.wait_seconds,
             detection_report_hash=value.report.report_hash,
             streams=value.streams,
             selected_eeg_capability_id=selected_eeg,
@@ -433,9 +439,37 @@ class WorkbenchController(QObject):
         )
         issues = tuple(issue for issue in self.state.issues if not issue.code.startswith("workbench.lsl"))
         if not value.lsl.support.dependency_available:
-            issues += (UiIssue("workbench.lsl_dependency_missing", "Live LSL dependency is unavailable", "Install EEGle's live dependencies before scanning the Neuracle network."),)
+            issues += (
+                UiIssue(
+                    "workbench.lsl_dependency_missing",
+                    "Live LSL dependency could not be loaded",
+                    "\n".join(
+                        (
+                            value.lsl.support.unavailable_reason
+                            or "pylsl could not be imported.",
+                            *value.lsl.support.remediation,
+                        )
+                    ),
+                    IssueSeverity.ERROR,
+                ),
+            )
         elif not value.streams:
-            issues += (UiIssue("workbench.lsl_no_streams", "No LSL streams were detected", "Start Neuracle acquisition and arm PsychoPy, then scan again."),)
+            issues += (
+                UiIssue(
+                    "workbench.lsl_no_streams",
+                    "No LSL streams were detected",
+                    "\n".join(
+                        (
+                            (
+                                f"pylsl {value.lsl.support.library_version or 'unknown'}"
+                                f" resolved no streams in {value.wait_seconds:g} s."
+                            ),
+                            "Start Neuracle acquisition and arm the DSART task, then scan again.",
+                            *_discovery_remediation(),
+                        )
+                    ),
+                ),
+            )
         self.state = replace(self.state, lifecycle=Lifecycle.APPARATUS_UNBOUND, apparatus=apparatus, build=BuildSnapshot(), issues=issues)
         self._emit()
 
@@ -532,8 +566,14 @@ class WorkbenchController(QObject):
             if self.task_process.running:
                 self.task_process.abort("runner_failed")
             message = str(error.get("message", "EEGle runner failed."))
+            detail = str(error.get("traceback") or "").strip()
             self.state = replace(self.state, runner=replace(runner, status=RunnerStatus.FAILED, message=message), lifecycle=Lifecycle.FINALIZING)
-            self._append_issue(str(error.get("code", "workbench.runner_failed")), "EEGle runner failed", message, IssueSeverity.ERROR)
+            self._append_issue(
+                str(error.get("code", "workbench.runner_failed")),
+                "EEGle runner failed",
+                f"{message}\n\n{detail}" if detail else message,
+                IssueSeverity.ERROR,
+            )
             return
         if kind == "warning":
             self._append_issue(str(payload.get("code", "workbench.runner_warning")), "EEGle runner warning", str(payload.get("message", "Unknown runner warning")))

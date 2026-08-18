@@ -11,6 +11,7 @@ from typing import Protocol, runtime_checkable
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
 
+from eegle._paths import opened
 from eegle.recording.artifacts import ArtifactReference
 
 
@@ -101,7 +102,7 @@ def reference_only(reference: ArtifactReference) -> ExternalArtifactVerification
 def _hash_file(path: Path) -> tuple[str, int]:
     digest = hashlib.sha256()
     size = 0
-    with path.open("rb") as handle:
+    with opened(path, "rb") as handle:
         while chunk := handle.read(1024 * 1024):
             size += len(chunk)
             digest.update(chunk)

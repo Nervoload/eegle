@@ -117,6 +117,9 @@ class ApparatusSnapshot:
     dependency_available: bool = False
     library_version: str | None = None
     support_level: str = "unavailable"
+    unavailable_reason: str | None = None
+    remediation: tuple[str, ...] = ()
+    scan_wait_seconds: float = 0.0
     detection_report_hash: str | None = None
     streams: tuple[DetectedStreamSnapshot, ...] = ()
     selected_eeg_capability_id: str | None = None

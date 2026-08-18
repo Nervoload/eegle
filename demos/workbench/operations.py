@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -68,11 +69,33 @@ class SiteOverlay:
                 raise ValueError(f"the reviewed {name.replace('_', ' ')} is required")
 
 
+# LSL discovery is a network resolve. One second is enough for a quiet local
+# link but not for a host with several interfaces, where the first multicast
+# round can be missed entirely; Windows laptops with virtual adapters are the
+# usual case. The wait is overridable so a site can tune it without a rebuild.
+DEFAULT_LSL_WAIT_SECONDS = 2.5
+LSL_WAIT_ENV_VAR = "EEGLE_WORKBENCH_LSL_WAIT_SECONDS"
+
+
+def lsl_scan_wait_seconds() -> float:
+    """Resolve the LSL discovery wait, preferring an explicit site override."""
+
+    configured = os.environ.get(LSL_WAIT_ENV_VAR, "").strip()
+    if not configured:
+        return DEFAULT_LSL_WAIT_SECONDS
+    try:
+        value = float(configured)
+    except ValueError:
+        return DEFAULT_LSL_WAIT_SECONDS
+    return value if value > 0 else DEFAULT_LSL_WAIT_SECONDS
+
+
 @dataclass(frozen=True, slots=True)
 class WorkbenchDetection:
     lsl: LslDetection
     report: DetectionReport
     streams: tuple[DetectedStreamSnapshot, ...]
+    wait_seconds: float = DEFAULT_LSL_WAIT_SECONDS
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,9 +129,15 @@ class WorkbenchOperations:
     def __init__(self, *, pylsl_module: Any | None = None) -> None:
         self._pylsl_module = pylsl_module
 
-    def scan_lsl(self, project_root: Path, *, wait_time: float = 1.0) -> WorkbenchDetection:
+    def scan_lsl(
+        self,
+        project_root: Path,
+        *,
+        wait_time: float | None = None,
+    ) -> WorkbenchDetection:
+        wait = lsl_scan_wait_seconds() if wait_time is None else float(wait_time)
         lsl = detect_lsl(
-            wait_time=wait_time,
+            wait_time=wait,
             boundary_clock_id="boundary.clock",
             logical_clock_id="device.clock",
             default_dense_unit="unknown",
@@ -122,7 +151,7 @@ class WorkbenchOperations:
             include_entry_points=True,
         )
         snapshots = tuple(self._stream_snapshot(value) for value in lsl.sources)
-        return WorkbenchDetection(lsl, report, snapshots)
+        return WorkbenchDetection(lsl, report, snapshots, wait)
 
     def accept_live_deployment(
         self,

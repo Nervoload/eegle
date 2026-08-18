@@ -10,6 +10,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping
 
+from eegle._paths import io_path, opened
 from eegle._validation import freeze_json, require_identifier, thaw_json
 from eegle.compiler.lock import canonical_hash, canonical_json_bytes
 from eegle.recording.artifacts import ArtifactStore
@@ -153,7 +154,7 @@ class Session:
         created_at: str | None = None,
     ) -> "Session":
         target = Path(root).expanduser().resolve()
-        target.mkdir(parents=True, exist_ok=True)
+        os.makedirs(io_path(target), exist_ok=True)
         manifest_path = target / cls.MANIFEST_NAME
         if manifest_path.exists() or (target / ArtifactStore.MANIFEST_URI).exists():
             raise FileExistsError(f"session already exists at {target}")
@@ -324,12 +325,14 @@ def _utc_now() -> str:
 
 
 def _mtime_iso(path: Path) -> str:
-    return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(timespec="seconds")
+    modified = os.stat(io_path(path)).st_mtime
+    return datetime.fromtimestamp(modified, timezone.utc).isoformat(timespec="seconds")
 
 
 def _read_json(path: Path) -> Mapping[str, Any]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        with opened(path, "r", encoding="utf-8") as handle:
+            payload = json.loads(handle.read())
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"invalid session manifest JSON: {path}") from exc
     if not isinstance(payload, dict):
@@ -340,11 +343,11 @@ def _read_json(path: Path) -> Mapping[str, Any]:
 def _atomic_write(path: Path, data: bytes) -> None:
     temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
     try:
-        with temporary.open("wb") as handle:
+        with opened(temporary, "wb") as handle:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        os.replace(io_path(temporary), io_path(path))
     finally:
-        if temporary.exists():
-            temporary.unlink()
+        if os.path.exists(io_path(temporary)):
+            os.unlink(io_path(temporary))

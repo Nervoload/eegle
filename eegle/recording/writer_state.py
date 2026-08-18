@@ -15,6 +15,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
+from eegle._paths import io_path, opened
 from eegle._validation import freeze_json, require_digest, require_identifier, thaw_json
 from eegle.compiler.lock import canonical_hash, canonical_json_bytes
 from eegle.recording.artifacts import ArtifactReference
@@ -216,7 +217,8 @@ def writer_state_path(session: "Session", bundle_id: str) -> Path:
 def read_writer_state(session: "Session", bundle_id: str) -> EvidenceWriterState:
     path = writer_state_path(session, bundle_id)
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        with opened(path, "r", encoding="utf-8") as handle:
+            payload = json.loads(handle.read())
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"invalid evidence-writer state JSON: {path}") from exc
     if not isinstance(payload, dict):
@@ -307,14 +309,14 @@ def _bundle_identifier(value: str) -> str:
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(io_path(path.parent), exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
     try:
-        with temporary.open("wb") as handle:
+        with opened(temporary, "wb") as handle:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        os.replace(io_path(temporary), io_path(path))
     finally:
-        if temporary.exists():
-            temporary.unlink()
+        if os.path.exists(io_path(temporary)):
+            os.unlink(io_path(temporary))

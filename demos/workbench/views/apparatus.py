@@ -14,8 +14,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from demos.workbench.platform_support import discovery_remediation
 from demos.workbench.profile import Study1Profile
 from demos.workbench.state import (
+    ApparatusSnapshot,
     EnvironmentMode,
     ProjectSnapshot,
     TaskStatus,
@@ -132,6 +134,14 @@ class ApparatusPage(WorkbenchPage):
         streams.layout.addWidget(self.stream_empty)
         streams.layout.addWidget(self.stream_table)
         self.stream_table.hide()
+        self.stream_diagnostic = QLabel()
+        self.stream_diagnostic.setProperty("role", "muted")
+        self.stream_diagnostic.setWordWrap(True)
+        self.stream_diagnostic.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.stream_diagnostic.hide()
+        streams.layout.addWidget(self.stream_diagnostic)
         self.streams_card = streams
         self.content.addWidget(streams)
 
@@ -243,7 +253,38 @@ class ApparatusPage(WorkbenchPage):
                 f"Detection {digest[:19]}… · pylsl {version} · {len(apparatus.streams)} stream(s)"
             )
             self._render_streams(state)
+        self._render_diagnostic(apparatus)
         self._sync_primary()
+
+    def _render_diagnostic(self, apparatus: ApparatusSnapshot) -> None:
+        """Say why a scan found nothing, rather than leaving an empty table."""
+
+        if not apparatus.scan_complete:
+            self.stream_diagnostic.hide()
+            return
+        if not apparatus.dependency_available:
+            lines = [
+                (
+                    "The native LSL library could not be loaded, so no scan "
+                    "reached the network."
+                ),
+                apparatus.unavailable_reason or "pylsl could not be imported.",
+                *apparatus.remediation,
+            ]
+        elif not apparatus.streams:
+            lines = [
+                (
+                    f"pylsl {apparatus.library_version or 'unknown'} loaded "
+                    f"and resolved no streams in "
+                    f"{apparatus.scan_wait_seconds:g} s."
+                ),
+                *discovery_remediation(),
+            ]
+        else:
+            self.stream_diagnostic.hide()
+            return
+        self.stream_diagnostic.setText("\n".join(f"• {line}" for line in lines))
+        self.stream_diagnostic.show()
 
     def _render_streams(self, state: WorkbenchState) -> None:
         streams = state.apparatus.streams

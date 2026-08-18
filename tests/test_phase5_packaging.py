@@ -32,6 +32,7 @@ V1_ROOT_WHEEL_PATHS = {
     "eegle/__init__.py",
     "eegle/__main__.py",
     "eegle/_domain.py",
+    "eegle/_paths.py",
     "eegle/_validation.py",
 }
 P6_REMOVED_WHEEL_PATHS = {

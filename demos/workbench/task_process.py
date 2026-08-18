@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QProcess, Signal
+from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, Signal
+
+from demos.workbench.platform_support import (
+    REPOSITORY_ROOT,
+    child_environment,
+    child_interpreter,
+)
 
 PROTOCOL = "eegle.workbench.study1_task_protocol.v1"
 
@@ -24,6 +29,10 @@ class TaskProcess(QObject):
         self.process.finished.connect(self._finished)
         self._buffer = ""
         self._terminal_message = False
+        environment = QProcessEnvironment()
+        for key, value in child_environment().items():
+            environment.insert(key, value)
+        self.process.setProcessEnvironment(environment)
 
     @property
     def running(self) -> bool:
@@ -47,6 +56,8 @@ class TaskProcess(QObject):
             return
         session_root = project_root / "task_sessions" / session_id
         arguments = [
+            "-X",
+            "utf8",
             "-m",
             "demos.workbench.task_runner",
             "--variant",
@@ -64,8 +75,8 @@ class TaskProcess(QObject):
             arguments.append("--controlled-start")
         self._buffer = ""
         self._terminal_message = False
-        self.process.setWorkingDirectory(str(Path(__file__).resolve().parents[2]))
-        self.process.start(str(python_executable or sys.executable), arguments)
+        self.process.setWorkingDirectory(str(REPOSITORY_ROOT))
+        self.process.start(child_interpreter(python_executable), arguments)
 
     def start_task(self) -> None:
         self.send({"command": "start"})
@@ -79,7 +90,12 @@ class TaskProcess(QObject):
         self.abort("workbench_closed")
         if not self.process.waitForFinished(3000):
             self.process.terminate()
-            self.process.waitForFinished(1500)
+            if not self.process.waitForFinished(1500):
+                # terminate() posts WM_CLOSE on Windows, which a console child
+                # without a message loop never handles; kill() is the only
+                # reliable stop there.
+                self.process.kill()
+                self.process.waitForFinished(1500)
 
     def send(self, payload: dict[str, object]) -> None:
         if not self.running:

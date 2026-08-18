@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib
 import json
 import math
+import sys
 from collections import deque
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -75,14 +76,19 @@ class LslSupportReport:
     library_version: str | None
     support_level: LslSupportLevel
     real_acceptance_id: str | None = None
+    unavailable_reason: str | None = None
+    remediation: tuple[str, ...] = ()
     schema: str = LSL_SUPPORT_SCHEMA_ID
 
     def __post_init__(self) -> None:
         if self.schema != LSL_SUPPORT_SCHEMA_ID:
             raise ValueError(f"unsupported LSL support schema: {self.schema}")
         object.__setattr__(self, "support_level", LslSupportLevel(self.support_level))
+        object.__setattr__(self, "remediation", tuple(str(v) for v in self.remediation))
         if not self.dependency_available and self.support_level != LslSupportLevel.UNAVAILABLE:
             raise ValueError("LSL cannot be supported while its dependency is unavailable")
+        if self.dependency_available and self.unavailable_reason is not None:
+            raise ValueError("an available LSL dependency cannot carry an unavailable reason")
         if self.support_level == LslSupportLevel.LIVE_OBSERVE_ONLY_VALIDATED:
             if self.real_acceptance_id is None:
                 raise ValueError("live LSL validation requires an acceptance evidence identity")
@@ -96,6 +102,8 @@ class LslSupportReport:
             "library_version": self.library_version,
             "support_level": self.support_level.value,
             "real_acceptance_id": self.real_acceptance_id,
+            "unavailable_reason": self.unavailable_reason,
+            "remediation": list(self.remediation),
         }
 
 
@@ -593,8 +601,21 @@ def detect_lsl(
         raise ValueError("LSL discovery wait_time must be finite and nonnegative")
     try:
         pylsl = pylsl_module or _import_pylsl()
-    except (ImportError, OSError, RuntimeError):
-        return LslDetection((), (), LslSupportReport(False, None, LslSupportLevel.UNAVAILABLE), ())
+    except (ImportError, OSError, RuntimeError) as exc:
+        # The native liblsl load failure is the operator's only actionable
+        # signal, so it is reported rather than reduced to "unavailable".
+        return LslDetection(
+            (),
+            (),
+            LslSupportReport(
+                False,
+                None,
+                LslSupportLevel.UNAVAILABLE,
+                unavailable_reason=f"{type(exc).__name__}: {exc}",
+                remediation=lsl_dependency_remediation(),
+            ),
+            (),
+        )
     infos = tuple(pylsl.resolve_streams(wait_time=wait))
     streams: list[LslStreamIdentity] = []
     sources: list[SourceCapability] = []
@@ -757,6 +778,77 @@ def stream_identity(info: Any) -> LslStreamIdentity:
 
 def _identity_field(identity: LslStreamIdentity, field: str) -> str:
     return identity.stream_type if field == "type" else str(getattr(identity, field))
+
+
+def lsl_dependency_remediation() -> tuple[str, ...]:
+    """Return host-specific steps for making the native LSL library loadable."""
+
+    common = (
+        (
+            "Install the optional live dependency into the interpreter "
+            'running EEGle: python -m pip install "eegle[live]".'
+        ),
+        (
+            "Point PYLSL_LIB at an existing liblsl binary if it is installed "
+            "outside the pylsl package."
+        ),
+    )
+    if sys.platform == "win32":
+        return (
+            *common,
+            (
+                "Confirm pip selected a win_amd64 pylsl wheel; the "
+                "pure-python sdist omits lsl.dll and cannot load."
+            ),
+            (
+                "Install the Microsoft Visual C++ Redistributable (x64); "
+                "lsl.dll fails to load without it."
+            ),
+            (
+                "Allow python.exe through Windows Defender Firewall on "
+                "private networks, or LSL discovery finds no streams even "
+                "when the library loads."
+            ),
+        )
+    if sys.platform == "darwin":
+        return (
+            *common,
+            (
+                "brew install labstreaminglayer/tap/lsl installs liblsl "
+                "outside the package; recent pylsl wheels already bundle it."
+            ),
+        )
+    return (
+        *common,
+        (
+            "conda install -c conda-forge liblsl, or install a liblsl "
+            "release from https://github.com/sccn/liblsl/releases."
+        ),
+    )
+
+
+def probe_lsl_dependency() -> LslSupportReport:
+    """Report whether the native LSL library loads, without resolving streams.
+
+    Discovery needs working network access; this probe isolates the separate
+    question of whether the optional dependency is installed and loadable.
+    """
+
+    try:
+        pylsl = _import_pylsl()
+    except (ImportError, OSError, RuntimeError) as exc:
+        return LslSupportReport(
+            False,
+            None,
+            LslSupportLevel.UNAVAILABLE,
+            unavailable_reason=f"{type(exc).__name__}: {exc}",
+            remediation=lsl_dependency_remediation(),
+        )
+    return LslSupportReport(
+        True,
+        _library_version(pylsl),
+        LslSupportLevel.SIMULATED_VALIDATED,
+    )
 
 
 def _import_pylsl() -> Any:
@@ -949,7 +1041,9 @@ __all__ = [
     "LslSupportReport",
     "detect_lsl",
     "exact_selector",
+    "lsl_dependency_remediation",
     "lsl_plugin_descriptors",
+    "probe_lsl_dependency",
     "select_exact_stream",
     "stream_identity",
 ]

@@ -11,6 +11,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 
+from eegle._paths import io_path, opened
 from eegle.compiler.lock import canonical_json_bytes
 from eegle.recording.evidence import EvidenceRecord
 
@@ -93,11 +94,11 @@ class FramingInspection:
 class FramedEvidenceWriter:
     def __init__(self, path: str | Path, *, durable: bool = False) -> None:
         self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        os.makedirs(io_path(self.path.parent), exist_ok=True)
         self.durable = bool(durable)
-        if self.path.exists() and self.path.stat().st_size:
+        if os.path.exists(io_path(self.path)) and os.stat(io_path(self.path)).st_size:
             tuple(iter_framed_payloads(self.path))
-        self._handle = self.path.open("ab")
+        self._handle = opened(self.path, "ab")
         if self._handle.tell() == 0:
             self._handle.write(MAGIC)
             self._flush()
@@ -137,7 +138,7 @@ def iter_framed_payloads(
     allow_truncated_final_frame: bool = False,
 ) -> Iterator[dict[str, Any]]:
     source = Path(path)
-    with source.open("rb") as handle:
+    with opened(source, "rb") as handle:
         header = handle.read(len(MAGIC))
         if header != MAGIC:
             raise EvidenceIntegrityError("unsupported or missing evidence log header")
@@ -201,7 +202,7 @@ def inspect_framed_payloads(path: str | Path) -> FramingInspection:
     """
 
     source = Path(path)
-    file_size = source.stat().st_size
+    file_size = os.stat(io_path(source)).st_size
     payloads: list[dict[str, Any]] = []
     try:
         payloads.extend(iter_framed_payloads(source))
@@ -270,8 +271,8 @@ def recover_framed_prefix(source: str | Path, destination: str | Path) -> Framin
     if inspection.status == IntegrityStatus.UNRECOVERABLE:
         issue = inspection.issues[0].message if inspection.issues else "unknown integrity issue"
         raise EvidenceIntegrityError(f"cannot recover an unproven frame prefix: {issue}")
-    destination_path.parent.mkdir(parents=True, exist_ok=True)
-    with source_path.open("rb") as reader, destination_path.open("xb") as writer:
+    os.makedirs(io_path(destination_path.parent), exist_ok=True)
+    with opened(source_path, "rb") as reader, opened(destination_path, "xb") as writer:
         remaining = inspection.last_complete_offset
         while remaining:
             chunk = reader.read(min(1024 * 1024, remaining))

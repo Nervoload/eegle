@@ -8,6 +8,7 @@ import json
 import queue
 import sys
 import threading
+import traceback
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -151,6 +152,9 @@ def main(argv: list[str] | None = None) -> int:
                 "error": {
                     "code": "task.start_failed",
                     "message": f"{type(exc).__name__}: {exc}",
+                    "traceback": "".join(
+                        traceback.format_exception(type(exc), exc, exc.__traceback__)
+                    ),
                 },
             },
             lock,

@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QProcess, Signal
+from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, Signal
+
+from demos.workbench.platform_support import (
+    REPOSITORY_ROOT,
+    child_environment,
+    child_interpreter,
+)
 
 PROTOCOL = "eegle.workbench.runner_protocol.v1"
 
@@ -24,6 +29,10 @@ class RunnerProcess(QObject):
         self.process.finished.connect(self._finished)
         self._buffer = ""
         self._terminal_message = False
+        environment = QProcessEnvironment()
+        for key, value in child_environment().items():
+            environment.insert(key, value)
+        self.process.setProcessEnvironment(environment)
 
     @property
     def running(self) -> bool:
@@ -37,10 +46,12 @@ class RunnerProcess(QObject):
             return
         self._buffer = ""
         self._terminal_message = False
-        self.process.setWorkingDirectory(str(Path(__file__).resolve().parents[2]))
+        self.process.setWorkingDirectory(str(REPOSITORY_ROOT))
         self.process.start(
-            sys.executable,
+            child_interpreter(),
             [
+                "-X",
+                "utf8",
                 "-m",
                 "demos.workbench.runner",
                 "--project-root",
@@ -67,7 +78,12 @@ class RunnerProcess(QObject):
         self.cancel("workbench_closed")
         if not self.process.waitForFinished(5000):
             self.process.terminate()
-            self.process.waitForFinished(1500)
+            if not self.process.waitForFinished(1500):
+                # terminate() posts WM_CLOSE on Windows, which a console child
+                # without a message loop never handles; kill() is the only
+                # reliable stop there.
+                self.process.kill()
+                self.process.waitForFinished(1500)
 
     def send(self, payload: dict[str, object]) -> None:
         if self.running:

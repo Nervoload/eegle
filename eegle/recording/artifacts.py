@@ -9,6 +9,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from eegle._paths import io_path, opened
 from eegle._validation import freeze_json, require_digest, require_identifier, thaw_json
 from eegle.compiler.lock import canonical_hash, canonical_json_bytes, content_hash
 
@@ -256,7 +257,7 @@ class ArtifactStore:
     @classmethod
     def create(cls, root: str | Path, session_id: str) -> "ArtifactStore":
         target = Path(root).expanduser().resolve()
-        target.mkdir(parents=True, exist_ok=True)
+        os.makedirs(io_path(target), exist_ok=True)
         store = cls(target, ArtifactManifest(session_id=session_id))
         store._save()
         return store
@@ -360,8 +361,8 @@ class ArtifactStore:
         suffix = digest.removeprefix("sha256:")
         relative = Path("artifacts") / namespace / suffix
         target = self.root / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists():
+        os.makedirs(io_path(target.parent), exist_ok=True)
+        if os.path.exists(io_path(target)):
             observed, size = _hash_file(target)
             if observed != digest or size != len(data):
                 raise ValueError(f"content-addressed artifact collision at {relative.as_posix()}")
@@ -421,8 +422,8 @@ class ArtifactStore:
             digest, size = _hash_file(path)
             relative = Path("artifacts") / namespace / digest.removeprefix("sha256:")
             target = self.root / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if target.exists():
+            os.makedirs(io_path(target.parent), exist_ok=True)
+            if os.path.exists(io_path(target)):
                 observed, observed_size = _hash_file(target)
                 if observed != digest or observed_size != size:
                     raise ValueError(
@@ -611,7 +612,7 @@ def _namespace(value: str) -> str:
 def _hash_file(path: Path) -> tuple[str, int]:
     digest = hashlib.sha256()
     size = 0
-    with path.open("rb") as handle:
+    with opened(path, "rb") as handle:
         while chunk := handle.read(1024 * 1024):
             size += len(chunk)
             digest.update(chunk)
@@ -619,39 +620,40 @@ def _hash_file(path: Path) -> tuple[str, int]:
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(io_path(path.parent), exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
     try:
-        with temporary.open("wb") as handle:
+        with opened(temporary, "wb") as handle:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        os.replace(io_path(temporary), io_path(path))
     finally:
-        if temporary.exists():
-            temporary.unlink()
+        if os.path.exists(io_path(temporary)):
+            os.unlink(io_path(temporary))
 
 
 def _atomic_copy(source: Path, destination: Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(io_path(destination.parent), exist_ok=True)
     temporary = destination.with_name(f".{destination.name}.tmp-{os.getpid()}")
     try:
-        with source.open("rb") as reader, temporary.open("xb") as writer:
+        with opened(source, "rb") as reader, opened(temporary, "xb") as writer:
             while chunk := reader.read(1024 * 1024):
                 writer.write(chunk)
             writer.flush()
             os.fsync(writer.fileno())
-        os.replace(temporary, destination)
+        os.replace(io_path(temporary), io_path(destination))
     finally:
-        if temporary.exists():
-            temporary.unlink()
+        if os.path.exists(io_path(temporary)):
+            os.unlink(io_path(temporary))
 
 
 def _read_json(path: Path) -> Mapping[str, Any]:
     import json
 
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        with opened(path, "r", encoding="utf-8") as handle:
+            payload = json.loads(handle.read())
     except FileNotFoundError:
         raise
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:

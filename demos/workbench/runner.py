@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 import threading
+import traceback
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,12 @@ def _error_payload(exc: BaseException) -> dict[str, Any]:
     return {
         "code": "runner.execution_failed",
         "message": f"{type(exc).__name__}: {exc}",
+        # The child owns the only stack for this failure. Without it a host
+        # error surfaces as an unattributable message and the layer that
+        # actually failed cannot be identified from the supervisor side.
+        "traceback": "".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__)
+        ),
         "diagnostics": [
             {
                 "code": getattr(value, "code", "unknown"),

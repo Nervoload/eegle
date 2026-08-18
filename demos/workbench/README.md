@@ -4,6 +4,22 @@ EEGle Workbench is a local, scientist-facing demonstration built beside the
 EEGle package. It reads real EEGle project artifacts but does not add a second
 compiler, runtime, recording authority, server, or database.
 
+## Check the host first
+
+Before opening the interface on a new machine, run the headless self-test. It
+drives the same code the interface drives, without Qt, and prints a full stack
+for anything that fails:
+
+```bash
+python -m demos.workbench.diagnose
+```
+
+It reports the interpreter and encodings, whether the GUI and LSL dependencies
+load, whether recorded evidence paths fit this host's limits, and whether the
+complete simulation path (compile, preflight, rehearse, inspect, replay) and
+the supervised runner protocol both succeed. Warnings do not block the
+simulation demo; failures are real host problems.
+
 ## Run the Workbench
 
 Install EEGle from this checkout, then install the demo-only dependencies:
@@ -13,6 +29,15 @@ python3.11 -m venv .venv-workbench
 .venv-workbench/bin/python -m pip install -e ".[live]"
 .venv-workbench/bin/python -m pip install -r demos/workbench/requirements.txt
 .venv-workbench/bin/python -m demos.workbench
+```
+
+On Windows, use the same steps with the Windows interpreter layout:
+
+```bat
+py -3.11 -m venv .venv-workbench
+.venv-workbench\Scripts\python -m pip install -e ".[live]"
+.venv-workbench\Scripts\python -m pip install -r demos/workbench/requirements.txt
+.venv-workbench\Scripts\python -m demos.workbench
 ```
 
 The first launch creates the prepared Study 1 rehearsal project under the
@@ -56,3 +81,45 @@ open capture; Stop registers a cancelled partial session where possible.
 If the task interpreter is absent, Workbench may open its Qt presentation
 fallback, but that fallback cannot enable live recording. Real Neuracle and
 display acceptance remain an on-site laboratory gate.
+
+## Windows notes
+
+Three host differences matter on Windows. `python -m demos.workbench.diagnose`
+reports all three.
+
+**Evidence path length.** A session evidence artifact nests a session id, a
+bundle id, and a content-addressed digest, which reaches roughly 180
+characters below the project root. Windows rejects non-extended paths beyond
+260 characters, so a checkout under `Documents` can cross the limit. EEGle
+writes evidence through extended-length paths so recording itself succeeds,
+but Explorer, archive tools, and editors cannot open such a session. Point
+Workbench at a shorter directory to keep sessions reachable:
+
+```bat
+set EEGLE_WORKBENCH_DATA_ROOT=%LOCALAPPDATA%\EEGle\Workbench\projects
+```
+
+If the in-repository location would cross the limit, Workbench selects that
+per-user directory on Windows by default. POSIX hosts are never relocated.
+
+**LSL discovery.** `pylsl` needs the native `liblsl` library. Confirm pip
+selected a `win_amd64` wheel, since the pure-python sdist omits `lsl.dll`;
+loading it also requires the Microsoft Visual C++ Redistributable (x64). Once
+it loads, discovery is UDP multicast, so `python.exe` must be allowed through
+Windows Defender Firewall on private networks — a blocked host resolves zero
+streams while reporting a perfectly healthy library. Hosts with several
+adapters (Wi-Fi, Ethernet, virtual switches) may need a longer wait than the
+2.5 second default:
+
+```bat
+set EEGLE_WORKBENCH_LSL_WAIT_SECONDS=6
+```
+
+The Apparatus page now states which of these applies after every scan instead
+of showing an empty table.
+
+**Launching.** Start Workbench with `python.exe`, not `pythonw.exe`. Workbench
+supervises its runner and task children over line-delimited JSON on their
+standard streams, which a GUI-only interpreter does not provide. Workbench
+substitutes the console interpreter beside `pythonw.exe` when it can find one,
+and pins UTF-8 and unbuffered pipes for both children.

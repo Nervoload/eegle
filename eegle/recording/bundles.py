@@ -684,13 +684,12 @@ class IncrementalEngineEvidenceSink:
     def __call__(self, record: EvidenceRecord) -> None:
         if not isinstance(record, EvidenceRecord):
             raise TypeError("engine evidence sink accepts only EvidenceRecord values")
-        self.writer.append(record)
-        self.last_record = record
-        if record.record_type == "component_started":
-            self._component_versions[str(record.payload["component_id"])] = str(
-                record.payload["component_version"]
-            )
-        elif record.record_type == "component_state":
+        # Any artifact this record implies is materialized before the ledger
+        # commits the record. A failing artifact write then leaves the ledger
+        # and the emitting engine on the same sequence, so the engine can
+        # record the failure at that sequence instead of desynchronizing the
+        # ledger and failing every later record with a sequence gap.
+        if record.record_type == "component_state":
             component_id = str(record.payload["component_id"])
             self.writer.snapshot_component(
                 component_id=component_id,
@@ -700,6 +699,12 @@ class IncrementalEngineEvidenceSink:
                 sequence=record.sequence,
                 captured_time=record.emitted_time,
                 state=dict(record.payload["state"]),
+            )
+        self.writer.append(record)
+        self.last_record = record
+        if record.record_type == "component_started":
+            self._component_versions[str(record.payload["component_id"])] = str(
+                record.payload["component_version"]
             )
 
 

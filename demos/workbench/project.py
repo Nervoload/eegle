@@ -8,6 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from demos.workbench.platform_support import (
+    default_data_root,
+    enforced_project_root_risk,
+)
 from demos.workbench.profile import Study1Profile, build_study1_design
 from demos.workbench.state import IssueSeverity, ProjectSnapshot, UiIssue
 from eegle.authoring import ExperimentDesign
@@ -28,8 +32,7 @@ class BootstrapResult:
 
 
 def default_project_root() -> Path:
-    repository_root = Path(__file__).resolve().parents[2]
-    return repository_root / "data" / "workbench" / "projects" / "study1-neuracle64-demo"
+    return default_data_root() / "study1-neuracle64-demo"
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:
@@ -106,6 +109,16 @@ def bootstrap_study1_project(
         project = open_project(root)
     snapshot = project_snapshot(project, profile)
     issues: list[UiIssue] = []
+    path_risk = enforced_project_root_risk(root)
+    if path_risk is not None:
+        issues.append(
+            UiIssue(
+                "workbench.project_path_length",
+                "Recorded evidence paths may exceed this host's path limit",
+                path_risk,
+                IssueSeverity.WARNING,
+            )
+        )
     if snapshot.profile_digest != profile.digest:
         issues.append(
             UiIssue(
