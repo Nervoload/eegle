@@ -8,9 +8,9 @@ from typing import Any
 
 
 TASK_NAME = "dynamic_sart"
-TASK_VERSION = "1.2"
-PLAN_SCHEMA = "eegle.dynamic_sart.plan.v3"
-TRIAL_SCHEMA = "eegle.dynamic_sart.trial.v3"
+TASK_VERSION = "1.3"
+PLAN_SCHEMA = "eegle.dynamic_sart.plan.v4"
+TRIAL_SCHEMA = "eegle.dynamic_sart.trial.v4"
 KEY_EVENT_SCHEMA = "eegle.dynamic_sart.key_event.v1"
 BLOCK_SCHEMA = "eegle.dynamic_sart.block.v3"
 SUPPORT_REFERENCE_SCHEMA = "eegle.dynamic_sart.support_reference.v2"
@@ -75,6 +75,7 @@ class DynamicSartConfig:
     minimum_go_trials_between_no_go: int
     minimum_leading_go_trials: int
     minimum_trailing_go_trials: int
+    no_go_randomization: dict[str, Any]
     master_seed: int
     blocks: tuple[DynamicSartBlock, ...]
     practice_enabled: bool
@@ -153,6 +154,7 @@ class DynamicSartConfig:
             minimum_go_trials_between_no_go=int(raw.get("minimum_go_trials_between_no_go", 2)),
             minimum_leading_go_trials=int(raw.get("minimum_leading_go_trials", 4)),
             minimum_trailing_go_trials=int(raw.get("minimum_trailing_go_trials", 0)),
+            no_go_randomization=dict(raw.get("no_go_randomization") or {}),
             master_seed=int(raw.get("master_seed", 42)),
             blocks=blocks,
             practice_enabled=bool(practice.get("enabled", True)),
@@ -215,6 +217,7 @@ class DynamicSartConfig:
             "minimum_go_trials_between_no_go": self.minimum_go_trials_between_no_go,
             "minimum_leading_go_trials": self.minimum_leading_go_trials,
             "minimum_trailing_go_trials": self.minimum_trailing_go_trials,
+            "no_go_randomization": dict(self.no_go_randomization),
             "master_seed": self.master_seed,
             "blocks": [block.payload(index) for index, block in enumerate(self.blocks, start=1)],
             "practice": {
@@ -295,6 +298,7 @@ def validate_dynamic_sart_config(config: DynamicSartConfig) -> None:
         raise ValueError("tasks.dynamic_sart.minimum_leading_go_trials must be nonnegative")
     if config.minimum_trailing_go_trials < 0:
         raise ValueError("tasks.dynamic_sart.minimum_trailing_go_trials must be nonnegative")
+    _validate_no_go_randomization(config)
     if not config.blocks or any(block.trials < 1 for block in config.blocks):
         raise ValueError("tasks.dynamic_sart.blocks must each contain at least one trial")
     if config.planned_no_go_count is not None:
@@ -387,6 +391,39 @@ def validate_dynamic_sart_config(config: DynamicSartConfig) -> None:
     if not math.isfinite(config.countdown_step_seconds) or config.countdown_step_seconds <= 0:
         raise ValueError("tasks.dynamic_sart.countdown_step_seconds must be finite and positive")
     _validate_cue_schedule(config)
+
+
+def _validate_no_go_randomization(config: DynamicSartConfig) -> None:
+    randomization = dict(config.no_go_randomization)
+    mode = str(randomization.get("mode", "uniform_constrained"))
+    if mode == "uniform_constrained":
+        return
+    if mode != "stratified_weighted":
+        raise ValueError(
+            "tasks.dynamic_sart.no_go_randomization.mode must be "
+            "uniform_constrained or stratified_weighted"
+        )
+    stratum_trials = int(randomization.get("stratum_trials", 0))
+    if stratum_trials < 2:
+        raise ValueError(
+            "tasks.dynamic_sart.no_go_randomization.stratum_trials must be at least 2"
+        )
+    maximum_consecutive = int(randomization.get("maximum_consecutive_no_go", 0))
+    if maximum_consecutive < 1:
+        raise ValueError(
+            "tasks.dynamic_sart.no_go_randomization.maximum_consecutive_no_go must be positive"
+        )
+    for name in ("adjacent_no_go_weight", "one_go_gap_weight"):
+        weight = float(randomization.get(name, 0.0))
+        if not math.isfinite(weight) or not 0.0 < weight <= 1.0:
+            raise ValueError(
+                f"tasks.dynamic_sart.no_go_randomization.{name} must be in (0, 1]"
+            )
+    if any(block.trials % stratum_trials for block in config.blocks):
+        raise ValueError(
+            "tasks.dynamic_sart stratified no-go randomization requires each block trial "
+            "count to be divisible by stratum_trials"
+        )
 
 
 def _validate_cue_schedule(config: DynamicSartConfig) -> None:

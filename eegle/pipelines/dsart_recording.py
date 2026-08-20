@@ -7,6 +7,7 @@ import copy
 import csv
 import hashlib
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -22,7 +23,7 @@ from typing import Any, Iterable
 from eegle.analysis.dynamic_sart import analyze_dynamic_sart_session
 from eegle.config import load_config, resolve_session_root
 from eegle.devices.lsl_markers import LslMarkerReceiptRecorder
-from eegle.devices.labrecorder_xdf import labrecorder_environment
+from eegle.devices.labrecorder_xdf import LabRecorderXdfRecorder, labrecorder_environment
 from eegle.devices.xdf_integrity import validate_xdf_recording
 from eegle.experiment import ForwardExperimentRunner
 from eegle.feedback_manager import FeedbackManager
@@ -369,6 +370,7 @@ def run_recording_suite(options: DsartRecordingOptions) -> dict[str, Any]:
                     manifest["baseline_session_directory"] = result.get("session_dir")
                     if result.get("status") != "completed":
                         raise RuntimeError(_incomplete_phase_detail("resting baseline", result))
+                    _accept_post_recording_warnings(result, options, "resting baseline")
                 elif phase == "dsart_session_1":
                     result = run_dsart_child_session(
                         config,
@@ -382,6 +384,7 @@ def run_recording_suite(options: DsartRecordingOptions) -> dict[str, Any]:
                     _record_dsart_attempt(manifest, 1, result)
                     if result.get("status") != "completed":
                         raise RuntimeError(_incomplete_phase_detail("DSART session 1", result))
+                    _accept_post_recording_warnings(result, options, "DSART session 1")
                 elif phase == "inter_session_break":
                     result = run_inter_session_break(
                         config,
@@ -410,6 +413,7 @@ def run_recording_suite(options: DsartRecordingOptions) -> dict[str, Any]:
                     _record_dsart_attempt(manifest, 2, result)
                     if result.get("status") != "completed":
                         raise RuntimeError(_incomplete_phase_detail("DSART session 2", result))
+                    _accept_post_recording_warnings(result, options, "DSART session 2")
                 else:
                     raise RuntimeError(f"unsupported suite phase {phase}")
                 _complete_phase(manifest, phase, result)
@@ -769,6 +773,14 @@ def run_recording_preflight(
                 environment,
             )
         check_payloads.append(xdf_check.__dict__)
+        if xdf_check.status == "ok":
+            xdf_probe = _run_xdf_preflight_probe(
+                config,
+                participant_id=participant_id,
+                phase=phase,
+                output_dir=output_dir,
+            )
+            check_payloads.append(xdf_probe.__dict__)
     identity = CheckResult(
         "visit_identity",
         "ok" if participant_id.strip() and visit_id.strip() else "fail",
@@ -822,6 +834,18 @@ def run_recording_preflight(
         status = "fail"
     elif comparison and comparison.get("status") == "warning" and status == "pass":
         status = "warning"
+    preflight_warnings = _preflight_warning_messages(check_payloads)
+    preflight_failures = [item["detail"] for item in check_payloads if item.get("status") == "fail"]
+    if comparison and comparison.get("status") == "warning":
+        comparison_warnings = list(comparison.get("warnings") or [])
+        if not comparison_warnings and comparison.get("reason"):
+            comparison_warnings = [comparison["reason"]]
+        preflight_warnings.extend(str(item) for item in comparison_warnings)
+    if comparison and comparison.get("status") == "fail":
+        comparison_failures = list(comparison.get("failures") or [])
+        if not comparison_failures and comparison.get("reason"):
+            comparison_failures = [comparison["reason"]]
+        preflight_failures.extend(str(item) for item in comparison_failures)
     report = {
         "schema": PREFLIGHT_SCHEMA,
         "phase": phase,
@@ -835,13 +859,162 @@ def run_recording_preflight(
         "channel_contract": channel_contract,
         "electrode_quality_file": None if electrode_path is None else str(electrode_path),
         "comparison_to_initial": comparison,
-        "warnings": [item["detail"] for item in check_payloads if item.get("status") == "warn"],
-        "failures": [item["detail"] for item in check_payloads if item.get("status") == "fail"],
+        "warnings": list(dict.fromkeys(preflight_warnings)),
+        "failures": list(dict.fromkeys(preflight_failures)),
     }
     report_path = output_dir / f"{phase}.json"
     report["report_file"] = str(report_path)
     _write_json_atomic(report_path, report)
     return report
+
+
+def _preflight_warning_messages(checks: list[dict[str, Any]]) -> list[str]:
+    """Flatten check-specific warning details into a concise operator list."""
+
+    messages: list[str] = []
+    for check in checks:
+        if check.get("status") != "warn":
+            continue
+        data = dict(check.get("data") or {})
+        nested = [str(item).strip() for item in data.get("warnings", []) if str(item).strip()]
+        if nested:
+            messages.extend(nested)
+            continue
+        detail = str(check.get("detail") or "").strip()
+        if detail:
+            messages.append(detail)
+    return list(dict.fromkeys(messages))
+
+
+def _run_xdf_preflight_probe(
+    config: dict[str, Any],
+    *,
+    participant_id: str,
+    phase: str,
+    output_dir: Path,
+) -> CheckResult:
+    """Make and validate a short real XDF before a full acquisition phase."""
+
+    probe_config = copy.deepcopy(config)
+    recorder_config = dict(probe_config.get("processes", {}).get("recorder", {}) or {})
+    probe_seconds = max(
+        1.0,
+        float(recorder_config.get("preflight_xdf_probe_seconds", 3.0)),
+    )
+    probe_root = output_dir / "xdf_recording_probes"
+    probe_config.setdefault("runtime", {})["session_root"] = str(probe_root.resolve())
+    probe_config.setdefault("experiment", {}).update(
+        {
+            "experiment_id": f"xdf_preflight_{_safe_token(phase)}",
+            "participant_id": participant_id,
+            "task": "xdf_preflight",
+        }
+    )
+    paths = create_session(
+        probe_config,
+        task="xdf_preflight",
+        participant_id=participant_id,
+        root=probe_root,
+    )
+    persisted_config = load_config(paths.parameters)
+    outlet: LslMarkerOutlet | NullMarkerOutlet | None = None
+    receipt: LslMarkerReceiptRecorder | None = None
+    recorder: LabRecorderXdfRecorder | None = None
+    recorder_started = False
+    recorder_summary: dict[str, Any] = {}
+    drain_warning: str | None = None
+    try:
+        outlet = _make_marker_outlet(persisted_config, paths)
+        if not isinstance(outlet, LslMarkerOutlet):
+            raise RuntimeError("preflight XDF probe could not create its required marker outlet")
+        receipt = _start_marker_receipt_recorder(outlet, paths)
+        recorder = LabRecorderXdfRecorder(
+            persisted_config,
+            paths,
+            startup_timeout_seconds=float(recorder_config.get("startup_timeout_seconds", 20.0)),
+        )
+        recorder_summary = recorder.start()
+        recorder_started = True
+        start_timestamp = lsl_local_clock()
+        if start_timestamp is None:
+            raise RuntimeError("LSL local clock was unavailable for the XDF preflight start marker")
+        outlet.push("xdf_preflight_start", timestamp=start_timestamp)
+        sleep(probe_seconds)
+        end_timestamp = lsl_local_clock()
+        if end_timestamp is None:
+            raise RuntimeError("LSL local clock was unavailable for the XDF preflight end marker")
+        outlet.push("xdf_preflight_end", timestamp=end_timestamp)
+        drain_warning = _drain_emitted_markers(persisted_config, outlet, receipt)
+        recorder_summary = recorder.stop(reason="preflight_probe_complete")
+        recorder_started = False
+        receipt_summary = receipt.stop()
+        receipt = None
+        outlet.close()
+        outlet = None
+        if recorder_summary.get("status") != "stopped":
+            raise RuntimeError(
+                str(recorder_summary.get("error") or "preflight XDF recorder did not stop cleanly")
+            )
+        if receipt_summary.get("status") != "stopped":
+            raise RuntimeError(
+                str(receipt_summary.get("error") or "preflight marker receipt did not stop cleanly")
+            )
+        validation = validate_xdf_recording(paths.root, required=True)
+        failures = [str(item) for item in validation.get("failures") or []]
+        warnings = [str(item) for item in validation.get("warnings") or []]
+        mirror_warning = str(recorder_summary.get("csv_mirror_warning") or "").strip()
+        if mirror_warning:
+            warnings.append(mirror_warning)
+        if drain_warning:
+            warnings.append(drain_warning)
+        warnings = list(dict.fromkeys(warnings))
+        status = "fail" if failures else ("warn" if warnings else "ok")
+        if failures:
+            detail = "XDF preflight recording failed: " + "; ".join(failures[:3])
+        elif warnings:
+            detail = "XDF preflight recording warnings: " + "; ".join(warnings[:3])
+        else:
+            detail = f"{probe_seconds:g}-second XDF preflight recording passed full validation"
+        return CheckResult(
+            "xdf_recording_probe",
+            status,
+            detail,
+            {
+                "session_dir": str(paths.root),
+                "probe_seconds": probe_seconds,
+                "recorder_summary": recorder_summary,
+                "validation": validation,
+                "warnings": warnings,
+                "failures": failures,
+            },
+        )
+    except Exception as exc:
+        return CheckResult(
+            "xdf_recording_probe",
+            "fail",
+            f"XDF preflight recording could not be completed: {type(exc).__name__}: {exc}",
+            {
+                "session_dir": str(paths.root),
+                "probe_seconds": probe_seconds,
+                "recorder_summary": recorder_summary,
+            },
+        )
+    finally:
+        if recorder_started and recorder is not None:
+            try:
+                recorder.stop(reason="preflight_probe_cleanup")
+            except Exception:
+                pass
+        if receipt is not None:
+            try:
+                receipt.stop()
+            except Exception:
+                pass
+        if outlet is not None:
+            try:
+                outlet.close()
+            except Exception:
+                pass
 
 
 def assess_channel_contract(
@@ -896,42 +1069,81 @@ def assess_sample_probe(
     stream = dict(probe.get("stream", {}) or {})
     quality = dict(probe.get("quality", {}) or {})
     observed_rate = _optional_float(stream.get("nominal_srate")) or _optional_float(quality.get("sample_rate_hz"))
+    effective_rate = _optional_float(quality.get("effective_sample_rate_hz"))
     probe_seconds = _optional_float(probe.get("probe_seconds")) or _optional_float(eeg_config.get("sample_probe_seconds"))
     sample_count = int(probe.get("sample_count") or 0)
-    expected_samples = None if expected_rate is None or probe_seconds is None else expected_rate * probe_seconds
-    sample_fraction = None if not expected_samples else sample_count / expected_samples
+    expected_samples = (
+        _optional_float(quality.get("expected_sample_count_from_timestamp_span"))
+        or (None if expected_rate is None or probe_seconds is None else expected_rate * probe_seconds)
+    )
+    sample_fraction = _optional_float(
+        quality.get("sample_fraction_of_expected_from_timestamp_span")
+    )
+    if sample_fraction is None and expected_samples:
+        sample_fraction = sample_count / expected_samples
+    quality_config = dict(eeg_config.get("quality_check", {}) or {})
+    rate_tolerance_fraction = max(
+        0.001,
+        float(quality_config.get("effective_sample_rate_warning_tolerance_fraction", 0.02)),
+    )
+    minimum_sample_fraction = min(
+        1.0,
+        max(0.0, float(quality_config.get("minimum_sample_fraction_warning", 0.98))),
+    )
     failures: list[str] = []
     warnings: list[str] = []
     if probe.get("status") not in {"ok", "warn"} or sample_count <= 0:
         (failures if require_eeg else warnings).append("sample probe did not receive EEG samples")
     if expected_rate is not None:
         if observed_rate is None:
-            (failures if require_eeg else warnings).append("EEG stream did not declare a sample rate")
+            warnings.append("EEG stream did not declare a nominal sample rate")
         elif abs(observed_rate - expected_rate) >= 1.0:
-            (failures if require_eeg else warnings).append(
-                f"EEG sample rate is {observed_rate:g} Hz; expected {expected_rate:g} Hz"
+            warnings.append(
+                f"Nominal EEG rate is {observed_rate:g} Hz; expected {expected_rate:g} Hz"
+            )
+        if effective_rate is None:
+            warnings.append("Measured EEG rate could not be calculated from source timestamps")
+        elif abs(effective_rate - expected_rate) / expected_rate > rate_tolerance_fraction:
+            warnings.append(
+                f"Measured EEG rate is {effective_rate:.1f} Hz; expected about {expected_rate:g} Hz"
             )
     if eeg_config.get("recording_lsl_processing") == "source_preserving":
         correction = _optional_float(probe.get("initial_time_correction_seconds"))
         if correction is None:
-            (failures if require_eeg else warnings).append(
+            warnings.append(
                 "LSL time correction is unavailable; source EEG timestamps cannot be aligned to task markers"
             )
-    if sample_fraction is not None:
-        if sample_fraction < 0.5:
-            (failures if require_eeg else warnings).append(
-                f"sample probe received only {sample_fraction:.0%} of the nominal sample count"
-            )
-        elif sample_fraction < 0.8:
-            warnings.append(f"sample probe received {sample_fraction:.0%} of the nominal sample count")
+    if sample_fraction is not None and sample_fraction < minimum_sample_fraction:
+        warnings.append(f"EEG probe retained {sample_fraction:.1%} of the expected samples")
     if quality:
+        invalid_rows = int(quality.get("invalid_sample_row_count") or 0)
+        if invalid_rows:
+            warnings.append(
+                f"EEG probe received {invalid_rows} sample row(s) with the wrong channel width"
+            )
         if not bool(quality.get("timestamps_finite", False)):
-            (failures if require_eeg else warnings).append("EEG probe timestamps are missing or non-finite")
+            warnings.append("EEG probe timestamps are missing or non-finite")
         if not bool(quality.get("timestamps_strictly_increasing", False)):
-            (failures if require_eeg else warnings).append("EEG probe timestamps are not strictly increasing")
-        maximum_gap = _optional_float(quality.get("maximum_timestamp_gap_seconds"))
-        if maximum_gap is not None and expected_rate and maximum_gap > 5.0 / expected_rate:
-            warnings.append(f"EEG probe maximum timestamp gap was {maximum_gap:.6f} seconds")
+            warnings.append("EEG probe timestamps are not strictly increasing")
+        gap_count = int(quality.get("timestamp_gap_warning_count") or 0)
+        estimated_missing = int(quality.get("estimated_missing_samples") or 0)
+        if gap_count:
+            warnings.append(
+                f"EEG probe found {gap_count} sampling gap(s), about {estimated_missing} missing sample(s)"
+            )
+        warning_channels = [str(name) for name in quality.get("warning_channels", [])]
+        if warning_channels:
+            warning_rows = [
+                row for row in quality.get("channels", []) if row.get("status") == "warning"
+            ]
+            preview = ", ".join(
+                f"{row.get('channel_name')} ({', '.join(row.get('warnings') or ['quality warning'])})"
+                for row in warning_rows[:6]
+            ) or ", ".join(warning_channels[:6])
+            suffix = "" if len(warning_channels) <= 6 else f" (+{len(warning_channels) - 6} more)"
+            warnings.append(
+                f"Signal quality on {len(warning_channels)} channel(s): {preview}{suffix}"
+            )
     elif require_eeg:
         failures.append("EEG probe did not provide timestamp-continuity diagnostics")
     status = "fail" if failures else ("warn" if warnings else "ok")
@@ -941,6 +1153,7 @@ def assess_sample_probe(
         "detail": detail,
         "expected_sample_rate_hz": expected_rate,
         "observed_sample_rate_hz": observed_rate,
+        "effective_sample_rate_hz": effective_rate,
         "probe_seconds": probe_seconds,
         "sample_count": sample_count,
         "expected_sample_count": expected_samples,
@@ -963,16 +1176,26 @@ def _accept_recording_preflight(report: dict[str, Any], options: DsartRecordingO
         "report_file": report.get("report_file"),
     }
     print(json.dumps({"dsart_recording_preflight": summary}, indent=2, sort_keys=True))
+    warnings = [str(item).strip() for item in report.get("warnings", []) if str(item).strip()]
     accepted_by = "software_only"
     accepted = True
     if options.task_mode == "psychopy" and options.record_eeg:
-        if options.electrodes_confirmed:
+        if warnings:
+            print(f"{phase}: preflight warnings")
+            for index, warning in enumerate(warnings, start=1):
+                print(f"  {index}. {warning}")
+        if options.electrodes_confirmed and not warnings:
             accepted_by = "--confirm-electrodes"
         else:
+            requested_actions = []
+            if warnings:
+                requested_actions.append("review the warnings")
+            if not options.electrodes_confirmed:
+                requested_actions.append("inspect cap contact/impedance")
+            action_text = " and ".join(requested_actions)
             try:
                 answer = input(
-                    f"{phase}: inspect NIC contact/impedance and the report above. "
-                    "Type YES to accept the electrodes and continue: "
+                    f"{phase}: {action_text}. Type YES to continue: "
                 )
             except EOFError:
                 answer = ""
@@ -983,19 +1206,82 @@ def _accept_recording_preflight(report: dict[str, Any], options: DsartRecordingO
         "method": accepted_by,
         "accepted_at": _now() if accepted else None,
         "operator": options.operator,
+        "warning_count": len(warnings),
+        "warnings_accepted": accepted and bool(warnings),
     }
     report_file = report.get("report_file")
     if report_file:
-        _write_json_atomic(Path(str(report_file)), report)
+        try:
+            _write_json_atomic(Path(str(report_file)), report)
+        except Exception as exc:
+            report.setdefault("acceptance_persistence_warnings", []).append(
+                f"preflight acceptance could not be added to {report_file}: "
+                f"{type(exc).__name__}: {exc}"
+            )
     electrode_file = report.get("electrode_quality_file")
     if accepted and electrode_file:
         electrode_report = _load_json(Path(str(electrode_file))) or {}
         electrode_report["operator_confirmed"] = True
         electrode_report["operator_confirmation_method"] = accepted_by
         electrode_report["operator_confirmation_at"] = _now()
-        _write_json_atomic(Path(str(electrode_file)), electrode_report)
+        try:
+            _write_json_atomic(Path(str(electrode_file)), electrode_report)
+        except Exception as exc:
+            report.setdefault("acceptance_persistence_warnings", []).append(
+                f"electrode acceptance could not be added to {electrode_file}: "
+                f"{type(exc).__name__}: {exc}"
+            )
     if not accepted:
         raise RuntimeError(f"{phase} electrode/contact check was not accepted by the operator")
+
+
+def _accept_post_recording_warnings(
+    result: dict[str, Any],
+    options: DsartRecordingOptions,
+    phase: str,
+) -> None:
+    """Show nonfatal validation warnings before advancing to another acquisition phase."""
+    validation = dict(result.get("validation") or {})
+    candidates = [
+        *list(result.get("warnings") or []),
+        *list(validation.get("warnings") or []),
+    ]
+    warnings = list(dict.fromkeys(str(item).strip() for item in candidates if str(item).strip()))
+    if not warnings:
+        return
+    accepted = True
+    method = "software_only"
+    if options.task_mode == "psychopy" and options.record_eeg:
+        print(f"{phase}: recording completed with warnings")
+        for index, warning in enumerate(warnings, start=1):
+            print(f"  {index}. {warning}")
+        try:
+            answer = input(f"{phase}: type YES to accept these warnings and continue: ")
+        except EOFError:
+            answer = ""
+        accepted = answer.strip() == "YES"
+        method = "interactive_terminal"
+    acceptance = {
+        "accepted": accepted,
+        "method": method,
+        "accepted_at": _now() if accepted else None,
+        "operator": options.operator,
+        "warnings": warnings,
+    }
+    result["operator_warning_acceptance"] = acceptance
+    session_dir = result.get("session_dir")
+    if session_dir:
+        try:
+            _write_json_atomic(
+                Path(str(session_dir)) / "logs" / "post_recording_warning_acceptance.json",
+                acceptance,
+            )
+        except Exception as exc:
+            result.setdefault("warnings", []).append(
+                f"warning acceptance record could not be published: {type(exc).__name__}: {exc}"
+            )
+    if not accepted:
+        raise RuntimeError(f"{phase} warnings were not accepted; raw recording was retained")
 
 
 def compare_preflights(
@@ -1038,7 +1324,7 @@ def compare_preflights(
     if first_contract.get("expected_channel_order") != second_contract.get("expected_channel_order"):
         failures.append("configured channel order changed between preflights")
     if rate_difference is not None and abs(rate_difference) >= 1.0:
-        failures.append("sample rate changed by at least 1 Hz")
+        warnings.append("sample rate changed by at least 1 Hz after the break")
     if source_changed:
         warnings.append("EEG stream source ID changed after the break")
     if correction_difference is not None and abs(correction_difference) >= 0.002:
@@ -1176,24 +1462,24 @@ def run_resting_baseline(
         baseline_validation = _baseline_recording_validation(paths, result, record_eeg=options.record_eeg)
     except Exception as exc:
         baseline_validation = {
-            "status": "fail",
-            "failures": [f"baseline validation failed: {type(exc).__name__}: {exc}"],
-            "warnings": [],
+            "status": "warning",
+            "failures": [],
+            "warnings": [
+                f"baseline validation report was unavailable ({type(exc).__name__}: {exc}); raw recording was retained"
+            ],
         }
     result["validation"] = baseline_validation
     if baseline_validation["failures"]:
         result["status"] = "failed"
         result.setdefault("warnings", []).extend(baseline_validation["failures"])
-    try:
-        _write_json_atomic(paths.events / "dsart_baseline_results.json", result)
-        _write_json_atomic(paths.completion_summary, result)
-    except Exception as exc:
-        result["status"] = "failed"
-        result["failure_kind"] = "post_recording_metadata_failure"
-        result["error"] = f"{type(exc).__name__}: {exc}"
-        result.setdefault("warnings", []).append(
-            "baseline raw data were retained, but one or more completion metadata files could not be published"
-        )
+    for target in (paths.events / "dsart_baseline_results.json", paths.completion_summary):
+        try:
+            _write_json_atomic(target, result)
+        except Exception as exc:
+            result.setdefault("warnings", []).append(
+                f"baseline completion report could not be published to {target}: {type(exc).__name__}: {exc}; "
+                "raw recording was retained"
+            )
     return result
 
 
@@ -1813,24 +2099,28 @@ def _run_dsart_child_session_inline(
         }
     forward_payload = forward.as_dict()
     session_dir = Path(forward.session_dir)
+    post_recording_warnings: list[str] = []
+    task_summary = dict((forward_payload.get("task") or {}).get("summary") or {})
+    sequence_manifest: dict[str, Any] = {}
     try:
         _write_json_atomic(session_dir / "logs" / "suite_preflight.json", preflight)
-        task_summary = dict((forward_payload.get("task") or {}).get("summary") or {})
-        sequence_manifest = _load_json(session_dir / "events" / "stimulus_manifest.json") or {}
-        if options.recipe == "dsart32":
-            write_dsart8_overlap_manifest(session_dir, child_config)
     except Exception as exc:
-        return {
-            "status": "partial",
-            "session_index": session_index,
-            "session_dir": str(session_dir),
-            "session_id": session_dir.name,
-            "seed": int(seed),
-            "error": f"{type(exc).__name__}: {exc}",
-            "failure_kind": "post_recording_metadata_failure",
-            "practice_status": "skipped" if not practice_enabled else "unknown",
-            "raw_recording_retained": True,
-        }
+        post_recording_warnings.append(
+            f"preflight copy could not be published ({type(exc).__name__}: {exc}); raw recording was retained"
+        )
+    try:
+        sequence_manifest = _load_json(session_dir / "events" / "stimulus_manifest.json") or {}
+    except Exception as exc:
+        post_recording_warnings.append(
+            f"stimulus manifest could not be re-read ({type(exc).__name__}: {exc}); raw recording was retained"
+        )
+    if options.recipe == "dsart32":
+        try:
+            write_dsart8_overlap_manifest(session_dir, child_config)
+        except Exception as exc:
+            post_recording_warnings.append(
+                f"channel-overlap report could not be published ({type(exc).__name__}: {exc}); raw recording was retained"
+            )
     analysis_error = None
     try:
         dynamic_report = analyze_dynamic_sart_session(session_dir, child_config)
@@ -1848,17 +2138,15 @@ def _run_dsart_child_session_inline(
             analysis_error=analysis_error,
         )
     except Exception as exc:
-        return {
-            "status": "partial",
-            "session_index": session_index,
-            "session_dir": str(session_dir),
-            "session_id": session_dir.name,
-            "seed": int(seed),
-            "error": f"{type(exc).__name__}: {exc}",
-            "failure_kind": "post_recording_validation_failure",
-            "practice_status": "skipped" if not practice_enabled else "unknown",
-            "raw_recording_retained": True,
+        validation = {
+            "status": "warning",
+            "failures": [],
+            "warnings": [
+                f"post-recording validation report was unavailable ({type(exc).__name__}: {exc}); "
+                "raw recording was retained"
+            ],
         }
+        post_recording_warnings.extend(validation["warnings"])
     status = "completed" if not validation["failures"] else "partial"
     return {
         "status": status,
@@ -1874,6 +2162,8 @@ def _run_dsart_child_session_inline(
         ),
         "task_summary": task_summary,
         "validation": validation,
+        "warnings": list(dict.fromkeys([*post_recording_warnings, *list(validation.get("warnings") or [])])),
+        "raw_recording_retained": True,
         "forward": forward_payload,
     }
 
@@ -2049,21 +2339,25 @@ def _child_session_validation(
     planned_rows = [
         row for row in list(stimulus_manifest.get("planned_trials") or []) if not bool(row.get("is_practice"))
     ]
-    expected = (
-        {
+    if planned_rows:
+        expected = {
             "experimental_trials": len(planned_rows),
             "support_trials": sum(int(row.get("phase") == "support") for row in planned_rows),
             "query_trials": sum(int(row.get("phase") == "query") for row in planned_rows),
             "no_go_trial_count": sum(int(bool(row.get("is_no_go"))) for row in planned_rows),
         }
-        if planned_rows
-        else {
+    elif stimulus_manifest:
+        expected = {
             "experimental_trials": 600,
             "support_trials": 200,
             "query_trials": 400,
             "no_go_trial_count": 67,
         }
-    )
+    else:
+        expected = {}
+        warnings.append(
+            "stimulus manifest was unavailable for trial-plan validation; raw recording was retained"
+        )
     for field, value in expected.items():
         if int(task_summary.get(field, -1)) != value:
             failures.append(f"{field}={task_summary.get(field)}; expected {value}")
@@ -2110,6 +2404,7 @@ def _child_session_validation(
     warnings.extend(marker_integrity["warnings"])
     countdown_integrity = _countdown_event_integrity(session_dir)
     failures.extend(countdown_integrity["failures"])
+    warnings.extend(countdown_integrity["warnings"])
     return {
         "status": "pass" if not failures and not warnings else ("fail" if failures else "warning"),
         "failures": failures,
@@ -2141,10 +2436,12 @@ def _child_session_validation(
 
 def _countdown_event_integrity(session_dir: Path) -> dict[str, Any]:
     path = session_dir / "events" / "events.jsonl"
-    rows = []
+    countdown_rows: list[tuple[int, str, dict[str, Any]]] = []
+    practice_onsets: list[tuple[int, dict[str, Any]]] = []
+    experimental_onsets: list[tuple[int, dict[str, Any]]] = []
     if path.exists():
         with path.open("r", encoding="utf-8") as handle:
-            for line in handle:
+            for line_number, line in enumerate(handle, start=1):
                 if not line.strip():
                     continue
                 try:
@@ -2156,27 +2453,113 @@ def _countdown_event_integrity(session_dir: Path) -> dict[str, Any]:
                     "dynamic_sart_countdown_start",
                     "dynamic_sart_countdown_step",
                     "dynamic_sart_countdown_end",
-                    "dynamic_sart_stimulus_onset",
                 }:
-                    rows.append((family, row))
-    families = [family for family, _row in rows]
-    step_values = [str(row.get("value")) for family, row in rows if family == "dynamic_sart_countdown_step"]
-    failures = []
+                    countdown_rows.append((line_number, family, row))
+                elif family == "dynamic_sart_stimulus_onset":
+                    target = practice_onsets if _is_practice_stimulus_event(row) else experimental_onsets
+                    target.append((line_number, row))
+    families = [family for _line, family, _row in countdown_rows]
+    step_values = [
+        str(row.get("value"))
+        for _line, family, row in countdown_rows
+        if family == "dynamic_sart_countdown_step"
+    ]
+    failures: list[str] = []
+    warnings: list[str] = []
     if families.count("dynamic_sart_countdown_start") != 1:
         failures.append("countdown-start event count is not exactly one")
     if families.count("dynamic_sart_countdown_end") != 1:
         failures.append("countdown-end event count is not exactly one")
     if step_values != ["5", "4", "3", "2", "1", "GO!"]:
         failures.append(f"countdown steps are invalid: {step_values}")
-    if "dynamic_sart_countdown_end" in families and "dynamic_sart_stimulus_onset" in families:
-        if families.index("dynamic_sart_countdown_end") > families.index("dynamic_sart_stimulus_onset"):
-            failures.append("countdown did not finish before the first stimulus onset")
+    expected_families = [
+        "dynamic_sart_countdown_start",
+        *(["dynamic_sart_countdown_step"] * 6),
+        "dynamic_sart_countdown_end",
+    ]
+    if families != expected_families:
+        failures.append("countdown events are not in the required start/steps/end order")
+    if not experimental_onsets:
+        failures.append("first experimental stimulus-onset event is missing")
+
+    countdown_timestamps = [_finite_event_timestamp(row) for _line, _family, row in countdown_rows]
+    first_experimental = experimental_onsets[0] if experimental_onsets else None
+    first_experimental_timestamp = (
+        None if first_experimental is None else _finite_event_timestamp(first_experimental[1])
+    )
+    timestamps_available = (
+        len(countdown_timestamps) == len(expected_families)
+        and all(value is not None for value in countdown_timestamps)
+        and first_experimental_timestamp is not None
+    )
+    if not timestamps_available:
+        failures.append("countdown/first experimental onset timestamps are missing or non-finite")
+    else:
+        resolved_countdown_timestamps = [float(value) for value in countdown_timestamps if value is not None]
+        if any(
+            later < earlier
+            for earlier, later in zip(
+                resolved_countdown_timestamps,
+                resolved_countdown_timestamps[1:],
+            )
+        ):
+            failures.append("countdown timestamps are not nondecreasing")
+        countdown_end_timestamp = resolved_countdown_timestamps[-1]
+        if countdown_end_timestamp > float(first_experimental_timestamp):
+            failures.append(
+                "countdown ended after the first experimental stimulus onset by "
+                f"{countdown_end_timestamp - float(first_experimental_timestamp):.6f} seconds"
+            )
+
+    event_order_valid: bool | None = None
+    if families.count("dynamic_sart_countdown_end") == 1 and first_experimental is not None:
+        countdown_end_line = next(
+            line_number
+            for line_number, family, _row in countdown_rows
+            if family == "dynamic_sart_countdown_end"
+        )
+        event_order_valid = countdown_end_line < first_experimental[0]
+        if not event_order_valid:
+            failures.append(
+                "countdown-end event is not recorded before the first experimental stimulus onset"
+            )
     return {
-        "status": "fail" if failures else "pass",
+        "status": "fail" if failures else ("warning" if warnings else "pass"),
         "events_file": str(path),
         "step_values": step_values,
+        "practice_stimulus_onset_count": len(practice_onsets),
+        "experimental_stimulus_onset_count": len(experimental_onsets),
+        "first_experimental_stimulus_onset_timestamp": first_experimental_timestamp,
+        "countdown_end_timestamp": (
+            countdown_timestamps[-1] if len(countdown_timestamps) == len(expected_families) else None
+        ),
+        "event_order_valid": event_order_valid,
         "failures": failures,
+        "warnings": warnings,
     }
+
+
+def _is_practice_stimulus_event(row: dict[str, Any]) -> bool:
+    """Recognize practice trials from redundant current and legacy ledger fields."""
+
+    metadata = dict(row.get("metadata") or {})
+    practice_value = metadata.get("practice", row.get("practice"))
+    if practice_value is True or str(practice_value).strip().lower() in {"1", "true", "yes"}:
+        return True
+    if str(metadata.get("phase") or row.get("phase") or "").strip().lower() == "practice":
+        return True
+    try:
+        if int(row.get("trial")) < 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    label_tokens = str(row.get("label") or "").split("__")[1:]
+    return "practice=1" in label_tokens
+
+
+def _finite_event_timestamp(row: dict[str, Any]) -> float | None:
+    timestamp = _optional_float(row.get("timestamp"))
+    return timestamp if timestamp is not None and math.isfinite(timestamp) else None
 
 
 def _task_marker_integrity(
@@ -2316,6 +2699,10 @@ def _task_marker_integrity(
     raw_metadata = _load_json(session_dir / "raw" / "eeg_metadata.json") or {}
     raw_first = _optional_float(raw_metadata.get("first_local_received_time"))
     raw_last = _optional_float(raw_metadata.get("last_local_received_time"))
+    recorder_backend = str(
+        parameters.get("processes", {}).get("recorder", {}).get("backend", "lsl_csv")
+    )
+    overlap_target = warnings if recorder_backend == "labrecorder_xdf" else failures
     display_monotonic_timestamps = [
         value
         for value in (_optional_float(row.get("timestamp")) for row in display_marker_rows)
@@ -2323,15 +2710,17 @@ def _task_marker_integrity(
     ]
     if require_markers and display_monotonic_timestamps:
         if raw_first is None or raw_last is None:
-            failures.append(
-                "raw EEG metadata lacks the PC-local receipt-time span needed to verify marker overlap"
+            overlap_target.append(
+                "CSV mirror lacks the PC-local receipt-time span; XDF marker/EEG overlap is "
+                "validated from the authoritative XDF"
             )
         elif (
             raw_first > min(display_monotonic_timestamps) + 0.5
             or raw_last < max(display_monotonic_timestamps) - 0.5
         ):
-            failures.append(
-                "raw EEG PC-local receipt-time span does not cover every stimulus marker"
+            overlap_target.append(
+                "CSV mirror PC-local receipt-time span does not cover every stimulus marker; "
+                "authoritative XDF coverage is validated separately"
             )
     marker_receipt = _marker_receipt_integrity(session_dir, display_marker_rows, required=require_markers)
     failures.extend(marker_receipt["failures"])
@@ -2509,6 +2898,9 @@ def _raw_eeg_integrity(session_dir: Path, *, required: bool) -> dict[str, Any]:
     stream = dict(metadata.get("stream", {}) or {})
     parameters = _load_json(session_dir / "parameters.json") or {}
     eeg_config = dict(parameters.get("hardware", {}).get("eeg", {}) or {})
+    recorder_backend = str(
+        parameters.get("processes", {}).get("recorder", {}).get("backend", "lsl_csv")
+    )
     expected_channels: list[str] = []
     try:
         if eeg_config.get("profile"):
@@ -2521,50 +2913,57 @@ def _raw_eeg_integrity(session_dir: Path, *, required: bool) -> dict[str, Any]:
             header = next(csv.reader(handle), [])
     failures = []
     warnings = []
+
+    def record_csv_issue(message: str) -> None:
+        if recorder_backend == "labrecorder_xdf":
+            warnings.append(f"CSV mirror warning: {message}")
+        else:
+            failures.append(message)
+
     if required:
         if not raw_path.exists():
-            failures.append("raw EEG CSV is missing")
+            record_csv_issue("raw EEG CSV is missing")
         if metadata.get("status") != "stopped":
-            failures.append("raw EEG recorder status is not stopped")
+            record_csv_issue("raw EEG recorder status is not stopped")
         if int(metadata.get("sample_count") or 0) <= 0:
-            failures.append("raw EEG recorder did not retain any samples")
+            record_csv_issue("raw EEG recorder did not retain any samples")
         if int(metadata.get("timestamp_gap_count") or 0) > 0:
-            failures.append("raw EEG contains one or more timestamp gaps above the configured acquisition limit")
+            record_csv_issue("raw EEG contains one or more timestamp gaps above the configured acquisition limit")
         if int(metadata.get("nonmonotonic_timestamp_count") or 0) > 0:
-            failures.append("raw EEG contains nonmonotonic source timestamps")
+            record_csv_issue("raw EEG contains nonmonotonic source timestamps")
         if contract.get("amplitude_samples_modified") is not False:
-            failures.append("raw EEG metadata does not prove amplitude pass-through")
+            record_csv_issue("raw EEG metadata does not prove amplitude pass-through")
         if list(contract.get("amplitude_transformations") or []) != []:
-            failures.append("raw EEG metadata reports an amplitude transformation")
+            record_csv_issue("raw EEG metadata reports an amplitude transformation")
         if contract.get("channel_value_order_modified") is not False:
-            failures.append("raw EEG metadata does not prove channel-order pass-through")
+            record_csv_issue("raw EEG metadata does not prove channel-order pass-through")
         for operation in ("filtering", "resampling", "rereferencing", "artifact_rejection"):
             if contract.get(operation) != "none":
-                failures.append(f"raw EEG metadata reports {operation} during acquisition")
+                record_csv_issue(f"raw EEG metadata reports {operation} during acquisition")
         if contract.get("recording_timestamp_mode") != "source_preserving":
-            failures.append("raw EEG metadata does not prove source-preserving timestamps")
+            record_csv_issue("raw EEG metadata does not prove source-preserving timestamps")
         if contract.get("source_timestamp_retained") is not True:
-            failures.append("raw EEG metadata does not prove original source timestamps were retained")
+            record_csv_issue("raw EEG metadata does not prove original source timestamps were retained")
         if contract.get("initial_time_correction_available") is not True:
-            failures.append("raw EEG recorder did not obtain an LSL correction for marker alignment")
+            record_csv_issue("raw EEG recorder did not obtain an LSL correction for marker alignment")
         if header[:4] != [
             "lsl_timestamp",
             "local_received_time",
             "source_lsl_timestamp",
             "lsl_time_correction_seconds",
         ]:
-            failures.append("raw EEG CSV does not retain corrected and original LSL timestamps")
+            record_csv_issue("raw EEG CSV does not retain corrected and original LSL timestamps")
         recorded_channels = header[4:]
         if expected_channels and recorded_channels != expected_channels:
-            failures.append("raw EEG CSV channel columns do not match the configured physical device order")
+            record_csv_issue("raw EEG CSV channel columns do not match the configured physical device order")
         if list(stream.get("channel_names") or []) != recorded_channels:
-            failures.append("raw EEG metadata channel order does not match the CSV header")
+            record_csv_issue("raw EEG metadata channel order does not match the CSV header")
         if stream.get("channel_value_order_changed") is not False:
-            failures.append("raw EEG stream metadata does not prove that channel values stayed in source order")
+            record_csv_issue("raw EEG stream metadata does not prove that channel values stayed in source order")
         if list(stream.get("amplitude_transformations") or []) != []:
-            failures.append("raw EEG stream metadata reports an amplitude transformation")
+            record_csv_issue("raw EEG stream metadata reports an amplitude transformation")
         if list(stream.get("lsl_processing") or []) != []:
-            failures.append("raw EEG inlet applied LSL processing despite the source-preserving contract")
+            record_csv_issue("raw EEG inlet applied LSL processing despite the source-preserving contract")
     result = {
         "status": "fail" if failures else ("warning" if warnings else "pass"),
         "required": required,
@@ -2578,9 +2977,6 @@ def _raw_eeg_integrity(session_dir: Path, *, required: bool) -> dict[str, Any]:
         "failures": failures,
         "warnings": warnings,
     }
-    recorder_backend = str(
-        parameters.get("processes", {}).get("recorder", {}).get("backend", "lsl_csv")
-    )
     result["primary_format"] = "xdf" if recorder_backend == "labrecorder_xdf" else "csv"
     result["primary_file"] = (
         str(session_dir / "raw" / "recording.xdf")
@@ -2702,6 +3098,7 @@ def _baseline_recording_validation(
         raw_metadata = dict(raw.get("metadata") or {})
         raw_first = _optional_float(raw_metadata.get("first_local_received_time"))
         raw_last = _optional_float(raw_metadata.get("last_local_received_time"))
+        overlap_target = warnings if raw.get("primary_format") == "xdf" else failures
         phase_starts = [
             value
             for value in (_optional_float(row.get("start_monotonic_timestamp")) for row in phases)
@@ -2713,15 +3110,17 @@ def _baseline_recording_validation(
             if value is not None
         ]
         if raw_first is None or raw_last is None:
-            failures.append(
-                "raw EEG metadata lacks the PC-local receipt-time span needed to verify baseline overlap"
+            overlap_target.append(
+                "CSV mirror lacks the PC-local receipt-time span; XDF baseline overlap is "
+                "validated from the authoritative XDF"
             )
         elif phase_starts and phase_ends and (
             raw_first > min(phase_starts) + 0.5
             or raw_last < max(phase_ends) - 0.5
         ):
-            failures.append(
-                "raw EEG PC-local receipt-time span does not cover the complete resting baseline"
+            overlap_target.append(
+                "CSV mirror PC-local receipt-time span does not cover the complete resting baseline; "
+                "authoritative XDF coverage is validated separately"
             )
     return {
         "status": "fail" if failures else ("warning" if warnings else "pass"),

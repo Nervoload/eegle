@@ -165,7 +165,9 @@ Telemetry augments the canonical experiment files. Stimulus timing still lives i
 
 - `recorder`: `lsl_csv` records directly through pylsl; `labrecorder_xdf`
   manages LabRecorder through its loopback control socket and retains the CSV
-  recorder as a live health and recovery mirror.
+  recorder as a non-authoritative health and recovery mirror. CSV degradation
+  is warning-only while primary XDF acquisition and final validation remain
+  healthy.
 - `realtime_processor`: reads EEG LSL and marker LSL, maintains raw and processed ring buffers, uses causal online preprocessing, runs marker-locked epochs through a registry-backed `ModelAdapter`, converts predictions through `DecisionPolicy`, and logs/emits explicit task actions. It can also run calibrated posterior alpha measurement continuously and write `realtime/alpha_power.jsonl` while marker-locked epoching remains enabled. Rolling-window decisions remain available as a compatibility path.
 - `dashboard`: optional non-critical localhost HTTP worker that reads session artifacts and displays live classifier status without touching the PsychoPy process.
 - `dashboard` demo mode: an explicitly simulated classroom path that subscribes

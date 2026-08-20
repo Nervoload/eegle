@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 
+from eegle.hardware.eeg_device import matching_eeg_streams
 from eegle.hardware.profiles import configured_channel_types, expected_profile, mapped_channel_names
 
 
@@ -69,12 +70,35 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
         failures.append("XDF does not contain any stream headers")
         return _finish(result, metadata_path)
 
-    selected = dict(metadata.get("selected_eeg_stream") or {})
-    eeg_matches = [
-        stream
-        for stream in stream_infos
-        if _matches_selected_eeg(stream, selected, eeg_config)
-    ]
+    recorder_status = _load_json(root / "logs" / "processes" / "recorder.status.json") or {}
+    recorder_summary = dict(recorder_status.get("summary") or {})
+    selected = dict(
+        metadata.get("selected_eeg_stream")
+        or recorder_summary.get("stream")
+        or {}
+    )
+    if selected:
+        eeg_matches = [
+            stream
+            for stream in stream_infos
+            if _matches_selected_eeg(stream, selected, eeg_config)
+        ]
+    else:
+        configured_matches = matching_eeg_streams(stream_infos, eeg_config)
+        eeg_matches = [stream for stream in stream_infos if stream in configured_matches]
+        if len(eeg_matches) == 1:
+            selected = dict(eeg_matches[0])
+            warnings.append(
+                "XDF selected-stream metadata was unavailable; the unique configured EEG "
+                "identity was recovered from the XDF header"
+            )
+    metadata_warning = str(
+        metadata.get("xdf_metadata_warning")
+        or recorder_summary.get("xdf_metadata_warning")
+        or ""
+    ).strip()
+    if metadata_warning:
+        warnings.append(metadata_warning)
     marker_source_id = str(marker_config.get("source_id") or "")
     marker_matches = [
         stream
@@ -107,20 +131,36 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
         eeg_id: _new_stream_stats(),
         marker_id: _new_stream_stats(),
     }
+    signal_stats = _new_signal_stats(int(eeg_matches[0].get("channel_count") or 0))
     marker_labels: list[str] = []
     maximum_gap = float(eeg_config.get("maximum_timestamp_gap_seconds", 0.1))
+    expected_rate = float(eeg_config.get("expected_sample_rate_hz") or 0.0)
+    quality_config = dict(eeg_config.get("quality_check", {}) or {})
+    gap_warning_samples = max(
+        1.0,
+        float(quality_config.get("maximum_timestamp_gap_samples_warning", 5.0)),
+    )
 
     def on_chunk(values: Any, stamps: Any, info: dict[str, Any], stream_id: int) -> tuple[Any, Any, dict[str, Any]]:
         stream_id = int(stream_id)
         timestamps = np.asarray(stamps, dtype=float)
         if stream_id in stats:
-            _update_stats(stats[stream_id], timestamps, maximum_gap if stream_id == eeg_id else None)
+            _update_stats(
+                stats[stream_id],
+                timestamps,
+                maximum_gap if stream_id == eeg_id else None,
+                expected_rate=expected_rate if stream_id == eeg_id else None,
+                gap_warning_samples=gap_warning_samples,
+            )
         if stream_id == marker_id:
             marker_labels.extend(_marker_values(values))
             return values, stamps, info
         if stream_id == eeg_id and timestamps.size > 2:
+            _update_signal_stats(signal_stats, values)
             indices = np.asarray([0, timestamps.size - 1], dtype=int)
             return values[indices], timestamps[indices], info
+        if stream_id == eeg_id:
+            _update_signal_stats(signal_stats, values)
         return values, stamps, info
 
     log_messages: list[str] = []
@@ -175,21 +215,23 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
         and positional_evidence["status"] == "pass"
     ):
         mapped_labels = list(expected_labels)
-        mapping_source = "operator_confirmed_position+csv_mirror_identity"
+        mapping_source = str(
+            positional_evidence.get("mapping_source")
+            or "operator_confirmed_position+xdf_stream_identity"
+        )
         warnings.append(
             "XDF channel descriptor labels differed from the operator-confirmed positional names; "
-            "the canonical 65-value order was retained because the independent source-preserving "
-            "CSV mirror recorded the same LSL stream identity and value order"
+            "the canonical value order was retained from the operator-confirmed positional contract "
+            f"using {mapping_source}"
         )
     mapped_types = configured_channel_types(mapped_labels, eeg_config)
     expected_counts = [int(value) for value in eeg_config.get("expected_channel_counts", [])]
     observed_count = int(eeg_matches[0].get("channel_count") or 0)
     observed_rate = float(eeg_matches[0].get("nominal_srate") or 0.0)
-    expected_rate = float(eeg_config.get("expected_sample_rate_hz") or 0.0)
     if expected_counts and observed_count not in expected_counts:
         failures.append(f"XDF EEG channel count is {observed_count}; expected one of {expected_counts}")
     if expected_rate and abs(observed_rate - expected_rate) >= 1.0:
-        failures.append(f"XDF EEG sample rate is {observed_rate:g} Hz; expected {expected_rate:g} Hz")
+        warnings.append(f"XDF nominal EEG rate is {observed_rate:g} Hz; expected {expected_rate:g} Hz")
     if expected_labels and mapped_labels != expected_labels:
         mismatch_detail = _channel_mismatch_detail(original_labels, mapped_labels, expected_labels)
         failures.append(
@@ -200,11 +242,73 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
     if eeg_stats["sample_count"] <= 0:
         failures.append("XDF EEG stream does not contain samples")
     if eeg_stats["nonfinite_timestamp_count"]:
-        failures.append("XDF EEG contains non-finite source timestamps")
+        warnings.append("XDF EEG contains non-finite source timestamps")
     if eeg_stats["nonmonotonic_timestamp_count"]:
-        failures.append("XDF EEG contains nonmonotonic source timestamps")
+        warnings.append("XDF EEG contains nonmonotonic source timestamps")
     if eeg_stats["timestamp_gap_count"]:
-        failures.append("XDF EEG contains one or more timestamp gaps above the configured acquisition limit")
+        warnings.append(
+            f"XDF EEG contains {eeg_stats['timestamp_gap_count']} timestamp gap(s) above "
+            f"{maximum_gap:.6f} seconds"
+        )
+    if eeg_stats["sampling_gap_warning_count"]:
+        warnings.append(
+            f"XDF EEG contains {eeg_stats['sampling_gap_warning_count']} sampling gap(s), "
+            f"about {eeg_stats['estimated_missing_samples']} missing sample(s)"
+        )
+    effective_rate = _effective_sample_rate(eeg_stats)
+    expected_sample_count = (
+        float((eeg_stats["last_timestamp"] - eeg_stats["first_timestamp"]) * expected_rate + 1.0)
+        if expected_rate > 0
+        and eeg_stats.get("first_timestamp") is not None
+        and eeg_stats.get("last_timestamp") is not None
+        and eeg_stats["last_timestamp"] > eeg_stats["first_timestamp"]
+        else None
+    )
+    sample_fraction = (
+        float(eeg_stats["finite_timestamp_count"] / expected_sample_count)
+        if expected_sample_count
+        else None
+    )
+    rate_tolerance_fraction = max(
+        0.001,
+        float(quality_config.get("effective_sample_rate_warning_tolerance_fraction", 0.02)),
+    )
+    minimum_sample_fraction = min(
+        1.0,
+        max(0.0, float(quality_config.get("minimum_sample_fraction_warning", 0.98))),
+    )
+    if (
+        expected_rate > 0
+        and effective_rate is not None
+        and abs(effective_rate - expected_rate) / expected_rate > rate_tolerance_fraction
+    ):
+        warnings.append(
+            f"XDF measured EEG rate is {effective_rate:.1f} Hz; expected about {expected_rate:g} Hz"
+        )
+    if sample_fraction is not None and sample_fraction < minimum_sample_fraction:
+        warnings.append(f"XDF retained {sample_fraction:.1%} of the expected EEG samples")
+
+    signal_quality = _finish_signal_stats(
+        signal_stats,
+        mapped_labels,
+        sample_rate_hz=effective_rate or observed_rate or expected_rate,
+        eeg_config=eeg_config,
+    )
+    if signal_quality.get("shape_mismatch"):
+        warnings.append("XDF EEG sample rows did not consistently match the declared channel count")
+    warning_channels = list(signal_quality.get("warning_channels") or [])
+    if warning_channels:
+        warning_rows = [
+            row for row in signal_quality.get("channels", []) if row.get("status") == "warning"
+        ]
+        preview = ", ".join(
+            f"{row.get('channel_name')} ({', '.join(row.get('warnings') or ['quality warning'])})"
+            for row in warning_rows[:6]
+        ) or ", ".join(warning_channels[:6])
+        suffix = "" if len(warning_channels) <= 6 else f" (+{len(warning_channels) - 6} more)"
+        warnings.append(
+            f"XDF signal quality on {len(warning_channels)} channel(s): {preview}{suffix}"
+        )
 
     receipt_labels = _marker_receipt_labels(root / "raw" / "lsl_markers_received.csv")
     if not receipt_labels:
@@ -300,12 +404,19 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
     result["eeg"] = {
         "stream": eeg_matches[0],
         "sample_count": eeg_stats["sample_count"],
+        "finite_timestamp_count": eeg_stats["finite_timestamp_count"],
         "first_source_timestamp": eeg_stats["first_timestamp"],
         "last_source_timestamp": eeg_stats["last_timestamp"],
         "nonfinite_timestamp_count": eeg_stats["nonfinite_timestamp_count"],
         "nonmonotonic_timestamp_count": eeg_stats["nonmonotonic_timestamp_count"],
         "timestamp_gap_count": eeg_stats["timestamp_gap_count"],
         "largest_timestamp_gap_seconds": eeg_stats["largest_timestamp_gap_seconds"],
+        "sampling_gap_warning_count": eeg_stats["sampling_gap_warning_count"],
+        "estimated_missing_samples": eeg_stats["estimated_missing_samples"],
+        "effective_sample_rate_hz": effective_rate,
+        "expected_sample_count": expected_sample_count,
+        "sample_fraction_of_expected": sample_fraction,
+        "signal_quality": signal_quality,
         "original_channel_names": original_labels,
         "mapped_channel_names": mapped_labels,
         "mapped_channel_types": mapped_types,
@@ -331,12 +442,15 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
 def _new_stream_stats() -> dict[str, Any]:
     return {
         "sample_count": 0,
+        "finite_timestamp_count": 0,
         "first_timestamp": None,
         "last_timestamp": None,
         "nonfinite_timestamp_count": 0,
         "nonmonotonic_timestamp_count": 0,
         "timestamp_gap_count": 0,
         "largest_timestamp_gap_seconds": 0.0,
+        "sampling_gap_warning_count": 0,
+        "estimated_missing_samples": 0,
     }
 
 
@@ -361,13 +475,21 @@ def _matches_selected_eeg(
     return str(stream.get("type") or "").lower() == expected_type.lower()
 
 
-def _update_stats(stats: dict[str, Any], timestamps: np.ndarray, maximum_gap: float | None) -> None:
+def _update_stats(
+    stats: dict[str, Any],
+    timestamps: np.ndarray,
+    maximum_gap: float | None,
+    *,
+    expected_rate: float | None = None,
+    gap_warning_samples: float = 5.0,
+) -> None:
     if timestamps.size == 0:
         return
     finite = np.isfinite(timestamps)
     stats["sample_count"] += int(timestamps.size)
     stats["nonfinite_timestamp_count"] += int(np.sum(~finite))
     values = timestamps[finite]
+    stats["finite_timestamp_count"] += int(values.size)
     if values.size == 0:
         return
     previous = stats.get("last_timestamp")
@@ -385,7 +507,216 @@ def _update_stats(stats: dict[str, Any], timestamps: np.ndarray, maximum_gap: fl
                 float(stats["largest_timestamp_gap_seconds"]),
                 float(np.max(gaps)),
             )
+    if expected_rate is not None and expected_rate > 0:
+        positive_differences = differences[differences > 0]
+        missing = np.maximum(
+            0,
+            np.rint(positive_differences * expected_rate).astype(int) - 1,
+        )
+        stats["estimated_missing_samples"] += int(np.sum(missing))
+        stats["sampling_gap_warning_count"] += int(
+            np.sum(positive_differences > float(gap_warning_samples) / expected_rate)
+        )
     stats["last_timestamp"] = float(values[-1])
+
+
+def _effective_sample_rate(stats: dict[str, Any]) -> float | None:
+    first = stats.get("first_timestamp")
+    last = stats.get("last_timestamp")
+    count = int(stats.get("finite_timestamp_count") or 0)
+    if first is None or last is None or count <= 1 or float(last) <= float(first):
+        return None
+    return float((count - 1) / (float(last) - float(first)))
+
+
+def _new_signal_stats(channel_count: int) -> dict[str, Any]:
+    count = max(0, int(channel_count))
+    return {
+        "channel_count": count,
+        "row_count": 0,
+        "nonfinite_value_count": 0,
+        "finite_counts": np.zeros(count, dtype=np.int64),
+        "means": np.zeros(count, dtype=float),
+        "m2": np.zeros(count, dtype=float),
+        "minimums": np.full(count, np.inf, dtype=float),
+        "maximums": np.full(count, -np.inf, dtype=float),
+        "minimum_counts": np.zeros(count, dtype=np.int64),
+        "maximum_counts": np.zeros(count, dtype=np.int64),
+        "last_values": np.full(count, np.nan, dtype=float),
+        "current_constant_runs": np.zeros(count, dtype=np.int64),
+        "longest_constant_runs": np.zeros(count, dtype=np.int64),
+    }
+
+
+def _update_signal_stats(stats: dict[str, Any], values: Any) -> None:
+    channel_count = int(stats.get("channel_count") or 0)
+    if channel_count <= 0:
+        return
+    matrix = np.asarray(values, dtype=float)
+    if matrix.ndim == 1:
+        matrix = matrix.reshape(1, -1)
+    if matrix.ndim != 2 or matrix.shape[1] != channel_count:
+        stats["shape_mismatch"] = True
+        return
+    stats["row_count"] += int(matrix.shape[0])
+    finite = np.isfinite(matrix)
+    stats["nonfinite_value_count"] += int(np.sum(~finite))
+    for index in range(channel_count):
+        column = matrix[:, index]
+        finite_values = column[np.isfinite(column)]
+        if finite_values.size:
+            old_count = int(stats["finite_counts"][index])
+            chunk_count = int(finite_values.size)
+            chunk_mean = float(np.mean(finite_values))
+            chunk_m2 = float(np.sum((finite_values - chunk_mean) ** 2))
+            total_count = old_count + chunk_count
+            delta = chunk_mean - float(stats["means"][index])
+            if old_count:
+                stats["m2"][index] += chunk_m2 + delta * delta * old_count * chunk_count / total_count
+                stats["means"][index] += delta * chunk_count / total_count
+            else:
+                stats["means"][index] = chunk_mean
+                stats["m2"][index] = chunk_m2
+            stats["finite_counts"][index] = total_count
+            chunk_minimum = float(np.min(finite_values))
+            chunk_maximum = float(np.max(finite_values))
+            minimum_count = int(np.sum(finite_values == chunk_minimum))
+            maximum_count = int(np.sum(finite_values == chunk_maximum))
+            if chunk_minimum < stats["minimums"][index]:
+                stats["minimums"][index] = chunk_minimum
+                stats["minimum_counts"][index] = minimum_count
+            elif chunk_minimum == stats["minimums"][index]:
+                stats["minimum_counts"][index] += minimum_count
+            if chunk_maximum > stats["maximums"][index]:
+                stats["maximums"][index] = chunk_maximum
+                stats["maximum_counts"][index] = maximum_count
+            elif chunk_maximum == stats["maximums"][index]:
+                stats["maximum_counts"][index] += maximum_count
+        longest, current, last = _constant_run_stats(
+            column,
+            last_value=float(stats["last_values"][index]),
+            current_run=int(stats["current_constant_runs"][index]),
+        )
+        stats["longest_constant_runs"][index] = max(
+            int(stats["longest_constant_runs"][index]),
+            longest,
+        )
+        stats["current_constant_runs"][index] = current
+        stats["last_values"][index] = last
+
+
+def _constant_run_stats(values: np.ndarray, *, last_value: float, current_run: int) -> tuple[int, int, float]:
+    if values.size == 0:
+        return current_run, current_run, last_value
+    finite = np.isfinite(values)
+    same = np.zeros(values.size, dtype=bool)
+    if values.size > 1:
+        same[1:] = finite[1:] & finite[:-1] & (values[1:] == values[:-1])
+    starts = np.flatnonzero(~same)
+    lengths = np.diff(np.append(starts, values.size))
+    longest = int(np.max(lengths[finite[starts]])) if np.any(finite[starts]) else 0
+    first_length = int(lengths[0]) if finite[0] else 0
+    if current_run and np.isfinite(last_value) and finite[0] and values[0] == last_value:
+        longest = max(longest, current_run + first_length)
+    if not finite[-1]:
+        next_current = 0
+    elif len(starts) == 1 and finite[0] and np.isfinite(last_value) and values[0] == last_value:
+        next_current = current_run + values.size
+    else:
+        next_current = int(lengths[-1])
+    return longest, next_current, float(values[-1])
+
+
+def _finish_signal_stats(
+    stats: dict[str, Any],
+    channel_names: list[str],
+    *,
+    sample_rate_hz: float,
+    eeg_config: dict[str, Any],
+) -> dict[str, Any]:
+    quality_config = dict(eeg_config.get("quality_check", {}) or {})
+    minimum_std = float(quality_config.get("minimum_channel_std", 1e-12))
+    maximum_abs_value = quality_config.get("maximum_absolute_value")
+    maximum_abs = None if maximum_abs_value is None else float(maximum_abs_value)
+    flatline_seconds = max(0.0, float(quality_config.get("flatline_duration_warning_seconds", 1.0)))
+    clipping_fraction_warning = min(
+        1.0,
+        max(0.0, float(quality_config.get("clipping_fraction_warning", 0.01))),
+    )
+    clipping_minimum_repeated = max(
+        2,
+        int(quality_config.get("clipping_minimum_repeated_samples", 10)),
+    )
+    excluded = {str(name) for name in eeg_config.get("quality_excluded_channel_names", [])}
+    row_count = int(stats.get("row_count") or 0)
+    channels = []
+    for index in range(int(stats.get("channel_count") or 0)):
+        name = channel_names[index] if index < len(channel_names) else f"channel_{index + 1}"
+        finite_count = int(stats["finite_counts"][index])
+        std = (
+            float(np.sqrt(stats["m2"][index] / finite_count))
+            if finite_count
+            else None
+        )
+        minimum = float(stats["minimums"][index]) if finite_count else None
+        maximum = float(stats["maximums"][index]) if finite_count else None
+        max_abs = max(abs(minimum), abs(maximum)) if minimum is not None and maximum is not None else None
+        flat = std is not None and std < minimum_std
+        longest_run = int(stats["longest_constant_runs"][index])
+        longest_run_seconds = longest_run / sample_rate_hz if sample_rate_hz > 0 else None
+        long_flatline = bool(
+            longest_run_seconds is not None
+            and flatline_seconds > 0
+            and longest_run_seconds >= flatline_seconds
+        )
+        extreme_repeats = (
+            int(stats["minimum_counts"][index]) + int(stats["maximum_counts"][index])
+            if minimum != maximum
+            else finite_count
+        )
+        clipping_fraction = float(extreme_repeats / finite_count) if finite_count else None
+        clipping = bool(
+            not flat
+            and extreme_repeats >= clipping_minimum_repeated
+            and clipping_fraction is not None
+            and clipping_fraction >= clipping_fraction_warning
+        )
+        channel_warnings = []
+        if finite_count < row_count:
+            channel_warnings.append("non_finite_samples")
+        if flat:
+            channel_warnings.append("flat_channel")
+        elif long_flatline:
+            channel_warnings.append("flatline_run")
+        if clipping:
+            channel_warnings.append("possible_clipping")
+        if maximum_abs is not None and max_abs is not None and max_abs > maximum_abs:
+            channel_warnings.append("extreme_amplitude")
+        is_excluded = name in excluded
+        channels.append(
+            {
+                "channel_index": index + 1,
+                "channel_name": name,
+                "finite_sample_fraction": float(finite_count / row_count) if row_count else 0.0,
+                "standard_deviation_native_units": std,
+                "minimum_native_units": minimum,
+                "maximum_native_units": maximum,
+                "longest_constant_run_samples": longest_run,
+                "longest_constant_run_seconds": longest_run_seconds,
+                "possible_clipping": clipping,
+                "extreme_repeat_fraction": clipping_fraction,
+                "status": "excluded" if is_excluded else ("warning" if channel_warnings else "good"),
+                "warnings": [] if is_excluded else channel_warnings,
+            }
+        )
+    return {
+        "sample_count": row_count,
+        "channel_count": int(stats.get("channel_count") or 0),
+        "nonfinite_value_count": int(stats.get("nonfinite_value_count") or 0),
+        "shape_mismatch": bool(stats.get("shape_mismatch", False)),
+        "channels": channels,
+        "warning_channels": [row["channel_name"] for row in channels if row["status"] == "warning"],
+    }
 
 
 def _marker_values(values: Any) -> list[str]:
@@ -439,14 +770,12 @@ def _confirmed_positional_xdf_evidence(
     raw_metadata = _load_json(root / "raw" / "eeg_metadata.json") or {}
     raw_stream = dict(raw_metadata.get("stream") or {})
     contract = dict(raw_metadata.get("raw_sample_contract") or {})
-    if raw_metadata.get("status") != "stopped":
-        reasons.append("independent CSV mirror did not stop cleanly")
-    if list(raw_stream.get("channel_names") or []) != expected_labels:
-        reasons.append("independent CSV mirror did not retain the canonical channel header")
-    if raw_stream.get("channel_value_order_changed") is not False:
-        reasons.append("independent CSV mirror does not prove source value-order preservation")
-    if contract.get("channel_value_order_modified") is not False:
-        reasons.append("raw sample contract does not prove source value-order preservation")
+    csv_evidence_available = (
+        raw_metadata.get("status") == "stopped"
+        and list(raw_stream.get("channel_names") or []) == expected_labels
+        and raw_stream.get("channel_value_order_changed") is False
+        and contract.get("channel_value_order_modified") is False
+    )
     identity_fields = ("name", "type", "source_id", "hostname", "channel_count")
     identity_mismatches = []
     for field in identity_fields:
@@ -455,10 +784,22 @@ def _confirmed_positional_xdf_evidence(
             continue
         if str(raw_stream.get(field)) != str(selected_value):
             identity_mismatches.append(field)
-    if identity_mismatches:
+    if csv_evidence_available and identity_mismatches:
         reasons.append(
             "XDF and CSV mirror LSL identities differ in " + ", ".join(identity_mismatches)
         )
+    selected_identity_available = bool(
+        str(selected_xdf_stream.get("name") or "").strip()
+        and str(selected_xdf_stream.get("type") or "").strip()
+        and str(selected_xdf_stream.get("source_id") or "").strip()
+    )
+    if not csv_evidence_available and not selected_identity_available:
+        reasons.append("neither CSV evidence nor a stable selected XDF stream identity is available")
+    mapping_source = (
+        "operator_confirmed_position+csv_mirror_identity"
+        if csv_evidence_available
+        else "operator_confirmed_position+xdf_stream_identity"
+    )
     return {
         "status": "fail" if reasons else "pass",
         "configured_mapping_source": configured_source,
@@ -466,6 +807,13 @@ def _confirmed_positional_xdf_evidence(
             field: selected_xdf_stream.get(field) for field in identity_fields
         },
         "csv_mirror_stream": {field: raw_stream.get(field) for field in identity_fields},
+        "csv_evidence_available": csv_evidence_available,
+        "mapping_source": mapping_source,
+        "warnings": (
+            []
+            if csv_evidence_available
+            else ["CSV mirror evidence was unavailable; positional mapping used the selected XDF stream identity"]
+        ),
         "reasons": reasons,
     }
 
@@ -666,9 +1014,12 @@ def _finish(result: dict[str, Any], metadata_path: Path) -> dict[str, Any]:
     }
     try:
         _write_json_atomic(metadata_path, metadata)
-    except OSError as exc:
-        failures.append(f"XDF validation metadata could not be written: {type(exc).__name__}: {exc}")
-        result["status"] = "fail"
+    except Exception as exc:
+        warnings.append(
+            f"XDF validation report could not be written ({type(exc).__name__}: {exc}); "
+            "the raw XDF was retained"
+        )
+        result["status"] = "fail" if failures else "warning"
     result["failures"] = failures
     result["warnings"] = warnings
     result["metadata"] = metadata

@@ -252,7 +252,9 @@ time reference. The following 400 query trials retain the same stimuli, timing,
 and response rule but cannot update that frozen reference. Before experimental
 trial 1, after practice passes or is skipped, the task displays the mandatory
 one-second sequence `5`, `4`, `3`, `2`, `1`, `GO!`; all six display onsets are
-written as flip-synchronized countdown markers.
+written as flip-synchronized countdown markers. Post-run validation explicitly
+excludes practice stimulus onsets, then requires the complete ordered countdown
+and its final timestamp to precede or equal the first experimental onset.
 
 Each block reserves its first four trials as go trials so the no-go stimulus
 cannot appear before a response tendency has begun to form. The two internal

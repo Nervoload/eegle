@@ -288,6 +288,23 @@ class ManagedXdfTests(unittest.TestCase):
             with self.assertRaisesRegex(FileExistsError, "refusing to overwrite"):
                 recorder.start()
 
+    def test_xdf_metadata_report_failure_does_not_stop_primary_recording(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = paths_for_existing_session(tmp)
+            recorder = LabRecorderXdfRecorder(self._config("LabRecorder.exe"), paths)
+            recorder._status = "recording"
+            recorder._process = _Process()  # type: ignore[assignment]
+            with patch(
+                "eegle.devices.labrecorder_xdf._write_json_atomic",
+                side_effect=PermissionError("metadata policy lock"),
+            ):
+                recorder._write_metadata()
+
+            status = recorder.snapshot()
+
+        self.assertEqual(status["status"], "recording")
+        self.assertIn("primary XDF acquisition continues", status["xdf_metadata_warning"])
+
     def test_snapshot_warns_when_xdf_growth_stalls_but_csv_mirror_is_healthy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = paths_for_existing_session(tmp)
@@ -325,7 +342,7 @@ class ManagedXdfTests(unittest.TestCase):
             self.assertEqual(status["status"], "failed")
             self.assertIn("return code 3", str(status["error"]))
 
-    def test_snapshot_fails_when_csv_mirror_fails(self) -> None:
+    def test_snapshot_warns_when_csv_mirror_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = paths_for_existing_session(tmp)
             paths.eeg_xdf.write_bytes(b"XDF:test")
@@ -337,8 +354,10 @@ class ManagedXdfTests(unittest.TestCase):
 
             status = recorder.snapshot()
 
-            self.assertEqual(status["status"], "failed")
-            self.assertIn("CSV mirror status", str(status["error"]))
+            self.assertEqual(status["status"], "recording")
+            self.assertTrue(status["csv_mirror_degraded"])
+            self.assertIn("CSV mirror status", str(status["csv_mirror_warning"]))
+            self.assertIsNone(status["error"])
 
 
 class XdfIntegrityTests(unittest.TestCase):
@@ -350,6 +369,7 @@ class XdfIntegrityTests(unittest.TestCase):
         channel_count: int = 65,
         labels: list[str] | None = None,
         eeg_stamps: list[float] | None = None,
+        eeg_values: np.ndarray | None = None,
     ) -> tuple[object, Path]:
         paths = paths_for_existing_session(root)
         paths.eeg_xdf.write_bytes(b"XDF:test-data")
@@ -382,6 +402,7 @@ class XdfIntegrityTests(unittest.TestCase):
             channel_count=channel_count,
             labels=labels,
             eeg_stamps=eeg_stamps,
+            eeg_values=eeg_values,
         )
 
     def _fake_pyxdf(
@@ -391,9 +412,17 @@ class XdfIntegrityTests(unittest.TestCase):
         channel_count: int = 65,
         labels: list[str] | None = None,
         eeg_stamps: list[float] | None = None,
+        eeg_values: np.ndarray | None = None,
     ) -> object:
         labels = list(labels or CHANNELS[:channel_count])
         eeg_stamps = list(eeg_stamps or [1.0, 1.001, 1.002])
+        if eeg_values is None:
+            eeg_matrix = (
+                np.arange(len(eeg_stamps), dtype=np.float32)[:, None]
+                + np.arange(channel_count, dtype=np.float32)[None, :] / 100.0
+            )
+        else:
+            eeg_matrix = np.asarray(eeg_values, dtype=np.float32)
         eeg_header = {
             "stream_id": 1,
             "name": "Neuracle EEG",
@@ -419,8 +448,8 @@ class XdfIntegrityTests(unittest.TestCase):
             channel_rows = [{"label": [name]} for name in labels]
             eeg_info = {"stream_id": 1, "desc": [{"channels": [{"channel": channel_rows}]}]}
             marker_info = {"stream_id": 2, "desc": [{}]}
-            eeg_values, returned_eeg_stamps, _ = on_chunk(  # type: ignore[operator]
-                np.zeros((len(eeg_stamps), channel_count), dtype=np.float32),
+            returned_eeg_values, returned_eeg_stamps, _ = on_chunk(  # type: ignore[operator]
+                eeg_matrix,
                 np.asarray(eeg_stamps),
                 {"info": eeg_info},
                 1,
@@ -432,7 +461,11 @@ class XdfIntegrityTests(unittest.TestCase):
                 2,
             )
             return [
-                {"info": eeg_info, "time_series": eeg_values, "time_stamps": returned_eeg_stamps},
+                {
+                    "info": eeg_info,
+                    "time_series": returned_eeg_values,
+                    "time_stamps": returned_eeg_stamps,
+                },
                 {"info": marker_info, "time_series": marker_values, "time_stamps": returned_marker_stamps},
             ], {}
 
@@ -466,14 +499,39 @@ class XdfIntegrityTests(unittest.TestCase):
         self.assertIn("not requested", result["skip_reason"])
         self.assertEqual(result["failures"], [])
 
-    def test_xdf_validation_rejects_wrong_sample_rate(self) -> None:
+    def test_xdf_validation_report_write_failure_does_not_invalidate_raw_xdf(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths, pyxdf = self._session(Path(tmp))
+            with patch.dict(sys.modules, {"pyxdf": pyxdf}), patch(
+                "eegle.devices.xdf_integrity._write_json_atomic",
+                side_effect=PermissionError("report policy lock"),
+            ):
+                result = validate_xdf_recording(paths.root, required=True)
+
+        self.assertEqual(result["status"], "warning")
+        self.assertEqual(result["failures"], [])
+        self.assertTrue(any("raw XDF was retained" in row for row in result["warnings"]))
+
+    def test_xdf_validation_recovers_unique_stream_identity_without_metadata_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths, pyxdf = self._session(Path(tmp))
+            paths.xdf_metadata.unlink()
+            with patch.dict(sys.modules, {"pyxdf": pyxdf}):
+                result = validate_xdf_recording(paths.root, required=True)
+
+        self.assertEqual(result["status"], "warning")
+        self.assertEqual(result["failures"], [])
+        self.assertTrue(any("recovered from the XDF header" in row for row in result["warnings"]))
+
+    def test_xdf_validation_warns_on_wrong_sample_rate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths, pyxdf = self._session(Path(tmp), rate=500.0)
             with patch.dict(sys.modules, {"pyxdf": pyxdf}):
                 result = validate_xdf_recording(paths.root, required=True)
 
-            self.assertEqual(result["status"], "fail")
-            self.assertTrue(any("sample rate" in failure for failure in result["failures"]))
+            self.assertEqual(result["status"], "warning")
+            self.assertEqual(result["failures"], [])
+            self.assertTrue(any("rate" in warning for warning in result["warnings"]))
 
     def test_xdf_validation_rejects_marker_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -562,14 +620,47 @@ class XdfIntegrityTests(unittest.TestCase):
             "pass",
         )
 
-    def test_xdf_validation_rejects_timestamp_gap(self) -> None:
+    def test_xdf_validation_warns_on_timestamp_gap_and_estimated_loss(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths, pyxdf = self._session(Path(tmp), eeg_stamps=[1.0, 1.001, 1.5])
             with patch.dict(sys.modules, {"pyxdf": pyxdf}):
                 result = validate_xdf_recording(paths.root, required=True)
 
-        self.assertEqual(result["status"], "fail")
-        self.assertTrue(any("timestamp gaps" in failure for failure in result["failures"]))
+        self.assertEqual(result["status"], "warning")
+        self.assertEqual(result["failures"], [])
+        self.assertGreater(result["eeg"]["estimated_missing_samples"], 0)
+        self.assertTrue(any("timestamp gap" in warning for warning in result["warnings"]))
+
+    def test_xdf_validation_warns_for_nonfinite_flatline_and_clipping(self) -> None:
+        stamps = [1.0 + index / 1000.0 for index in range(100)]
+        values = (
+            np.arange(100, dtype=np.float32)[:, None]
+            + np.arange(65, dtype=np.float32)[None, :] / 100.0
+        )
+        values[10, 0] = np.nan
+        values[11, 0] = np.inf
+        values[:, 1] = 0.0
+        values[:10, 2] = -100.0
+        values[-10:, 2] = 100.0
+        with tempfile.TemporaryDirectory() as tmp:
+            paths, pyxdf = self._session(
+                Path(tmp),
+                eeg_stamps=stamps,
+                eeg_values=values,
+            )
+            with patch.dict(sys.modules, {"pyxdf": pyxdf}):
+                result = validate_xdf_recording(paths.root, required=True)
+
+        self.assertEqual(result["status"], "warning")
+        self.assertEqual(result["failures"], [])
+        self.assertEqual(result["eeg"]["signal_quality"]["nonfinite_value_count"], 2)
+        by_name = {
+            row["channel_name"]: row
+            for row in result["eeg"]["signal_quality"]["channels"]
+        }
+        self.assertIn("non_finite_samples", by_name[CHANNELS[0]]["warnings"])
+        self.assertIn("flat_channel", by_name[CHANNELS[1]]["warnings"])
+        self.assertIn("possible_clipping", by_name[CHANNELS[2]]["warnings"])
 
     def test_short_xdf_finalization_tail_is_warning_when_csv_proves_full_coverage(self) -> None:
         stamps = [index * 0.05 for index in range(10)]
@@ -822,14 +913,15 @@ class XdfIntegrityTests(unittest.TestCase):
             any("starts after the first required marker" in row for row in result["failures"])
         )
 
-    def test_xdf_validation_rejects_nonmonotonic_source_timestamps(self) -> None:
+    def test_xdf_validation_warns_on_nonmonotonic_source_timestamps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths, pyxdf = self._session(Path(tmp), eeg_stamps=[1.0, 1.002, 1.001])
             with patch.dict(sys.modules, {"pyxdf": pyxdf}):
                 result = validate_xdf_recording(paths.root, required=True)
 
-        self.assertEqual(result["status"], "fail")
-        self.assertTrue(any("nonmonotonic" in failure for failure in result["failures"]))
+        self.assertEqual(result["status"], "warning")
+        self.assertEqual(result["failures"], [])
+        self.assertTrue(any("nonmonotonic" in warning for warning in result["warnings"]))
 
     def test_xdf_validation_rejects_duplicate_required_eeg_stream(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

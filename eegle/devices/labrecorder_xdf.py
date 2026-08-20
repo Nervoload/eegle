@@ -15,12 +15,12 @@ from pathlib import Path
 from time import monotonic, sleep
 from typing import Any, BinaryIO
 
-from eegle.devices.lsl_eeg import LslEegRecorder
+from eegle.devices.lsl_eeg import LslEegRecorder, resolve_eeg_stream_identity
 from eegle.session import SessionPaths
 
 
 class LabRecorderXdfRecorder:
-    """Control LabRecorder over its loopback socket and retain a CSV mirror."""
+    """Control authoritative LabRecorder/XDF capture with an optional CSV mirror."""
 
     def __init__(
         self,
@@ -34,8 +34,7 @@ class LabRecorderXdfRecorder:
         self.eeg_config = dict(config.get("hardware", {}).get("eeg", {}) or {})
         self.marker_config = dict(config.get("hardware", {}).get("markers", {}) or {})
         self.recorder_config = dict(config.get("processes", {}).get("recorder", {}) or {})
-        if not bool(self.recorder_config.get("csv_mirror", False)):
-            raise ValueError("labrecorder_xdf currently requires processes.recorder.csv_mirror=true")
+        self.csv_mirror_enabled = bool(self.recorder_config.get("csv_mirror", True))
         self.startup_timeout_seconds = max(1.0, float(startup_timeout_seconds))
         self.shutdown_timeout_seconds = max(
             2.0,
@@ -79,6 +78,8 @@ class LabRecorderXdfRecorder:
         self._status = "initialized"
         self._error: str | None = None
         self._notes: list[str] = []
+        self._csv_mirror_warning: str | None = None
+        self._metadata_warning: str | None = None
         self._last_xdf_size = 0
         self._last_xdf_growth_at = monotonic()
         self._xdf_growth_warning_active = False
@@ -87,7 +88,7 @@ class LabRecorderXdfRecorder:
         self._stop_reason: str | None = None
 
     def start(self) -> dict[str, Any]:
-        """Start the CSV mirror, launch LabRecorder, and prove XDF growth."""
+        """Attempt the mirror, launch LabRecorder, and prove primary XDF growth."""
         if self.paths.eeg_xdf.exists():
             raise FileExistsError(f"refusing to overwrite existing XDF recording: {self.paths.eeg_xdf}")
         self._executable = resolve_labrecorder_executable(
@@ -97,9 +98,21 @@ class LabRecorderXdfRecorder:
         require_loopback_port_available(self.rcs_port)
         self._status = "starting"
         try:
-            self._start_mirror()
-            mirror = self._mirror.snapshot()
-            self._selected_eeg_stream = dict(mirror.get("stream") or {})
+            if self.csv_mirror_enabled:
+                try:
+                    self._start_mirror()
+                except Exception as exc:
+                    self._warn_csv_mirror(
+                        f"CSV mirror could not start ({type(exc).__name__}: {exc}); XDF acquisition will continue"
+                    )
+                else:
+                    mirror = self._mirror.snapshot()
+                    self._selected_eeg_stream = dict(mirror.get("stream") or {})
+            if not self._selected_eeg_stream:
+                self._selected_eeg_stream = resolve_eeg_stream_identity(
+                    self.eeg_config,
+                    timeout=float(self.eeg_config.get("stream_timeout_seconds", 5.0)),
+                )
             self._selected_marker_stream = resolve_labrecorder_marker_stream(
                 self.marker_config,
                 timeout_seconds=float(self.eeg_config.get("stream_timeout_seconds", 5.0)),
@@ -150,7 +163,11 @@ class LabRecorderXdfRecorder:
             raise
 
     def snapshot(self) -> dict[str, Any]:
-        mirror = self._mirror.snapshot()
+        mirror = (
+            self._mirror.snapshot()
+            if self.csv_mirror_enabled
+            else {"status": "disabled", "sample_count": 0, "raw_file": str(self.paths.eeg_csv)}
+        )
         xdf_size = _file_size(self.paths.eeg_xdf)
         now = monotonic()
         if xdf_size > self._last_xdf_size:
@@ -163,9 +180,15 @@ class LabRecorderXdfRecorder:
             if self._process is None or self._process.poll() is not None:
                 returncode = None if self._process is None else self._process.poll()
                 self._fail(f"LabRecorder exited during acquisition with return code {returncode}")
-            elif mirror.get("status") != "recording":
-                self._fail(str(mirror.get("error") or f"CSV mirror status changed to {mirror.get('status')}"))
-            elif now - self._last_xdf_growth_at > self.xdf_growth_warning_seconds:
+            else:
+                if self.csv_mirror_enabled and mirror.get("status") != "recording":
+                    self._warn_csv_mirror(
+                        str(
+                            mirror.get("error")
+                            or f"CSV mirror status changed to {mirror.get('status')}; XDF acquisition continues"
+                        )
+                    )
+            if self._status == "recording" and now - self._last_xdf_growth_at > self.xdf_growth_warning_seconds:
                 if not self._xdf_growth_warning_active:
                     self._xdf_growth_warning_active = True
                     self._xdf_growth_warning_count += 1
@@ -205,8 +228,11 @@ class LabRecorderXdfRecorder:
             "last_local_received_lsl_timestamp": mirror.get(
                 "last_local_received_lsl_timestamp"
             ),
-            "stream": mirror.get("stream"),
+            "stream": mirror.get("stream") or self._selected_eeg_stream,
             "csv_mirror": mirror,
+            "csv_mirror_degraded": self._csv_mirror_warning is not None,
+            "csv_mirror_warning": self._csv_mirror_warning,
+            "xdf_metadata_warning": self._metadata_warning,
             "labrecorder_pid": None if self._process is None else self._process.pid,
             "labrecorder_returncode": None if self._process is None else self._process.poll(),
             "labrecorder_executable": None if self._executable is None else str(self._executable),
@@ -243,12 +269,15 @@ class LabRecorderXdfRecorder:
                 failures.append(f"XDF finalization failed: {type(exc).__name__}: {exc}")
         else:
             failures.append("LabRecorder was not running during recorder shutdown")
-        try:
-            mirror = self._mirror.stop()
-            if mirror.get("status") != "stopped":
-                failures.append(str(mirror.get("error") or f"CSV mirror stopped with {mirror.get('status')}"))
-        except Exception as exc:
-            failures.append(f"CSV mirror shutdown failed: {type(exc).__name__}: {exc}")
+        if self.csv_mirror_enabled:
+            try:
+                mirror = self._mirror.stop()
+                if mirror.get("status") != "stopped":
+                    self._warn_csv_mirror(
+                        str(mirror.get("error") or f"CSV mirror stopped with {mirror.get('status')}")
+                    )
+            except Exception as exc:
+                self._warn_csv_mirror(f"CSV mirror shutdown failed: {type(exc).__name__}: {exc}")
         self._close_rcs()
         self._close_process(failures)
         if failures or self._status == "failed":
@@ -279,6 +308,13 @@ class LabRecorderXdfRecorder:
             sleep(0.05)
         self._mirror.stop()
         raise TimeoutError("CSV mirror connected but did not receive any EEG samples")
+
+    def _warn_csv_mirror(self, detail: str) -> None:
+        message = str(detail).strip() or "CSV mirror is unavailable; XDF acquisition continues"
+        if self._csv_mirror_warning == message:
+            return
+        self._csv_mirror_warning = message
+        self._notes.append(message)
 
     def _connect_rcs(self) -> socket.socket:
         deadline = monotonic() + self.startup_timeout_seconds
@@ -416,7 +452,16 @@ class LabRecorderXdfRecorder:
                 },
             }
         )
-        _write_json_atomic(self.paths.xdf_metadata, payload)
+        try:
+            _write_json_atomic(self.paths.xdf_metadata, payload)
+        except Exception as exc:
+            message = (
+                f"XDF metadata report could not be written ({type(exc).__name__}: {exc}); "
+                "primary XDF acquisition continues"
+            )
+            self._metadata_warning = message
+            if message not in self._notes:
+                self._notes.append(message)
 
 
 def resolve_labrecorder_executable(configured: str) -> Path:

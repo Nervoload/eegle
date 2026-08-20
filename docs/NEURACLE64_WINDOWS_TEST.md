@@ -252,13 +252,17 @@ config.
 The physical preflight checks:
 
 - exactly one matching Collect EEG stream;
-- live sample delivery;
+- live sample delivery, effective source-timestamp rate, and retained sample fraction;
 - 65 values in the confirmed transport order (64 physical inputs plus value 65);
 - a nominal/observed rate compatible with 1000 Hz;
+- non-finite samples, flat/failed channels, constant runs, possible clipping,
+  and line-noise warnings;
 - a local EEGle marker-stream loopback;
 - PsychoPy availability;
 - writable storage and free space;
 - LabRecorder executable, `pyxdf`, and loopback control-port availability;
+- a finalized three-second LabRecorder XDF probe with start/end markers and the
+  full stored-signal integrity scan;
 - channel signal/contact summary plus the operator's explicit confirmation for
   the 64 physical inputs.
 
@@ -267,6 +271,11 @@ impedance in Collect. It is an attestation, not an impedance measurement read
 from Collect. If available, a structured quality file can instead be passed to
 the underlying `study1 --preflight-only` command with
 `--electrode-quality-file`.
+
+If the live inlet or XDF probe finds nonfatal sample-rate, sample-retention,
+timestamp, or signal-quality concerns, preflight prints a numbered warning
+list. A live run proceeds only after the operator types `YES`;
+`-ConfirmElectrodes` does not bypass warnings.
 
 ## 4. Short EEG task test: 10-20 trials
 
@@ -403,6 +412,13 @@ breaks. Plan for at least 33 minutes after preflight for the two baselines, one
 successful practice round, and the minimum breaks, plus instructions and
 participant transitions.
 
+No-go positions use the corrected v2 weighted-stratified schedule. Every
+section is independently randomized; each hidden 50-trial stratum contains
+seven or eight no-go trials. Adjacent and one-go-separated no-go trials remain
+possible but are down-weighted, three consecutive no-go trials are prohibited,
+and the first and last four trials of each section are go trials. The schedule
+must show varied inter-no-go gaps rather than a repeating 6/7-trial rhythm.
+
 ```powershell
 $ParticipantId = "sub-001"
 $VisitId = "$ParticipantId-full-visit1"
@@ -417,7 +433,7 @@ $VisitId = "$ParticipantId-full-visit1"
 ```
 
 The launcher selects the explicit
-`full_1000_support500_query500_v1` acquisition profile. It cannot be combined
+`full_1000_support500_query500_v2` acquisition profile. It cannot be combined
 with the smoke profile, a non-120-second baseline override, Visit 2, or skipped
 practice. The profile name and protocol hash are written to the participant and
 visit manifests, preventing an accidental resume with the standard or short
@@ -506,12 +522,11 @@ label still fails.
 
 LabRecorder and the CSV mirror can serialize the same Collect channel
 descriptors differently. If an XDF descriptor does not match the canonical
-name, EEGle accepts the positional XDF order only when all of the following are
-true: the cap mapping was explicitly operator-confirmed, the XDF has exactly 65
-values, the independent CSV mirror stopped cleanly, it recorded the same LSL
-stream identity, and its raw contract proves that channel value order was not
-changed. This produces a validation warning, not a failure. Otherwise the XDF
-fails with the exact mismatching value numbers and observed/expected labels.
+name, EEGle accepts the positional XDF order when the cap mapping was explicitly
+operator-confirmed, the XDF has exactly 65 values, and either the independent
+CSV mirror proves unchanged order/identity or the stable selected XDF identity
+is available. This produces a validation warning, not a failure. Otherwise the
+XDF fails with the exact mismatching value numbers and observed/expected labels.
 
 ### `R_EEGleMarkers` disconnect line at a phase transition
 
@@ -545,29 +560,30 @@ LabRecorder can also finalize its last buffered EEG chunk slightly before the
 final marker. A source-clock shortfall of at most two seconds is a warning only
 when the same clock bridge proves the separate source-preserving CSV mirror is
 complete, gap-free, and from the same EEG stream. A larger source-time
-shortfall, missing corroborating evidence, a real EEG gap, or broken marker
-parity remains a hard failure and reports the exact evidence that failed.
+shortfall, missing corroborating coverage evidence, or broken marker parity
+remains a hard failure and reports the exact evidence that failed. Timestamp
+gaps and their estimated missing samples are reported separately as warnings.
 
 A genuine EEG interruption is reported separately by the recorder health gate,
-CSV timestamp-gap validation, XDF timestamp-gap validation, or the selected
-Neuracle stream identity. Do not ignore those failures merely because the
-marker transition message is harmless.
+CSV warning, XDF timestamp/sample-retention warning, or the selected Neuracle
+stream identity. Review and explicitly accept quality warnings; do not confuse
+them with the harmless marker-transition message.
 
 ### XDF file-growth warning during a live phase
 
 LabRecorder can buffer XDF chunks on Windows, so the visible `recording.xdf`
 file may remain the same size for 15 seconds or longer even though LabRecorder
 is alive and EEG samples continue to arrive. EEGle records this as an
-`xdf_buffering_warning` and continues whenever the independent source-preserving
-CSV/LSL mirror is advancing. Final XDF structure, timestamps, streams, and
-marker parity are still validated after LabRecorder stops.
+`xdf_buffering_warning` and continues. Final XDF structure, timestamps, streams,
+sample retention, signal quality, and marker parity are validated after
+LabRecorder stops.
 
-The live task stops only when the LabRecorder process exits, the independent
-EEG recorder reports an LSL/write/timestamp failure, or both its heartbeat and
-source-preserving sample file stop advancing. A temporarily stale or unreadable
-status JSON is a warning while the sample file continues to grow. When a real
-health failure occurs, the baseline failure includes the underlying reason
-instead of only `recorder_health_failure`.
+The live task stops for a primary LabRecorder/XDF failure, not for a CSV mirror
+startup, inlet, write, timestamp, or shutdown failure. CSV degradation is
+reported once as a recorder warning and the authoritative XDF continues. A
+temporarily stale or unreadable status JSON is a warning while a recording file
+continues to grow. When a real XDF health failure occurs, the baseline failure
+includes the underlying reason instead of only `recorder_health_failure`.
 
 ### LabRecorder gate fails
 
