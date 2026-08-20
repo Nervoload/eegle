@@ -1,0 +1,8 @@
+{
+  "backend": "disabled",
+  "elapsed_seconds": 0.0,
+  "name": "realtime_processor",
+  "reason": "realtime processor disabled by experiment settings",
+  "status": "disabled",
+  "updated_at": "2026-08-20T16:13:36"
+}
