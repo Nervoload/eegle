@@ -26,7 +26,7 @@ and resume machinery.
 ### Complete 1,000-trial acquisition profile
 
 The Windows complete-run launcher opts Visit 1 into the separately identified
-`full_1000_support500_query500_v1` profile. It does not change the standard
+`full_1000_support500_query500_v2` profile. It does not change the standard
 600-trial proposal profile above. The complete profile requires:
 
 - 120-second eyes-open and 120-second eyes-closed baselines;
@@ -35,6 +35,21 @@ The Windows complete-run launcher opts Visit 1 into the separately identified
 - four 250-trial sections with breaks after trials 250, 500, and 750;
 - support trials 1-500, followed by held-out query trials 501-1000; and
 - 150 no-go trials allocated `[38, 37, 38, 37]` across the sections.
+
+The v2 no-go schedule corrects the periodic v1 fallback. Each 250-trial section
+is generated independently from its participant-specific section seed. Its five
+hidden 50-trial randomization strata contain seven or eight no-go trials in a
+separately permuted order, so no-go events cannot accumulate at one end of a
+section. Within those constraints, positions are sampled from a weighted
+distribution: adjacent no-go trials and no-go trials separated by one go trial
+remain possible, but receive weights `0.10` and `0.35` relative to gaps of two
+or more go trials. Three consecutive no-go trials are prohibited. Every section
+begins and ends with at least four go trials. These strata are schedule
+constraints only and are not participant-visible task blocks.
+
+The v1 evenly spaced schedule must not be used for new acquisition. Recordings
+made with v1 retain their original protocol identity and must not be resumed or
+silently pooled as v2 recordings.
 
 Support and query are analysis roles, not participant-visible conditions. The
 support reference is frozen after section 2. Keeping all support trials before

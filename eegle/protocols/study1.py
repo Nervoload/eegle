@@ -15,7 +15,7 @@ from eegle.tasks.dynamic_sart_sequence import build_dynamic_sart_plan, validate_
 STUDY1_PROTOCOL_NAME = "study1_dynamic_sart_v1"
 STUDY1_SEGMENTS = ("session1_main", "session2_main", "session2_cue_extension")
 STUDY1_STANDARD_ACQUISITION_PROFILE = "proposal_standard_v1"
-STUDY1_FULL_1000_ACQUISITION_PROFILE = "full_1000_support500_query500_v1"
+STUDY1_FULL_1000_ACQUISITION_PROFILE = "full_1000_support500_query500_v2"
 STUDY1_ACQUISITION_PROFILES = (
     STUDY1_STANDARD_ACQUISITION_PROFILE,
     STUDY1_FULL_1000_ACQUISITION_PROFILE,
@@ -76,6 +76,20 @@ def apply_study1_full_1000_profile(config: dict[str, Any]) -> dict[str, Any]:
             "cue_schedule": {"enabled": False},
         }
     )
+    result.setdefault("tasks", {}).setdefault("dynamic_sart", {}).update(
+        {
+            "minimum_go_trials_between_no_go": 0,
+            "minimum_leading_go_trials": 4,
+            "minimum_trailing_go_trials": 4,
+            "no_go_randomization": {
+                "mode": "stratified_weighted",
+                "stratum_trials": 50,
+                "maximum_consecutive_no_go": 2,
+                "adjacent_no_go_weight": 0.10,
+                "one_go_gap_weight": 0.35,
+            },
+        }
+    )
     suite = result.setdefault("recording_suite", {})
     suite["acquisition_profile"] = STUDY1_FULL_1000_ACQUISITION_PROFILE
     return result
@@ -105,6 +119,15 @@ def study1_protocol(
             {
                 "acquisition_profile": STUDY1_FULL_1000_ACQUISITION_PROFILE,
                 "break_after_trials": [250, 500, 750],
+                "no_go_randomization": {
+                    "mode": "stratified_weighted",
+                    "stratum_trials": 50,
+                    "maximum_consecutive_no_go": 2,
+                    "adjacent_no_go_weight": 0.10,
+                    "one_go_gap_weight": 0.35,
+                    "minimum_leading_go_trials": 4,
+                    "minimum_trailing_go_trials": 4,
+                },
             }
         )
     return ScientificProtocol(
@@ -330,6 +353,31 @@ def validate_study1_config(config: dict[str, Any]) -> list[dict[str, str]]:
                             "full 1000 practice must use 30 trials, 4 no-go trials, and at most 3 rounds",
                         )
                     )
+                expected_randomization = {
+                    "mode": "stratified_weighted",
+                    "stratum_trials": 50,
+                    "maximum_consecutive_no_go": 2,
+                    "adjacent_no_go_weight": 0.10,
+                    "one_go_gap_weight": 0.35,
+                }
+                if parsed.no_go_randomization != expected_randomization:
+                    issues.append(
+                        _issue(
+                            "fail",
+                            "full 1000 profile must use the versioned weighted-stratified no-go randomization",
+                        )
+                    )
+                if (
+                    parsed.minimum_go_trials_between_no_go,
+                    parsed.minimum_leading_go_trials,
+                    parsed.minimum_trailing_go_trials,
+                ) != (0, 4, 4):
+                    issues.append(
+                        _issue(
+                            "fail",
+                            "full 1000 no-go randomization must allow close trials with four-go section boundaries",
+                        )
+                    )
         except (KeyError, TypeError, ValueError) as exc:
             issues.append(_issue("fail", f"Study 1 segment {name} is invalid: {exc}"))
     if acquisition_profile == STUDY1_FULL_1000_ACQUISITION_PROFILE:
@@ -443,6 +491,24 @@ def _full_1000_segment_issues(plan: dict[str, Any]) -> list[dict[str, str]]:
             break
     if sum(int(block.get("planned_no_go_count", 0)) for block in blocks) != 150:
         issues.append(_issue("fail", "full 1000 session1_main must contain exactly 150 no-go trials"))
+    condition_sequences = [
+        tuple(bool(row.get("is_no_go")) for row in rows if int(row.get("block_index", 0)) == index)
+        for index in range(1, 5)
+    ]
+    if condition_sequences[0] == condition_sequences[2] or condition_sequences[1] == condition_sequences[3]:
+        issues.append(_issue("fail", "full 1000 sections must use independently randomized no-go sequences"))
+    stratum_counts = [
+        [
+            sum(int(bool(row.get("is_no_go"))) for row in section[start : start + 50])
+            for start in range(0, len(section), 50)
+        ]
+        for section in (
+            [row for row in rows if int(row.get("block_index", 0)) == index]
+            for index in range(1, 5)
+        )
+    ]
+    if any(sorted(counts) not in ([7, 7, 8, 8, 8], [7, 7, 7, 8, 8]) for counts in stratum_counts):
+        issues.append(_issue("fail", "full 1000 sections must balance no-go trials across 50-trial strata"))
     if any(abs(float(row.get("planned_soi_seconds", 0.0)) - 1.60) > 1e-9 for row in rows):
         issues.append(_issue("fail", "full 1000 session1_main SOIs must remain fixed at 1.60 seconds"))
     if bool(dict(plan.get("cue_schedule") or {}).get("enabled", False)):

@@ -394,6 +394,46 @@ class Study1Tests(unittest.TestCase):
         self.assertTrue(all(row["phase"] == "support" for row in trials[:500]))
         self.assertTrue(all(row["phase"] == "query" for row in trials[500:]))
         self.assertEqual(sum(row["is_no_go"] for row in trials), 150)
+        self.assertEqual(parsed.minimum_go_trials_between_no_go, 0)
+        self.assertEqual(parsed.minimum_leading_go_trials, 4)
+        self.assertEqual(parsed.minimum_trailing_go_trials, 4)
+        self.assertEqual(
+            parsed.no_go_randomization,
+            {
+                "mode": "stratified_weighted",
+                "stratum_trials": 50,
+                "maximum_consecutive_no_go": 2,
+                "adjacent_no_go_weight": 0.10,
+                "one_go_gap_weight": 0.35,
+            },
+        )
+        condition_sequences = []
+        observed_gaps = []
+        for block_index, expected_count in enumerate((38, 37, 38, 37), start=1):
+            section = [row for row in trials if row["block_index"] == block_index]
+            positions = [row["block_trial_index"] for row in section if row["is_no_go"]]
+            gaps = [right - left - 1 for left, right in zip(positions, positions[1:])]
+            strata = [
+                sum(row["is_no_go"] for row in section[start : start + 50])
+                for start in range(0, 250, 50)
+            ]
+            self.assertEqual(sum(strata), expected_count)
+            self.assertLessEqual(max(strata) - min(strata), 1)
+            self.assertGreater(positions[0], 4)
+            self.assertLessEqual(positions[-1], 246)
+            self.assertFalse(any(
+                section[index]["is_no_go"]
+                and section[index + 1]["is_no_go"]
+                and section[index + 2]["is_no_go"]
+                for index in range(len(section) - 2)
+            ))
+            condition_sequences.append(tuple(row["is_no_go"] for row in section))
+            observed_gaps.extend(gaps)
+        self.assertNotEqual(condition_sequences[0], condition_sequences[2])
+        self.assertNotEqual(condition_sequences[1], condition_sequences[3])
+        self.assertIn(0, observed_gaps)
+        self.assertIn(1, observed_gaps)
+        self.assertGreater(len(set(observed_gaps)), 8)
         self.assertTrue(parsed.practice_enabled)
         self.assertTrue(parsed.practice_require_ready_confirmation)
         self.assertEqual(
@@ -435,6 +475,18 @@ class Study1Tests(unittest.TestCase):
                 for issue in issues
             )
         )
+
+    def test_full_1000_validator_rejects_randomization_contract_drift(self) -> None:
+        full = apply_study1_full_1000_profile(load_config(CONFIG))
+        full["tasks"]["dynamic_sart"]["no_go_randomization"]["adjacent_no_go_weight"] = 1.0
+
+        issues = validate_study1_config(full)
+
+        self.assertTrue(any(
+            issue["status"] == "fail"
+            and "weighted-stratified no-go randomization" in issue["detail"]
+            for issue in issues
+        ))
 
     def test_full_1000_task_completes_software_dry_execution(self) -> None:
         full = apply_study1_full_1000_profile(load_config(CONFIG))

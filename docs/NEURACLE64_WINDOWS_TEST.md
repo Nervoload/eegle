@@ -412,6 +412,13 @@ breaks. Plan for at least 33 minutes after preflight for the two baselines, one
 successful practice round, and the minimum breaks, plus instructions and
 participant transitions.
 
+No-go positions use the corrected v2 weighted-stratified schedule. Every
+section is independently randomized; each hidden 50-trial stratum contains
+seven or eight no-go trials. Adjacent and one-go-separated no-go trials remain
+possible but are down-weighted, three consecutive no-go trials are prohibited,
+and the first and last four trials of each section are go trials. The schedule
+must show varied inter-no-go gaps rather than a repeating 6/7-trial rhythm.
+
 ```powershell
 $ParticipantId = "sub-001"
 $VisitId = "$ParticipantId-full-visit1"
@@ -426,7 +433,7 @@ $VisitId = "$ParticipantId-full-visit1"
 ```
 
 The launcher selects the explicit
-`full_1000_support500_query500_v1` acquisition profile. It cannot be combined
+`full_1000_support500_query500_v2` acquisition profile. It cannot be combined
 with the smoke profile, a non-120-second baseline override, Visit 2, or skipped
 practice. The profile name and protocol hash are written to the participant and
 visit manifests, preventing an accidental resume with the standard or short
