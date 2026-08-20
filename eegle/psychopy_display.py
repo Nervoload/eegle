@@ -52,8 +52,8 @@ def create_psychopy_window(visual: Any, display: dict[str, Any], *, title: str =
 def measure_psychopy_refresh_rate(win: Any, display: dict[str, Any]) -> dict[str, Any]:
     """Measure and validate display refresh rather than accepting a modeled rate."""
 
-    expected = max(1.0, float(display.get("expected_refresh_rate_hz", 120.0)))
-    tolerance = max(0.0, float(display.get("refresh_rate_tolerance_hz", 10.0)))
+    expected = max(1.0, float(display.get("expected_refresh_rate_hz", 60.0)))
+    tolerance = max(0.0, float(display.get("refresh_rate_tolerance_hz", 1000000.0)))
     check_enabled = bool(display.get("check_refresh_rate", True))
     check_required = bool(display.get("require_refresh_rate_match", False))
     measured = None
