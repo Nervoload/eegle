@@ -166,8 +166,10 @@ Telemetry augments the canonical experiment files. Stimulus timing still lives i
 - `recorder`: `lsl_csv` records directly through pylsl; `labrecorder_xdf`
   manages LabRecorder through its loopback control socket. Study 1 disables the
   full CSV mirror and uses a sample-only LSL heartbeat for live progress and
-  timestamp warnings. The heartbeat does not write amplitudes and cannot stop
-  authoritative XDF acquisition.
+  timestamp warnings. The heartbeat also retains source/local clock boundary
+  anchors so post-recording validation can normalize device-origin timestamps
+  to a first-marker `t=0` frame without modifying the authoritative XDF. It does
+  not write amplitudes and cannot stop authoritative XDF acquisition.
 - `realtime_processor`: reads EEG LSL and marker LSL, maintains raw and processed ring buffers, uses causal online preprocessing, runs marker-locked epochs through a registry-backed `ModelAdapter`, converts predictions through `DecisionPolicy`, and logs/emits explicit task actions. It can also run calibrated posterior alpha measurement continuously and write `realtime/alpha_power.jsonl` while marker-locked epoching remains enabled. Rolling-window decisions remain available as a compatibility path.
 - `dashboard`: optional non-critical localhost HTTP worker that reads session artifacts and displays live classifier status without touching the PsychoPy process.
 - `dashboard` demo mode: an explicitly simulated classroom path that subscribes

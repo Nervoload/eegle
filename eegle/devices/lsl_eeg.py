@@ -443,6 +443,9 @@ class LslSampleHeartbeat:
             "stream": None,
             "first_source_lsl_timestamp": None,
             "last_source_lsl_timestamp": None,
+            "first_local_received_lsl_timestamp": None,
+            "last_local_received_lsl_timestamp": None,
+            "clock_origin": None,
             "timestamp_gap_count": 0,
             "largest_timestamp_gap_seconds": 0.0,
             "nonmonotonic_timestamp_count": 0,
@@ -463,7 +466,12 @@ class LslSampleHeartbeat:
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
-            return dict(self._summary, notes=list(self._summary.get("notes") or []))
+            clock_origin = self._summary.get("clock_origin")
+            return dict(
+                self._summary,
+                clock_origin=None if clock_origin is None else dict(clock_origin),
+                notes=list(self._summary.get("notes") or []),
+            )
 
     def stop(self) -> dict[str, Any]:
         self._stop.set()
@@ -500,16 +508,35 @@ class LslSampleHeartbeat:
                 if not samples:
                     continue
                 usable = min(len(samples), len(timestamps))
+                received_at_lsl = _safe_lsl_local_clock(pylsl)
+                received_lsl_times = (
+                    [None] * usable
+                    if received_at_lsl is None
+                    else _local_received_times_for_chunk(
+                        list(timestamps[:usable]),
+                        received_at_lsl,
+                    )
+                )
                 if len(samples) != len(timestamps):
                     with self._lock:
                         self._summary["notes"].append(
                             "sample/timestamp count mismatch in diagnostic heartbeat; XDF continues"
                         )
-                for timestamp in timestamps[:usable]:
+                for timestamp, local_received_lsl in zip(
+                    timestamps[:usable],
+                    received_lsl_times,
+                ):
                     value = float(timestamp)
                     with self._lock:
                         if self._summary["first_source_lsl_timestamp"] is None:
                             self._summary["first_source_lsl_timestamp"] = value
+                            self._summary["first_local_received_lsl_timestamp"] = local_received_lsl
+                            if local_received_lsl is not None:
+                                self._summary["clock_origin"] = {
+                                    "definition": "first_observed_eeg_sample",
+                                    "source_lsl_timestamp": value,
+                                    "local_lsl_timestamp": float(local_received_lsl),
+                                }
                         if last_timestamp is not None:
                             gap = value - last_timestamp
                             if gap <= 0.0:
@@ -522,6 +549,7 @@ class LslSampleHeartbeat:
                                 )
                         self._summary["sample_count"] += 1
                         self._summary["last_source_lsl_timestamp"] = value
+                        self._summary["last_local_received_lsl_timestamp"] = local_received_lsl
                     last_timestamp = value
         except Exception as exc:
             with self._lock:

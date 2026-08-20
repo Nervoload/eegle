@@ -491,6 +491,12 @@ class XdfIntegrityTests(unittest.TestCase):
                 ["ecg", "eog", "eog", "eog", "eog", "stim"],
             )
             self.assertTrue(result["markers"]["sequence_matches_receipt"])
+            self.assertEqual(
+                result["recording_coverage"]["clock_normalization"]["schema"],
+                "eegle.xdf_clock_normalization.v1",
+            )
+            self.assertAlmostEqual(result["eeg"]["normalized_first_timestamp"], -0.0005)
+            self.assertEqual(result["markers"]["normalized_first_timestamp"], 0.0)
             metadata = json.loads(paths.xdf_metadata.read_text(encoding="utf-8"))
             self.assertEqual(metadata["validation"]["status"], "pass")
 
@@ -807,8 +813,8 @@ class XdfIntegrityTests(unittest.TestCase):
         self.assertEqual(result["status"], "fail")
         self.assertTrue(any("clock-bridge evidence" in failure for failure in result["failures"]))
 
-    def test_large_constant_eeg_marker_clock_offset_is_warning_when_bridge_proves_coverage(self) -> None:
-        eeg_stamps = [100.0, 100.05, 100.1, 100.15, 100.2, 100.25, 100.3]
+    def test_large_constant_eeg_marker_clock_offset_is_normalized_when_bridge_proves_coverage(self) -> None:
+        eeg_stamps = [100.0 + index / 1000.0 for index in range(301)]
         with tempfile.TemporaryDirectory() as tmp:
             paths, pyxdf = self._session(Path(tmp), eeg_stamps=eeg_stamps)
             original_load = pyxdf.load_xdf  # type: ignore[attr-defined]
@@ -855,17 +861,75 @@ class XdfIntegrityTests(unittest.TestCase):
             with patch.dict(sys.modules, {"pyxdf": pyxdf}):
                 result = validate_xdf_recording(paths.root, required=True)
 
-        self.assertEqual(result["status"], "warning", result)
+        self.assertEqual(result["status"], "pass", result)
         self.assertEqual(result["failures"], [])
         self.assertEqual(
             result["recording_coverage"]["clock_alignment_mode"],
-            "eeg_source_clock_to_local_receipt_clock_bridge",
+            "recording_origin_normalized",
         )
         self.assertEqual(
             result["recording_coverage"]["csv_clock_bridge_evidence"]["status"],
             "pass",
         )
-        self.assertTrue(any("incompatible clock origins" in row for row in result["warnings"]))
+        normalization = result["recording_coverage"]["clock_normalization"]
+        self.assertEqual(
+            normalization["origin_definition"],
+            "first_required_marker_pyxdf_synchronized_timestamp",
+        )
+        self.assertAlmostEqual(normalization["normalized_eeg_start_seconds"], -0.05)
+        self.assertAlmostEqual(normalization["normalized_eeg_end_seconds"], 0.25)
+        self.assertAlmostEqual(normalization["normalized_marker_start_seconds"], 0.0)
+        self.assertAlmostEqual(normalization["normalized_marker_end_seconds"], 0.2)
+        self.assertFalse(normalization["raw_xdf_timestamps_modified"])
+        self.assertEqual(result["warnings"], [])
+
+    def test_nonwriting_heartbeat_normalizes_device_clock_without_csv_mirror(self) -> None:
+        eeg_stamps = [100.0 + index / 1000.0 for index in range(301)]
+        with tempfile.TemporaryDirectory() as tmp:
+            paths, pyxdf = self._session(Path(tmp), eeg_stamps=eeg_stamps)
+            original_load = pyxdf.load_xdf  # type: ignore[attr-defined]
+
+            def load_with_device_clock_offset(*args: object, **kwargs: object) -> object:
+                loaded, header = original_load(*args, **kwargs)
+                loaded[1]["time_stamps"] = np.asarray([871645.05, 871645.25])
+                return loaded, header
+
+            pyxdf.load_xdf = load_with_device_clock_offset  # type: ignore[attr-defined]
+            (paths.raw / "lsl_markers_received.csv").write_text(
+                "marker_label,lsl_timestamp,local_received_lsl_timestamp\n"
+                "task_start,871645.05,871645.06\n"
+                "task_end,871645.25,871645.26\n",
+                encoding="utf-8",
+            )
+            metadata = json.loads(paths.xdf_metadata.read_text(encoding="utf-8"))
+            metadata["lsl_sample_heartbeat"] = {
+                "status": "stopped",
+                "sample_count": 400,
+                "first_source_lsl_timestamp": 99.9,
+                "last_source_lsl_timestamp": 100.4,
+                "first_local_received_lsl_timestamp": 871644.9,
+                "last_local_received_lsl_timestamp": 871645.4,
+                "timestamp_gap_count": 0,
+                "nonmonotonic_timestamp_count": 0,
+                "stream": {
+                    "name": "Neuracle EEG",
+                    "type": "EEG",
+                    "source_id": "eeg-test",
+                    "channel_count": 65,
+                },
+            }
+            paths.xdf_metadata.write_text(json.dumps(metadata), encoding="utf-8")
+            with patch.dict(sys.modules, {"pyxdf": pyxdf}):
+                result = validate_xdf_recording(paths.root, required=True)
+
+        self.assertEqual(result["status"], "pass", result)
+        bridge = result["recording_coverage"]["clock_bridge_evidence"]
+        self.assertEqual(bridge["evidence_source"], "lsl_sample_heartbeat")
+        self.assertEqual(bridge["status"], "pass")
+        self.assertEqual(
+            result["recording_coverage"]["clock_alignment_mode"],
+            "recording_origin_normalized",
+        )
 
     def test_clock_bridge_still_rejects_xdf_that_really_starts_after_marker(self) -> None:
         eeg_stamps = [100.8, 100.85, 100.9, 100.95, 101.0]

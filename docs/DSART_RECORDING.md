@@ -32,7 +32,13 @@ times in both Python monotonic and PC-local LSL clock domains. Coverage checks
 use local receipt clocks, not an assumed equality between the Neuracle source
 clock and EEGle's marker clock. For XDF, validation bridges source time to local
 receipt time and still requires the selected stream identity and exact marker
-sequence.
+sequence. Study 1's non-writing heartbeat supplies these clock anchors when its
+CSV mirror is disabled. A successful bridge stores an affine source-to-local
+mapping in `raw/xdf_metadata.json` and defines the first required synchronized
+marker as `t=0`; EEG samples before that marker remain negative. Source and XDF
+timestamps stay unchanged. A timestamp reset, nonmonotonic step, acquisition
+gap, missing anchor, stream-identity mismatch, or incomplete marker interval
+still fails validation rather than being hidden by normalization.
 
 Metadata explicitly declares the amplitude and timestamp contract. The suite
 will not accept a live child session if those provenance fields or timestamp

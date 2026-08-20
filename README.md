@@ -669,13 +669,16 @@ Fz, Cz, Pz, C3, C4, P3, P4, Oz
 ```
 
 The managed `labrecorder_xdf` backend launches an installed LabRecorder through
-its loopback remote-control socket and writes `raw/recording.xdf`; Study 1 uses
-this backend with the existing `raw/eeg.csv` recorder retained as a safety
-mirror. A mirror failure is warning-only for this backend; the XDF remains
+its loopback remote-control socket and writes `raw/recording.xdf`. Study 1 uses
+this backend with a non-writing LSL sample heartbeat; the XDF remains
 authoritative and is checked after each phase for sample retention, timestamps,
-non-finite/flat/clipped signals, stream structure, and marker parity. Other
-shipped acquisition presets remain on `lsl_csv` unless explicitly configured
-otherwise.
+non-finite/flat/clipped signals, stream structure, and marker parity. The
+heartbeat retains first/last EEG source-clock and PC-local receipt-clock anchors.
+If the Neuracle and marker streams use different absolute clock origins,
+validation maps the EEG source clock into the PC-local LSL domain and records a
+first-required-marker `t=0` normalization in `raw/xdf_metadata.json`; original
+XDF timestamps are never rewritten. Other shipped acquisition presets remain on
+`lsl_csv` unless explicitly configured otherwise.
 
 ## Example Neuracle W64 LSL Setup Check
 

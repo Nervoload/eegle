@@ -1519,6 +1519,7 @@ class DsartRecordingTests(unittest.TestCase):
 
         pylsl = ModuleType("pylsl")
         pylsl.StreamInlet = Inlet
+        pylsl.local_clock = lambda: 871645.4
         pylsl.proc_none = 0
         heartbeat = LslSampleHeartbeat(
             {
@@ -1538,6 +1539,10 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertEqual(summary["status"], "stopped")
         self.assertEqual(summary["sample_count"], 2)
         self.assertEqual(summary["timestamp_gap_count"], 1)
+        self.assertAlmostEqual(summary["first_local_received_lsl_timestamp"], 871645.2)
+        self.assertAlmostEqual(summary["last_local_received_lsl_timestamp"], 871645.4)
+        self.assertEqual(summary["clock_origin"]["definition"], "first_observed_eeg_sample")
+        self.assertAlmostEqual(summary["clock_origin"]["source_lsl_timestamp"], 1.0)
         self.assertIsNone(summary["error"])
 
     def test_marker_receipt_recorder_persists_delivered_lsl_sample(self) -> None:
