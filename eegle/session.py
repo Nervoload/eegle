@@ -175,7 +175,7 @@ def create_session(
         },
         "display_timing": {
             "timing_model": "psychopy_callOnFlip_plus_fixed_display_latency",
-            "expected_refresh_rate_hz": config_to_write.get("hardware", {}).get("display", {}).get("expected_refresh_rate_hz", 120.0),
+            "expected_refresh_rate_hz": config_to_write.get("hardware", {}).get("display", {}).get("expected_refresh_rate_hz", 60.0),
             "fixed_display_latency_ms": config_to_write.get("hardware", {}).get("display", {}).get("fixed_display_latency_ms", 0.0),
             "photodiode_verification_enabled": bool(config_to_write.get("hardware", {}).get("display", {}).get("photodiode_patch", False)),
         },

@@ -1,5 +1,5 @@
 (.venv) PS C:\Projects\code\eegle> .\scripts\windows\neuracle64\04-Run-FullShortTest.ps1 `
->>   -Participant "test1" ` 
+>>   -Participant "testrand" `
 >>   -ConfirmElectrodes `
 >>   -DataRoot $EegleData `
 >>   -NoGoDigit 3 `
@@ -13,7 +13,7 @@
   ]
 }
 Starting the complete short Study 1 test:
-  full preflight and electrode checks
+  full preflight, three-second XDF recording probe, and electrode checks
   10 seconds eyes open
   10 seconds eyes closed
   participant practice
@@ -21,54 +21,136 @@ Starting the complete short Study 1 test:
   fixed timing: 250 ms digit + 1350 ms fixation (1600 ms SOI; no jitter)
 Keep Neuracle Collect LSL streaming. EEGle launches/stops LabRecorder.
 A phase-end liblsl ERR mentioning R_EEGleMarkers is expected when EEGle closes that phase's marker receiver; it is not the Neuracle EEG stream.
-LabRecorder may buffer XDF disk writes; paused XDF file growth is a warning while the independent CSV/LSL recorder is still receiving samples.
-2026-08-14 15:20:09.869 (   0.030s) [        3E53C539]      netinterfaces.cpp:36    INFO| netif '{50635E82-F596-4DD4-A07E-758006593EC2}' (status: 1, multicast: 1
-2026-08-14 15:20:09.869 (   0.030s) [        3E53C539]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 9
-2026-08-14 15:20:09.869 (   0.030s) [        3E53C539]      netinterfaces.cpp:36    INFO| netif '{4D8CF894-7764-40B7-B5F8-52C7C859FBA5}' (status: 2, multicast: 1
-2026-08-14 15:20:09.869 (   0.030s) [        3E53C539]      netinterfaces.cpp:36    INFO| netif '{8E26F3A3-0C9F-4C70-A709-35E90EC0A844}' (status: 2, multicast: 1
-2026-08-14 15:20:09.869 (   0.030s) [        3E53C539]      netinterfaces.cpp:36    INFO| netif '{94A5AEF1-4F4C-4BED-9205-860D4599A3B1}' (status: 1, multicast: 1
-2026-08-14 15:20:09.869 (   0.030s) [        3E53C539]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 19
-2026-08-14 15:20:09.870 (   0.030s) [        3E53C539]      netinterfaces.cpp:36    INFO| netif '{ABA8E1FB-58AD-424E-8FC2-3EE30AAB2410}' (status: 2, multicast: 1
-2026-08-14 15:20:09.870 (   0.030s) [        3E53C539]      netinterfaces.cpp:36    INFO| netif '{999E4E5F-9892-11EE-A20A-806E6F6E6963}' (status: 1, multicast: 1
-2026-08-14 15:20:09.870 (   0.030s) [        3E53C539]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 1
-2026-08-14 15:20:09.870 (   0.030s) [        3E53C539]         api_config.cpp:126   INFO| Loaded default config
-2026-08-14 15:20:25.079 (  15.240s) [        3E53C539]             common.cpp:78    INFO| git:64988c6a14b8dc3b3f270ece58eab4f480bfab43/branch:refs/tags/v1.17.7/build:Release/compiler:MSVC-19.29.30159.0/link:SHARED
-2026-08-14 15:20:31.120 (  21.280s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
+LabRecorder may buffer XDF disk writes; paused XDF growth and CSV-mirror degradation are warnings. Primary XDF failure remains fatal.
+Review each numbered preflight/post-recording warning list; type YES only if you accept it.
+2026-08-20 15:04:59.109 (   0.031s) [        77AAED7C]      netinterfaces.cpp:36    INFO| netif '{874AEFF9-2B3C-476A-B3F0-0F685E6CDB31}' (status: 2, multicast: 1
+2026-08-20 15:04:59.110 (   0.031s) [        77AAED7C]      netinterfaces.cpp:36    INFO| netif '{50635E82-F596-4DD4-A07E-758006593EC2}' (status: 1, multicast: 1
+2026-08-20 15:04:59.110 (   0.032s) [        77AAED7C]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 9
+2026-08-20 15:04:59.110 (   0.032s) [        77AAED7C]      netinterfaces.cpp:36    INFO| netif '{4D8CF894-7764-40B7-B5F8-52C7C859FBA5}' (status: 2, multicast: 1
+2026-08-20 15:04:59.110 (   0.032s) [        77AAED7C]      netinterfaces.cpp:36    INFO| netif '{8E26F3A3-0C9F-4C70-A709-35E90EC0A844}' (status: 2, multicast: 1
+2026-08-20 15:04:59.110 (   0.032s) [        77AAED7C]      netinterfaces.cpp:36    INFO| netif '{94A5AEF1-4F4C-4BED-9205-860D4599A3B1}' (status: 1, multicast: 1
+2026-08-20 15:04:59.110 (   0.032s) [        77AAED7C]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 19
+2026-08-20 15:04:59.110 (   0.032s) [        77AAED7C]      netinterfaces.cpp:36    INFO| netif '{ABA8E1FB-58AD-424E-8FC2-3EE30AAB2410}' (status: 2, multicast: 1
+2026-08-20 15:04:59.110 (   0.032s) [        77AAED7C]      netinterfaces.cpp:36    INFO| netif '{999E4E5F-9892-11EE-A20A-806E6F6E6963}' (status: 1, multicast: 1
+2026-08-20 15:04:59.110 (   0.032s) [        77AAED7C]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 1
+2026-08-20 15:04:59.110 (   0.032s) [        77AAED7C]         api_config.cpp:126   INFO| Loaded default config
+2026-08-20 15:05:14.567 (  15.488s) [        77AAED7C]             common.cpp:78    INFO| git:64988c6a14b8dc3b3f270ece58eab4f480bfab43/branch:refs/tags/v1.17.7/build:Release/compiler:MSVC-19.29.30159.0/link:SHARED
+2026-08-20 15:05:37.926 (  38.848s) [R_neuracle64_E  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
+2026-08-20 15:05:38.671 (  39.592s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
+2026-08-20 15:05:38.834 (  39.756s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
 {
   "dsart_recording_preflight": {
     "channel_contract": "ok",
-    "electrode_quality_file": "C:\\Projects\\code\\eegle\\data\\study1\\test1\\visits\\visit-1\\visit-1-20260814T152009\\preflight\\visit_1_preflight_electrode_quality.json",
+    "electrode_quality_file": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\testrand\\visits\\visit-1\\visit-1-20260820T140641\\preflight\\visit_1_preflight_electrode_quality.json",
     "phase": "visit_1_preflight",
-    "report_file": "C:\\Projects\\code\\eegle\\data\\study1\\test1\\visits\\visit-1\\visit-1-20260814T152009\\preflight\\visit_1_preflight.json",
+    "report_file": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\testrand\\visits\\visit-1\\visit-1-20260820T140641\\preflight\\visit_1_preflight.json",
     "status": "warning",
     "warnings": [
       "not importable",
-      "not importable",
-      "not importable",
-      "not importable",
-      "not importable",
       "missing training packages: joblib, sklearn",
-      "electrode quality warn; report=C:\\Projects\\code\\eegle\\data\\study1\\test1\\visits\\visit-1\\visit-1-20260814T152009\\preflight\\visit_1_preflight_electrode_quality.json"
+      "Signal quality on 63 channel(s): Fpz (line_noise), Fp1 (line_noise), Fp2 (line_noise), AF3 (line_noise), AF4 (line_noise), AF7 (line_noise) (+57 more)",
+      "XDF EEG and marker synchronized timestamps have incompatible clock origins (separation 1394958.830207 seconds). Source-preserving EEG timestamps, PC-local receipt timestamps, and exact marker receipt parity independently prove that the XDF covers the required marker interval",
+      "electrode quality warn; report=C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\testrand\\visits\\visit-1\\visit-1-20260820T140641\\preflight\\visit_1_preflight_electrode_quality.json"
     ]
   }
 }
+visit_1_preflight: preflight warnings
+  1. not importable
+  2. missing training packages: joblib, sklearn
+  3. Signal quality on 63 channel(s): Fpz (line_noise), Fp1 (line_noise), Fp2 (line_noise), AF3 (line_noise), AF4 (line_noise), AF7 (line_noise) (+57 more)
+  4. XDF EEG and marker synchronized timestamps have incompatible clock origins (separation 1394958.830207 seconds). Source-preserving EEG timestamps, PC-local receipt timestamps, and exact marker receipt parity independently prove that the XDF covers the required marker interval
+  5. electrode quality warn; report=C:\Users\Surettej\AppData\Local\EEGle\data\study1\testrand\visits\visit-1\visit-1-20260820T140641\preflight\visit_1_preflight_electrode_quality.json
+
+
+  (.venv) PS C:\Projects\code\eegle> .\scripts\windows\neuracle64\04-Run-FullShortTest.ps1 `
+>>   -Participant "testrand" `
+>>   -ConfirmElectrodes `
+>>   -DataRoot $EegleData `
+>>   -NoGoDigit 3 `
+>>   -Operator "john" `
+>>   -BaselineSeconds 10
+{
+  "written_configs": [
+    "C:\\Projects\\code\\eegle\\.runtime\\windows-neuracle64\\display-only.json",
+    "C:\\Projects\\code\\eegle\\.runtime\\windows-neuracle64\\study1-live.json",
+    "C:\\Projects\\code\\eegle\\.runtime\\windows-neuracle64\\short-live-task.json"
+  ]
+}
+Starting the complete short Study 1 test:
+  full preflight, three-second XDF recording probe, and electrode checks
+  10 seconds eyes open
+  10 seconds eyes closed
+  participant practice
+  30 experimental trials (three 10-trial blocks)
+  fixed timing: 250 ms digit + 1350 ms fixation (1600 ms SOI; no jitter)
+Keep Neuracle Collect LSL streaming. EEGle launches/stops LabRecorder.
+A phase-end liblsl ERR mentioning R_EEGleMarkers is expected when EEGle closes that phase's marker receiver; it is not the Neuracle EEG stream.
+LabRecorder may buffer XDF disk writes; paused XDF growth and CSV-mirror degradation are warnings. Primary XDF failure remains fatal.
+Review each numbered preflight/post-recording warning list; type YES only if you accept it.
+2026-08-20 15:04:59.109 (   0.031s) [        77AAED7C]      netinterfaces.cpp:36    INFO| netif '{874AEFF9-2B3C-476A-B3F0-0F685E6CDB31}' (status: 2, multicast: 1
+2026-08-20 15:04:59.110 (   0.031s) [        77AAED7C]      netinterfaces.cpp:36    INFO| netif '{50635E82-F596-4DD4-A07E-758006593EC2}' (status: 1, multicast: 1
+2026-08-20 15:04:59.110 (   0.032s) [        77AAED7C]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 9
+2026-08-20 15:04:59.110 (   0.032s) [        77AAED7C]      netinterfaces.cpp:36    INFO| netif '{4D8CF894-7764-40B7-B5F8-52C7C859FBA5}' (status: 2, multicast: 1
+2026-08-20 15:04:59.110 (   0.032s) [        77AAED7C]      netinterfaces.cpp:36    INFO| netif '{8E26F3A3-0C9F-4C70-A709-35E90EC0A844}' (status: 2, multicast: 1
+2026-08-20 15:04:59.110 (   0.032s) [        77AAED7C]      netinterfaces.cpp:36    INFO| netif '{94A5AEF1-4F4C-4BED-9205-860D4599A3B1}' (status: 1, multicast: 1
+2026-08-20 15:04:59.110 (   0.032s) [        77AAED7C]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 19
+2026-08-20 15:04:59.110 (   0.032s) [        77AAED7C]      netinterfaces.cpp:36    INFO| netif '{ABA8E1FB-58AD-424E-8FC2-3EE30AAB2410}' (status: 2, multicast: 1
+2026-08-20 15:04:59.110 (   0.032s) [        77AAED7C]      netinterfaces.cpp:36    INFO| netif '{999E4E5F-9892-11EE-A20A-806E6F6E6963}' (status: 1, multicast: 1
+2026-08-20 15:04:59.110 (   0.032s) [        77AAED7C]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 1
+2026-08-20 15:04:59.110 (   0.032s) [        77AAED7C]         api_config.cpp:126   INFO| Loaded default config
+2026-08-20 15:05:14.567 (  15.488s) [        77AAED7C]             common.cpp:78    INFO| git:64988c6a14b8dc3b3f270ece58eab4f480bfab43/branch:refs/tags/v1.17.7/build:Release/compiler:MSVC-19.29.30159.0/link:SHARED
+2026-08-20 15:05:37.926 (  38.848s) [R_neuracle64_E  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
+2026-08-20 15:05:38.671 (  39.592s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
+2026-08-20 15:05:38.834 (  39.756s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
+{
+  "dsart_recording_preflight": {
+    "channel_contract": "ok",
+    "electrode_quality_file": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\testrand\\visits\\visit-1\\visit-1-20260820T140641\\preflight\\visit_1_preflight_electrode_quality.json",
+    "phase": "visit_1_preflight",
+    "report_file": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\testrand\\visits\\visit-1\\visit-1-20260820T140641\\preflight\\visit_1_preflight.json",
+    "status": "warning",
+    "warnings": [
+      "not importable",
+      "missing training packages: joblib, sklearn",
+      "Signal quality on 63 channel(s): Fpz (line_noise), Fp1 (line_noise), Fp2 (line_noise), AF3 (line_noise), AF4 (line_noise), AF7 (line_noise) (+57 more)",
+      "XDF EEG and marker synchronized timestamps have incompatible clock origins (separation 1394958.830207 seconds). Source-preserving EEG timestamps, PC-local receipt timestamps, and exact marker receipt parity independently prove that the XDF covers the required marker interval",
+      "electrode quality warn; report=C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\testrand\\visits\\visit-1\\visit-1-20260820T140641\\preflight\\visit_1_preflight_electrode_quality.json"
+    ]
+  }
+}
+visit_1_preflight: preflight warnings
+  1. not importable
+  2. missing training packages: joblib, sklearn
+  3. Signal quality on 63 channel(s): Fpz (line_noise), Fp1 (line_noise), Fp2 (line_noise), AF3 (line_noise), AF4 (line_noise), AF7 (line_noise) (+57 more)
+  4. XDF EEG and marker synchronized timestamps have incompatible clock origins (separation 1394958.830207 seconds). Source-preserving EEG timestamps, PC-local receipt timestamps, and exact marker receipt parity independently prove that the XDF covers the required marker interval
+  5. electrode quality warn; report=C:\Users\Surettej\AppData\Local\EEGle\data\study1\testrand\visits\visit-1\visit-1-20260820T140641\preflight\visit_1_preflight_electrode_quality.json
+visit_1_preflight: review the warnings. Type YES to continue: YES
 [feedback_manager] Feedback manager starting enabled processes
 [feedback_manager] Starting recorder
 [feedback_manager] recorder status: recording
 [realtime_processor] realtime_processor disabled
 [dashboard] dashboard disabled
 [dsart.baseline] dsart_baseline_eyes_open_start
+[dsart.baseline] dsart_baseline_recorder_warning
 [dsart.baseline] dsart_baseline_eyes_open_end
 [dsart.baseline] dsart_baseline_eyes_closed_start
 [dsart.baseline] dsart_baseline_eyes_closed_end
-2026-08-14 15:21:18.820 (  68.979s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
-7.7940  WARNING         Monitor specification not found. Creating a temporary one...
-33.8436         WARNING         No default speaker specified in Preferences / Hardware, using first speaker found: Speakers (Cirrus Logic XU (with APO Extensions))
+2026-08-20 15:08:42.819 ( 223.743s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
+14.1683         WARNING         Monitor specification not found. Creating a temporary one...
+15.2597         WARNING         t of last frame was 34.02ms (=1/29)
+15.2919         WARNING         t of last frame was 32.19ms (=1/31)
+15.3257         WARNING         t of last frame was 33.77ms (=1/29)
+15.3627         WARNING         t of last frame was 37.07ms (=1/26)
+15.3964         WARNING         Multiple dropped frames have occurred - I'll stop bothering you about them!
+102.4923        WARNING         No default speaker specified in Preferences / Hardware, using first speaker found: C34H89x (NVIDIA High Definition Audio)
 [feedback_manager] Feedback manager stopping processes
 [feedback_manager] Stopping recorder
 [feedback_manager] recorder stopped
 [feedback_manager] Feedback manager summary: complete
-[experiment] Session initialized: C:\Projects\code\eegle\data\participants\test1\sessions\2026-08-14\study1_visit_visit-1-20260814T152009_session1_main\dynamic_sart\run-20260814T152127
+Study 1 baseline: recording completed with warnings
+  1. XDF EEG and marker synchronized timestamps have incompatible clock origins (separation 1395011.877277 seconds). Source-preserving EEG timestamps, PC-local receipt timestamps, and exact marker receipt parity independently prove that the XDF covers the required marker interval
+Study 1 baseline: type YES to accept these warnings and continue: YES
+[experiment] Session initialized: C:\Users\Surettej\AppData\Local\EEGle\data\participants\testrand\sessions\2026-08-20\study1_visit_visit-1-20260820T140641_session1_main\dynamic_sart\run-20260820T150858
 [experiment] Using preflight results accepted by the enclosing pipeline
 [feedback_manager] Feedback manager starting enabled processes
 [feedback_manager] Starting recorder
@@ -91,45 +173,44 @@ LabRecorder may buffer XDF disk writes; paused XDF file growth is a warning whil
 [task.dynamic_sart] dynamic_sart_block_start__block=3__phase=query
 [task.dynamic_sart] dynamic_sart_block_end__block=3__phase=query
 [task.dynamic_sart] dynamic_sart_task_end
-2026-08-14 15:23:49.656 ( 141.459s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
-7.8070  WARNING         Monitor specification not found. Creating a temporary one...
+2026-08-20 15:11:26.455 ( 147.513s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
+8.8118  WARNING         Monitor specification not found. Creating a temporary one...
+9.8708  WARNING         t of last frame was 32.59ms (=1/30)
+9.9048  WARNING         t of last frame was 33.93ms (=1/29)
+9.9393  WARNING         t of last frame was 34.56ms (=1/28)
+9.9721  WARNING         t of last frame was 32.81ms (=1/30)
+9.9930  WARNING         Multiple dropped frames have occurred - I'll stop bothering you about them!
 [experiment] Task dynamic_sart ended
 [feedback_manager] Feedback manager stopping processes
 [feedback_manager] Stopping recorder
 [feedback_manager] recorder stopped
 [offline_analyzer] offline_analyzer disabled
 [feedback_manager] Feedback manager summary: complete
-[experiment] Experiment complete: C:\Projects\code\eegle\data\participants\test1\sessions\2026-08-14\study1_visit_visit-1-20260814T152009_session1_main\dynamic_sart\run-20260814T152127
+[experiment] Experiment complete: C:\Users\Surettej\AppData\Local\EEGle\data\participants\testrand\sessions\2026-08-20\study1_visit_visit-1-20260820T140641_session1_main\dynamic_sart\run-20260820T150858
+session1_main: recording completed with warnings
+  1. XDF EEG and marker synchronized timestamps have incompatible clock origins (separation 1394971.701056 seconds). Source-preserving EEG timestamps, PC-local receipt timestamps, and exact marker receipt parity independently prove that the XDF covers the required marker interval
+session1_main: type YES to accept these warnings and continue: YES
 {
   "acquisition_profile": "proposal_standard_v1",
-  "failed_phase": "session1_main",
-  "failure_detail": "RuntimeError: session1_main did not complete: countdown did not finish before the first stimulus onset",
   "failures": [
     {
-      "error": "RuntimeError: session1_main did not complete: countdown did not finish before the first stimulus onset",
-      "phase": "session1_main",
-      "timestamp": "2026-08-14T15:23:58"
+      "error": "RuntimeError: Study 1 preflight did not complete: no Neuracle EEG LSL stream matched",
+      "phase": "preflight",
+      "timestamp": "2026-08-20T14:07:04"
     }
   ],
-  "manifest_file": "C:\\Projects\\code\\eegle\\data\\study1\\test1\\visits\\visit-1\\visit-1-20260814T152009\\visit_manifest.json",
-  "next_action": "Correct the reported failure, then rerun the same Windows operator command. EEGle will reuse this incomplete visit, skip completed phases, and rerun the failed phase.",
+  "manifest_file": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\testrand\\visits\\visit-1\\visit-1-20260820T140641\\visit_manifest.json",
   "no_go_digit": 3,
-  "participant_id": "test1",
-  "retained_session_directory": "C:\\Projects\\code\\eegle\\data\\participants\\test1\\sessions\\2026-08-14\\study1_visit_visit-1-20260814T152009_session1_main\\dynamic_sart\\run-20260814T152127",
+  "participant_id": "testrand",
   "schema": "eegle.study1.visit.v1",
-  "sequence_hashes": {},
-  "session_directories": {
-    "baseline": "C:\\Projects\\code\\eegle\\data\\participants\\test1\\sessions\\2026-08-14\\study1_visit_visit-1-20260814T152009\\study1_baseline\\run-20260814T152031"
+  "sequence_hashes": {
+    "session1_main": "76c288353811a5388176f09dcc67954b5af8cb7b2e2db3c44a10c0bac5664c95"
   },
-  "status": "partial",
-  "visit_id": "visit-1-20260814T152009",
+  "session_directories": {
+    "baseline": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\participants\\testrand\\sessions\\2026-08-20\\study1_visit_visit-1-20260820T140641\\study1_baseline\\run-20260820T150647",
+    "session1_main": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\participants\\testrand\\sessions\\2026-08-20\\study1_visit_visit-1-20260820T140641_session1_main\\dynamic_sart\\run-20260820T150858"
+  },
+  "status": "completed",
+  "visit_id": "visit-1-20260820T140641",
   "visit_number": 1
 }
-full short Study 1 test stopped without a successful completion (exit code 1). Read the EEGle failure_detail and next_action printed immediately above; 
-retained raw/session files are not overwritten.
-At C:\Projects\code\eegle\scripts\windows\neuracle64\Common.ps1:101 char:9
-+         throw "$Operation stopped without a successful completion (ex ...
-+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : OperationStopped: (full short Stud...ot overwritten.:String) [], RuntimeException
-    + FullyQualifiedErrorId : full short Study 1 test stopped without a successful completion (exit code 1). Read the EEGle failure_detail and next_act 
-   ion printed immediately above; retained raw/session files are not overwritten.

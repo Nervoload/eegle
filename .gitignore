@@ -1,5 +1,7 @@
 # Python environments and build output
 .venv/
+.venv-314/
+.venv-313/
 .vscode/
 venv/
 env/
