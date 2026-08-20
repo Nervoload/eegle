@@ -69,14 +69,18 @@ class _Process:
     def __init__(self) -> None:
         self.pid = 1234
         self.returncode = None
+        self.terminated = False
+        self.killed = False
 
     def poll(self) -> int | None:
         return self.returncode
 
     def terminate(self) -> None:
+        self.terminated = True
         self.returncode = 0
 
     def kill(self) -> None:
+        self.killed = True
         self.returncode = -9
 
     def wait(self, timeout: float) -> int:
@@ -133,7 +137,8 @@ class ManagedXdfTests(unittest.TestCase):
         self.assertTrue(normalized["recorder"]["csv_mirror"])
         self.assertEqual(normalized["recorder"]["executable"], "C:/LSL/LabRecorder.exe")
         self.assertEqual(normalized["recorder"]["rcs_port"], 22345)
-        self.assertEqual(normalized["recorder"]["shutdown_timeout_seconds"], 20.0)
+        self.assertNotIn("shutdown_timeout_seconds", normalized["recorder"])
+        self.assertEqual(normalized["recorder"]["finalization_status_interval_seconds"], 5.0)
         self.assertEqual(normalized["recorder"]["tail_guard_seconds"], 0.0)
 
     def test_labrecorder_config_preserves_spaces_and_required_streams(self) -> None:
@@ -213,6 +218,7 @@ class ManagedXdfTests(unittest.TestCase):
             )
             self.assertTrue(paths.xdf_metadata.exists())
             self.assertTrue(paths.eeg_xdf.exists())
+            self.assertFalse(process.killed)
             metadata = json.loads(paths.xdf_metadata.read_text(encoding="utf-8"))
             self.assertIn("RequiredStreams=", metadata["labrecorder_config_contents"])
             self.assertEqual(metadata["labrecorder_launch_command"], popen.call_args.args[0])

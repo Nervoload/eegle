@@ -30,12 +30,15 @@ class EventLogger:
         triggers_txt: Path,
         telemetry: Any | None = None,
         component: str = "task",
+        *,
+        flush_each_event: bool = True,
     ) -> None:
         self.behavior_csv = Path(behavior_csv)
         self.events_jsonl = Path(events_jsonl)
         self.triggers_txt = Path(triggers_txt)
         self.telemetry = telemetry
         self.component = component
+        self.flush_each_event = bool(flush_each_event)
         self.behavior_csv.parent.mkdir(parents=True, exist_ok=True)
         self.events_jsonl.parent.mkdir(parents=True, exist_ok=True)
         self.triggers_txt.parent.mkdir(parents=True, exist_ok=True)
@@ -73,12 +76,18 @@ class EventLogger:
         row = asdict(record)
         row["metadata"] = json.dumps(record.metadata, sort_keys=True)
         self._writer.writerow(row)
-        self._csv.flush()
         self._jsonl.write(json.dumps(asdict(record), sort_keys=True) + "\n")
-        self._jsonl.flush()
         self._triggers.write(f"{record.label} {record.event_type} {record.timestamp:.9f}\n")
-        self._triggers.flush()
+        if self.flush_each_event:
+            self.flush()
         self._emit_telemetry(record)
+
+    def flush(self) -> None:
+        """Checkpoint every primary event ledger outside a display deadline."""
+
+        self._csv.flush()
+        self._jsonl.flush()
+        self._triggers.flush()
 
     def _emit_telemetry(self, record: EventRecord) -> None:
         if self.telemetry is None:

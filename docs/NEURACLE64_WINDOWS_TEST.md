@@ -280,7 +280,8 @@ list. A live run proceeds only after the operator types `YES`;
 ## 4. Short EEG task test: 10-20 trials
 
 Keep Collect streaming. Do not start LabRecorder manually. The script repeats
-the full physical preflight, then records the task to XDF with a CSV mirror:
+the full physical preflight, then records the task to authoritative XDF while a
+non-writing LSL heartbeat reports sample progress:
 
 ```powershell
 .\scripts\windows\neuracle64\03-Run-EEGTaskTest.ps1 `
@@ -297,19 +298,17 @@ After successful completion, locate the printed session directory and verify:
 
 ```text
 raw\recording.xdf
-raw\eeg.csv
 raw\xdf_metadata.json
-raw\eeg_metadata.json
 raw\lsl_markers_received.csv
 events\events.jsonl
 events\dynamic_sart_trials.jsonl
 process_logs\manager_summary.json
 ```
 
-The XDF is the primary raw recording. The CSV is an independent live safety
-mirror. A task run is not successful merely because the PsychoPy window closed;
-the final command must exit without an error and the recorder/validation status
-must be complete.
+The XDF is the only full raw EEG recording. A task run is not successful merely
+because the PsychoPy window closed; the terminal reports while XDF or other
+processing continues, and the final command returns only after graceful
+finalization completes.
 
 ## 5. Complete short test
 
@@ -520,13 +519,11 @@ its configured position; generic values and common names for the reserved
 trigger/status value are canonicalized by position. A conflicting meaningful
 label still fails.
 
-LabRecorder and the CSV mirror can serialize the same Collect channel
-descriptors differently. If an XDF descriptor does not match the canonical
-name, EEGle accepts the positional XDF order when the cap mapping was explicitly
-operator-confirmed, the XDF has exactly 65 values, and either the independent
-CSV mirror proves unchanged order/identity or the stable selected XDF identity
-is available. This produces a validation warning, not a failure. Otherwise the
-XDF fails with the exact mismatching value numbers and observed/expected labels.
+If an XDF descriptor does not match the canonical name, EEGle accepts the
+positional XDF order when the cap mapping was explicitly operator-confirmed,
+the XDF has exactly 65 values, and the stable selected XDF stream identity is
+available. This produces a validation warning, not a failure. Otherwise the XDF
+reports the exact mismatching value numbers and observed/expected labels.
 
 ### `R_EEGleMarkers` disconnect line at a phase transition
 
@@ -547,27 +544,15 @@ flip. Local marker delivery latency is recorded; a delivery taking more than
 250 ms is a warning because the preserved LSL timestamp, rather than arrival
 time, defines alignment.
 
-Collect can publish Neuracle samples with a device/application clock origin that
-differs from the PC-local clock used by EEGle markers. PyXDF may then report a
-large, nearly constant EEG/marker timestamp separation even though both streams
-were recorded together. EEGle does not interpret that cross-origin number as a
-missing EEG tail. It bridges the clocks using the source-preserving CSV EEG
-timestamps and PC-local receipt timestamps, requires exact XDF/receipt marker
-parity, and verifies that the XDF source-time span covers the bridged marker
-interval. A proven clock-origin difference is a warning.
-
-LabRecorder can also finalize its last buffered EEG chunk slightly before the
-final marker. A source-clock shortfall of at most two seconds is a warning only
-when the same clock bridge proves the separate source-preserving CSV mirror is
-complete, gap-free, and from the same EEG stream. A larger source-time
-shortfall, missing corroborating coverage evidence, or broken marker parity
-remains a hard failure and reports the exact evidence that failed. Timestamp
-gaps and their estimated missing samples are reported separately as warnings.
+PyXDF synchronized timestamps, exact XDF/receipt marker parity, and the locked
+stream identities provide alignment evidence. Timestamp gaps, estimated missing
+samples, effective-rate mismatch, retained fraction, and signal-quality findings
+are warnings; they never stop a recording in progress.
 
 A genuine EEG interruption is reported separately by the recorder health gate,
-CSV warning, XDF timestamp/sample-retention warning, or the selected Neuracle
-stream identity. Review and explicitly accept quality warnings; do not confuse
-them with the harmless marker-transition message.
+sample-heartbeat warning, XDF timestamp/sample-retention warning, or the selected
+Neuracle stream identity. Review and explicitly accept quality warnings; do not
+confuse them with the harmless marker-transition message.
 
 ### XDF file-growth warning during a live phase
 
@@ -578,12 +563,10 @@ is alive and EEG samples continue to arrive. EEGle records this as an
 sample retention, signal quality, and marker parity are validated after
 LabRecorder stops.
 
-The live task stops for a primary LabRecorder/XDF failure, not for a CSV mirror
-startup, inlet, write, timestamp, or shutdown failure. CSV degradation is
-reported once as a recorder warning and the authoritative XDF continues. A
-temporarily stale or unreadable status JSON is a warning while a recording file
-continues to grow. When a real XDF health failure occurs, the baseline failure
-includes the underlying reason instead of only `recorder_health_failure`.
+Timestamp gaps, heartbeat degradation, and visible XDF growth pauses are
+reported once while the authoritative XDF continues. A temporarily stale or
+unreadable status JSON is also a warning. If LabRecorder itself exits, the
+baseline/task reports that the primary acquisition has already failed.
 
 ### LabRecorder gate fails
 
@@ -599,11 +582,10 @@ includes the underlying reason instead of only `recorder_health_failure`.
 The generated configs use screen 0 and a resizable 1000 by 700 window for safe
 testing. Change only the local generated display settings after verifying the
 correct Windows display index. Add `-FullScreen` to scripts 01, 03, or 04 after
-the abort keys have been tested. At launch, EEGle measures the refresh rate and
-requires it to match the generated config (60 Hz by default, within 2 Hz). If
-Windows is intentionally set to another rate, update
-`hardware.display.expected_refresh_rate_hz` in all three generated JSON files
-before rerunning setup tests.
+the abort keys have been tested. Before LabRecorder starts, EEGle opens the real
+window, measures the refresh rate, and verifies the PTB keyboard queue. A
+measured 60 Hz or 120 Hz mode is selected automatically (within 2 Hz); other
+display modes fail preflight.
 
 ### Windows blocks data writes
 

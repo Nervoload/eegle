@@ -151,7 +151,32 @@ class FeedbackManager:
     def stop_after_task(self) -> None:
         self.telemetry.emit("manager.stop", level="default", message="Feedback manager stopping processes")
         failures = []
+        # Notify every child first. A stuck non-critical dashboard must never
+        # postpone the recorder's tail guard and XDF finalization request.
         for name in ("dashboard", "realtime_processor", "recorder"):
+            worker = self._workers.get(name)
+            process = None if worker is None else getattr(worker, "process", None)
+            if process is None or process.poll() is not None:
+                continue
+            try:
+                self._request_worker_stop(worker)
+            except Exception as exc:
+                # _stop_worker retries the cooperative request. This first-pass
+                # warning must not prevent the recorder from being signaled.
+                self.telemetry.emit(
+                    "process.stop_request_warning",
+                    level="default",
+                    message=f"Initial cooperative stop request for {name} failed; it will be retried",
+                    metadata={
+                        "name": name,
+                        "exception_type": type(exc).__name__,
+                        "exception": str(exc),
+                    },
+                )
+        # Confirm the authoritative recorder first; the other children have
+        # already received their cooperative stop requests and cannot hold XDF
+        # finalization hostage.
+        for name in ("recorder", "realtime_processor", "dashboard"):
             worker = self._workers.get(name)
             if worker is not None:
                 try:
@@ -331,44 +356,60 @@ class FeedbackManager:
             )
             worker.started_at_monotonic = monotonic()
             self._workers[worker.name] = worker
-            try:
-                worker.process.wait(timeout=timeout_seconds)
-            except subprocess.TimeoutExpired:
+            task_complete_started = monotonic()
+            next_notice = task_complete_started
+            timeout_reported = False
+            while worker.process.poll() is None:
+                elapsed = monotonic() - task_complete_started
+                if elapsed >= timeout_seconds and not timeout_reported:
+                    timeout_reported = True
+                    message = (
+                        f"{worker.name} exceeded its {timeout_seconds:.1f}s advisory duration; "
+                        "processing continues and will not be force-killed"
+                    )
+                    print(message, flush=True)
+                    self.telemetry.emit(
+                        "process.duration_warning",
+                        level="default",
+                        message=message,
+                        metadata={"timeout_seconds": timeout_seconds, "command": worker.command},
+                    )
+                if monotonic() >= next_notice:
+                    latest = load_status(worker.status_file) or {}
+                    message = (
+                        f"Task is complete; {worker.name} is still processing "
+                        f"({elapsed:.1f}s, status={latest.get('status', 'starting')})."
+                    )
+                    print(message, flush=True)
+                    next_notice = monotonic() + 5.0
                 self.telemetry.emit(
-                    "process.timeout",
-                    level="default",
-                    message=f"{worker.name} timed out",
-                    metadata={"timeout_seconds": timeout_seconds, "command": worker.command},
+                    "process.post_task_progress",
+                    level="debug",
+                    message=f"{worker.name} continues after task completion",
+                    metadata={"elapsed_seconds": elapsed, "latest_status": latest},
                 )
-                worker.process.terminate()
                 try:
-                    worker.process.wait(timeout=5.0)
+                    worker.process.wait(timeout=0.5)
                 except subprocess.TimeoutExpired:
-                    worker.process.kill()
-                    worker.process.wait(timeout=5.0)
-                self._write_forced_status(worker, "killed", "offline analyzer timed out")
-            finally:
-                self._ensure_terminal_worker_status(worker)
-                worker.stopped_at_monotonic = monotonic()
-                self.telemetry.emit(
-                    "process.stop",
-                    level="default",
-                    message=f"{worker.name} exited",
-                    metadata={
-                        "name": worker.name,
-                        "returncode": None if worker.process is None else worker.process.poll(),
-                        "elapsed_seconds": None if worker.started_at_monotonic is None else worker.stopped_at_monotonic - worker.started_at_monotonic,
-                    },
-                )
-                self._close_worker_logs(worker)
+                    pass
+            self._ensure_terminal_worker_status(worker)
+            worker.stopped_at_monotonic = monotonic()
+            self.telemetry.emit(
+                "process.stop",
+                level="default",
+                message=f"{worker.name} exited",
+                metadata={
+                    "name": worker.name,
+                    "returncode": None if worker.process is None else worker.process.poll(),
+                    "elapsed_seconds": None if worker.started_at_monotonic is None else worker.stopped_at_monotonic - worker.started_at_monotonic,
+                },
+            )
+            self._close_worker_logs(worker)
 
     def _stop_worker(self, worker: WorkerHandle) -> None:
         if worker.process is None:
             return
         failures = []
-        shutdown_timeout = float(
-            dict(self.processes.get(worker.name, {}) or {}).get("shutdown_timeout_seconds", 5.0)
-        )
         if worker.process.poll() is None:
             self.telemetry.emit(
                 "process.stop",
@@ -380,38 +421,42 @@ class FeedbackManager:
                 self._request_worker_stop(worker)
             except Exception as exc:
                 failures.append(f"cooperative stop request failed: {type(exc).__name__}: {exc}")
-            else:
-                try:
-                    worker.process.wait(timeout=shutdown_timeout)
-                except subprocess.TimeoutExpired:
-                    self.telemetry.emit(
-                        "process.timeout",
-                        level="default",
-                        message=f"{worker.name} did not stop after cooperative request",
-                        metadata={"name": worker.name, "backend": worker.backend},
+            task_complete_started = monotonic()
+            next_notice = task_complete_started
+            while worker.process.poll() is None:
+                elapsed = monotonic() - task_complete_started
+                if monotonic() >= next_notice:
+                    latest = load_status(worker.status_file) or {}
+                    detail = latest.get("message") or latest.get("finalization_stage") or latest.get("status") or "stopping"
+                    message = (
+                        f"Task is complete; {worker.name} is still processing "
+                        f"({elapsed:.1f}s): {detail}. No forced kill will be used."
                     )
-                except Exception as exc:
-                    failures.append(f"waiting for cooperative stop failed: {type(exc).__name__}: {exc}")
-
-            if worker.process.poll() is None:
+                    print(message, flush=True)
+                    self.telemetry.emit(
+                        "process.post_task_progress",
+                        level="default",
+                        message=message,
+                        metadata={"name": worker.name, "elapsed_seconds": elapsed, "latest_status": latest},
+                    )
+                    next_notice = monotonic() + 5.0
                 try:
-                    worker.process.terminate()
-                    worker.process.wait(timeout=shutdown_timeout)
+                    worker.process.wait(timeout=0.5)
                 except subprocess.TimeoutExpired:
-                    try:
-                        worker.process.kill()
-                        self._write_forced_status(worker, "killed", "worker did not stop after terminate")
-                        worker.process.wait(timeout=shutdown_timeout)
-                    except Exception as exc:
-                        failures.append(f"forced kill failed: {type(exc).__name__}: {exc}")
+                    pass
                 except Exception as exc:
-                    failures.append(f"terminate failed: {type(exc).__name__}: {exc}")
-                    if worker.process.poll() is None:
-                        try:
-                            worker.process.kill()
-                            worker.process.wait(timeout=shutdown_timeout)
-                        except Exception as kill_exc:
-                            failures.append(f"fallback kill failed: {type(kill_exc).__name__}: {kill_exc}")
+                    message = (
+                        f"Could not query {worker.name} completion cleanly "
+                        f"({type(exc).__name__}: {exc}); the process remains under observation"
+                    )
+                    print(message, flush=True)
+                    self.telemetry.emit(
+                        "process.wait_warning",
+                        level="default",
+                        message=message,
+                        metadata={"name": worker.name},
+                    )
+                    sleep(0.5)
         try:
             self._ensure_terminal_worker_status(worker)
         except Exception as exc:
@@ -596,20 +641,7 @@ def normalize_processes(config: dict[str, Any], record_eeg: bool = True) -> dict
     recorder_enabled = bool(recorder.get("enabled", recorder_backend not in {"disabled", "none"})) and record_eeg
     if not record_eeg:
         recorder_backend = "disabled"
-    recorder_finalize_timeout = float(
-        recorder.get(
-            "shutdown_timeout_seconds",
-            15.0 if recorder_backend == "labrecorder_xdf" else 5.0,
-        )
-    )
     recorder_tail_guard = float(recorder.get("tail_guard_seconds", 1.0))
-    recorder_worker_shutdown_timeout = float(
-        recorder.get(
-            "worker_shutdown_timeout_seconds",
-            recorder_finalize_timeout
-            + (recorder_tail_guard + 5.0 if recorder_backend == "labrecorder_xdf" else 0.0),
-        )
-    )
 
     realtime_proc = dict(process_config.get("realtime_processor", {}))
     realtime_component = components.get("realtime_processor", "disabled")
@@ -639,12 +671,17 @@ def normalize_processes(config: dict[str, Any], record_eeg: bool = True) -> dict
             "enabled": recorder_enabled,
             "backend": recorder_backend,
             "csv_mirror": bool(recorder.get("csv_mirror", recorder_backend == "lsl_csv")),
+            "lsl_sample_heartbeat": bool(
+                recorder.get("lsl_sample_heartbeat", recorder_backend == "labrecorder_xdf")
+            ),
             "executable": str(recorder.get("executable", "LabRecorder.exe")),
             "rcs_port": int(recorder.get("rcs_port", 22345)),
             "startup_timeout_seconds": float(
                 recorder.get("startup_timeout_seconds", 20.0 if recorder_backend == "labrecorder_xdf" else 8.0)
             ),
-            "shutdown_timeout_seconds": recorder_worker_shutdown_timeout,
+            "finalization_status_interval_seconds": float(
+                recorder.get("finalization_status_interval_seconds", 5.0)
+            ),
             "xdf_growth_warning_seconds": float(
                 recorder.get(
                     "xdf_growth_warning_seconds",

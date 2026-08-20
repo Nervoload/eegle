@@ -51,6 +51,8 @@ from eegle.protocols.study1 import (
     study1_protocol_hash,
     validate_study1_config,
 )
+from eegle.tasks.dynamic_sart_schema import DynamicSartConfig
+from eegle.tasks.dynamic_sart_sequence import build_dynamic_sart_plan, validate_dynamic_sart_plan
 
 
 STUDY_SCHEMA = "eegle.study1.participant.v1"
@@ -355,6 +357,12 @@ def _run_configured_study1_visit(
         for phase in VISIT_PHASES[options.visit_number]
         if phase in SEGMENT_INDEX
     }
+    prepared_sequences = _prepare_visit_sequences(
+        config,
+        options,
+        assigned_no_go_digit=assigned_no_go_digit,
+        segment_seeds=segment_seeds,
+    )
     if visit_manifest_path.exists():
         manifest = _load_json(visit_manifest_path) or {}
         _validate_resume(
@@ -379,6 +387,8 @@ def _run_configured_study1_visit(
             config,
         )
         _write_json_atomic(visit_manifest_path, manifest)
+    manifest["prepared_sequence_hashes"] = prepared_sequences
+    _write_json_atomic(visit_manifest_path, manifest)
     _update_participant_visit(
         participant_manifest,
         participant_manifest_path,
@@ -896,6 +906,32 @@ def _validate_resume(
     mismatches = [key for key, value in expected.items() if manifest.get(key) != value]
     if mismatches:
         raise ValueError("resume identity does not match existing Study 1 visit: " + ", ".join(mismatches))
+
+
+def _prepare_visit_sequences(
+    config: dict[str, Any],
+    options: Study1Options,
+    *,
+    assigned_no_go_digit: int,
+    segment_seeds: dict[str, int],
+) -> dict[str, str]:
+    """Build every actual seeded segment before any recorder process starts."""
+
+    prepared: dict[str, str] = {}
+    for phase, seed in segment_seeds.items():
+        child = configure_study1_segment(
+            config,
+            phase,
+            no_go_digit=assigned_no_go_digit,
+            seed=seed,
+            smoke=options.smoke,
+            include_practice=options.include_practice,
+        )
+        parsed = DynamicSartConfig.from_mapping(child["tasks"]["dynamic_sart"])
+        plan = build_dynamic_sart_plan(parsed)
+        validate_dynamic_sart_plan(plan, parsed)
+        prepared[phase] = str(plan["sequence_id"])
+    return prepared
 
 
 def _dsart_options(options: Study1Options, *, trials: int) -> DsartRecordingOptions:

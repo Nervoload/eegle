@@ -108,7 +108,7 @@
       "raw_sample_mode": "passthrough",
       "recording_lsl_processing": "source_preserving",
       "maximum_timestamp_gap_seconds": 0.1,
-      "abort_on_timestamp_gap": true,
+      "abort_on_timestamp_gap": false,
       "minimum_free_bytes_during_recording": 536870912,
       "disk_check_interval_seconds": 5.0,
       "mapping_source": "pending-neuracle64-lab-confirmation",
@@ -133,10 +133,12 @@
       "background_color": "black",
       "photodiode_patch": false,
       "expected_refresh_rate_hz": 120.0,
-      "refresh_rate_tolerance_hz": 10.0,
+      "supported_refresh_rates_hz": [60.0, 120.0],
+      "refresh_rate_tolerance_hz": 2.0,
       "check_refresh_rate": true,
       "require_refresh_rate_match": true,
       "wait_blanking": true,
+      "keyboard_backend": "ptb",
       "fixed_display_latency_ms": 0.0
     }
   },
@@ -160,13 +162,13 @@
     "recorder": {
       "enabled": true,
       "backend": "labrecorder_xdf",
-      "csv_mirror": true,
+      "csv_mirror": false,
+      "lsl_sample_heartbeat": true,
       "executable": "LabRecorder.exe",
       "rcs_port": 22345,
       "startup_timeout_seconds": 20.0,
       "preflight_xdf_probe_seconds": 3.0,
-      "shutdown_timeout_seconds": 15.0,
-      "worker_shutdown_timeout_seconds": 22.0,
+      "finalization_status_interval_seconds": 5.0,
       "xdf_growth_warning_seconds": 15.0,
       "tail_guard_seconds": 1.0,
       "maximum_xdf_tail_shortfall_warning_seconds": 2.0
@@ -191,9 +193,16 @@
       "minimum_valid_rt_seconds": 0.1,
       "no_go_probability": 0.15,
       "planned_no_go_count": 90,
-      "minimum_go_trials_between_no_go": 2,
+      "minimum_go_trials_between_no_go": 0,
       "minimum_leading_go_trials": 4,
-      "minimum_trailing_go_trials": 0,
+      "minimum_trailing_go_trials": 4,
+      "no_go_randomization": {
+        "mode": "stratified_weighted",
+        "stratum_trials": 50,
+        "maximum_consecutive_no_go": 2,
+        "adjacent_no_go_weight": 0.10,
+        "one_go_gap_weight": 0.35
+      },
       "master_seed": 42,
       "blocks": [
         {"name": "session1_block_1", "phase": "support", "study_segment": "session1_main", "trials": 200, "planned_no_go_count": 30},

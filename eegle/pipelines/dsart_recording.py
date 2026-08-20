@@ -35,6 +35,7 @@ from eegle.preflight import run_preflight
 from eegle.psychopy_display import (
     create_psychopy_window,
     measure_psychopy_refresh_rate,
+    probe_psychopy_display_and_keyboard,
     redraw_psychopy_after_resize,
 )
 from eegle.psychopy_input import clear_psychopy_keys, poll_psychopy_keys
@@ -684,13 +685,34 @@ def run_recording_preflight(
     check_payloads = [result.__dict__ for result in checks]
     display_check = next((result for result in checks if result.name == "display_ready"), None)
     if require_display:
-        display_ok = display_check is not None and display_check.status == "ok"
+        dependency_ok = display_check is not None and display_check.status == "ok"
+        runtime_timing: dict[str, Any] = {}
+        runtime_error: str | None = None
+        if dependency_ok:
+            try:
+                prepare_psychopy_runtime(config.get("runtime", {}).get("runtime_cache_dir", ".runtime"))
+                runtime_timing = probe_psychopy_display_and_keyboard(config)
+            except Exception as exc:
+                runtime_error = f"{type(exc).__name__}: {exc}"
+        display_ok = dependency_ok and runtime_error is None
         check_payloads.append(
             CheckResult(
                 "dsart_display_contract",
                 "ok" if display_ok else "fail",
-                "PsychoPy display dependency is ready" if display_ok else "PsychoPy is required for live DSART acquisition",
-                {} if display_check is None else dict(display_check.data),
+                (
+                    "real PsychoPy window, measured refresh, and asynchronous PTB keyboard are ready"
+                    if display_ok
+                    else (
+                        f"live DSART display/input probe failed: {runtime_error}"
+                        if runtime_error
+                        else "PsychoPy is required for live DSART acquisition"
+                    )
+                ),
+                {
+                    **({} if display_check is None else dict(display_check.data)),
+                    **runtime_timing,
+                    "runtime_error": runtime_error,
+                },
             ).__dict__
         )
     eeg = dict(config.get("hardware", {}).get("eeg", {}) or {})
@@ -2680,6 +2702,12 @@ def _task_marker_integrity(
         target.append("DSART trial ledger contains duplicate global trial indices")
     invalid_trial_timing = []
     overlapping_trials = []
+    stimulus_duration_warning_trials = []
+    soi_warning_trials = []
+    display_manifest = _load_json(session_dir / "events" / "stimulus_manifest.json") or {}
+    display_timing = dict(display_manifest.get("display_timing") or {})
+    frame_seconds = float(display_timing.get("expected_frame_interval_ms") or 0.0) / 1000.0
+    timing_warning_threshold = frame_seconds * 1.5 if frame_seconds > 0.0 else None
     previous_response_close: float | None = None
     for trial_row in trial_records:
         trial_index = trial_row.get("global_trial_index")
@@ -2692,10 +2720,35 @@ def _task_marker_integrity(
         if previous_response_close is not None and onset < previous_response_close:
             overlapping_trials.append(trial_index)
         previous_response_close = response_close
+        if timing_warning_threshold is not None:
+            actual_stimulus = _optional_float(trial_row.get("actual_stimulus_seconds"))
+            planned_stimulus = _optional_float(trial_row.get("planned_stimulus_seconds"))
+            if (
+                actual_stimulus is not None
+                and planned_stimulus is not None
+                and abs(actual_stimulus - planned_stimulus) > timing_warning_threshold
+            ):
+                stimulus_duration_warning_trials.append(trial_index)
+            actual_soi = _optional_float(trial_row.get("actual_trial_duration_seconds"))
+            planned_soi = _optional_float(trial_row.get("planned_soi_seconds"))
+            if (
+                actual_soi is not None
+                and planned_soi is not None
+                and abs(actual_soi - planned_soi) > timing_warning_threshold
+            ):
+                soi_warning_trials.append(trial_index)
     if invalid_trial_timing:
         target.append(f"{len(invalid_trial_timing)} trial rows have invalid onset/offset/response-close ordering")
     if overlapping_trials:
         target.append(f"{len(overlapping_trials)} trial response windows overlap the next stimulus")
+    if stimulus_duration_warning_trials:
+        warnings.append(
+            f"{len(stimulus_duration_warning_trials)} trial(s) missed the 250 ms digit duration by more than 1.5 frames"
+        )
+    if soi_warning_trials:
+        warnings.append(
+            f"{len(soi_warning_trials)} trial(s) missed the 1.600 s SOI by more than 1.5 frames"
+        )
     raw_metadata = _load_json(session_dir / "raw" / "eeg_metadata.json") or {}
     raw_first = _optional_float(raw_metadata.get("first_local_received_time"))
     raw_last = _optional_float(raw_metadata.get("last_local_received_time"))
@@ -2740,6 +2793,9 @@ def _task_marker_integrity(
         "invalid_stimulus_offset_trials": invalid_offset_rows,
         "invalid_trial_timing_trials": invalid_trial_timing,
         "overlapping_trial_indices": overlapping_trials,
+        "stimulus_duration_warning_trials": stimulus_duration_warning_trials,
+        "soi_warning_trials": soi_warning_trials,
+        "timing_warning_threshold_seconds": timing_warning_threshold,
         "onset_lsl_timestamps_strictly_increasing": not any(
             second <= first for first, second in zip(onset_lsl_timestamps, onset_lsl_timestamps[1:])
         ),

@@ -130,20 +130,21 @@ def _run_labrecorder_xdf(
     stop_event: threading.Event,
     manager_pid: int,
 ) -> int:
-    """Run LabRecorder and the existing CSV mirror behind one worker status."""
+    """Run authoritative LabRecorder/XDF with a lightweight LSL heartbeat."""
     recorder_config = dict(config.get("processes", {}).get("recorder", {}) or {})
     startup_timeout = float(recorder_config.get("startup_timeout_seconds", 20.0))
     recorder = LabRecorderXdfRecorder(config, paths, startup_timeout_seconds=startup_timeout)
-    status.update(
-        "starting",
-        xdf_file=str(paths.eeg_xdf),
-        csv_mirror_file=str(paths.eeg_csv),
-        metadata_file=str(paths.xdf_metadata),
-    )
+    starting_details = {
+        "xdf_file": str(paths.eeg_xdf),
+        "metadata_file": str(paths.xdf_metadata),
+    }
+    if bool(recorder_config.get("csv_mirror", False)):
+        starting_details["csv_mirror_file"] = str(paths.eeg_csv)
+    status.update("starting", **starting_details)
     telemetry.emit(
         "lsl.discovery.start",
         level="default",
-        message="Starting managed LabRecorder/XDF acquisition and CSV mirror",
+        message="Starting managed LabRecorder/XDF acquisition",
         metadata={"backend": "labrecorder_xdf", "xdf_file": str(paths.eeg_xdf)},
     )
     try:
@@ -172,6 +173,24 @@ def _run_labrecorder_xdf(
     last_xdf_growth_status = str(snapshot.get("xdf_growth_status") or "advancing")
     stop_reason = "stop_requested"
     final_status = "failed"
+    last_finalization_stage: str | None = None
+
+    def report_finalization(stage: str, message: str, progress: dict[str, Any]) -> None:
+        nonlocal last_finalization_stage
+        status.update(
+            "finalizing",
+            finalization_stage=stage,
+            message=message,
+            summary=progress,
+        )
+        if stage != last_finalization_stage:
+            telemetry.emit(
+                "recorder.finalization_progress",
+                level="default",
+                message=message,
+                metadata={"stage": stage, **progress},
+            )
+            last_finalization_stage = stage
     try:
         while not stop_event.is_set():
             if _manager_process_disappeared(manager_pid):
@@ -221,7 +240,10 @@ def _run_labrecorder_xdf(
                     last_health_event = monotonic()
             sleep(0.1)
     finally:
-        summary = recorder.stop(reason=stop_reason)
+        summary = recorder.stop(
+            reason=stop_reason,
+            progress_callback=report_finalization,
+        )
         final_status = str(summary.get("status", "failed"))
         telemetry.emit(
             "recorder.stop",

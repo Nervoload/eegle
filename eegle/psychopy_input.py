@@ -1,4 +1,4 @@
-"""Normalize legacy PsychoPy event-key results without importing PsychoPy eagerly."""
+"""Normalize PsychoPy keyboard results without importing PsychoPy eagerly."""
 
 from __future__ import annotations
 
@@ -17,6 +17,36 @@ class PsychoPyKeyEvent:
 def poll_psychopy_keys(event_module: Any, *, clock: Any | None = None) -> list[PsychoPyKeyEvent]:
     """Poll every legacy PsychoPy event key and normalize its return shape."""
     raw_events = event_module.getKeys(timeStamped=clock) if clock is not None else event_module.getKeys()
+    normalized = []
+    for value in raw_events or []:
+        event = _normalize_key_event(value)
+        if event.name:
+            normalized.append(event)
+    return normalized
+
+
+def create_hardware_keyboard(keyboard_module: Any, *, backend: str = "ptb") -> Any:
+    """Create PsychoPy's asynchronous hardware keyboard and clear stale keys.
+
+    The PTB backend records key-down times in its operating-system queue rather
+    than assigning a time when the task happens to poll the queue.  Keeping the
+    construction in this import-light module also makes the live display probe
+    and the task use the same backend contract.
+    """
+
+    keyboard = keyboard_module.Keyboard(backend=str(backend))
+    clock = getattr(keyboard, "clock", None)
+    if clock is None:
+        raise RuntimeError("PsychoPy hardware Keyboard did not expose its timestamp clock")
+    clock.reset()
+    keyboard.clearEvents()
+    return keyboard
+
+
+def poll_hardware_keyboard(keyboard: Any) -> list[PsychoPyKeyEvent]:
+    """Drain asynchronous key-down events from a hardware ``Keyboard``."""
+
+    raw_events = keyboard.getKeys(keyList=None, waitRelease=False, clear=True)
     normalized = []
     for value in raw_events or []:
         event = _normalize_key_event(value)

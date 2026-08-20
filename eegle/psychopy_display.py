@@ -53,6 +53,7 @@ def measure_psychopy_refresh_rate(win: Any, display: dict[str, Any]) -> dict[str
     """Measure and validate display refresh rather than accepting a modeled rate."""
 
     expected = max(1.0, float(display.get("expected_refresh_rate_hz", 120.0)))
+    supported = _positive_rates(display.get("supported_refresh_rates_hz", []))
     tolerance = max(0.0, float(display.get("refresh_rate_tolerance_hz", 10.0)))
     check_enabled = bool(display.get("check_refresh_rate", True))
     check_required = bool(display.get("require_refresh_rate_match", False))
@@ -72,7 +73,12 @@ def measure_psychopy_refresh_rate(win: Any, display: dict[str, Any]) -> dict[str
             except Exception as exc:  # pragma: no cover - hardware/backend specific
                 error = f"{type(exc).__name__}: {exc}"
     measured_value = _positive_float(measured)
-    deviation = None if measured_value is None else abs(measured_value - expected)
+    nominal = (
+        min(supported, key=lambda value: abs(value - measured_value))
+        if measured_value is not None and supported
+        else expected
+    )
+    deviation = None if measured_value is None else abs(measured_value - nominal)
     within_tolerance = measured_value is not None and deviation <= tolerance
     if check_enabled and measured_value is None:
         status = "measurement_failed"
@@ -87,16 +93,18 @@ def measure_psychopy_refresh_rate(win: Any, display: dict[str, Any]) -> dict[str
             detail = "PsychoPy could not obtain a stable measured refresh rate"
         else:
             detail = (
-                f"measured refresh {measured_value:.3f} Hz differs from expected "
-                f"{expected:.3f} Hz by more than {tolerance:.3f} Hz"
+                f"measured refresh {measured_value:.3f} Hz differs from the nearest supported "
+                f"mode ({nominal:.3f} Hz) by more than {tolerance:.3f} Hz"
             )
         if error:
             detail += f" ({error})"
         raise RuntimeError(
             f"DSART display refresh check failed: {detail}. "
-            "Set hardware.display.expected_refresh_rate_hz to the Windows display mode or correct the display settings."
+            "Use a supported 60 Hz or 120 Hz Windows display mode, or correct the display settings."
         )
-    effective = measured_value or expected
+    effective = measured_value or nominal
+    stimulus_frames = _whole_frame_count(0.25, nominal)
+    soi_frames = _whole_frame_count(1.60, nominal)
     if measured_value is not None:
         try:
             win._monitorFrameRate = measured_value
@@ -110,6 +118,8 @@ def measure_psychopy_refresh_rate(win: Any, display: dict[str, Any]) -> dict[str
     return {
         "status": status,
         "expected_refresh_rate_hz": expected,
+        "supported_refresh_rates_hz": supported,
+        "nominal_refresh_rate_hz": nominal,
         "measured_refresh_rate_hz": measured_value,
         "effective_refresh_rate_hz": effective,
         "refresh_rate_deviation_hz": deviation,
@@ -120,6 +130,10 @@ def measure_psychopy_refresh_rate(win: Any, display: dict[str, Any]) -> dict[str
         "refresh_rate_measurement_error": error,
         "wait_blanking": wait_blanking,
         "expected_frame_interval_ms": 1000.0 / effective,
+        "stimulus_frame_count": stimulus_frames,
+        "soi_frame_count": soi_frames,
+        "fixation_frame_count": soi_frames - stimulus_frames,
+        "frame_locked_timing": True,
         "fixed_display_latency_ms": float(display.get("fixed_display_latency_ms", 0.0)),
         "expected_visual_onset_uncertainty_ms": 500.0 / effective,
         "photodiode_verification_enabled": bool(display.get("photodiode_patch", False)),
@@ -222,3 +236,50 @@ def _positive_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if number > 0.0 else None
+
+
+def _positive_rates(values: Any) -> list[float]:
+    rates = []
+    for value in values or []:
+        parsed = _positive_float(value)
+        if parsed is not None and parsed not in rates:
+            rates.append(parsed)
+    return rates
+
+
+def _whole_frame_count(seconds: float, refresh_rate_hz: float) -> int:
+    frames = int(round(float(seconds) * float(refresh_rate_hz)))
+    if frames <= 0 or abs((frames / float(refresh_rate_hz)) - float(seconds)) > 1e-9:
+        raise RuntimeError(
+            f"DSART timing {seconds:.3f}s is not representable as a whole number of frames "
+            f"at {refresh_rate_hz:.3f} Hz"
+        )
+    return frames
+
+
+def probe_psychopy_display_and_keyboard(config: dict[str, Any]) -> dict[str, Any]:
+    """Open the real task window and PTB keyboard before acquisition starts."""
+
+    from psychopy import visual
+    from psychopy.hardware import keyboard as keyboard_module
+
+    from eegle.psychopy_input import create_hardware_keyboard, poll_hardware_keyboard
+
+    display = dict(config.get("hardware", {}).get("display", {}) or {})
+    win = None
+    try:
+        win = create_psychopy_window(visual, display, title="EEGle preflight")
+        timing = measure_psychopy_refresh_rate(win, display)
+        keyboard = create_hardware_keyboard(
+            keyboard_module,
+            backend=str(display.get("keyboard_backend", "ptb")),
+        )
+        # Exercise the queue once.  A backend/configuration failure therefore
+        # occurs before LabRecorder creates a partial XDF.
+        poll_hardware_keyboard(keyboard)
+        timing["keyboard_backend"] = str(display.get("keyboard_backend", "ptb"))
+        timing["window_opened"] = True
+        return timing
+    finally:
+        if win is not None:
+            win.close()

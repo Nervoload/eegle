@@ -13,13 +13,18 @@ and resume machinery.
   trials (200 support and 400 immutable query), then a separate 400-trial cue
   extension.
 - Every 200-trial block contains exactly 30 no-go trials.
+- The standard 200-trial blocks use the same weighted 50-trial strata as the
+  complete profile: adjacent no-go trials are possible but down-weighted,
+  three consecutive no-go trials are prohibited, and every block begins and
+  ends with at least four go trials.
 - Digits are 0-9. The counterbalanced no-go digit is stored in the participant
   manifest and reused across visits.
 - Each digit is planned for 250 ms, followed by 1350 ms of fixation. The SOI is
   fixed at 1600 ms with no intentional jitter.
-- PsychoPy waits for vertical blanking and measures the display refresh rate
-  before acquisition; the run stops if it cannot match the configured display
-  rate within tolerance.
+- Before LabRecorder starts, preflight opens the real PsychoPy window, measures
+  the display, and verifies the asynchronous PTB keyboard queue. Only measured
+  60 Hz and 120 Hz modes are accepted. The digit/SOI use 15/96 or 30/192 frames,
+  respectively, on absolute VBlank boundaries.
 - The cue extension creates 20 deterministic opportunities, grouped into five
   permuted blocks with two cue and two no-cue assignments in each block.
 
@@ -82,9 +87,9 @@ This `--skip-eeg` path does not start LabRecorder and therefore does not create
 or test an XDF file. Missing XDF is reported as `skipped`, not as a passing XDF
 validation.
 
-To exercise the real LSL, LabRecorder, XDF, CSV-mirror, marker-receipt, and
-PyXDF validation path without an EEG amplifier, run a synthetic acquisition
-rehearsal:
+To exercise the real LSL, non-writing sample heartbeat, LabRecorder, XDF,
+marker-receipt, and PyXDF validation path without an EEG amplifier, run a
+synthetic acquisition rehearsal:
 
 ```bash
 python -m eegle.pipelines.study1 \
@@ -128,9 +133,9 @@ assigned cue was delivered.
 ## Managed XDF acquisition
 
 Study 1 uses the managed `labrecorder_xdf` backend. Each baseline or task child
-session writes `raw/recording.xdf` as its authoritative recording and keeps
-`raw/eeg.csv` plus `raw/eeg_metadata.json` as an independent acquisition mirror.
-The XDF is never appended across phases or visits.
+session writes `raw/recording.xdf` as its authoritative recording. A non-writing
+LSL sample heartbeat reports live progress without duplicating the full EEG
+amplitudes. The XDF is never appended across phases or visits.
 
 On the Windows x64 acquisition computer:
 
@@ -177,15 +182,17 @@ markers successfully emitted by the task. Baseline starts and Dynamic SART
 stimulus onsets/offsets are captured on their PsychoPy flips; emitted and
 received LSL timestamps, marker order, source identity, and delivery latency are
 persisted and validated. LabRecorder is held open for a one-second tail guard
-before its stop command. The worker then waits for file-size settlement and
-for a bounded PyXDF scan to confirm that the finalized file is structurally
-readable. This prevents a partially flushed XDF from being reported as stopped.
+before its stop command. The worker then waits without a deadline for file-size
+settlement and a PyXDF scan to confirm that the finalized file is structurally
+readable. The terminal prints continuing finalization status. Neither the
+recorder worker nor its manager uses a forced-kill fallback.
 
 Live XDF file growth is not itself a liveness gate because LabRecorder may
 buffer Windows disk writes. A 15-second growth pause is logged as a warning.
-Recorder heartbeat/read errors are likewise warnings while a recording file
-still advances. A CSV mirror startup, inlet, write, timestamp, or shutdown
-failure is recorded as a warning and does not stop LabRecorder or the task.
+The non-writing LSL sample heartbeat reports live sample progress and timestamp
+anomalies. Heartbeat degradation, timestamp gaps, stalled visible XDF growth,
+sample-rate mismatch, and signal-quality findings are warnings and do not stop
+LabRecorder or the task.
 LabRecorder process exit, XDF startup/finalization failure, unavailable storage,
 and loss of required marker/stream structure remain blocking acquisition
 failures.
@@ -197,43 +204,32 @@ A completed acquisition phase must contain:
 - a terminal `logs/processes/recorder.status.json` with status `stopped`; and
 - an XDF integrity section with no structural failures.
 
-`raw/eeg.csv` and `raw/eeg_metadata.json` are expected safety-mirror artifacts,
-but their absence or degradation is warning-only when the authoritative XDF is
-valid.
+`raw/eeg.csv` is intentionally absent for Study 1. The full CSV mirror is
+disabled so that XDF acquisition and finalization have priority.
 
-If LabRecorder exits or disk space falls below the configured reserve, the
-shared recorder health gate stops the baseline/task. XDF structural or
-finalization failures retain available raw files but prevent the phase from
-being marked complete. CSV mirror and report-publication failures retain the
-phase as completed with warnings.
+If LabRecorder itself exits, the shared recorder health gate reports that the
+authoritative acquisition has already failed. XDF structural/finalization
+failures retain available raw files. Progress, timestamp, rate, retention, and
+signal-quality warnings do not automatically interrupt acquisition.
 
 For the operator-confirmed Neuracle positional mapping, XDF descriptor names
-may be canonicalized from either corroborating CSV identity/order evidence or
-the stable selected XDF stream identity when the CSV mirror is unavailable.
+may be canonicalized from the stable, preflight-selected XDF stream identity.
 Conflicting channel counts, stream identities, meaningful positional labels,
 or marker receipts remain failures. Sample-rate, sample-count, timestamp-gap,
 non-finite, flatline, and possible-clipping findings are retained as warnings.
 
-After every baseline or task phase, the bounded XDF scan checks the complete
+After every baseline or task phase, the XDF scan checks the complete
 stored signal for sample retention, effective rate, timestamp continuity,
 non-finite amplitudes, flat/failed channels, long constant runs, and possible
 clipping. A live operator must explicitly accept any resulting warning list
 before Study 1 advances. Report-copy, report-read, or unexpected validation-
 report exceptions do not invalidate an otherwise retained recording.
 
-The Neuracle outlet and EEGle marker outlet are not assumed to share an absolute
-clock origin. When PyXDF's synchronized endpoints disagree, validation bridges
-the Neuracle source clock to the PC-local LSL receipt clock recorded by the CSV
-mirror and marker inlet. Exact marker parity and the XDF source-time endpoints
-must then prove coverage. A proven clock-origin difference is a warning, not an
-acquisition failure.
-
-If that source-relative proof finds an XDF EEG tail shortfall greater than 500
-ms but no more than two seconds, the phase may continue with a warning only when
-the independent source-preserving CSV mirror proves complete coverage from the
-same EEG stream. This narrow recovery handles a LabRecorder final-chunk race
-without weakening marker parity, EEG gap, stream identity, or large-tail
-failure gates.
+PyXDF synchronized timestamps, the independently received marker sequence, and
+the stable selected stream identities are the Study 1 alignment evidence.
+Because the CSV bridge is disabled, a genuine failure to retain the required
+EEG or marker stream remains separately visible rather than being hidden by a
+secondary recording.
 
 BDF, photodiode/audio loopback qualification, and the full modeling suite
 remain separate follow-up work.

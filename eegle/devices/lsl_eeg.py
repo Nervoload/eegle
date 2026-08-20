@@ -419,6 +419,126 @@ def _recorded_eeg_row(
     return [f"{corrected_timestamp:.9f}", f"{received_time:.9f}", *sample], corrected_timestamp
 
 
+class LslSampleHeartbeat:
+    """Count live EEG samples without writing a second raw recording.
+
+    This observer is diagnostic-only: timestamp anomalies become counters and
+    warnings, never exceptions that can stop authoritative XDF acquisition.
+    """
+
+    def __init__(self, eeg_config: dict[str, Any], stream_timeout_seconds: float = 5.0) -> None:
+        self.eeg_config = dict(eeg_config)
+        self.stream_timeout_seconds = float(stream_timeout_seconds)
+        self.maximum_timestamp_gap_seconds = max(
+            0.01,
+            float(eeg_config.get("maximum_timestamp_gap_seconds", 0.1)),
+        )
+        self._stop = threading.Event()
+        self._ready = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+        self._summary: dict[str, Any] = {
+            "status": "initialized",
+            "sample_count": 0,
+            "stream": None,
+            "first_source_lsl_timestamp": None,
+            "last_source_lsl_timestamp": None,
+            "timestamp_gap_count": 0,
+            "largest_timestamp_gap_seconds": 0.0,
+            "nonmonotonic_timestamp_count": 0,
+            "error": None,
+            "notes": [],
+        }
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            raise RuntimeError("LSL sample heartbeat is already running")
+        self._stop.clear()
+        self._ready.clear()
+        self._thread = threading.Thread(target=self._observe, name="lsl-eeg-heartbeat", daemon=True)
+        self._thread.start()
+
+    def wait_until_ready(self, timeout: float) -> bool:
+        return self._ready.wait(timeout=float(timeout))
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return dict(self._summary, notes=list(self._summary.get("notes") or []))
+
+    def stop(self) -> dict[str, Any]:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join()
+        with self._lock:
+            if self._summary["status"] == "recording":
+                self._summary["status"] = "stopped"
+        return self.snapshot()
+
+    def _observe(self) -> None:
+        inlet: Any | None = None
+        try:
+            import pylsl
+
+            info, stream = _select_lsl_info(pylsl, self.eeg_config, self.stream_timeout_seconds)
+            if info is None:
+                raise RuntimeError("no matching LSL EEG stream found for the sample heartbeat")
+            inlet = pylsl.StreamInlet(
+                info,
+                max_buflen=10,
+                max_chunklen=128,
+                recover=True,
+                processing_flags=_eeg_inlet_processing_flags(pylsl, self.eeg_config),
+            )
+            inlet.open_stream(timeout=self.stream_timeout_seconds)
+            with self._lock:
+                self._summary["stream"] = dict(stream or {})
+                self._summary["status"] = "recording"
+            self._ready.set()
+            last_timestamp: float | None = None
+            while not self._stop.is_set():
+                samples, timestamps = inlet.pull_chunk(timeout=0.2, max_samples=256)
+                if not samples:
+                    continue
+                usable = min(len(samples), len(timestamps))
+                if len(samples) != len(timestamps):
+                    with self._lock:
+                        self._summary["notes"].append(
+                            "sample/timestamp count mismatch in diagnostic heartbeat; XDF continues"
+                        )
+                for timestamp in timestamps[:usable]:
+                    value = float(timestamp)
+                    with self._lock:
+                        if self._summary["first_source_lsl_timestamp"] is None:
+                            self._summary["first_source_lsl_timestamp"] = value
+                        if last_timestamp is not None:
+                            gap = value - last_timestamp
+                            if gap <= 0.0:
+                                self._summary["nonmonotonic_timestamp_count"] += 1
+                            elif gap > self.maximum_timestamp_gap_seconds:
+                                self._summary["timestamp_gap_count"] += 1
+                                self._summary["largest_timestamp_gap_seconds"] = max(
+                                    float(self._summary["largest_timestamp_gap_seconds"]),
+                                    gap,
+                                )
+                        self._summary["sample_count"] += 1
+                        self._summary["last_source_lsl_timestamp"] = value
+                    last_timestamp = value
+        except Exception as exc:
+            with self._lock:
+                self._summary["status"] = "failed"
+                self._summary["error"] = f"{type(exc).__name__}: {exc}"
+            self._ready.set()
+        finally:
+            if inlet is not None:
+                try:
+                    inlet.close_stream()
+                except Exception as exc:
+                    with self._lock:
+                        self._summary["notes"].append(
+                            f"heartbeat inlet cleanup failed: {type(exc).__name__}: {exc}"
+                        )
+
+
 def probe_eeg_stream(eeg_config: dict[str, Any], seconds: float = 2.0, timeout: float = 5.0) -> dict[str, Any]:
     """Connect to a matching EEG stream and count samples for a short period."""
     try:

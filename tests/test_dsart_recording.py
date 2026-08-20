@@ -11,7 +11,13 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from eegle.config import load_config
-from eegle.devices.lsl_eeg import LslEegRecorder, _eeg_inlet_processing_flags, _eeg_probe_quality, _recorded_eeg_row
+from eegle.devices.lsl_eeg import (
+    LslEegRecorder,
+    LslSampleHeartbeat,
+    _eeg_inlet_processing_flags,
+    _eeg_probe_quality,
+    _recorded_eeg_row,
+)
 from eegle.devices.lsl_markers import LslMarkerReceiptRecorder
 from eegle.eeg_csv import eeg_channel_columns
 from eegle.hardware.profiles import mapped_channel_names
@@ -505,6 +511,11 @@ class DsartRecordingTests(unittest.TestCase):
             "eegle.pipelines.dsart_recording.run_preflight",
             return_value=[CheckResult("display_ready", "ok", "ready")],
         ) as preflight, patch(
+            "eegle.pipelines.dsart_recording.probe_psychopy_display_and_keyboard",
+            return_value={"status": "measured", "window_opened": True, "keyboard_backend": "ptb"},
+        ), patch(
+            "eegle.pipelines.dsart_recording.prepare_psychopy_runtime",
+        ), patch(
             "eegle.pipelines.dsart_recording._electrode_report"
         ) as electrode_report:
             report = run_recording_preflight(
@@ -1489,6 +1500,46 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertEqual(summary["first_source_lsl_timestamp"], 1.0)
         self.assertAlmostEqual(summary["first_local_received_lsl_timestamp"], 999.8)
 
+    def test_nonwriting_sample_heartbeat_warns_on_gap_without_throwing(self) -> None:
+        holder: dict[str, LslSampleHeartbeat] = {}
+
+        class Inlet:
+            def __init__(self, *_args, **_kwargs) -> None:
+                return None
+
+            def open_stream(self, **_kwargs) -> None:
+                return None
+
+            def pull_chunk(self, **_kwargs):
+                holder["heartbeat"]._stop.set()
+                return [[1.0], [2.0]], [1.0, 1.2]
+
+            def close_stream(self) -> None:
+                return None
+
+        pylsl = ModuleType("pylsl")
+        pylsl.StreamInlet = Inlet
+        pylsl.proc_none = 0
+        heartbeat = LslSampleHeartbeat(
+            {
+                "recording_lsl_processing": "source_preserving",
+                "maximum_timestamp_gap_seconds": 0.1,
+                "abort_on_timestamp_gap": True,
+            }
+        )
+        holder["heartbeat"] = heartbeat
+        with patch.dict(sys.modules, {"pylsl": pylsl}), patch(
+            "eegle.devices.lsl_eeg._select_lsl_info",
+            return_value=(object(), {"name": "unit-eeg", "nominal_srate": 500.0}),
+        ):
+            heartbeat._observe()
+            summary = heartbeat.stop()
+
+        self.assertEqual(summary["status"], "stopped")
+        self.assertEqual(summary["sample_count"], 2)
+        self.assertEqual(summary["timestamp_gap_count"], 1)
+        self.assertIsNone(summary["error"])
+
     def test_marker_receipt_recorder_persists_delivered_lsl_sample(self) -> None:
         recorder_holder = {}
 
@@ -1977,14 +2028,16 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertEqual(result["status"], "fail")
         self.assertTrue(any("did not receive" in failure for failure in result["failures"]))
 
-    def test_recorder_monitor_detects_failed_or_stalled_recording(self) -> None:
+    def test_recorder_monitor_warns_for_stall_and_detects_process_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             status_path = Path(tmp) / "recorder.status.json"
             status_path.write_text(json.dumps({"status": "recording", "summary": {"sample_count": 100}}))
             monitor = RecorderHealthMonitor(status_path, required=True, stall_timeout_seconds=1.0)
             self.assertTrue(monitor.check().ok)
             monitor._last_progress_at -= 2.0
-            self.assertFalse(monitor.check().ok)
+            stalled = monitor.check()
+            self.assertTrue(stalled.ok)
+            self.assertTrue(stalled.warning)
             status_path.write_text(json.dumps({"status": "failed", "summary": {"sample_count": 100}}))
             failed = monitor.check()
         self.assertFalse(failed.ok)
@@ -2018,15 +2071,16 @@ class DsartRecordingTests(unittest.TestCase):
             warning = monitor.check()
             repeated = monitor.check()
             monitor._last_progress_at -= 2.0
-            failed = monitor.check()
+            stalled = monitor.check()
 
         self.assertTrue(warning.ok)
         self.assertTrue(warning.warning)
         self.assertIn("still advancing", str(warning.reason))
         self.assertTrue(repeated.ok)
         self.assertFalse(repeated.warning)
-        self.assertFalse(failed.ok)
-        self.assertIn("has not advanced", str(failed.reason))
+        self.assertTrue(stalled.ok)
+        self.assertTrue(stalled.warning)
+        self.assertIn("has not advanced", str(stalled.reason))
 
     def test_recorder_monitor_does_not_abort_xdf_when_csv_mirror_is_degraded(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2055,9 +2109,10 @@ class DsartRecordingTests(unittest.TestCase):
             second = monitor.check()
 
         self.assertTrue(first.ok)
-        self.assertTrue(first.warning)
-        self.assertIn("XDF acquisition continues", str(first.reason))
+        self.assertFalse(first.warning)
         self.assertTrue(second.ok)
+        self.assertTrue(second.warning)
+        self.assertIn("not advanced", str(second.reason))
 
     def test_raw_row_preserves_amplitudes_and_both_lsl_timestamps(self) -> None:
         sample = [1.25, -2.5, 3.75]

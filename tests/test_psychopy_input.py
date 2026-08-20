@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from eegle.psychopy_input import poll_psychopy_keys
+from eegle.psychopy_input import create_hardware_keyboard, poll_hardware_keyboard, poll_psychopy_keys
 from eegle.pipelines.dsart_recording import _baseline_instruction
 from eegle.tasks.dynamic_sart import PersistentKeyboardCollector
 
@@ -46,6 +46,23 @@ class _Store:
 class _MalformedKeyPress:
     name = ["SPACE", 0.5]
     rt = None
+
+
+class _HardwareKeyboard:
+    def __init__(self, *, backend: str) -> None:
+        self.backend = backend
+        self.clock = _Clock()
+        self.events: list[object] = []
+        self.cleared = 0
+
+    def clearEvents(self) -> None:
+        self.cleared += 1
+
+    def getKeys(self, *, keyList: object, waitRelease: bool, clear: bool) -> list[object]:
+        self.asserted_call = (keyList, waitRelease, clear)
+        values = self.events
+        self.events = []
+        return values
 
 
 class _Window:
@@ -98,6 +115,18 @@ class PsychoPyInputTests(unittest.TestCase):
         self.assertTrue(rows[1]["is_escape_key"])
         self.assertEqual([row["keyboard_time"] for row in rows], [0.1, 0.2])
         self.assertEqual(store.rows, rows)
+
+    def test_hardware_keyboard_uses_ptb_queue_and_keydown_timestamps(self) -> None:
+        module = type("KeyboardModule", (), {"Keyboard": _HardwareKeyboard})
+        keyboard = create_hardware_keyboard(module, backend="ptb")
+        keyboard.events = [type("KeyPress", (), {"name": "SPACE", "rt": 0.125})()]
+
+        keys = poll_hardware_keyboard(keyboard)
+
+        self.assertEqual(keyboard.backend, "ptb")
+        self.assertEqual(keyboard.cleared, 1)
+        self.assertEqual(keyboard.asserted_call, (None, False, True))
+        self.assertEqual([(key.name, key.rt) for key in keys], [("space", 0.125)])
 
     def test_baseline_instruction_accepts_space_and_aborts_on_escape(self) -> None:
         self.assertTrue(_baseline_instruction(_Window(), _Visual, _EventModule(["space"]), "Continue"))

@@ -155,16 +155,15 @@ PsychoPy units and a resize-aware viewport keep digits, fixation, and wrapped
 instructions centered when a window is resized. Full-screen mode is recommended
 for participant acquisition after the display and abort keys have been rehearsed.
 
-Before any baseline or DSART trials, PsychoPy waits for vertical blanking and
-measures the actual refresh rate. The formal recipes require it to match
-`hardware.display.expected_refresh_rate_hz` within the configured tolerance;
-an unstable or mismatched display stops before acquisition. The DSART schedule
-is fixed at a 250 ms digit plus 1350 ms post-digit fixation (1600 ms SOI) with
-zero intentional jitter. Keyboard input
-uses the same `psychopy.event` path as the existing Go/No-go task, with one
-shared normalizer for event names and timestamps. Space, Escape, and Q are
-recognized consistently in the baseline, practice, experimental trials,
-breaks, and completion screen.
+Before any baseline or DSART trials, preflight opens the real PsychoPy window,
+measures the actual refresh rate, and opens the asynchronous PTB keyboard queue.
+Study 1 accepts only measured 60 Hz or 120 Hz modes. The task schedules the
+250 ms digit and 1600 ms SOI as 15/96 frames at 60 Hz or 30/192 frames at 120 Hz,
+using absolute VBlank boundaries rather than cumulative relative sleeps. The
+post-digit fixation occupies the remaining frames and intentional jitter stays
+zero. Hardware key-down timestamps, rather than polling time, assign responses
+to their trial. Space, Escape, and Q are recognized consistently in practice,
+experimental trials, breaks, and the completion screen.
 
 Verify NIC is publishing one EEG LSL stream at 500 Hz with the expected channel
 count. Close unrelated EEG outlets before starting. The suites reject an

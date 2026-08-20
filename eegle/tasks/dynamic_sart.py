@@ -21,7 +21,12 @@ from eegle.psychopy_display import (
     measure_psychopy_refresh_rate,
     redraw_psychopy_after_resize,
 )
-from eegle.psychopy_input import clear_psychopy_keys, poll_psychopy_keys
+from eegle.psychopy_input import (
+    clear_psychopy_keys,
+    create_hardware_keyboard,
+    poll_hardware_keyboard,
+    poll_psychopy_keys,
+)
 from eegle.realtime.policy import TaskAction
 from eegle.realtime.task_feedback import TaskFeedbackClient
 from eegle.recording_health import RecorderHealthMonitor
@@ -442,7 +447,8 @@ class DynamicSartTask:
         marker_outlet: LslMarkerOutlet | NullMarkerOutlet | None = None,
     ) -> dict[str, Any]:
         ensure_runtime_environment(self.config.get("runtime", {}).get("runtime_cache_dir", ".runtime"))
-        from psychopy import core, event, visual
+        from psychopy import visual
+        from psychopy.hardware import keyboard as keyboard_module
 
         apply_pyglet_macos_notification_patch()
         participant = _participant_id(paths, self.participant_id)
@@ -476,14 +482,28 @@ class DynamicSartTask:
             win = create_psychopy_window(visual, display, title="EEGle Dynamic SART")
             timing = measure_psychopy_refresh_rate(win, display)
             store.set_display_timing(timing)
+            digit_stimulus = visual.TextStim(win, text="", height=0.22, color="white")
+            fixation_stimulus = visual.TextStim(win, text="+", height=0.08, color="white")
+            hardware_keyboard = create_hardware_keyboard(
+                keyboard_module,
+                backend=str(display.get("keyboard_backend", "ptb")),
+            )
             keyboard = PersistentKeyboardCollector(
-                event,
-                core.Clock(),
+                hardware_keyboard,
+                hardware_keyboard.clock,
                 store,
                 self.task_config.response_keys,
                 self.task_config.escape_keys,
+                hardware=True,
             )
-            with EventLogger(paths.behavior_csv, paths.events_jsonl, paths.triggers, telemetry, "task.dynamic_sart") as logger:
+            with EventLogger(
+                paths.behavior_csv,
+                paths.events_jsonl,
+                paths.triggers,
+                telemetry,
+                "task.dynamic_sart",
+                flush_each_event=False,
+            ) as logger:
                 keyboard.logger = logger
                 task_start = monotonic()
                 _emit(logger, marker_outlet, marker_label("task_start"), event_type="SYSTEM", mode="psychopy")
@@ -520,8 +540,7 @@ class DynamicSartTask:
                                 aborted = True
                                 abort_reason = "recorder_health_failure"
                                 break
-                            next_trial = practice_plan[trial_index + 1] if trial_index + 1 < len(practice_plan) else None
-                            record, trial_aborted, practice_premature = _present_psychopy_trial(
+                            record, trial_aborted, practice_premature, _ = _present_psychopy_trial(
                                 win,
                                 visual,
                                 keyboard,
@@ -533,7 +552,9 @@ class DynamicSartTask:
                                 timing,
                                 task_start,
                                 premature_events=practice_premature,
-                                next_trial=next_trial,
+                                next_trial=None,
+                                digit_stimulus=digit_stimulus,
+                                fixation_stimulus=fixation_stimulus,
                             )
                             if trial_aborted:
                                 aborted = True
@@ -625,6 +646,7 @@ class DynamicSartTask:
                 blocks = list(plan["planned_blocks"])
                 final_support_block = max(int(block["block_index"]) for block in blocks if block["phase"] == "support")
                 premature_for_next: list[dict[str, Any]] = []
+                preflipped_onset: dict[str, Any] | None = None
                 last_break_monotonic = task_start
                 for block in blocks:
                     if aborted:
@@ -645,14 +667,20 @@ class DynamicSartTask:
                             aborted = True
                             abort_reason = "recorder_health_failure"
                             break
-                        next_trial = _next_experimental_trial(plan["planned_trials"], int(trial["global_trial_index"]))
+                        next_trial = (
+                            block_trials[local_index + 1]
+                            if local_index + 1 < len(block_trials)
+                            and not bool(trial.get("probe_after"))
+                            and not feedback_client.enabled
+                            else None
+                        )
                         action_audits = _poll_and_audit_dynamic_sart_feedback(
                             feedback_client,
                             logger,
                             trial_index=int(trial["global_trial_index"]),
                             block_index=block_index,
                         )
-                        record, trial_aborted, premature_for_next = _present_psychopy_trial(
+                        record, trial_aborted, premature_for_next, preflipped_onset = _present_psychopy_trial(
                             win,
                             visual,
                             keyboard,
@@ -665,6 +693,9 @@ class DynamicSartTask:
                             task_start,
                             premature_events=premature_for_next,
                             next_trial=next_trial,
+                            preflipped_onset=preflipped_onset,
+                            digit_stimulus=digit_stimulus,
+                            fixation_stimulus=fixation_stimulus,
                             applied_task_actions=action_audits,
                             last_break_monotonic=last_break_monotonic,
                         )
@@ -689,6 +720,17 @@ class DynamicSartTask:
                                     aborted = True
                                     abort_reason = "probe_abort"
                                     break
+                                preflipped_onset = None
+                    timing_warning = _block_timing_warning(block_records, timing)
+                    if timing_warning is not None:
+                        _emit(
+                            logger,
+                            marker_outlet,
+                            marker_label("timing_warning", block=block_index),
+                            event_type="SYSTEM",
+                            block_index=block_index,
+                            **timing_warning,
+                        )
                     _emit(
                         logger,
                         marker_outlet,
@@ -699,6 +741,7 @@ class DynamicSartTask:
                         completed_trials=len(block_records),
                     )
                     store.append_block(_block_result(block_trials, block_records))
+                    logger.flush()
                     if not aborted and block_index == final_support_block:
                         support_reference = _complete_support(store, self.task_config, monotonic(), logger, marker_outlet)
                         support_complete = True
@@ -809,7 +852,7 @@ class DynamicSartTask:
 
 
 class DynamicSartArtifactStore:
-    """Incrementally flush raw task artifacts while keeping plan values immutable."""
+    """Buffer timing-path writes and checkpoint them at block boundaries."""
 
     def __init__(
         self,
@@ -905,9 +948,7 @@ class DynamicSartArtifactStore:
         immutable = deepcopy(record)
         self.records.append(immutable)
         self._trial_jsonl.write(json.dumps(immutable, sort_keys=True) + "\n")
-        self._trial_jsonl.flush()
         self._trial_writer.writerow({field: _csv_value(immutable.get(field)) for field in TRIAL_CSV_FIELDS})
-        self._trial_csv.flush()
         target = next(
             (
                 row
@@ -924,15 +965,13 @@ class DynamicSartArtifactStore:
         immutable = deepcopy(event)
         self.key_events.append(immutable)
         self._key_jsonl.write(json.dumps(immutable, sort_keys=True) + "\n")
-        self._key_jsonl.flush()
 
     def append_probe(self, probe: dict[str, Any]) -> None:
         self._probes_jsonl.write(json.dumps(deepcopy(probe), sort_keys=True) + "\n")
-        self._probes_jsonl.flush()
 
     def append_block(self, result: dict[str, Any]) -> None:
         self._block_writer.writerow({field: _csv_value(result.get(field)) for field in self._block_fields})
-        self._blocks_csv.flush()
+        self.checkpoint()
         self.manifest["last_checkpoint"] = {
             "completed_record_count": len(self.records),
             "last_completed_trial_index": (
@@ -942,6 +981,18 @@ class DynamicSartArtifactStore:
             "block_name": result.get("block_name"),
         }
         _write_json_atomic(self.manifest_path, self.manifest)
+
+    def checkpoint(self) -> None:
+        """Flush task ledgers only at a non-stimulus block boundary."""
+
+        for handle in (
+            self._trial_jsonl,
+            self._key_jsonl,
+            self._probes_jsonl,
+            self._trial_csv,
+            self._blocks_csv,
+        ):
+            handle.flush()
 
     def write_support_reference(self, reference: dict[str, Any]) -> None:
         _write_json_atomic(self.reference_path, reference)
@@ -1020,7 +1071,7 @@ def _attach_cleanup_warnings(
 
 
 class PersistentKeyboardCollector:
-    """Poll one persistent PsychoPy keyboard clock without per-trial clearing."""
+    """Drain one persistent keyboard queue without per-trial clearing."""
 
     def __init__(
         self,
@@ -1029,8 +1080,11 @@ class PersistentKeyboardCollector:
         store: DynamicSartArtifactStore,
         response_keys: Iterable[str],
         escape_keys: Iterable[str],
+        *,
+        hardware: bool = False,
     ) -> None:
         self.event_module = event_module
+        self.hardware = bool(hardware)
         self.clock = clock
         self.store = store
         self.response_keys = {str(key).strip().lower() for key in response_keys}
@@ -1042,7 +1096,10 @@ class PersistentKeyboardCollector:
         self.origin_monotonic = monotonic() - elapsed
         current_lsl = lsl_local_clock()
         self.origin_lsl = None if current_lsl is None else current_lsl - elapsed
-        clear_psychopy_keys(self.event_module)
+        if self.hardware:
+            self.event_module.clearEvents()
+        else:
+            clear_psychopy_keys(self.event_module)
 
     def poll(
         self,
@@ -1055,7 +1112,12 @@ class PersistentKeyboardCollector:
         late: bool = False,
     ) -> list[dict[str, Any]]:
         rows = []
-        for value in poll_psychopy_keys(self.event_module, clock=self.clock):
+        values = (
+            poll_hardware_keyboard(self.event_module)
+            if self.hardware
+            else poll_psychopy_keys(self.event_module, clock=self.clock)
+        )
+        for value in values:
             self.sequence += 1
             keyboard_time = _optional_float(value.rt)
             timestamp = monotonic() if keyboard_time is None else self.origin_monotonic + keyboard_time
@@ -1068,12 +1130,16 @@ class PersistentKeyboardCollector:
                 "timestamp_monotonic": timestamp,
                 "timestamp_lsl_if_available": lsl_timestamp,
                 "keyboard_time": keyboard_time,
+                "keyboard_backend": "psychopy.hardware.keyboard.Keyboard" if self.hardware else "psychopy.event",
+                "hardware_timestamped": self.hardware and keyboard_time is not None,
                 "task_state": task_state,
                 "assigned_trial": assigned_trial,
                 "assigned_block": assigned_block,
                 "assigned_phase": assigned_phase,
                 "is_response_key": key in self.response_keys,
                 "is_escape_key": key in self.escape_keys,
+                # Kept for backward-readable key ledgers. Trial scoring derives
+                # timing classes from the captured key-down timestamp itself.
                 "is_premature": premature and key in self.response_keys,
                 "is_late": late and key in self.response_keys,
             }
@@ -1199,11 +1265,19 @@ def score_dynamic_sart_trial(
         "correct": correct,
         "commission_error": outcome == "commission_error",
         "omission_error": outcome == "omission_error",
-        "premature_response": any(bool(row.get("is_premature")) for row in events),
+        "premature_response": any(
+            bool(row.get("is_response_key"))
+            and float(row.get("timestamp_monotonic", math.inf)) < stimulus_onset_monotonic
+            for row in events
+        ),
         "too_fast_response": too_fast,
         "multiple_response": len(response_events) > 1,
         "wrong_key_response": any(not bool(row.get("is_response_key")) for row in in_window),
-        "late_response": any(bool(row.get("is_late")) for row in events),
+        "late_response": any(
+            bool(row.get("is_response_key"))
+            and float(row.get("timestamp_monotonic", -math.inf)) > scheduled_response_window_close_monotonic
+            for row in events
+        ),
         "aborted": False,
         "invalid": False,
         "time_on_task_seconds": stimulus_onset_monotonic - task_start_monotonic,
@@ -1759,21 +1833,42 @@ def _present_psychopy_trial(
     *,
     premature_events: list[dict[str, Any]],
     next_trial: dict[str, Any] | None,
+    preflipped_onset: dict[str, Any] | None = None,
+    digit_stimulus: Any | None = None,
+    fixation_stimulus: Any | None = None,
     applied_task_actions: list[dict[str, Any]] | None = None,
     last_break_monotonic: float | None = None,
-) -> tuple[dict[str, Any] | None, bool, list[dict[str, Any]]]:
-    digit = visual.TextStim(win, text=str(planned["digit"]), height=0.22, color="white")
-    fixation = visual.TextStim(win, text="+", height=0.08, color="white")
-    holder: dict[str, Any] = {}
-    _emit_planned_cue(logger, marker_outlet, planned)
-    digit.draw()
-    win.callOnFlip(_capture_flip_event, holder, marker_outlet, marker_label("stimulus_onset", planned), planned, timing, "onset")
-    win.flip()
-    _log_captured_flip_event(holder, logger, "onset")
+) -> tuple[dict[str, Any] | None, bool, list[dict[str, Any]], dict[str, Any] | None]:
+    digit = digit_stimulus or visual.TextStim(win, text="", height=0.22, color="white")
+    fixation = fixation_stimulus or visual.TextStim(win, text="+", height=0.08, color="white")
+    holder: dict[str, Any] = preflipped_onset or {}
+    if preflipped_onset is None:
+        _set_stimulus_text(digit, str(planned["digit"]))
+        _emit_planned_cue(logger, marker_outlet, planned)
+        digit.draw()
+        win.callOnFlip(
+            _capture_flip_event,
+            holder,
+            marker_outlet,
+            marker_label("stimulus_onset", planned),
+            planned,
+            timing,
+            "onset",
+        )
+        win.flip()
+        _log_captured_flip_event(holder, logger, "onset")
     onset = float(holder["onset_monotonic"])
     onset_lsl = _optional_float(holder.get("onset_lsl"))
+    onset_flip = float(holder["onset_event"]["flip_monotonic"])
+    nominal_rate = float(timing.get("nominal_refresh_rate_hz") or 60.0)
+    stimulus_frames = int(timing.get("stimulus_frame_count") or round(config.stimulus_seconds * nominal_rate))
+    soi_frames = int(timing.get("soi_frame_count") or round(config.response_window_seconds * nominal_rate))
+    frame_period = 1.0 / nominal_rate
+    flip_request_lead = frame_period * 0.75
+    scheduled_offset_flip = onset_flip + (stimulus_frames * frame_period)
+    scheduled_boundary_flip = onset_flip + (soi_frames * frame_period)
     events = list(premature_events)
-    while monotonic() < onset + config.stimulus_seconds:
+    while monotonic() < scheduled_offset_flip - flip_request_lead:
         redraw_psychopy_after_resize(win, digit)
         polled = keyboard.poll(
             task_state="STIMULUS_VISIBLE",
@@ -1783,14 +1878,17 @@ def _present_psychopy_trial(
         )
         events.extend(polled)
         if any(row["is_escape_key"] for row in polled):
-            return None, True, []
+            return None, True, [], None
         sleep(0.002)
     fixation.draw()
     win.callOnFlip(_capture_flip_event, holder, marker_outlet, marker_label("stimulus_offset", planned), planned, timing, "offset")
     win.flip()
     _log_captured_flip_event(holder, logger, "offset")
-    scheduled_response_close = onset + config.response_window_seconds
-    while monotonic() < scheduled_response_close:
+    scheduled_response_close = onset + (soi_frames * frame_period)
+    if next_trial is not None:
+        _set_stimulus_text(digit, str(next_trial["digit"]))
+        _emit_planned_cue(logger, marker_outlet, next_trial)
+    while monotonic() < scheduled_boundary_flip - flip_request_lead:
         redraw_psychopy_after_resize(win, fixation)
         polled = keyboard.poll(
             task_state="RESPONSE_WINDOW_MASK",
@@ -1800,23 +1898,67 @@ def _present_psychopy_trial(
         )
         events.extend(polled)
         if any(row["is_escape_key"] for row in polled):
-            return None, True, []
+            return None, True, [], None
         sleep(0.002)
-    response_close = monotonic()
-    response_close_lsl = lsl_local_clock()
+    boundary: dict[str, Any] = {}
+    (digit if next_trial is not None else fixation).draw()
     scheduled_response_close_lsl = None if onset_lsl is None else onset_lsl + config.response_window_seconds
-    _emit(
-        logger,
+    win.callOnFlip(
+        _capture_response_close_event,
+        boundary,
         marker_outlet,
         marker_label("response_window_close", planned),
-        timestamp=response_close,
-        lsl_timestamp=response_close_lsl,
-        trial=int(planned["global_trial_index"]),
-        scheduled_response_window_close_monotonic=scheduled_response_close,
-        scheduled_response_window_close_lsl=scheduled_response_close_lsl,
-        response_window_close_overshoot_seconds=max(0.0, response_close - scheduled_response_close),
-        **_marker_metadata(planned),
+        planned,
+        timing,
+        scheduled_response_close,
+        scheduled_response_close_lsl,
     )
+    next_holder: dict[str, Any] | None = None
+    if next_trial is not None:
+        next_holder = {}
+        win.callOnFlip(
+            _capture_flip_event,
+            next_holder,
+            marker_outlet,
+            marker_label("stimulus_onset", next_trial),
+            next_trial,
+            timing,
+            "onset",
+        )
+    win.flip()
+    _log_captured_response_close_event(boundary, logger)
+    if next_holder is not None:
+        _log_captured_flip_event(next_holder, logger, "onset")
+    response_close = float(boundary["response_close_monotonic"])
+    response_close_lsl = _optional_float(boundary.get("response_close_lsl"))
+
+    boundary_rows = keyboard.poll(
+        task_state="STIMULUS_VISIBLE" if next_trial is not None else "RESPONSE_WINDOW_CLOSE",
+        assigned_trial=(
+            int(next_trial["global_trial_index"])
+            if next_trial is not None
+            else int(planned["global_trial_index"])
+        ),
+        assigned_block=(
+            int(next_trial["block_index"])
+            if next_trial is not None
+            else int(planned["block_index"])
+        ),
+        assigned_phase=(
+            str(next_trial["phase"])
+            if next_trial is not None
+            else str(planned["phase"])
+        ),
+    )
+    next_onset = None if next_holder is None else float(next_holder["onset_monotonic"])
+    upcoming = []
+    for row in boundary_rows:
+        if next_onset is not None and float(row["timestamp_monotonic"]) >= next_onset:
+            upcoming.append(row)
+        else:
+            events.append(row)
+    if any(row["is_escape_key"] for row in boundary_rows):
+        return None, True, upcoming, next_holder
     previous_experimental = max((int(row["global_trial_index"]) for row in store.records if not row.get("is_practice")), default=None)
     record = score_dynamic_sart_trial(
         planned,
@@ -1840,6 +1982,18 @@ def _present_psychopy_trial(
         trials_since_no_go=_trials_since_no_go(store.records),
         applied_task_actions=applied_task_actions,
     )
+    if next_holder is not None:
+        record["actual_next_trial_onset_monotonic"] = next_onset
+        record["actual_next_trial_onset_lsl"] = _optional_float(next_holder.get("onset_lsl"))
+        record["next_trial_onset_monotonic"] = next_onset
+        record["actual_trial_duration_seconds"] = (
+            None if next_onset is None else next_onset - onset
+        )
+        next_lsl = _optional_float(next_holder.get("onset_lsl"))
+        record["actual_trial_duration_lsl_seconds"] = (
+            None if next_lsl is None or onset_lsl is None else next_lsl - onset_lsl
+        )
+        record["timing_finalization_status"] = "observed_next_stimulus_flip"
     store.append_trial(record)
     _emit(
         logger,
@@ -1853,24 +2007,89 @@ def _present_psychopy_trial(
         reaction_time_seconds=record["reaction_time_seconds"],
         **_marker_metadata(planned),
     )
-    upcoming = []
-    next_onset = onset + float(planned["planned_soi_seconds"])
-    while monotonic() < next_onset:
-        redraw_psychopy_after_resize(win, fixation)
-        assigned = int(next_trial["global_trial_index"]) if next_trial is not None else None
-        polled = keyboard.poll(
-            task_state="INTERTRIAL_INTERVAL",
-            assigned_trial=assigned,
-            assigned_block=int(next_trial["block_index"]) if next_trial is not None else None,
-            assigned_phase=str(next_trial["phase"]) if next_trial is not None else None,
-            premature=next_trial is not None,
-            late=next_trial is None,
-        )
-        upcoming.extend(polled)
-        if any(row["is_escape_key"] for row in polled):
-            return record, True, upcoming
-        sleep(0.002)
-    return record, False, upcoming
+    return record, False, upcoming, next_holder
+
+
+def _set_stimulus_text(stimulus: Any, value: str) -> None:
+    setter = getattr(stimulus, "setText", None)
+    if callable(setter):
+        setter(value)
+    else:
+        stimulus.text = value
+
+
+def _block_timing_warning(
+    records: Iterable[dict[str, Any]],
+    timing: dict[str, Any],
+) -> dict[str, Any] | None:
+    frame_seconds = float(timing.get("expected_frame_interval_ms") or 0.0) / 1000.0
+    if frame_seconds <= 0.0:
+        return None
+    threshold = frame_seconds * 1.5
+    stimulus_errors = [
+        abs(float(row.get("actual_stimulus_seconds") or 0.0) - float(row.get("planned_stimulus_seconds") or 0.0))
+        for row in records
+    ]
+    soi_errors = [
+        abs(float(row["actual_trial_duration_seconds"]) - float(row.get("planned_soi_seconds") or 0.0))
+        for row in records
+        if row.get("actual_trial_duration_seconds") is not None
+    ]
+    affected = sum(error > threshold for error in stimulus_errors) + sum(
+        error > threshold for error in soi_errors
+    )
+    if affected <= 0:
+        return None
+    return {
+        "warning": True,
+        "affected_timing_measurements": affected,
+        "allowed_error_seconds": threshold,
+        "maximum_stimulus_error_seconds": max(stimulus_errors, default=0.0),
+        "maximum_soi_error_seconds": max(soi_errors, default=0.0),
+        "action": "recording continues; review the timing report after acquisition",
+    }
+
+
+def _capture_response_close_event(
+    holder: dict[str, Any],
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet,
+    label: str,
+    planned: dict[str, Any],
+    timing: dict[str, Any],
+    scheduled_monotonic: float,
+    scheduled_lsl: float | None,
+) -> None:
+    flip_monotonic = monotonic()
+    flip_lsl = lsl_local_clock()
+    latency = float(timing.get("fixed_display_latency_ms", 0.0)) / 1000.0
+    modeled_monotonic = flip_monotonic + latency
+    modeled_lsl = None if flip_lsl is None else flip_lsl + latency
+    if isinstance(marker_outlet, LslMarkerOutlet) and modeled_lsl is None:
+        raise RuntimeError("LSL local clock is unavailable for a required response-close marker")
+    marker_outlet.push(label, timestamp=modeled_lsl)
+    holder["response_close_monotonic"] = modeled_monotonic
+    holder["response_close_lsl"] = modeled_lsl
+    holder["event"] = {
+        "label": label,
+        "timestamp": modeled_monotonic,
+        "trial": int(planned["global_trial_index"]),
+        "lsl_timestamp": modeled_lsl,
+        "scheduled_on_flip": True,
+        "flip_monotonic": flip_monotonic,
+        "flip_lsl_timestamp": flip_lsl,
+        "scheduled_response_window_close_monotonic": scheduled_monotonic,
+        "scheduled_response_window_close_lsl": scheduled_lsl,
+        "response_window_close_overshoot_seconds": max(0.0, modeled_monotonic - scheduled_monotonic),
+        **_marker_metadata(planned),
+    }
+
+
+def _log_captured_response_close_event(holder: dict[str, Any], logger: EventLogger) -> None:
+    payload = dict(holder["event"])
+    label = str(payload.pop("label"))
+    timestamp = float(payload.pop("timestamp"))
+    trial = int(payload.pop("trial"))
+    logger.mark(label, timestamp=timestamp, trial=trial, **payload)
 
 
 def _capture_flip_event(

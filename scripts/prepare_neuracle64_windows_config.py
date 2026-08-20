@@ -111,7 +111,8 @@ def build_configs(
         {
             "enabled": True,
             "backend": "labrecorder_xdf",
-            "csv_mirror": True,
+            "csv_mirror": False,
+            "lsl_sample_heartbeat": True,
             "executable": str(labrecorder_executable),
         }
     )

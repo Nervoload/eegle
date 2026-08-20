@@ -1,4 +1,4 @@
-"""Managed LabRecorder/XDF acquisition with the existing CSV safety mirror."""
+"""Managed LabRecorder/XDF acquisition with optional non-authoritative diagnostics."""
 
 from __future__ import annotations
 
@@ -11,11 +11,12 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 from pathlib import Path
 from time import monotonic, sleep
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Callable
 
-from eegle.devices.lsl_eeg import LslEegRecorder, resolve_eeg_stream_identity
+from eegle.devices.lsl_eeg import LslEegRecorder, LslSampleHeartbeat, resolve_eeg_stream_identity
 from eegle.session import SessionPaths
 
 
@@ -35,11 +36,10 @@ class LabRecorderXdfRecorder:
         self.marker_config = dict(config.get("hardware", {}).get("markers", {}) or {})
         self.recorder_config = dict(config.get("processes", {}).get("recorder", {}) or {})
         self.csv_mirror_enabled = bool(self.recorder_config.get("csv_mirror", True))
-        self.startup_timeout_seconds = max(1.0, float(startup_timeout_seconds))
-        self.shutdown_timeout_seconds = max(
-            2.0,
-            float(self.recorder_config.get("shutdown_timeout_seconds", 15.0)),
+        self.heartbeat_enabled = bool(
+            self.recorder_config.get("lsl_sample_heartbeat", not self.csv_mirror_enabled)
         )
+        self.startup_timeout_seconds = max(1.0, float(startup_timeout_seconds))
         self.xdf_growth_warning_seconds = max(
             2.0,
             float(
@@ -53,6 +53,10 @@ class LabRecorderXdfRecorder:
             0.0,
             float(self.recorder_config.get("tail_guard_seconds", 1.0)),
         )
+        self.finalization_status_interval_seconds = max(
+            1.0,
+            float(self.recorder_config.get("finalization_status_interval_seconds", 5.0)),
+        )
         self.rcs_port = int(self.recorder_config.get("rcs_port", 22345))
         self.labrecorder_config = paths.process_logs / "labrecorder.cfg"
         self.labrecorder_stdout = paths.process_logs / "labrecorder.stdout.log"
@@ -61,6 +65,10 @@ class LabRecorderXdfRecorder:
             self.eeg_config,
             paths.eeg_csv,
             paths.eeg_metadata,
+            stream_timeout_seconds=float(self.eeg_config.get("stream_timeout_seconds", 5.0)),
+        )
+        self._heartbeat = LslSampleHeartbeat(
+            self.eeg_config,
             stream_timeout_seconds=float(self.eeg_config.get("stream_timeout_seconds", 5.0)),
         )
         self._process: subprocess.Popen[bytes] | None = None
@@ -86,6 +94,10 @@ class LabRecorderXdfRecorder:
         self._xdf_growth_warning_count = 0
         self._started_at = monotonic()
         self._stop_reason: str | None = None
+        self._heartbeat_warning: str | None = None
+        self._finalization_stage: str | None = None
+        self._finalization_message: str | None = None
+        self._progress_callback: Callable[[str, str, dict[str, Any]], None] | None = None
 
     def start(self) -> dict[str, Any]:
         """Attempt the mirror, launch LabRecorder, and prove primary XDF growth."""
@@ -113,6 +125,8 @@ class LabRecorderXdfRecorder:
                     self.eeg_config,
                     timeout=float(self.eeg_config.get("stream_timeout_seconds", 5.0)),
                 )
+            if self.heartbeat_enabled:
+                self._start_heartbeat()
             self._selected_marker_stream = resolve_labrecorder_marker_stream(
                 self.marker_config,
                 timeout_seconds=float(self.eeg_config.get("stream_timeout_seconds", 5.0)),
@@ -168,6 +182,12 @@ class LabRecorderXdfRecorder:
             if self.csv_mirror_enabled
             else {"status": "disabled", "sample_count": 0, "raw_file": str(self.paths.eeg_csv)}
         )
+        heartbeat = (
+            self._heartbeat.snapshot()
+            if self.heartbeat_enabled
+            else {"status": "disabled", "sample_count": 0}
+        )
+        live_source = heartbeat if self.heartbeat_enabled else mirror
         xdf_size = _file_size(self.paths.eeg_xdf)
         now = monotonic()
         if xdf_size > self._last_xdf_size:
@@ -188,6 +208,14 @@ class LabRecorderXdfRecorder:
                             or f"CSV mirror status changed to {mirror.get('status')}; XDF acquisition continues"
                         )
                     )
+                if self.heartbeat_enabled and heartbeat.get("status") != "recording":
+                    warning = str(
+                        heartbeat.get("error")
+                        or f"diagnostic LSL sample heartbeat changed to {heartbeat.get('status')}; XDF continues"
+                    )
+                    if warning != self._heartbeat_warning:
+                        self._heartbeat_warning = warning
+                        self._notes.append(warning)
             if self._status == "recording" and now - self._last_xdf_growth_at > self.xdf_growth_warning_seconds:
                 if not self._xdf_growth_warning_active:
                     self._xdf_growth_warning_active = True
@@ -195,7 +223,7 @@ class LabRecorderXdfRecorder:
                     self._notes.append(
                         "LabRecorder XDF file size did not advance for "
                         f"{now - self._last_xdf_growth_at:.1f} seconds while the process and "
-                        "source-preserving CSV/LSL mirror remained healthy; treating this as "
+                        "live LSL sample heartbeat remained healthy; treating this as "
                         "buffering until final XDF validation"
                     )
         xdf_growth_status = (
@@ -215,23 +243,25 @@ class LabRecorderXdfRecorder:
             "xdf_growth_warning_count": self._xdf_growth_warning_count,
             "xdf_growth_warning_seconds": self.xdf_growth_warning_seconds,
             "tail_guard_seconds": self.tail_guard_seconds,
-            "sample_count": int(mirror.get("sample_count") or 0),
-            "first_lsl_timestamp": mirror.get("first_lsl_timestamp"),
-            "last_lsl_timestamp": mirror.get("last_lsl_timestamp"),
-            "first_source_lsl_timestamp": mirror.get("first_source_lsl_timestamp"),
-            "last_source_lsl_timestamp": mirror.get("last_source_lsl_timestamp"),
-            "first_local_received_time": mirror.get("first_local_received_time"),
-            "last_local_received_time": mirror.get("last_local_received_time"),
-            "first_local_received_lsl_timestamp": mirror.get(
+            "sample_count": int(live_source.get("sample_count") or 0),
+            "first_lsl_timestamp": live_source.get("first_lsl_timestamp"),
+            "last_lsl_timestamp": live_source.get("last_lsl_timestamp"),
+            "first_source_lsl_timestamp": live_source.get("first_source_lsl_timestamp"),
+            "last_source_lsl_timestamp": live_source.get("last_source_lsl_timestamp"),
+            "first_local_received_time": live_source.get("first_local_received_time"),
+            "last_local_received_time": live_source.get("last_local_received_time"),
+            "first_local_received_lsl_timestamp": live_source.get(
                 "first_local_received_lsl_timestamp"
             ),
-            "last_local_received_lsl_timestamp": mirror.get(
+            "last_local_received_lsl_timestamp": live_source.get(
                 "last_local_received_lsl_timestamp"
             ),
-            "stream": mirror.get("stream") or self._selected_eeg_stream,
+            "stream": live_source.get("stream") or self._selected_eeg_stream,
             "csv_mirror": mirror,
             "csv_mirror_degraded": self._csv_mirror_warning is not None,
             "csv_mirror_warning": self._csv_mirror_warning,
+            "lsl_sample_heartbeat": heartbeat,
+            "lsl_sample_heartbeat_warning": self._heartbeat_warning,
             "xdf_metadata_warning": self._metadata_warning,
             "labrecorder_pid": None if self._process is None else self._process.pid,
             "labrecorder_returncode": None if self._process is None else self._process.poll(),
@@ -243,6 +273,8 @@ class LabRecorderXdfRecorder:
             "required_streams": list(self._required_streams),
             "commands": list(self._commands),
             "stop_reason": self._stop_reason,
+            "finalization_stage": self._finalization_stage,
+            "finalization_message": self._finalization_message,
             "error": self._error,
             "notes": list(self._notes),
         }
@@ -250,10 +282,21 @@ class LabRecorderXdfRecorder:
     def is_alive(self) -> bool:
         return self.snapshot().get("status") == "recording"
 
-    def stop(self, *, reason: str = "stop_requested") -> dict[str, Any]:
+    def stop(
+        self,
+        *,
+        reason: str = "stop_requested",
+        progress_callback: Callable[[str, str, dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         self._stop_reason = reason
+        self._progress_callback = progress_callback
         failures: list[str] = []
         if self._process is not None and self._process.poll() is None:
+            self._status = "finalizing"
+            self._report_progress(
+                "tail_guard",
+                "Task is complete; LabRecorder is retaining the configured marker/EEG tail before stop",
+            )
             if self.tail_guard_seconds > 0:
                 sleep(self.tail_guard_seconds)
                 self._notes.append(
@@ -261,6 +304,10 @@ class LabRecorderXdfRecorder:
                 )
             try:
                 self._send("stop")
+                self._report_progress(
+                    "xdf_finalization",
+                    "LabRecorder stop accepted; XDF is still finalizing and will not be force-killed",
+                )
             except Exception as exc:
                 failures.append(f"LabRecorder stop command failed: {type(exc).__name__}: {exc}")
             try:
@@ -278,6 +325,12 @@ class LabRecorderXdfRecorder:
                     )
             except Exception as exc:
                 self._warn_csv_mirror(f"CSV mirror shutdown failed: {type(exc).__name__}: {exc}")
+        if self.heartbeat_enabled:
+            heartbeat = self._heartbeat.stop()
+            if heartbeat.get("status") == "failed":
+                self._heartbeat_warning = str(
+                    heartbeat.get("error") or "diagnostic LSL sample heartbeat failed"
+                )
         self._close_rcs()
         self._close_process(failures)
         if failures or self._status == "failed":
@@ -290,6 +343,33 @@ class LabRecorderXdfRecorder:
         summary = self.snapshot()
         self._write_metadata(summary)
         return summary
+
+    def _start_heartbeat(self) -> None:
+        self._heartbeat.start()
+        timeout = float(self.eeg_config.get("stream_timeout_seconds", 5.0)) + 2.0
+        if not self._heartbeat.wait_until_ready(timeout):
+            self._heartbeat.stop()
+            raise TimeoutError("diagnostic LSL sample heartbeat did not become ready")
+        deadline = monotonic() + timeout
+        while monotonic() < deadline:
+            heartbeat = self._heartbeat.snapshot()
+            if heartbeat.get("status") != "recording":
+                self._heartbeat.stop()
+                raise RuntimeError(
+                    str(heartbeat.get("error") or "diagnostic LSL sample heartbeat did not start")
+                )
+            if int(heartbeat.get("sample_count") or 0) > 0:
+                return
+            sleep(0.05)
+        self._heartbeat.stop()
+        raise TimeoutError("EEG stream connected but delivered no samples before LabRecorder startup")
+
+    def _report_progress(self, stage: str, message: str) -> None:
+        self._finalization_stage = str(stage)
+        self._finalization_message = str(message)
+        callback = self._progress_callback
+        if callback is not None:
+            callback(self._finalization_stage, self._finalization_message, self.snapshot())
 
     def _start_mirror(self) -> None:
         self._mirror.start()
@@ -352,11 +432,11 @@ class LabRecorderXdfRecorder:
         raise TimeoutError(f"LabRecorder did not create a growing XDF file at {self.paths.eeg_xdf}")
 
     def _wait_for_xdf_settle(self) -> None:
-        deadline = monotonic() + self.shutdown_timeout_seconds
         previous: int | None = None
         stable_polls = 0
         structure_error: str | None = None
-        while monotonic() < deadline:
+        last_report = 0.0
+        while True:
             size = _file_size(self.paths.eeg_xdf)
             if size > 4 and size == previous:
                 stable_polls += 1
@@ -372,17 +452,24 @@ class LabRecorderXdfRecorder:
                                 "LabRecorder finalized a structurally readable XDF after a buffered-write warning"
                             )
                         self._xdf_growth_warning_active = False
+                        self._report_progress(
+                            "xdf_readable",
+                            f"XDF finalization complete and structurally readable ({size} bytes)",
+                        )
                         return
                     stable_polls = 0
             else:
                 stable_polls = 0
             previous = size
+            now = monotonic()
+            if now - last_report >= self.finalization_status_interval_seconds:
+                detail = "" if not structure_error else f"; latest reader result: {structure_error}"
+                self._report_progress(
+                    "xdf_finalization",
+                    f"XDF is still processing ({size} bytes); waiting without a forced shutdown{detail}",
+                )
+                last_report = now
             sleep(0.25)
-        detail = "" if not structure_error else f"; last structural check: {structure_error}"
-        raise TimeoutError(
-            f"XDF file did not settle into a structurally readable recording within "
-            f"{self.shutdown_timeout_seconds:.1f} seconds{detail}"
-        )
 
     def _fail(self, error: str) -> None:
         self._status = "failed"
@@ -392,14 +479,20 @@ class LabRecorderXdfRecorder:
         if self._rcs_socket is not None and self._process is not None and self._process.poll() is None:
             try:
                 self._send("stop")
-                if self.paths.eeg_xdf.exists():
+                if _file_size(self.paths.eeg_xdf) > 4 and has_xdf_signature(self.paths.eeg_xdf):
                     self._wait_for_xdf_settle()
             except Exception as exc:
                 self._notes.append(f"LabRecorder failed-start finalization failed: {type(exc).__name__}: {exc}")
-        try:
-            self._mirror.stop()
-        except Exception as exc:
-            self._notes.append(f"CSV mirror cleanup failed: {type(exc).__name__}: {exc}")
+        if self.csv_mirror_enabled:
+            try:
+                self._mirror.stop()
+            except Exception as exc:
+                self._notes.append(f"CSV mirror cleanup failed: {type(exc).__name__}: {exc}")
+        if self.heartbeat_enabled:
+            try:
+                self._heartbeat.stop()
+            except Exception as exc:
+                self._notes.append(f"LSL sample heartbeat cleanup failed: {type(exc).__name__}: {exc}")
         self._close_rcs()
         failures: list[str] = []
         self._close_process(failures)
@@ -418,14 +511,34 @@ class LabRecorderXdfRecorder:
         process = self._process
         if process is not None and process.poll() is None:
             try:
-                process.terminate()
-                process.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                try:
-                    process.kill()
-                    process.wait(timeout=5.0)
-                except Exception as exc:
-                    failures.append(f"LabRecorder forced shutdown failed: {type(exc).__name__}: {exc}")
+                self._report_progress(
+                    "labrecorder_close",
+                    "XDF is safe; requesting a graceful LabRecorder application close",
+                )
+                if sys.platform == "win32":
+                    posted = _post_windows_close(int(process.pid))
+                    if posted <= 0:
+                        self._report_progress(
+                            "awaiting_labrecorder_close",
+                            "Please close the stopped LabRecorder window; EEGle will wait and will not force-kill it",
+                        )
+                else:
+                    # SIGTERM is the normal application-close request on POSIX.
+                    # There is deliberately no SIGKILL fallback.
+                    process.terminate()
+                last_report = 0.0
+                while process.poll() is None:
+                    now = monotonic()
+                    if now - last_report >= self.finalization_status_interval_seconds:
+                        self._report_progress(
+                            "awaiting_labrecorder_close",
+                            "LabRecorder has stopped recording but is still closing; waiting without force-kill",
+                        )
+                        last_report = now
+                    try:
+                        process.wait(timeout=0.5)
+                    except subprocess.TimeoutExpired:
+                        pass
             except Exception as exc:
                 failures.append(f"LabRecorder shutdown failed: {type(exc).__name__}: {exc}")
         for attribute in ("_stdout_handle", "_stderr_handle"):
@@ -481,6 +594,32 @@ def resolve_labrecorder_executable(configured: str) -> Path:
             "processes.recorder.executable path or add it to PATH"
         )
     return Path(discovered).resolve()
+
+
+def _post_windows_close(process_id: int) -> int:
+    """Post WM_CLOSE to top-level windows owned by ``process_id``."""
+
+    if sys.platform != "win32":
+        return 0
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    posted = 0
+    callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    @callback_type
+    def close_window(hwnd: int, _lparam: int) -> bool:
+        nonlocal posted
+        owner = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if int(owner.value) == int(process_id):
+            user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
+            posted += 1
+        return True
+
+    user32.EnumWindows(close_window, 0)
+    return posted
 
 
 def labrecorder_environment(config: dict[str, Any]) -> dict[str, Any]:
@@ -605,7 +744,7 @@ def has_xdf_signature(path: Path) -> bool:
 
 
 def _xdf_is_structurally_readable(path: Path) -> tuple[bool, str | None]:
-    """Scan finalized chunks with bounded retained samples before killing LabRecorder."""
+    """Scan finalized chunks while retaining at most one sample per chunk."""
     try:
         import pyxdf
     except Exception as exc:

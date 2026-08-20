@@ -30,7 +30,7 @@ from eegle.realtime.epoching import load_eeg_csv_for_epoching
 from eegle.session import create_session
 from eegle.tasks.dynamic_sart import DynamicSartTask
 from eegle.tasks.dynamic_sart_schema import DynamicSartConfig
-from eegle.tasks.dynamic_sart_sequence import build_dynamic_sart_plan
+from eegle.tasks.dynamic_sart_sequence import build_dynamic_sart_plan, validate_dynamic_sart_plan
 from scripts.prepare_neuracle64_windows_config import build_configs, refresh_confirmed_configs
 
 
@@ -79,7 +79,8 @@ class Study1Tests(unittest.TestCase):
         self.assertEqual(live["hardware"]["eeg"]["expected_channel_names"][-1], "TRIGGER_STATUS")
         self.assertEqual(len(live["hardware"]["eeg"]["electrode_channel_names"]), 64)
         self.assertEqual(live["processes"]["recorder"]["backend"], "labrecorder_xdf")
-        self.assertTrue(live["processes"]["recorder"]["csv_mirror"])
+        self.assertFalse(live["processes"]["recorder"]["csv_mirror"])
+        self.assertTrue(live["processes"]["recorder"]["lsl_sample_heartbeat"])
         self.assertTrue(live["operator_confirmation"]["confirmed_for_this_generated_config"])
         self.assertIn("neuracle-collect-test", live["hardware"]["eeg"]["lsl_name_patterns"])
         self.assertFalse(live_task["tasks"]["dynamic_sart"]["practice"]["enabled"])
@@ -458,6 +459,50 @@ class Study1Tests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires --include-practice"):
             _validate_options(Study1Options(**{**base, "include_practice": False}))
 
+    def test_standard_study1_uses_weighted_strata_and_allows_rare_close_no_go_trials(self) -> None:
+        base = load_config(CONFIG)
+        child = configure_study1_segment(
+            base,
+            "session1_main",
+            no_go_digit=3,
+            seed=42,
+        )
+        parsed = DynamicSartConfig.from_mapping(child["tasks"]["dynamic_sart"])
+        plan = build_dynamic_sart_plan(parsed)
+        validate_dynamic_sart_plan(plan, parsed)
+
+        self.assertEqual(parsed.minimum_go_trials_between_no_go, 0)
+        self.assertEqual(parsed.minimum_trailing_go_trials, 4)
+        self.assertEqual(parsed.no_go_randomization["mode"], "stratified_weighted")
+        for block_index in range(1, 4):
+            section = [
+                row for row in plan["planned_trials"] if row["block_index"] == block_index
+            ]
+            strata = [
+                sum(row["is_no_go"] for row in section[start : start + 50])
+                for start in range(0, 200, 50)
+            ]
+            self.assertLessEqual(max(strata) - min(strata), 1)
+            self.assertFalse(any(
+                section[index]["is_no_go"]
+                and section[index + 1]["is_no_go"]
+                and section[index + 2]["is_no_go"]
+                for index in range(len(section) - 2)
+            ))
+
+    def test_study1_smoke_removes_formal_fifty_trial_strata(self) -> None:
+        child = configure_study1_segment(
+            load_config(CONFIG),
+            "session1_main",
+            no_go_digit=3,
+            seed=42,
+            smoke=True,
+        )
+        parsed = DynamicSartConfig.from_mapping(child["tasks"]["dynamic_sart"])
+
+        self.assertEqual(parsed.no_go_randomization, {})
+        validate_dynamic_sart_plan(build_dynamic_sart_plan(parsed), parsed)
+
     def test_full_1000_validator_rejects_interleaved_support(self) -> None:
         full = apply_study1_full_1000_profile(load_config(CONFIG))
         blocks = full["study1"]["segments"]["session1_main"]["blocks"]
@@ -536,14 +581,15 @@ class Study1Tests(unittest.TestCase):
             any(issue["status"] == "fail" and "1000 Hz" in issue["detail"] for issue in issues)
         )
 
-    def test_protocol_treats_disabled_csv_mirror_as_warning_for_xdf(self) -> None:
+    def test_protocol_requires_csv_mirror_off_and_nonwriting_heartbeat_on(self) -> None:
         config = load_config(CONFIG)
-        config["processes"]["recorder"]["csv_mirror"] = False
+        config["processes"]["recorder"]["csv_mirror"] = True
+        config["processes"]["recorder"]["lsl_sample_heartbeat"] = False
 
         issues = validate_study1_config(config)
 
-        mirror_issues = [issue for issue in issues if "CSV safety mirror" in issue["detail"]]
-        self.assertEqual([issue["status"] for issue in mirror_issues], ["warn"])
+        self.assertTrue(any(issue["status"] == "fail" and "CSV mirror" in issue["detail"] for issue in issues))
+        self.assertTrue(any(issue["status"] == "fail" and "sample heartbeat" in issue["detail"] for issue in issues))
 
     def test_cue_assignments_are_two_of_four_and_deterministic(self) -> None:
         config = load_config(CONFIG)

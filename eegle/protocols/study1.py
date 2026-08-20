@@ -195,6 +195,11 @@ def configure_study1_segment(
             "allow_stimulation": False,
         }
     )
+    if smoke:
+        # Ten-trial smoke blocks cannot use the formal 50-trial strata. Smoke
+        # validates orchestration only; recorded Study 1 segments retain the
+        # versioned weighted-stratified schedule below.
+        task["no_go_randomization"] = {}
     task.setdefault("practice", {})["enabled"] = bool(
         segment.get("practice_enabled", False) and (include_practice or not smoke)
     )
@@ -273,13 +278,12 @@ def validate_study1_config(config: dict[str, Any]) -> list[dict[str, str]]:
     recorder = dict(config.get("processes", {}).get("recorder", {}) or {})
     if not bool(recorder.get("enabled", False)) or recorder.get("backend") != "labrecorder_xdf":
         issues.append(_issue("fail", "Study 1 requires the managed labrecorder_xdf backend"))
-    if not bool(recorder.get("csv_mirror", False)):
-        issues.append(
-            _issue(
-                "warn",
-                "Study 1 CSV safety mirror is disabled; authoritative XDF acquisition remains available",
-            )
-        )
+    if bool(recorder.get("csv_mirror", False)):
+        issues.append(_issue("fail", "Study 1 full CSV mirror must remain disabled during XDF acquisition"))
+    if not bool(recorder.get("lsl_sample_heartbeat", False)):
+        issues.append(_issue("fail", "Study 1 requires the non-writing live LSL sample heartbeat"))
+    if bool(eeg.get("abort_on_timestamp_gap", False)):
+        issues.append(_issue("fail", "Study 1 timestamp gaps must warn without aborting acquisition"))
     if not str(recorder.get("executable", "")).strip():
         issues.append(_issue("fail", "Study 1 processes.recorder.executable must be configured"))
     try:
@@ -322,6 +326,10 @@ def validate_study1_config(config: dict[str, Any]) -> list[dict[str, str]]:
         issues.append(_issue("fail", "Study 1 display refresh-rate measurement must be enabled"))
     if not bool(display.get("require_refresh_rate_match", False)):
         issues.append(_issue("fail", "Study 1 measured refresh rate must match the configured display mode"))
+    if list(display.get("supported_refresh_rates_hz") or []) != [60.0, 120.0]:
+        issues.append(_issue("fail", "Study 1 display modes must be restricted to measured 60 Hz or 120 Hz"))
+    if str(display.get("keyboard_backend", "")).lower() != "ptb":
+        issues.append(_issue("fail", "Study 1 requires PsychoPy's asynchronous PTB keyboard backend"))
     for name in STUDY1_SEGMENTS:
         try:
             child = configure_study1_segment(config, name, no_go_digit=0, seed=42)
@@ -329,6 +337,31 @@ def validate_study1_config(config: dict[str, Any]) -> list[dict[str, str]]:
             plan = build_dynamic_sart_plan(parsed)
             validate_dynamic_sart_plan(plan, parsed)
             issues.extend(_segment_issues(name, plan, acquisition_profile=acquisition_profile))
+            expected_randomization = {
+                "mode": "stratified_weighted",
+                "stratum_trials": 50,
+                "maximum_consecutive_no_go": 2,
+                "adjacent_no_go_weight": 0.10,
+                "one_go_gap_weight": 0.35,
+            }
+            if parsed.no_go_randomization != expected_randomization:
+                issues.append(
+                    _issue(
+                        "fail",
+                        "Study 1 must use the versioned weighted-stratified no-go randomization",
+                    )
+                )
+            if (
+                parsed.minimum_go_trials_between_no_go,
+                parsed.minimum_leading_go_trials,
+                parsed.minimum_trailing_go_trials,
+            ) != (0, 4, 4):
+                issues.append(
+                    _issue(
+                        "fail",
+                        "Study 1 no-go randomization must allow rare close trials with four-go block boundaries",
+                    )
+                )
             if (
                 acquisition_profile == STUDY1_FULL_1000_ACQUISITION_PROFILE
                 and name == "session1_main"
@@ -351,31 +384,6 @@ def validate_study1_config(config: dict[str, Any]) -> list[dict[str, str]]:
                         _issue(
                             "fail",
                             "full 1000 practice must use 30 trials, 4 no-go trials, and at most 3 rounds",
-                        )
-                    )
-                expected_randomization = {
-                    "mode": "stratified_weighted",
-                    "stratum_trials": 50,
-                    "maximum_consecutive_no_go": 2,
-                    "adjacent_no_go_weight": 0.10,
-                    "one_go_gap_weight": 0.35,
-                }
-                if parsed.no_go_randomization != expected_randomization:
-                    issues.append(
-                        _issue(
-                            "fail",
-                            "full 1000 profile must use the versioned weighted-stratified no-go randomization",
-                        )
-                    )
-                if (
-                    parsed.minimum_go_trials_between_no_go,
-                    parsed.minimum_leading_go_trials,
-                    parsed.minimum_trailing_go_trials,
-                ) != (0, 4, 4):
-                    issues.append(
-                        _issue(
-                            "fail",
-                            "full 1000 no-go randomization must allow close trials with four-go section boundaries",
                         )
                     )
         except (KeyError, TypeError, ValueError) as exc:

@@ -152,6 +152,18 @@ class DynamicSartTaskTests(unittest.TestCase):
         self.assertTrue(measured["refresh_rate_within_tolerance"])
         self.assertAlmostEqual(window.monitorFramePeriod, 1.0 / 59.94)
         self.assertAlmostEqual(window.refreshThreshold, (1.0 / 59.94) * 1.2)
+        adaptive = measure_psychopy_refresh_rate(
+            SimpleNamespace(waitBlanking=True, getActualFrameRate=lambda **_kwargs: 59.94),
+            {
+                "expected_refresh_rate_hz": 120.0,
+                "supported_refresh_rates_hz": [60.0, 120.0],
+                "refresh_rate_tolerance_hz": 2.0,
+                "require_refresh_rate_match": True,
+            },
+        )
+        self.assertEqual(adaptive["nominal_refresh_rate_hz"], 60.0)
+        self.assertEqual(adaptive["stimulus_frame_count"], 15)
+        self.assertEqual(adaptive["soi_frame_count"], 96)
         mismatch = SimpleNamespace(waitBlanking=True, getActualFrameRate=lambda **_kwargs: 120.0)
         with self.assertRaisesRegex(RuntimeError, "measured refresh 120.000 Hz"):
             measure_psychopy_refresh_rate(
@@ -457,6 +469,24 @@ class DynamicSartTaskTests(unittest.TestCase):
         self.assertEqual(wrong_then_valid["first_valid_response_key"], "space")
         self.assertTrue(wrong_then_valid["wrong_key_response"])
         self.assertTrue(wrong_then_valid["multiple_response"])
+
+    def test_response_timing_flags_use_keydown_timestamp_not_polling_state(self) -> None:
+        config = DynamicSartConfig.from_mapping(_config()["tasks"]["dynamic_sart"])
+        record = _score(
+            config,
+            no_go=False,
+            events=[
+                _key("early", "space", 9.99),
+                _key("valid", "space", 10.35),
+                _key("late", "space", 11.16),
+            ],
+        )
+
+        self.assertEqual(record["primary_outcome"], "correct_go")
+        self.assertFalse(record["omission_error"])
+        self.assertTrue(record["premature_response"])
+        self.assertTrue(record["late_response"])
+        self.assertEqual(record["response_key_count"], 1)
 
     def test_timing_fields_distinguish_schedules_observations_and_next_flip_measurements(self) -> None:
         config = DynamicSartConfig.from_mapping(_config()["tasks"]["dynamic_sart"])

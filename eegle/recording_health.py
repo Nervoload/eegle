@@ -63,10 +63,10 @@ class RecorderHealthMonitor:
         except OSError:
             status_age = float("inf")
         summary = dict(payload.get("summary", {}) or {})
-        csv_mirror = dict(summary.get("csv_mirror") or {})
-        xdf_with_degraded_mirror = (
+        heartbeat = dict(summary.get("lsl_sample_heartbeat") or {})
+        heartbeat_degraded = (
             summary.get("primary_format") == "xdf"
-            and csv_mirror.get("status") not in {None, "recording"}
+            and heartbeat.get("status") not in {None, "recording"}
         )
         try:
             sample_count = int(summary.get("sample_count", 0))
@@ -83,7 +83,7 @@ class RecorderHealthMonitor:
             self._last_sample_count = sample_count
             self._last_data_file_size = data_file_size
             self._last_progress_at = now
-        elif now - self._last_progress_at > self.stall_timeout_seconds and not xdf_with_degraded_mirror:
+        elif now - self._last_progress_at > self.stall_timeout_seconds:
             if read_problem or status_age > self.status_stale_seconds:
                 reason = (
                     f"recorder heartbeat/status is unavailable and the source-preserving EEG file "
@@ -94,18 +94,17 @@ class RecorderHealthMonitor:
                     f"recorder sample count and source-preserving EEG file have not advanced for "
                     f"{now - self._last_progress_at:.1f} seconds"
                 )
-            return RecordingHealth(
-                False,
-                reason,
-                payload,
-            )
-        if xdf_with_degraded_mirror and not read_problem and status_age <= self.status_stale_seconds:
-            warning_kind = "csv_mirror_degraded"
+            warning_kind = "recording_progress_warning"
+            is_new = warning_kind != self._active_warning_kind
+            self._active_warning_kind = warning_kind
+            return RecordingHealth(True, reason if is_new else None, payload, warning=is_new)
+        if heartbeat_degraded and not read_problem and status_age <= self.status_stale_seconds:
+            warning_kind = "lsl_sample_heartbeat_degraded"
             is_new = warning_kind != self._active_warning_kind
             self._active_warning_kind = warning_kind
             reason = str(
-                summary.get("csv_mirror_warning")
-                or "CSV mirror is degraded; authoritative XDF acquisition continues"
+                summary.get("lsl_sample_heartbeat_warning")
+                or "diagnostic LSL sample heartbeat is degraded; authoritative XDF acquisition continues"
             )
             return RecordingHealth(True, reason if is_new else None, payload, warning=is_new)
         if read_problem or status_age > self.status_stale_seconds:
@@ -123,7 +122,7 @@ class RecorderHealthMonitor:
 
 
 def _recorded_data_file_size(summary: dict[str, Any]) -> int | None:
-    """Prefer CSV progress, falling back to primary XDF when the mirror is degraded."""
+    """Use an enabled healthy CSV observer, otherwise the primary XDF."""
 
     csv_mirror = dict(summary.get("csv_mirror") or {})
     mirror_healthy = csv_mirror.get("status") in {None, "recording"}

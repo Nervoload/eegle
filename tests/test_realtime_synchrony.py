@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import io
 import sys
 import tempfile
 import threading
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from time import monotonic, sleep
 from types import SimpleNamespace
@@ -557,8 +559,103 @@ class RealtimeSynchronyTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "recorder") as raised:
                     manager.stop_after_task()
 
-        self.assertEqual(attempted, list(workers.values()))
+        self.assertEqual(
+            attempted,
+            [workers["recorder"], workers["realtime_processor"], workers["dashboard"]],
+        )
         self.assertNotIn("dashboard", str(raised.exception))
+
+    def test_manager_signals_recorder_before_waiting_on_noncritical_workers(self) -> None:
+        class RunningProcess:
+            def poll(self) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = create_session(
+                {
+                    "runtime": {"session_root": tmp},
+                    "experiment": {"experiment_id": "test", "participant_id": "p1", "task": "go_nogo"},
+                },
+                root=Path(tmp),
+            )
+            manager = FeedbackManager({}, paths, record_eeg=False)
+            for name in ("dashboard", "realtime_processor", "recorder"):
+                manager._workers[name] = WorkerHandle(
+                    name=name,
+                    backend="test",
+                    module="test",
+                    command=[],
+                    status_file=paths.process_logs / f"{name}.status.json",
+                    stdout_file=paths.process_logs / f"{name}.stdout.log",
+                    stderr_file=paths.process_logs / f"{name}.stderr.log",
+                    stop_file=paths.process_logs / f"{name}.stop",
+                    process=RunningProcess(),  # type: ignore[arg-type]
+                )
+            actions: list[str] = []
+
+            with patch.object(
+                manager,
+                "_request_worker_stop",
+                side_effect=lambda worker: actions.append(f"signal:{worker.name}"),
+            ), patch.object(
+                manager,
+                "_stop_worker",
+                side_effect=lambda worker: actions.append(f"wait:{worker.name}"),
+            ):
+                manager.stop_after_task()
+
+        self.assertLess(actions.index("signal:recorder"), actions.index("wait:dashboard"))
+        self.assertEqual(
+            [action for action in actions if action.startswith("wait:")],
+            ["wait:recorder", "wait:realtime_processor", "wait:dashboard"],
+        )
+
+    def test_worker_shutdown_waits_with_terminal_progress_and_never_force_kills(self) -> None:
+        class CooperativeProcess:
+            def __init__(self) -> None:
+                self.waits = 0
+
+            def poll(self) -> int | None:
+                return 0 if self.waits >= 2 else None
+
+            def wait(self, timeout: float) -> int:
+                self.waits += 1
+                if self.waits < 2:
+                    raise __import__("subprocess").TimeoutExpired("worker", timeout)
+                return 0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = create_session(
+                {
+                    "runtime": {"session_root": tmp},
+                    "experiment": {"experiment_id": "test", "participant_id": "p1", "task": "go_nogo"},
+                },
+                root=Path(tmp),
+            )
+            manager = FeedbackManager({}, paths, record_eeg=False)
+            process = CooperativeProcess()
+            worker = WorkerHandle(
+                name="recorder",
+                backend="labrecorder_xdf",
+                module="eegle.workers.recorder",
+                command=[],
+                status_file=paths.process_logs / "recorder.status.json",
+                stdout_file=paths.process_logs / "recorder.stdout.log",
+                stderr_file=paths.process_logs / "recorder.stderr.log",
+                stop_file=paths.process_logs / "recorder.stop",
+                process=process,  # type: ignore[arg-type]
+            )
+            worker.status_file.write_text(
+                json.dumps({"status": "finalizing", "message": "XDF is still processing"}),
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+            with patch.object(manager, "_request_worker_stop"), redirect_stdout(output):
+                manager._stop_worker(worker)
+
+        self.assertEqual(process.waits, 2)
+        self.assertIn("XDF is still processing", output.getvalue())
+        self.assertIn("No forced kill", output.getvalue())
 
     def test_enabled_realtime_without_markers_or_alpha_is_invalid(self) -> None:
         failures = _pipeline_validity_failures(
