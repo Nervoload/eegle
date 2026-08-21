@@ -578,6 +578,11 @@ baseline/task reports that the primary acquisition has already failed.
   is not an EEGle ACL or read-only restriction. Inspect the reported
   `labrecorder.stdout.log` and `labrecorder.stderr.log` paths for the exact
   LabRecorder-side path/start failure.
+- EEGle keeps the nested preflight probe under the compact `preflight\xdfp`
+  hierarchy and refuses to launch LabRecorder when an XDF destination exceeds
+  its conservative 240-character Windows budget. If that early path error is
+  reported, shorten `-DataRoot`, `-Participant`, or `-VisitId`; no recording has
+  started and no acquired file has been overwritten.
 - Ensure the path points to `LabRecorder.exe` itself.
 - Close every manually running LabRecorder instance and stale
   `LabRecorder.exe` process in Task Manager.

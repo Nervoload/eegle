@@ -160,8 +160,13 @@ remain blocking setup errors.
 When the managed XDF backend is enabled, preflight also launches LabRecorder
 for a separate three-second probe, emits start/end markers, finalizes the file,
 and runs the same bounded XDF integrity scan used after full phases. The probe
-is retained under the visit's `preflight/xdf_recording_probes` directory as
-evidence that the actual XDF storage path—not only the live LSL inlet—worked.
+is retained under the visit's deliberately compact `preflight/xdfp` directory
+as evidence that the actual XDF storage path—not only the live LSL inlet—worked.
+The compact probe hierarchy keeps LabRecorder below Windows path-length limits.
+Before any LabRecorder process is launched, EEGle also rejects an XDF destination
+longer than its conservative 240-character Windows budget with an actionable
+error, avoiding the LabRecorder state where remote commands succeed but the file
+remains absent or at 0 kB.
 
 The task process creates the run-specific marker outlet before the recorder
 starts. The recorder worker resolves both required streams to their exact

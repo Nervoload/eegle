@@ -17,10 +17,12 @@ from unittest.mock import patch
 import numpy as np
 
 from eegle.devices.labrecorder_xdf import (
+    LABRECORDER_WINDOWS_PATH_BUDGET,
     LabRecorderXdfRecorder,
     build_labrecorder_config,
     labrecorder_environment,
     required_labrecorder_streams,
+    validate_labrecorder_xdf_path,
 )
 from eegle.devices.xdf_integrity import validate_xdf_recording
 from eegle.feedback_manager import normalize_processes
@@ -165,6 +167,29 @@ class ManagedXdfTests(unittest.TestCase):
         self.assertIn('RequiredStreams="Neuracle EEG (ACQ-PC)","EEGleMarkers"', rendered)
         self.assertIn("RCSEnabled=1", rendered)
         self.assertIn("RCSPort=22345", rendered)
+
+    def test_windows_xdf_path_budget_rejects_silent_zero_byte_destination(self) -> None:
+        safe = "C:\\" + "a" * (LABRECORDER_WINDOWS_PATH_BUDGET - 3)
+        too_long = safe + "x"
+
+        validate_labrecorder_xdf_path(safe, platform="win32")
+        with self.assertRaisesRegex(OSError, "Recording was not started"):
+            validate_labrecorder_xdf_path(too_long, platform="win32")
+
+        validate_labrecorder_xdf_path(too_long, platform="darwin")
+
+    def test_start_rejects_overlong_windows_path_before_labrecorder_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = paths_for_existing_session(tmp)
+            paths.eeg_xdf = Path("C:\\" + "a" * LABRECORDER_WINDOWS_PATH_BUDGET)
+            recorder = LabRecorderXdfRecorder(self._config("LabRecorder.exe"), paths)
+            with patch("eegle.devices.labrecorder_xdf.sys.platform", "win32"), patch(
+                "eegle.devices.labrecorder_xdf.resolve_labrecorder_executable"
+            ) as resolve_executable:
+                with self.assertRaisesRegex(OSError, "Recording was not started"):
+                    recorder.start()
+
+        resolve_executable.assert_not_called()
 
     def test_required_stream_contract_uses_exact_eeg_and_marker_hosts(self) -> None:
         required = required_labrecorder_streams(

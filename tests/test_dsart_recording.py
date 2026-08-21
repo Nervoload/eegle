@@ -632,7 +632,11 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertEqual(result.status, "warn")
         self.assertIn("measured EEG rate", result.detail)
         self.assertTrue(any("CSV mirror failed" in row for row in result.data["warnings"]))
-        self.assertTrue(Path(result.data["session_dir"]).name.startswith("run-"))
+        probe_session = Path(result.data["session_dir"])
+        self.assertTrue(probe_session.name.startswith("run-"))
+        self.assertIn("xdfp", probe_session.parts)
+        self.assertNotIn("xdf_recording_probes", probe_session.parts)
+        self.assertNotIn("xdf_preflight_initial_preflight", probe_session.parts)
 
     def test_preflight_comparison_returns_its_quality_result(self) -> None:
         initial = {

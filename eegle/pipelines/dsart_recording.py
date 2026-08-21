@@ -923,18 +923,21 @@ def _run_xdf_preflight_probe(
         1.0,
         float(recorder_config.get("preflight_xdf_probe_seconds", 3.0)),
     )
-    probe_root = output_dir / "xdf_recording_probes"
+    # This complete create_session hierarchy is nested inside the visit's
+    # preflight directory. Keep its disposable path components deliberately
+    # compact so LabRecorder remains below legacy Windows path limits.
+    probe_root = output_dir / "xdfp"
     probe_config.setdefault("runtime", {})["session_root"] = str(probe_root.resolve())
     probe_config.setdefault("experiment", {}).update(
         {
-            "experiment_id": f"xdf_preflight_{_safe_token(phase)}",
+            "experiment_id": "xdfp",
             "participant_id": participant_id,
-            "task": "xdf_preflight",
+            "task": "xdfp",
         }
     )
     paths = create_session(
         probe_config,
-        task="xdf_preflight",
+        task="xdfp",
         participant_id=participant_id,
         root=probe_root,
     )

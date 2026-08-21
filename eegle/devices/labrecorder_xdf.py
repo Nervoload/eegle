@@ -20,6 +20,27 @@ from eegle.devices.lsl_eeg import LslEegRecorder, LslSampleHeartbeat, resolve_ee
 from eegle.session import SessionPaths
 
 
+LABRECORDER_WINDOWS_PATH_BUDGET = 240
+
+
+def validate_labrecorder_xdf_path(
+    path: str | Path,
+    *,
+    platform: str | None = None,
+) -> None:
+    """Reject Windows destinations that LabRecorder may silently fail to open."""
+
+    active_platform = sys.platform if platform is None else platform
+    path_text = str(path)
+    if active_platform == "win32" and len(path_text) > LABRECORDER_WINDOWS_PATH_BUDGET:
+        raise OSError(
+            f"LabRecorder XDF destination is {len(path_text)} characters, exceeding EEGle's "
+            f"conservative Windows-safe budget of {LABRECORDER_WINDOWS_PATH_BUDGET}: {path_text}. "
+            "Choose a shorter session root or participant/visit identifier. Recording was not "
+            "started, preventing LabRecorder from silently remaining at 0 kB."
+        )
+
+
 class LabRecorderXdfRecorder:
     """Control authoritative LabRecorder/XDF capture with an optional CSV mirror."""
 
@@ -110,6 +131,7 @@ class LabRecorderXdfRecorder:
 
     def start(self) -> dict[str, Any]:
         """Attempt the mirror, launch LabRecorder, and prove primary XDF growth."""
+        validate_labrecorder_xdf_path(self.paths.eeg_xdf)
         if self.paths.eeg_xdf.exists():
             raise FileExistsError(f"refusing to overwrite existing XDF recording: {self.paths.eeg_xdf}")
         self._executable = resolve_labrecorder_executable(
