@@ -82,6 +82,8 @@ class PortabilityTests(unittest.TestCase):
         study_config = json.loads((ROOT / "configs" / "study1_neuracle64.json").read_text(encoding="utf-8"))
         self.assertEqual(study_config["recording_suite"]["marker_receipt_timeout_seconds"], 2.0)
         self.assertEqual(study_config["processes"]["recorder"]["tail_guard_seconds"], 1.0)
+        self.assertEqual(study_config["processes"]["recorder"]["rcs_ack_timeout_seconds"], 5.0)
+        self.assertEqual(study_config["processes"]["recorder"]["rcs_stop_ack_timeout_seconds"], 120.0)
         self.assertNotIn("worker_shutdown_timeout_seconds", study_config["processes"]["recorder"])
         self.assertNotIn("shutdown_timeout_seconds", study_config["processes"]["recorder"])
         self.assertEqual(study_config["processes"]["recorder"]["finalization_status_interval_seconds"], 5.0)

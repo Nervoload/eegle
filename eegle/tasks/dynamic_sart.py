@@ -689,7 +689,15 @@ class DynamicSartTask:
                     )
                     block_records = []
                     for local_index, trial in enumerate(block_trials):
-                        if not _recorder_health_gate(recorder_monitor, logger, marker_outlet, trial=trial):
+                        # A preflipped trial was already health-gated before its onset. Checking it
+                        # here would happen after the stimulus was visible and could leave an onset
+                        # marker without a matching trial record if the check failed.
+                        if preflipped_onset is None and not _recorder_health_gate(
+                            recorder_monitor,
+                            logger,
+                            marker_outlet,
+                            trial=trial,
+                        ):
                             aborted = True
                             abort_reason = "recorder_health_failure"
                             break
@@ -700,6 +708,17 @@ class DynamicSartTask:
                             and not feedback_client.enabled
                             else None
                         )
+                        recorder_failed_before_next = False
+                        if next_trial is not None and not _recorder_health_gate(
+                            recorder_monitor,
+                            logger,
+                            marker_outlet,
+                            trial=next_trial,
+                        ):
+                            # Finish and persist the current, already-started trial, but do not show
+                            # the next digit on its boundary frame.
+                            next_trial = None
+                            recorder_failed_before_next = True
                         action_audits = _poll_and_audit_dynamic_sart_feedback(
                             feedback_client,
                             logger,
@@ -747,6 +766,10 @@ class DynamicSartTask:
                                     abort_reason = "probe_abort"
                                     break
                                 preflipped_onset = None
+                        if recorder_failed_before_next:
+                            aborted = True
+                            abort_reason = "recorder_health_failure"
+                            break
                     timing_warning = _block_timing_warning(block_records, timing)
                     if timing_warning is not None:
                         _emit(
@@ -2286,7 +2309,7 @@ def _recorder_health_gate(
                 trial=None if trial is None else int(trial.get("global_trial_index", 0)),
                 reason=health.reason,
                 recorder_status=health.status.get("status"),
-                recorder_summary=health.status.get("summary"),
+                recorder_summary=_compact_recorder_summary(health.status.get("summary")),
             )
         return True
     _emit(
@@ -2297,9 +2320,35 @@ def _recorder_health_gate(
         trial=None if trial is None else int(trial.get("global_trial_index", 0)),
         reason=health.reason,
         recorder_status=health.status.get("status"),
-        recorder_summary=health.status.get("summary"),
+        recorder_summary=_compact_recorder_summary(health.status.get("summary")),
     )
     return False
+
+
+def _compact_recorder_summary(summary: Any) -> dict[str, Any]:
+    """Retain actionable health evidence without serializing recorder metadata mid-trial."""
+
+    payload = dict(summary or {})
+    csv_mirror = dict(payload.get("csv_mirror") or {})
+    heartbeat = dict(payload.get("lsl_sample_heartbeat") or {})
+    return {
+        "status": payload.get("status"),
+        "primary_format": payload.get("primary_format"),
+        "sample_count": payload.get("sample_count"),
+        "xdf_growth_status": payload.get("xdf_growth_status"),
+        "xdf_size_bytes": payload.get("xdf_size_bytes"),
+        "error": payload.get("error"),
+        "csv_mirror": {
+            "status": csv_mirror.get("status"),
+            "sample_count": csv_mirror.get("sample_count"),
+            "error": csv_mirror.get("error"),
+        },
+        "lsl_sample_heartbeat": {
+            "status": heartbeat.get("status"),
+            "sample_count": heartbeat.get("sample_count"),
+            "error": heartbeat.get("error"),
+        },
+    }
 
 
 def _emit(
