@@ -676,6 +676,10 @@ def normalize_processes(config: dict[str, Any], record_eeg: bool = True) -> dict
             ),
             "executable": str(recorder.get("executable", "LabRecorder.exe")),
             "rcs_port": int(recorder.get("rcs_port", 22345)),
+            "rcs_ack_timeout_seconds": float(recorder.get("rcs_ack_timeout_seconds", 5.0)),
+            "rcs_stop_ack_timeout_seconds": float(
+                recorder.get("rcs_stop_ack_timeout_seconds", 120.0)
+            ),
             "startup_timeout_seconds": float(
                 recorder.get("startup_timeout_seconds", 20.0 if recorder_backend == "labrecorder_xdf" else 8.0)
             ),

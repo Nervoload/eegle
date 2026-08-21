@@ -193,6 +193,13 @@ The non-writing LSL sample heartbeat reports live sample progress and timestamp
 anomalies. Heartbeat degradation, timestamp gaps, stalled visible XDF growth,
 sample-rate mismatch, and signal-quality findings are warnings and do not stop
 LabRecorder or the task.
+
+At launch and shutdown, EEGle consumes LabRecorder's remote-control `OK`
+acknowledgement after each `update`, `filename`, `start`, and `stop` request.
+This serializes LabRecorder's UI-thread operations so a stream refresh cannot
+race the filename or recording-start command. These acknowledgements do not
+replace the XDF gate: the expected file must still appear, finalize, parse, and
+pass stream and marker validation before a recording phase is accepted.
 LabRecorder process exit, XDF startup/finalization failure, unavailable storage,
 and loss of required marker/stream structure remain blocking acquisition
 failures.

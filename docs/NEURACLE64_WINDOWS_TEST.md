@@ -570,6 +570,14 @@ baseline/task reports that the primary acquisition has already failed.
 
 ### LabRecorder gate fails
 
+- EEGle waits for LabRecorder's `OK` acknowledgement after each remote-control
+  `update`, `filename`, `start`, and `stop` command. This prevents the start
+  request from overtaking LabRecorder's stream refresh or filename update.
+- A failure saying that commands were acknowledged but no XDF became observable
+  means LabRecorder handled the requests but did not open the expected file. It
+  is not an EEGle ACL or read-only restriction. Inspect the reported
+  `labrecorder.stdout.log` and `labrecorder.stderr.log` paths for the exact
+  LabRecorder-side path/start failure.
 - Ensure the path points to `LabRecorder.exe` itself.
 - Close every manually running LabRecorder instance and stale
   `LabRecorder.exe` process in Task Manager.

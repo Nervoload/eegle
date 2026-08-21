@@ -166,6 +166,8 @@
       "lsl_sample_heartbeat": true,
       "executable": "LabRecorder.exe",
       "rcs_port": 22345,
+      "rcs_ack_timeout_seconds": 5.0,
+      "rcs_stop_ack_timeout_seconds": 120.0,
       "startup_timeout_seconds": 20.0,
       "preflight_xdf_probe_seconds": 3.0,
       "finalization_status_interval_seconds": 5.0,

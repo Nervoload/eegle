@@ -90,9 +90,16 @@ class _Process:
 class _Socket:
     def __init__(self) -> None:
         self.sent: list[str] = []
+        self.timeout: float | None = None
 
     def sendall(self, value: bytes) -> None:
         self.sent.append(value.decode("utf-8").strip())
+
+    def settimeout(self, value: float) -> None:
+        self.timeout = float(value)
+
+    def recv(self, maximum: int) -> bytes:
+        return b"OK"[:maximum]
 
     def close(self) -> None:
         return None
@@ -122,6 +129,8 @@ class ManagedXdfTests(unittest.TestCase):
                     "csv_mirror": True,
                     "executable": executable,
                     "rcs_port": 22345,
+                    "rcs_ack_timeout_seconds": 5.0,
+                    "rcs_stop_ack_timeout_seconds": 120.0,
                     "startup_timeout_seconds": 20.0,
                     "shutdown_timeout_seconds": 15.0,
                     "xdf_stall_timeout_seconds": 15.0,
@@ -137,6 +146,8 @@ class ManagedXdfTests(unittest.TestCase):
         self.assertTrue(normalized["recorder"]["csv_mirror"])
         self.assertEqual(normalized["recorder"]["executable"], "C:/LSL/LabRecorder.exe")
         self.assertEqual(normalized["recorder"]["rcs_port"], 22345)
+        self.assertEqual(normalized["recorder"]["rcs_ack_timeout_seconds"], 5.0)
+        self.assertEqual(normalized["recorder"]["rcs_stop_ack_timeout_seconds"], 120.0)
         self.assertNotIn("shutdown_timeout_seconds", normalized["recorder"])
         self.assertEqual(normalized["recorder"]["finalization_status_interval_seconds"], 5.0)
         self.assertEqual(normalized["recorder"]["tail_guard_seconds"], 0.0)
@@ -211,6 +222,11 @@ class ManagedXdfTests(unittest.TestCase):
             self.assertEqual(remote.sent[0], "update")
             self.assertTrue(remote.sent[1].startswith("filename "))
             self.assertEqual(remote.sent[2:], ["start", "stop"])
+            self.assertEqual(
+                [row["command"] for row in stopped["rcs_acknowledgements"]],
+                ["update", "filename", "start", "stop"],
+            )
+            self.assertAlmostEqual(float(remote.timeout or 0.0), 120.0, places=3)
             self.assertEqual(stopped["sample_count"], 20)
             self.assertEqual(
                 popen.call_args.args[0],
@@ -222,6 +238,26 @@ class ManagedXdfTests(unittest.TestCase):
             metadata = json.loads(paths.xdf_metadata.read_text(encoding="utf-8"))
             self.assertIn("RequiredStreams=", metadata["labrecorder_config_contents"])
             self.assertEqual(metadata["labrecorder_launch_command"], popen.call_args.args[0])
+
+    def test_remote_commands_wait_for_labrecorder_acknowledgement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            recorder = LabRecorderXdfRecorder(self._config("LabRecorder.exe"), paths_for_existing_session(tmp))
+            remote = _Socket()
+            recorder._rcs_socket = remote  # type: ignore[assignment]
+
+            recorder._send("update")
+            recorder._send("filename {root:C:/data} {template:recording.xdf}")
+            recorder._send("start")
+
+        self.assertEqual(remote.sent, ["update", "filename {root:C:/data} {template:recording.xdf}", "start"])
+        self.assertEqual(
+            recorder._rcs_acknowledgements,
+            [
+                {"command": "update", "response": "OK"},
+                {"command": "filename", "response": "OK"},
+                {"command": "start", "response": "OK"},
+            ],
+        )
 
     def test_recorder_holds_tail_guard_before_sending_labrecorder_stop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

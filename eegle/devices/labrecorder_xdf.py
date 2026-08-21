@@ -58,6 +58,14 @@ class LabRecorderXdfRecorder:
             float(self.recorder_config.get("finalization_status_interval_seconds", 5.0)),
         )
         self.rcs_port = int(self.recorder_config.get("rcs_port", 22345))
+        self.rcs_ack_timeout_seconds = max(
+            1.0,
+            float(self.recorder_config.get("rcs_ack_timeout_seconds", 5.0)),
+        )
+        self.rcs_stop_ack_timeout_seconds = max(
+            self.rcs_ack_timeout_seconds,
+            float(self.recorder_config.get("rcs_stop_ack_timeout_seconds", 120.0)),
+        )
         self.labrecorder_config = paths.process_logs / "labrecorder.cfg"
         self.labrecorder_stdout = paths.process_logs / "labrecorder.stdout.log"
         self.labrecorder_stderr = paths.process_logs / "labrecorder.stderr.log"
@@ -78,6 +86,7 @@ class LabRecorderXdfRecorder:
         self._executable: Path | None = None
         self._executable_sha256: str | None = None
         self._commands: list[str] = []
+        self._rcs_acknowledgements: list[dict[str, str]] = []
         self._launch_command: list[str] = []
         self._generated_config: str | None = None
         self._required_streams: list[str] = []
@@ -272,6 +281,9 @@ class LabRecorderXdfRecorder:
             "labrecorder_launch_command": list(self._launch_command),
             "required_streams": list(self._required_streams),
             "commands": list(self._commands),
+            "rcs_acknowledgements": list(self._rcs_acknowledgements),
+            "rcs_ack_timeout_seconds": self.rcs_ack_timeout_seconds,
+            "rcs_stop_ack_timeout_seconds": self.rcs_stop_ack_timeout_seconds,
             "stop_reason": self._stop_reason,
             "finalization_stage": self._finalization_stage,
             "finalization_message": self._finalization_message,
@@ -403,7 +415,9 @@ class LabRecorderXdfRecorder:
             if self._process is not None and self._process.poll() is not None:
                 raise RuntimeError(f"LabRecorder exited during startup with return code {self._process.poll()}")
             try:
-                return socket.create_connection(("127.0.0.1", self.rcs_port), timeout=0.5)
+                connection = socket.create_connection(("127.0.0.1", self.rcs_port), timeout=0.5)
+                connection.settimeout(self.rcs_ack_timeout_seconds)
+                return connection
             except OSError as exc:
                 last_error = exc
                 sleep(0.1)
@@ -416,6 +430,60 @@ class LabRecorderXdfRecorder:
             raise RuntimeError("LabRecorder remote-control socket is unavailable")
         self._rcs_socket.sendall((command + "\n").encode("utf-8"))
         self._commands.append(command)
+        acknowledgement = self._receive_rcs_acknowledgement(command)
+        self._rcs_acknowledgements.append(
+            {
+                "command": command.split(maxsplit=1)[0],
+                "response": acknowledgement,
+            }
+        )
+
+    def _receive_rcs_acknowledgement(self, command: str) -> str:
+        """Wait until LabRecorder's UI thread has handled one RCS command.
+
+        LabRecorder writes ``OK`` only after emitting the command to its main
+        window.  Consuming that response serializes update/filename/start and
+        prevents ``start`` from racing the stream refresh or path update.
+        """
+
+        if self._rcs_socket is None:
+            raise RuntimeError("LabRecorder remote-control socket is unavailable")
+        command_name = command.split(maxsplit=1)[0]
+        timeout_seconds = (
+            self.rcs_stop_ack_timeout_seconds
+            if command_name == "stop"
+            else self.rcs_ack_timeout_seconds
+        )
+        deadline = monotonic() + timeout_seconds
+        response = bytearray()
+        while len(response) < 2:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    "LabRecorder did not acknowledge remote-control command "
+                    f"{command_name!r} within {timeout_seconds:.1f} seconds"
+                )
+            try:
+                self._rcs_socket.settimeout(remaining)
+                chunk = self._rcs_socket.recv(2 - len(response))
+            except socket.timeout as exc:
+                raise TimeoutError(
+                    "LabRecorder did not acknowledge remote-control command "
+                    f"{command_name!r} within {timeout_seconds:.1f} seconds"
+                ) from exc
+            if not chunk:
+                raise ConnectionError(
+                    "LabRecorder closed its remote-control connection before acknowledging "
+                    f"command {command_name!r}"
+                )
+            response.extend(chunk)
+        acknowledgement = bytes(response).decode("ascii", errors="replace").strip()
+        if acknowledgement != "OK":
+            raise RuntimeError(
+                "LabRecorder rejected or returned an unexpected acknowledgement for "
+                f"command {command_name!r}: {acknowledgement!r}"
+            )
+        return acknowledgement
 
     def _wait_for_xdf_growth(self) -> None:
         deadline = monotonic() + self.startup_timeout_seconds
@@ -429,7 +497,17 @@ class LabRecorderXdfRecorder:
                 self._last_xdf_growth_at = monotonic()
                 return
             sleep(0.1)
-        raise TimeoutError(f"LabRecorder did not create a growing XDF file at {self.paths.eeg_xdf}")
+        heartbeat = self._heartbeat.snapshot() if self.heartbeat_enabled else {}
+        raise TimeoutError(
+            "LabRecorder acknowledged its update, filename, and start commands but did not create "
+            f"an observable XDF file at {self.paths.eeg_xdf} within "
+            f"{self.startup_timeout_seconds:.1f} seconds; process_alive="
+            f"{self._process is not None and self._process.poll() is None}; "
+            f"heartbeat_status={heartbeat.get('status')}; "
+            f"heartbeat_samples={int(heartbeat.get('sample_count') or 0)}. "
+            "This is a LabRecorder path/start failure, not an EEGle write restriction; inspect "
+            f"{self.labrecorder_stdout} and {self.labrecorder_stderr}."
+        )
 
     def _wait_for_xdf_settle(self) -> None:
         previous: int | None = None
