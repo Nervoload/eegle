@@ -24,6 +24,7 @@ from eegle.tasks.dynamic_sart import (
     _block_timing_warning,
     _capture_countdown_flip,
     _capture_flip_event,
+    _compact_recorder_summary,
     _completion_text,
     _log_captured_flip_event,
     _log_captured_countdown_flip,
@@ -123,6 +124,34 @@ def _key(event_id: str, key: str, timestamp: float, *, response: bool = True, pr
 
 
 class DynamicSartTaskTests(unittest.TestCase):
+    def test_recorder_health_event_uses_compact_actionable_summary(self) -> None:
+        summary = {
+            "status": "recording",
+            "primary_format": "xdf",
+            "sample_count": 1200,
+            "xdf_growth_status": "advancing",
+            "xdf_size_bytes": 4096,
+            "error": None,
+            "commands": ["large", "diagnostic", "history"],
+            "stream": {"channel_names": [f"channel-{index}" for index in range(65)]},
+            "csv_mirror": {"status": "disabled", "sample_count": 0, "error": None},
+            "lsl_sample_heartbeat": {
+                "status": "recording",
+                "sample_count": 1200,
+                "error": None,
+                "stream": {"channel_names": [f"channel-{index}" for index in range(65)]},
+            },
+        }
+
+        compact = _compact_recorder_summary(summary)
+
+        self.assertEqual(compact["sample_count"], 1200)
+        self.assertEqual(compact["xdf_growth_status"], "advancing")
+        self.assertEqual(compact["lsl_sample_heartbeat"]["status"], "recording")
+        self.assertNotIn("commands", compact)
+        self.assertNotIn("stream", compact)
+        self.assertNotIn("stream", compact["lsl_sample_heartbeat"])
+
     def test_task_clock_maps_high_resolution_counter_to_monotonic_origin(self) -> None:
         with patch.object(dynamic_sart_task, "_performance_counter", return_value=40.125), patch.object(
             dynamic_sart_task,

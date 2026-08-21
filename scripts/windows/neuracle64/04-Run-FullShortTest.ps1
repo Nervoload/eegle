@@ -69,4 +69,7 @@ if ($FullScreen) {
     $arguments += "--fullscreen"
 }
 & $python @arguments
-Assert-EegleExit "full short Study 1 test"
+$studyExitCode = $LASTEXITCODE
+Write-Host "EEGle Study 1 process exit code: $studyExitCode"
+Assert-EegleExit "full short Study 1 test" $studyExitCode
+Write-Host "Full short Study 1 test completed successfully."

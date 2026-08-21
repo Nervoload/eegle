@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import copy
+import io
 import importlib.util
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,6 +19,7 @@ from eegle.pipelines.study1 import (
     _configure_simulated_eeg_rehearsal,
     _validate_options,
     _validate_visit_slot,
+    main,
     run_study1_visit,
 )
 from eegle.protocols.study1 import (
@@ -704,7 +707,32 @@ class Study1Tests(unittest.TestCase):
         self.assertIn("rerun the same Windows operator command", failed["next_action"])
         self.assertEqual(retried["status"], "completed")
         self.assertEqual(retried["visit_id"], "retry-visit-1")
+        self.assertEqual(retried["failures"], [])
+        self.assertEqual(len(retried["resolved_failures"]), 1)
+        self.assertEqual(retried["resolved_failures"][0]["phase"], "preflight")
+        self.assertEqual(
+            retried["resolved_failures"][0]["resolution"],
+            "visit_completed_after_retry",
+        )
+        self.assertEqual(manifest["failures"], [])
+        self.assertEqual(len(manifest["resolved_failures"]), 1)
         self.assertEqual(len(manifest["phases"]["preflight"]["attempts"]), 2)
+
+    def test_main_reports_and_returns_process_exit_code_from_final_status(self) -> None:
+        completed = {"status": "completed", "participant_id": "unit"}
+        failed = {"status": "failed", "participant_id": "unit"}
+        argv = ["--participant", "unit", "--visit", "1"]
+
+        for result, expected in ((completed, 0), (failed, 1)):
+            output = io.StringIO()
+            with self.subTest(status=result["status"]), patch(
+                "eegle.pipelines.study1.run_study1_visit",
+                return_value=copy.deepcopy(result),
+            ), redirect_stdout(output):
+                exit_code = main(argv)
+            printed = json.loads(output.getvalue())
+            self.assertEqual(exit_code, expected)
+            self.assertEqual(printed["process_exit_code"], expected)
 
     def test_retry_incomplete_does_not_overwrite_completed_visit(self) -> None:
         participant = {

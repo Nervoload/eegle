@@ -117,8 +117,10 @@ def main(argv: list[str] | None = None) -> int:
             "error": f"{type(exc).__name__}: {exc}",
             "next_action": _exception_next_action(exc),
         }
+    exit_code = 0 if result.get("status") == "completed" else 1
+    result["process_exit_code"] = exit_code
     print(json.dumps(result, indent=2, sort_keys=True))
-    return 0 if result.get("status") == "completed" else 1
+    return exit_code
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -518,6 +520,7 @@ def _run_configured_study1_visit(
     manifest["status"] = "completed"
     manifest["overall_status"] = "completed"
     manifest["visit_end"] = _now()
+    _archive_resolved_failures(manifest, resolved_at=manifest["visit_end"])
     _write_json_atomic(visit_manifest_path, manifest)
     _update_participant_visit(
         participant_manifest,
@@ -1001,6 +1004,24 @@ def _has_recording(manifest: dict[str, Any]) -> bool:
     return bool(manifest.get("session_directories")) or _phase_is_complete(manifest, "baseline")
 
 
+def _archive_resolved_failures(manifest: dict[str, Any], *, resolved_at: str) -> None:
+    """Keep retry history without reporting old failures as active on success."""
+
+    active = list(manifest.get("failures") or [])
+    if not active:
+        return
+    resolved = manifest.setdefault("resolved_failures", [])
+    for failure in active:
+        resolved.append(
+            {
+                **dict(failure),
+                "resolved_at": resolved_at,
+                "resolution": "visit_completed_after_retry",
+            }
+        )
+    manifest["failures"] = []
+
+
 def _public_result(manifest: dict[str, Any], path: Path) -> dict[str, Any]:
     result = {
         "schema": manifest.get("schema"),
@@ -1014,6 +1035,7 @@ def _public_result(manifest: dict[str, Any], path: Path) -> dict[str, Any]:
         "session_directories": manifest.get("session_directories"),
         "sequence_hashes": manifest.get("sequence_hashes"),
         "failures": manifest.get("failures"),
+        "resolved_failures": manifest.get("resolved_failures", []),
     }
     failures = list(manifest.get("failures") or [])
     if result["status"] != "completed" and failures:
