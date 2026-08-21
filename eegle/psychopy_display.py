@@ -162,6 +162,26 @@ def redraw_psychopy_after_resize(win: Any, *stimuli: Any) -> bool:
     return True
 
 
+def service_psychopy_static_window(win: Any, *stimuli: Any) -> bool:
+    """Pump native GUI events while a non-trial screen waits for input.
+
+    PTB keyboard polling is asynchronous and, unlike PsychoPy's legacy event
+    backend, does not itself service pyglet's Windows message queue.  Static
+    instruction, practice, break, and completion loops therefore call this
+    helper; frame-locked experimental trial loops deliberately do not.
+    """
+
+    dispatcher = getattr(type(win), "dispatchAllWindowEvents", None)
+    if callable(dispatcher):
+        dispatcher()
+    else:
+        handle = getattr(win, "winHandle", None)
+        handle_dispatcher = getattr(handle, "dispatch_events", None)
+        if callable(handle_dispatcher):
+            handle_dispatcher()
+    return redraw_psychopy_after_resize(win, *stimuli)
+
+
 @contextmanager
 def _pyglet_resizable_constructor() -> Iterator[None]:
     """Temporarily opt PsychoPy's pyglet window into native resizing."""

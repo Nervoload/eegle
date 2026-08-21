@@ -14,6 +14,7 @@ from eegle.psychopy_display import (
     create_psychopy_window,
     measure_psychopy_refresh_rate,
     redraw_psychopy_after_resize,
+    service_psychopy_static_window,
 )
 from eegle.realtime.epoching import EpochingConfig, MarkerEvent, load_stimulus_manifest_markers, parse_marker_label, should_epoch_marker
 from eegle.realtime.policy import TaskAction
@@ -32,6 +33,7 @@ from eegle.tasks.dynamic_sart import (
     _run_psychopy_countdown,
     _show_bounded_break,
     _show_practice_ready,
+    _show_screen,
     audit_dynamic_sart_action,
     practice_criteria,
     score_dynamic_sart_trial,
@@ -251,6 +253,46 @@ class DynamicSartTaskTests(unittest.TestCase):
         self.assertFalse(redraw_psychopy_after_resize(window, stimulus))
         stimulus.draw.assert_called_once_with()
         window.flip.assert_called_once_with()
+
+    def test_static_screen_services_native_window_events_while_waiting_for_ptb(self) -> None:
+        class Window:
+            dispatches = 0
+
+            @classmethod
+            def dispatchAllWindowEvents(cls) -> None:
+                cls.dispatches += 1
+
+        window = Window()
+        window._eegle_resize_redraw_pending = False
+
+        self.assertFalse(service_psychopy_static_window(window))
+        self.assertEqual(Window.dispatches, 1)
+
+    def test_instruction_screen_services_window_until_space_is_received(self) -> None:
+        keyboard = SimpleNamespace(
+            poll=MagicMock(
+                side_effect=[
+                    [],
+                    [{"key": "space", "is_escape_key": False}],
+                ]
+            )
+        )
+        window = SimpleNamespace(flip=MagicMock())
+        visual = SimpleNamespace(TextStim=MagicMock(return_value=SimpleNamespace(draw=MagicMock())))
+        with patch("eegle.tasks.dynamic_sart.service_psychopy_static_window") as service, patch(
+            "eegle.tasks.dynamic_sart.sleep"
+        ):
+            continued = _show_screen(
+                window,
+                visual,
+                keyboard,
+                "Instructions",
+                state="INSTRUCTIONS",
+                allowed_continue=["space"],
+            )
+
+        self.assertTrue(continued)
+        self.assertEqual(service.call_count, 2)
 
     def test_native_resize_updates_framebuffer_and_requests_repaint(self) -> None:
         class Handle:
