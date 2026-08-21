@@ -44,6 +44,8 @@ from eegle.pipelines.dsart_recording import (
     _runtime_cache_root,
     _storage_check,
     _task_marker_integrity,
+    _trial_soi_duration,
+    _trial_stimulus_duration,
     _options_from_args,
     _psychopy_baseline_phase,
     _raw_eeg_integrity,
@@ -92,6 +94,18 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertNotIn("abort_status", phase)
         self.assertFalse(_baseline_phase_aborted(phase))
         self.assertTrue(_baseline_phase_aborted({"abort_status": True}))
+
+    def test_task_timing_qc_prefers_flip_lsl_over_coarse_monotonic_durations(self) -> None:
+        row = {
+            "stimulus_onset_lsl": 20.0,
+            "stimulus_offset_lsl": 20.25,
+            "actual_stimulus_seconds": 0.265,
+            "actual_trial_duration_lsl_seconds": 1.6,
+            "actual_trial_duration_seconds": 1.625,
+        }
+
+        self.assertEqual(_trial_stimulus_duration(row), (0.25, "lsl_flip"))
+        self.assertEqual(_trial_soi_duration(row), (1.6, "lsl_flip"))
 
     def test_recording_enabled_dry_baseline_emits_lsl_boundaries(self) -> None:
         outlet = MagicMock()
@@ -1444,8 +1458,11 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertEqual(visual["status"], "fail")
         self.assertTrue(any("display flip" in row for row in visual["failures"]))
         self.assertEqual(xdf_without_csv["failures"], [])
-        self.assertEqual(xdf_without_csv["status"], "warning")
-        self.assertTrue(any("XDF" in row for row in xdf_without_csv["warnings"]))
+        self.assertEqual(xdf_without_csv["status"], "pass")
+        self.assertEqual(
+            xdf_without_csv["csv_marker_overlap_status"],
+            "not_applicable_authoritative_xdf",
+        )
 
     def test_raw_recorder_aborts_on_large_source_timestamp_gap(self) -> None:
         class Info:

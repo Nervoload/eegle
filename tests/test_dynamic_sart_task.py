@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import eegle.tasks.dynamic_sart as dynamic_sart_task
 from eegle.factory import make_task_component
 from eegle.psychopy_display import (
     _install_pyglet_resize_handler,
@@ -20,6 +21,7 @@ from eegle.session import create_session
 from eegle.tasks.dynamic_sart import (
     DynamicSartArtifactStore,
     DynamicSartTask,
+    _block_timing_warning,
     _capture_countdown_flip,
     _capture_flip_event,
     _completion_text,
@@ -121,6 +123,36 @@ def _key(event_id: str, key: str, timestamp: float, *, response: bool = True, pr
 
 
 class DynamicSartTaskTests(unittest.TestCase):
+    def test_task_clock_maps_high_resolution_counter_to_monotonic_origin(self) -> None:
+        with patch.object(dynamic_sart_task, "_performance_counter", return_value=40.125), patch.object(
+            dynamic_sart_task,
+            "_PERFORMANCE_COUNTER_MONOTONIC_OFFSET",
+            2.0,
+        ):
+            self.assertEqual(dynamic_sart_task.monotonic(), 42.125)
+
+    def test_timing_warning_prefers_flip_captured_lsl_durations(self) -> None:
+        row = {
+            "planned_stimulus_seconds": 0.25,
+            "actual_stimulus_seconds": 0.265,
+            "stimulus_onset_lsl": 100.0,
+            "stimulus_offset_lsl": 100.25,
+            "planned_soi_seconds": 1.6,
+            "actual_trial_duration_seconds": 1.625,
+            "actual_trial_duration_lsl_seconds": 1.6,
+        }
+        timing = {"expected_frame_interval_ms": 8.3}
+
+        self.assertIsNone(_block_timing_warning([row], timing))
+
+        row["stimulus_offset_lsl"] = 100.265
+        row["actual_trial_duration_lsl_seconds"] = 1.625
+        warning = _block_timing_warning([row], timing)
+        self.assertIsNotNone(warning)
+        assert warning is not None
+        self.assertEqual(warning["affected_timing_measurements"], 2)
+        self.assertEqual(warning["measurement_timebases"], ["lsl_flip"])
+
     def test_display_creation_supports_fullscreen_and_vblank(self) -> None:
         visual = SimpleNamespace(Window=MagicMock(return_value=SimpleNamespace()))
         create_psychopy_window(
@@ -505,8 +537,13 @@ class DynamicSartTaskTests(unittest.TestCase):
         reconstructed = reconstruct_dynamic_sart_timing([record, next_record])
         self.assertEqual(reconstructed[0]["actual_next_trial_onset_monotonic"], 11.31)
         self.assertAlmostEqual(reconstructed[0]["actual_trial_duration_seconds"], 1.31)
+        self.assertTrue(reconstructed[0]["actual_next_trial_within_block"])
         self.assertEqual(reconstructed[0]["timing_finalization_status"], "measured_from_next_stimulus_flip")
         self.assertEqual(reconstructed[1]["timing_finalization_status"], "terminal_no_following_stimulus_flip")
+
+        next_record["block_index"] = 2
+        block_transition = reconstruct_dynamic_sart_timing([record, next_record])
+        self.assertFalse(block_transition[0]["actual_next_trial_within_block"])
 
     def test_response_scoring_uses_logical_deadline_not_observed_loop_exit(self) -> None:
         config = DynamicSartConfig.from_mapping(_config()["tasks"]["dynamic_sart"])

@@ -54,6 +54,7 @@ def reconstruct_dynamic_sart_timing(trials: Iterable[dict[str, Any]]) -> list[di
         onset_lsl = _optional_float(row.get("stimulus_onset_lsl"))
         next_onset = _optional_float(next_row.get("stimulus_onset_monotonic")) if next_row else None
         next_onset_lsl = _optional_float(next_row.get("stimulus_onset_lsl")) if next_row else None
+        next_onset_within_block = _following_flip_is_within_block(row, next_row)
         monotonic_pair_valid = onset is not None and next_onset is not None and next_onset > onset
         lsl_pair_valid = onset_lsl is not None and next_onset_lsl is not None and next_onset_lsl > onset_lsl
         if not monotonic_pair_valid:
@@ -62,6 +63,9 @@ def reconstruct_dynamic_sart_timing(trials: Iterable[dict[str, Any]]) -> list[di
             next_onset_lsl = None
         row["actual_next_trial_onset_monotonic"] = next_onset
         row["actual_next_trial_onset_lsl"] = next_onset_lsl
+        row["actual_next_trial_within_block"] = (
+            next_onset_within_block if next_onset is not None or next_onset_lsl is not None else None
+        )
         row["next_trial_onset_monotonic"] = next_onset
         row["actual_trial_duration_seconds"] = (
             None if onset is None or next_onset is None else next_onset - onset
@@ -77,6 +81,20 @@ def reconstruct_dynamic_sart_timing(trials: Iterable[dict[str, Any]]) -> list[di
             else "invalid_or_missing_following_stimulus_flip"
         )
     return rows
+
+
+def _following_flip_is_within_block(
+    row: dict[str, Any],
+    next_row: dict[str, Any] | None,
+) -> bool:
+    if next_row is None:
+        return False
+    for field in ("is_practice", "practice_round", "phase", "block_index", "block_name"):
+        current = row.get(field)
+        following = next_row.get(field)
+        if current is not None and following is not None and current != following:
+            return False
+    return True
 
 
 def compute_support_reference(

@@ -9,7 +9,9 @@ import random
 from copy import deepcopy
 from pathlib import Path
 from statistics import median
-from time import monotonic, sleep
+from time import monotonic as _system_monotonic
+from time import perf_counter as _performance_counter
+from time import sleep
 from typing import Any, Iterable
 
 from eegle.analysis.dynamic_sart_labels import compute_support_reference
@@ -46,6 +48,30 @@ from eegle.tasks.dynamic_sart_schema import (
 )
 from eegle.tasks.dynamic_sart_sequence import build_dynamic_sart_plan, marker_label, validate_dynamic_sart_plan
 from eegle.telemetry import Telemetry
+
+
+def _performance_counter_monotonic_offset() -> float:
+    """Map the high-resolution counter onto the process monotonic origin.
+
+    Python 3.10's Windows monotonic clock can advance in roughly 15.6 ms
+    increments. The performance counter is high resolution, while this one-time
+    mapping preserves compatibility with recorder timestamps that use the
+    process monotonic origin.
+    """
+
+    counter_before = _performance_counter()
+    reference = _system_monotonic()
+    counter_after = _performance_counter()
+    return reference - ((counter_before + counter_after) / 2.0)
+
+
+_PERFORMANCE_COUNTER_MONOTONIC_OFFSET = _performance_counter_monotonic_offset()
+
+
+def monotonic() -> float:
+    """Return high-resolution monotonic time without changing persisted clock origin."""
+
+    return _performance_counter() + _PERFORMANCE_COUNTER_MONOTONIC_OFFSET
 
 
 EXPERIMENTAL_COUNTDOWN = ("5", "4", "3", "2", "1", "GO!")
@@ -2018,6 +2044,21 @@ def _set_stimulus_text(stimulus: Any, value: str) -> None:
         stimulus.text = value
 
 
+def _observed_stimulus_duration(row: dict[str, Any]) -> tuple[float | None, str]:
+    onset_lsl = _optional_float(row.get("stimulus_onset_lsl"))
+    offset_lsl = _optional_float(row.get("stimulus_offset_lsl"))
+    if onset_lsl is not None and offset_lsl is not None:
+        return offset_lsl - onset_lsl, "lsl_flip"
+    return _optional_float(row.get("actual_stimulus_seconds")), "high_resolution_monotonic"
+
+
+def _observed_soi_duration(row: dict[str, Any]) -> tuple[float | None, str]:
+    lsl_duration = _optional_float(row.get("actual_trial_duration_lsl_seconds"))
+    if lsl_duration is not None:
+        return lsl_duration, "lsl_flip"
+    return _optional_float(row.get("actual_trial_duration_seconds")), "high_resolution_monotonic"
+
+
 def _block_timing_warning(
     records: Iterable[dict[str, Any]],
     timing: dict[str, Any],
@@ -2026,14 +2067,18 @@ def _block_timing_warning(
     if frame_seconds <= 0.0:
         return None
     threshold = frame_seconds * 1.5
+    rows = list(records)
+    stimulus_observations = [_observed_stimulus_duration(row) for row in rows]
+    soi_observations = [_observed_soi_duration(row) for row in rows]
     stimulus_errors = [
-        abs(float(row.get("actual_stimulus_seconds") or 0.0) - float(row.get("planned_stimulus_seconds") or 0.0))
-        for row in records
+        abs(actual - float(row.get("planned_stimulus_seconds") or 0.0))
+        for row, (actual, _source) in zip(rows, stimulus_observations)
+        if actual is not None
     ]
     soi_errors = [
-        abs(float(row["actual_trial_duration_seconds"]) - float(row.get("planned_soi_seconds") or 0.0))
-        for row in records
-        if row.get("actual_trial_duration_seconds") is not None
+        abs(actual - float(row.get("planned_soi_seconds") or 0.0))
+        for row, (actual, _source) in zip(rows, soi_observations)
+        if actual is not None
     ]
     affected = sum(error > threshold for error in stimulus_errors) + sum(
         error > threshold for error in soi_errors
@@ -2046,6 +2091,13 @@ def _block_timing_warning(
         "allowed_error_seconds": threshold,
         "maximum_stimulus_error_seconds": max(stimulus_errors, default=0.0),
         "maximum_soi_error_seconds": max(soi_errors, default=0.0),
+        "measurement_timebases": sorted(
+            {
+                source
+                for actual, source in (*stimulus_observations, *soi_observations)
+                if actual is not None
+            }
+        ),
         "action": "recording continues; review the timing report after acquisition",
     }
 

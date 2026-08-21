@@ -206,6 +206,52 @@ class DynamicSartLabelTests(unittest.TestCase):
         self.assertEqual(len(timing_rows), 3)
         self.assertIn("actual_trial_duration_seconds", timing_rows[0])
 
+    def test_analysis_uses_lsl_drift_and_separates_block_transitions(self) -> None:
+        rows = [
+            _trial(1, phase="support", rt=0.3),
+            _trial(2, phase="support", rt=0.4),
+            _trial(3, phase="query", rt=0.5),
+        ]
+        rows[0].update(
+            block_index=1,
+            block_name="support",
+            planned_soi_seconds=1.25,
+            stimulus_onset_monotonic=10.0,
+            stimulus_onset_lsl=100.0,
+        )
+        rows[1].update(
+            block_index=1,
+            block_name="support",
+            planned_soi_seconds=1.25,
+            stimulus_onset_monotonic=11.265,
+            stimulus_onset_lsl=101.25,
+        )
+        rows[2].update(
+            block_index=2,
+            block_name="query",
+            planned_soi_seconds=1.25,
+            stimulus_onset_monotonic=12.7,
+            stimulus_onset_lsl=102.65,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "events").mkdir()
+            (root / "reports").mkdir()
+            (root / "events" / "dynamic_sart_trials.jsonl").write_text(
+                "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
+            )
+            result = analyze_dynamic_sart_session(root, {"tasks": {"dynamic_sart": {}}})
+
+        timing = result["timing_measurement"]
+        self.assertEqual(timing["measured_inter_onset_count"], 2)
+        self.assertEqual(timing["within_block_inter_onset_count"], 1)
+        self.assertEqual(timing["block_transition_inter_onset_count"], 1)
+        self.assertAlmostEqual(timing["maximum_absolute_next_onset_schedule_drift_seconds"], 0.0)
+        self.assertEqual(
+            timing["duration_timebase"],
+            "lsl_flip_preferred_with_high_resolution_monotonic_fallback",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

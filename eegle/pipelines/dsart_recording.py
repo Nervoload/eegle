@@ -2584,6 +2584,21 @@ def _finite_event_timestamp(row: dict[str, Any]) -> float | None:
     return timestamp if timestamp is not None and math.isfinite(timestamp) else None
 
 
+def _trial_stimulus_duration(row: dict[str, Any]) -> tuple[float | None, str]:
+    onset_lsl = _optional_float(row.get("stimulus_onset_lsl"))
+    offset_lsl = _optional_float(row.get("stimulus_offset_lsl"))
+    if onset_lsl is not None and offset_lsl is not None:
+        return offset_lsl - onset_lsl, "lsl_flip"
+    return _optional_float(row.get("actual_stimulus_seconds")), "high_resolution_monotonic"
+
+
+def _trial_soi_duration(row: dict[str, Any]) -> tuple[float | None, str]:
+    lsl_duration = _optional_float(row.get("actual_trial_duration_lsl_seconds"))
+    if lsl_duration is not None:
+        return lsl_duration, "lsl_flip"
+    return _optional_float(row.get("actual_trial_duration_seconds")), "high_resolution_monotonic"
+
+
 def _task_marker_integrity(
     session_dir: Path,
     parameters: dict[str, Any],
@@ -2704,6 +2719,7 @@ def _task_marker_integrity(
     overlapping_trials = []
     stimulus_duration_warning_trials = []
     soi_warning_trials = []
+    timing_measurement_timebases: set[str] = set()
     display_manifest = _load_json(session_dir / "events" / "stimulus_manifest.json") or {}
     display_timing = dict(display_manifest.get("display_timing") or {})
     frame_seconds = float(display_timing.get("expected_frame_interval_ms") or 0.0) / 1000.0
@@ -2721,7 +2737,9 @@ def _task_marker_integrity(
             overlapping_trials.append(trial_index)
         previous_response_close = response_close
         if timing_warning_threshold is not None:
-            actual_stimulus = _optional_float(trial_row.get("actual_stimulus_seconds"))
+            actual_stimulus, stimulus_timebase = _trial_stimulus_duration(trial_row)
+            if actual_stimulus is not None:
+                timing_measurement_timebases.add(stimulus_timebase)
             planned_stimulus = _optional_float(trial_row.get("planned_stimulus_seconds"))
             if (
                 actual_stimulus is not None
@@ -2729,7 +2747,9 @@ def _task_marker_integrity(
                 and abs(actual_stimulus - planned_stimulus) > timing_warning_threshold
             ):
                 stimulus_duration_warning_trials.append(trial_index)
-            actual_soi = _optional_float(trial_row.get("actual_trial_duration_seconds"))
+            actual_soi, soi_timebase = _trial_soi_duration(trial_row)
+            if actual_soi is not None:
+                timing_measurement_timebases.add(soi_timebase)
             planned_soi = _optional_float(trial_row.get("planned_soi_seconds"))
             if (
                 actual_soi is not None
@@ -2755,26 +2775,30 @@ def _task_marker_integrity(
     recorder_backend = str(
         parameters.get("processes", {}).get("recorder", {}).get("backend", "lsl_csv")
     )
-    overlap_target = warnings if recorder_backend == "labrecorder_xdf" else failures
+    csv_marker_overlap_status = "not_checked"
     display_monotonic_timestamps = [
         value
         for value in (_optional_float(row.get("timestamp")) for row in display_marker_rows)
         if value is not None
     ]
     if require_markers and display_monotonic_timestamps:
-        if raw_first is None or raw_last is None:
-            overlap_target.append(
-                "CSV mirror lacks the PC-local receipt-time span; XDF marker/EEG overlap is "
-                "validated from the authoritative XDF"
+        if recorder_backend == "labrecorder_xdf":
+            csv_marker_overlap_status = "not_applicable_authoritative_xdf"
+        elif raw_first is None or raw_last is None:
+            csv_marker_overlap_status = "fail_missing_csv_receipt_span"
+            failures.append(
+                "CSV mirror lacks the required PC-local receipt-time span for marker overlap"
             )
         elif (
             raw_first > min(display_monotonic_timestamps) + 0.5
             or raw_last < max(display_monotonic_timestamps) - 0.5
         ):
-            overlap_target.append(
-                "CSV mirror PC-local receipt-time span does not cover every stimulus marker; "
-                "authoritative XDF coverage is validated separately"
+            csv_marker_overlap_status = "fail_incomplete_csv_receipt_span"
+            failures.append(
+                "CSV mirror PC-local receipt-time span does not cover every stimulus marker"
             )
+        else:
+            csv_marker_overlap_status = "pass"
     marker_receipt = _marker_receipt_integrity(session_dir, display_marker_rows, required=require_markers)
     failures.extend(marker_receipt["failures"])
     warnings.extend(marker_receipt["warnings"])
@@ -2795,6 +2819,7 @@ def _task_marker_integrity(
         "overlapping_trial_indices": overlapping_trials,
         "stimulus_duration_warning_trials": stimulus_duration_warning_trials,
         "soi_warning_trials": soi_warning_trials,
+        "timing_measurement_timebases": sorted(timing_measurement_timebases),
         "timing_warning_threshold_seconds": timing_warning_threshold,
         "onset_lsl_timestamps_strictly_increasing": not any(
             second <= first for first, second in zip(onset_lsl_timestamps, onset_lsl_timestamps[1:])
@@ -2804,6 +2829,7 @@ def _task_marker_integrity(
             "first": _optional_float(raw_metadata.get("first_lsl_timestamp")),
             "last": _optional_float(raw_metadata.get("last_lsl_timestamp")),
         },
+        "csv_marker_overlap_status": csv_marker_overlap_status,
         "independent_marker_receipt": marker_receipt,
         "failures": failures,
         "warnings": warnings,

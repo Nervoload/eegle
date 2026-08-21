@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import math
 from collections import Counter
 from pathlib import Path
 from statistics import median
@@ -89,19 +90,22 @@ def analyze_dynamic_sart_session(session_dir: str | Path, config: dict[str, Any]
     measured_inter_onset_rows = [
         row for row in experimental if row.get("actual_trial_duration_seconds") is not None
     ]
-    onset_schedule_drift = [
-        float(row["actual_next_trial_onset_monotonic"])
-        - float(row["scheduled_next_trial_onset_monotonic"])
+    within_block_inter_onset_rows = [
+        row
         for row in measured_inter_onset_rows
-        if row.get("actual_next_trial_onset_monotonic") is not None
-        and row.get("scheduled_next_trial_onset_monotonic") is not None
+        if row.get("actual_next_trial_within_block") is not False
         and not bool(row.get("planned_break_after_trial"))
         and not bool(row.get("probe_after"))
     ]
+    onset_schedule_drift = [
+        drift
+        for row in within_block_inter_onset_rows
+        if (drift := _inter_onset_schedule_drift(row)) is not None
+    ]
     response_close_overshoot = [
-        float(row["response_window_close_overshoot_seconds"])
+        overshoot
         for row in rows
-        if row.get("response_window_close_overshoot_seconds") is not None
+        if (overshoot := _response_close_overshoot(row)) is not None
     ]
     legacy_timing_rows = sum(int(int(row.get("timing_semantics_version") or 1) < 2) for row in rows)
     _write_timing_rows(timing_path, rows)
@@ -128,8 +132,17 @@ def analyze_dynamic_sart_session(session_dir: str | Path, config: dict[str, Any]
         "mean_valid_go_rt_seconds": sum(valid_go_rts) / len(valid_go_rts) if valid_go_rts else None,
         "median_valid_go_rt_seconds": median(valid_go_rts) if valid_go_rts else None,
         "timing_measurement": {
-            "contract": "actual inter-onset intervals are reconstructed from consecutive flip-captured stimulus onsets",
+            "contract": (
+                "actual inter-onset intervals are reconstructed from consecutive flip-captured "
+                "stimulus onsets; drift statistics prefer LSL flip time and exclude block transitions"
+            ),
+            "duration_timebase": "lsl_flip_preferred_with_high_resolution_monotonic_fallback",
             "measured_inter_onset_count": len(measured_inter_onset_rows),
+            "within_block_inter_onset_count": len(within_block_inter_onset_rows),
+            "block_transition_inter_onset_count": sum(
+                int(row.get("actual_next_trial_within_block") is False)
+                for row in measured_inter_onset_rows
+            ),
             "terminal_or_missing_following_flip_count": len(experimental) - len(measured_inter_onset_rows),
             "legacy_scheduled_response_close_row_count": legacy_timing_rows,
             "mean_next_onset_schedule_drift_seconds": (
@@ -187,6 +200,36 @@ def _accuracy(rows: list[dict[str, Any]]) -> float | None:
     if not rows:
         return None
     return sum(int(bool(row.get("correct"))) for row in rows) / len(rows)
+
+
+def _inter_onset_schedule_drift(row: dict[str, Any]) -> float | None:
+    planned = _optional_float(row.get("planned_soi_seconds"))
+    actual_lsl = _optional_float(row.get("actual_trial_duration_lsl_seconds"))
+    actual_monotonic = _optional_float(row.get("actual_trial_duration_seconds"))
+    actual = actual_lsl if actual_lsl is not None else actual_monotonic
+    if planned is not None and actual is not None:
+        return actual - planned
+    actual_next = _optional_float(row.get("actual_next_trial_onset_monotonic"))
+    scheduled_next = _optional_float(row.get("scheduled_next_trial_onset_monotonic"))
+    return None if actual_next is None or scheduled_next is None else actual_next - scheduled_next
+
+
+def _response_close_overshoot(row: dict[str, Any]) -> float | None:
+    scheduled_lsl = _optional_float(row.get("scheduled_response_window_close_lsl"))
+    actual_lsl = _optional_float(row.get("response_window_close_lsl"))
+    if scheduled_lsl is not None and actual_lsl is not None:
+        return max(0.0, actual_lsl - scheduled_lsl)
+    return _optional_float(row.get("response_window_close_overshoot_seconds"))
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _event_counts(path: Path) -> Counter[str]:
@@ -247,9 +290,11 @@ def _write_timing_rows(path: Path, rows: list[dict[str, Any]]) -> None:
         "scheduled_next_trial_onset_monotonic",
         "actual_next_trial_onset_monotonic",
         "actual_next_trial_onset_lsl",
+        "actual_next_trial_within_block",
         "actual_trial_duration_seconds",
         "actual_trial_duration_lsl_seconds",
         "next_onset_schedule_drift_seconds",
+        "next_onset_schedule_drift_timebase",
         "planned_break_after_trial",
         "probe_after",
         "timing_semantics_version",
@@ -261,18 +306,24 @@ def _write_timing_rows(path: Path, rows: list[dict[str, Any]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         for row in rows:
-            actual_next = row.get("actual_next_trial_onset_monotonic")
-            scheduled_next = row.get("scheduled_next_trial_onset_monotonic")
             drift = (
                 None
-                if actual_next is None
-                or scheduled_next is None
+                if row.get("actual_next_trial_within_block") is False
                 or bool(row.get("planned_break_after_trial"))
                 or bool(row.get("probe_after"))
-                else float(actual_next) - float(scheduled_next)
+                else _inter_onset_schedule_drift(row)
             )
             payload = {field: row.get(field) for field in fields}
             payload["next_onset_schedule_drift_seconds"] = drift
+            payload["next_onset_schedule_drift_timebase"] = (
+                None
+                if drift is None
+                else "lsl_flip"
+                if _optional_float(row.get("actual_trial_duration_lsl_seconds")) is not None
+                else "high_resolution_monotonic"
+                if int(row.get("timing_semantics_version") or 1) >= 2
+                else "legacy_monotonic"
+            )
             writer.writerow(
                 {
                     field: "" if value is None else int(value) if isinstance(value, bool) else value
