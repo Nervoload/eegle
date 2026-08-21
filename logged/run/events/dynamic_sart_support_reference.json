@@ -1,0 +1,31 @@
+{
+  "created_at_support_boundary": 1399316.953,
+  "last_included_support_trial": 10,
+  "principal_support_relative_threshold": "q80",
+  "reference_hash": "e0265a7d5c08f78c252338c0dae3379748a6232faf49bfadd2d3d01335cda291",
+  "schema": "eegle.dynamic_sart.support_reference.v2",
+  "source_trial_hash": "51ecea2b3121137674f28b2760437816c42a9e795f977260a8cae111cb7e3a50",
+  "support_go_trial_budget": 9,
+  "support_log_rt_mad": 0.10173729874852744,
+  "support_log_rt_median": -1.3656716776745914,
+  "support_log_rt_q80": -1.2583498242814382,
+  "support_log_rt_q95": -0.858496174236111,
+  "support_log_rt_robust_scale": 0.15083571912456678,
+  "support_log_rt_scale_method": "median_absolute_deviation",
+  "support_q80_confidence": "low",
+  "support_q80_preferred_min_valid_go_trials": 100,
+  "support_q80_role": "primary_exploratory",
+  "support_q95_confidence": "low_unattainable_by_design",
+  "support_q95_preferred_attainable": false,
+  "support_q95_preferred_min_valid_go_trials": 200,
+  "support_q95_role": "secondary_exploratory",
+  "support_rt_median_seconds": 0.25520920008420944,
+  "support_trial_budget": 10,
+  "valid_support_go_count": 9,
+  "warnings": [
+    "valid_support_go_count_below_50_for_robust_reference",
+    "valid_support_go_count_below_100_for_q80",
+    "valid_support_go_count_below_200_for_q95",
+    "q95_preferred_confidence_unattainable_under_support_go_trial_budget"
+  ]
+}

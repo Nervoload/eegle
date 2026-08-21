@@ -1,0 +1,101 @@
+{
+  "backend": "labrecorder_xdf",
+  "elapsed_seconds": 217.84400000004098,
+  "error": null,
+  "name": "recorder",
+  "status": "stopped",
+  "summary": {
+    "commands": [
+      "update",
+      "filename {root:C:/Users/Surettej/AppData/Local/eegle/data/participants/tested/sessions/2026-08-20/study1_visit_visit-1-20260820T161050_session1_main/dynamic_sart/run-20260820T161425/raw} {template:recording.xdf}",
+      "start",
+      "stop"
+    ],
+    "csv_mirror": {
+      "raw_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\tested\\sessions\\2026-08-20\\study1_visit_visit-1-20260820T161050_session1_main\\dynamic_sart\\run-20260820T161425\\raw\\eeg.csv",
+      "sample_count": 0,
+      "status": "disabled"
+    },
+    "csv_mirror_degraded": false,
+    "csv_mirror_warning": null,
+    "error": null,
+    "finalization_message": "LabRecorder has stopped recording but is still closing; waiting without force-kill",
+    "finalization_stage": "awaiting_labrecorder_close",
+    "first_local_received_lsl_timestamp": 1399151.545165,
+    "first_local_received_time": null,
+    "first_lsl_timestamp": null,
+    "first_source_lsl_timestamp": 622.501,
+    "labrecorder_config": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\tested\\sessions\\2026-08-20\\study1_visit_visit-1-20260820T161050_session1_main\\dynamic_sart\\run-20260820T161425\\logs\\processes\\labrecorder.cfg",
+    "labrecorder_config_contents": "StudyRoot=C:/Users/Surettej/AppData/Local/eegle/data/participants/tested/sessions/2026-08-20/study1_visit_visit-1-20260820T161050_session1_main/dynamic_sart/run-20260820T161425/raw\nPathTemplate=recording.xdf\nRequiredStreams=\"neuracle64_EEG (NRC081798R)\",\"EEGleMarkers (NRC081798R)\"\nRCSEnabled=1\nRCSPort=22345\n",
+    "labrecorder_executable": "C:\\Users\\Surettej\\AppData\\Local\\Programs\\LabRecorder\\LabRecorder.exe",
+    "labrecorder_executable_sha256": "277e1c7d98a189b9bc89db81b3be42cd99edebf94b145ba4078c64b606330e19",
+    "labrecorder_launch_command": [
+      "C:\\Users\\Surettej\\AppData\\Local\\Programs\\LabRecorder\\LabRecorder.exe",
+      "--config",
+      "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\tested\\sessions\\2026-08-20\\study1_visit_visit-1-20260820T161050_session1_main\\dynamic_sart\\run-20260820T161425\\logs\\processes\\labrecorder.cfg"
+    ],
+    "labrecorder_pid": 30628,
+    "labrecorder_returncode": 0,
+    "last_local_received_lsl_timestamp": 1399358.4645889,
+    "last_local_received_time": null,
+    "last_lsl_timestamp": null,
+    "last_source_lsl_timestamp": 829.3999999999988,
+    "lsl_sample_heartbeat": {
+      "clock_origin": {
+        "definition": "first_observed_eeg_sample",
+        "local_lsl_timestamp": 1399151.545165,
+        "source_lsl_timestamp": 622.501
+      },
+      "error": null,
+      "first_local_received_lsl_timestamp": 1399151.545165,
+      "first_source_lsl_timestamp": 622.501,
+      "largest_timestamp_gap_seconds": 0.0,
+      "last_local_received_lsl_timestamp": 1399358.4645889,
+      "last_source_lsl_timestamp": 829.3999999999988,
+      "nonmonotonic_timestamp_count": 0,
+      "notes": [],
+      "sample_count": 206900,
+      "status": "stopped",
+      "stream": {
+        "channel_count": 65,
+        "hostname": "NRC081798R",
+        "name": "neuracle64_EEG",
+        "nominal_srate": 1000.0,
+        "source_id": "b697a704-3e15-48e1-9a2a-f3a1a0ecd32e",
+        "type": "EEG"
+      },
+      "timestamp_gap_count": 0
+    },
+    "lsl_sample_heartbeat_warning": null,
+    "metadata_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\tested\\sessions\\2026-08-20\\study1_visit_visit-1-20260820T161050_session1_main\\dynamic_sart\\run-20260820T161425\\raw\\xdf_metadata.json",
+    "notes": [
+      "kept LabRecorder open for a 1.000-second marker/EEG tail guard"
+    ],
+    "primary_format": "xdf",
+    "raw_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\tested\\sessions\\2026-08-20\\study1_visit_visit-1-20260820T161050_session1_main\\dynamic_sart\\run-20260820T161425\\raw\\recording.xdf",
+    "required_streams": [
+      "neuracle64_EEG (NRC081798R)",
+      "EEGleMarkers (NRC081798R)"
+    ],
+    "sample_count": 206900,
+    "status": "stopped",
+    "stop_reason": "stop_requested",
+    "stream": {
+      "channel_count": 65,
+      "hostname": "NRC081798R",
+      "name": "neuracle64_EEG",
+      "nominal_srate": 1000.0,
+      "source_id": "b697a704-3e15-48e1-9a2a-f3a1a0ecd32e",
+      "type": "EEG"
+    },
+    "tail_guard_seconds": 1.0,
+    "xdf_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\tested\\sessions\\2026-08-20\\study1_visit_visit-1-20260820T161050_session1_main\\dynamic_sart\\run-20260820T161425\\raw\\recording.xdf",
+    "xdf_growth_status": "finalized",
+    "xdf_growth_warning_count": 0,
+    "xdf_growth_warning_seconds": 15.0,
+    "xdf_metadata_warning": null,
+    "xdf_seconds_since_growth": 0.7809999999590218,
+    "xdf_size_bytes": 52176781
+  },
+  "updated_at": "2026-08-20T16:18:05"
+}

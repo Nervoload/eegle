@@ -1,0 +1,148 @@
+{
+  "abort_reason": null,
+  "aborted": false,
+  "artifact_files": {
+    "blocks_csv": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\participants\\tested\\sessions\\2026-08-20\\study1_visit_visit-1-20260820T161050_session1_main\\dynamic_sart\\run-20260820T161425\\events\\dynamic_sart_blocks.csv",
+    "key_events_jsonl": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\participants\\tested\\sessions\\2026-08-20\\study1_visit_visit-1-20260820T161050_session1_main\\dynamic_sart\\run-20260820T161425\\events\\dynamic_sart_key_events.jsonl",
+    "probes_jsonl": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\participants\\tested\\sessions\\2026-08-20\\study1_visit_visit-1-20260820T161050_session1_main\\dynamic_sart\\run-20260820T161425\\events\\dynamic_sart_probes.jsonl",
+    "support_reference_json": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\participants\\tested\\sessions\\2026-08-20\\study1_visit_visit-1-20260820T161050_session1_main\\dynamic_sart\\run-20260820T161425\\events\\dynamic_sart_support_reference.json",
+    "trials_csv": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\participants\\tested\\sessions\\2026-08-20\\study1_visit_visit-1-20260820T161050_session1_main\\dynamic_sart\\run-20260820T161425\\events\\dynamic_sart_trials.csv",
+    "trials_jsonl": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\participants\\tested\\sessions\\2026-08-20\\study1_visit_visit-1-20260820T161050_session1_main\\dynamic_sart\\run-20260820T161425\\events\\dynamic_sart_trials.jsonl"
+  },
+  "schema": "eegle.dynamic_sart.summary.v2",
+  "sequence_id": "237942804d5e24dc51a11ff9281243bab0f3fb0afd493a5da2f3cce232c141d1",
+  "settings": {
+    "allow_stimulation": false,
+    "allow_task_adaptation": false,
+    "blocks": [
+      {
+        "block_index": 1,
+        "block_name": "session1_main_smoke_1",
+        "break_after": false,
+        "maximum_break_seconds": 0.0,
+        "minimum_break_seconds": 0.0,
+        "phase": "support",
+        "planned_no_go_count": 1,
+        "schema": "eegle.dynamic_sart.block.v3",
+        "study_segment": "session1_main",
+        "trials": 10
+      },
+      {
+        "block_index": 2,
+        "block_name": "session1_main_smoke_2",
+        "break_after": true,
+        "maximum_break_seconds": 0.0,
+        "minimum_break_seconds": 0.0,
+        "phase": "query",
+        "planned_no_go_count": 1,
+        "schema": "eegle.dynamic_sart.block.v3",
+        "study_segment": "session1_main",
+        "trials": 10
+      },
+      {
+        "block_index": 3,
+        "block_name": "session1_main_smoke_3",
+        "break_after": false,
+        "maximum_break_seconds": 0.0,
+        "minimum_break_seconds": 0.0,
+        "phase": "query",
+        "planned_no_go_count": 1,
+        "schema": "eegle.dynamic_sart.block.v3",
+        "study_segment": "session1_main",
+        "trials": 10
+      }
+    ],
+    "completion_auto_close_seconds": 30.0,
+    "countdown_step_seconds": 1.0,
+    "cue_schedule": {
+      "enabled": false
+    },
+    "digits": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "dry_run": {},
+    "escape_keys": [
+      "escape",
+      "q"
+    ],
+    "inter_trial_jitter_max_seconds": 0.0,
+    "inter_trial_jitter_min_seconds": 0.0,
+    "master_seed": 6814534644143003232,
+    "minimum_go_trials_between_no_go": 0,
+    "minimum_leading_go_trials": 4,
+    "minimum_trailing_go_trials": 4,
+    "minimum_valid_rt_seconds": 0.1,
+    "no_go_digit": 3,
+    "no_go_probability": 0.15,
+    "no_go_randomization": {},
+    "planned_no_go_count": 3,
+    "post_digit_fixation_seconds": 1.35,
+    "practice": {
+      "enabled": true,
+      "feedback_seconds": 0.35,
+      "go_accuracy": 0.8,
+      "max_anticipatory_response_rate": 0.15,
+      "max_rounds": 3,
+      "no_go_accuracy": 0.6666666667,
+      "no_go_trials": 4,
+      "trials_per_round": 30
+    },
+    "response_keys": [
+      "space"
+    ],
+    "response_window_seconds": 1.6,
+    "soi_max_seconds": 1.6,
+    "soi_min_seconds": 1.6,
+    "stimulus_seconds": 0.25,
+    "thought_probes": {
+      "after_trials": [],
+      "enabled": false,
+      "exclusion_window_trials": 2,
+      "max_seconds": 10.0,
+      "question": "Where was your attention just before this question?",
+      "response_choices": [
+        "on_task",
+        "mind_wandering",
+        "uncertain"
+      ]
+    }
+  },
+  "summary": {
+    "abort_reason": null,
+    "aborted": false,
+    "accuracy": 0.9666666666666667,
+    "commission_errors": 1,
+    "experimental_trials": 30,
+    "go_accuracy": 1.0,
+    "go_trial_count": 27,
+    "mean_valid_go_rt_seconds": 0.2856412333677764,
+    "median_valid_go_rt_seconds": 0.25116159999743104,
+    "multiple_responses": 1,
+    "no_go_accuracy": 0.6666666666666666,
+    "no_go_trial_count": 3,
+    "omission_errors": 0,
+    "partial_run": false,
+    "planned_experimental_trials": 30,
+    "practice_trials": 60,
+    "premature_responses": 0,
+    "query_trials": 20,
+    "schema": "eegle.dynamic_sart.summary.v2",
+    "support_complete": true,
+    "support_trials": 10,
+    "task": "dynamic_sart",
+    "task_version": "1.3",
+    "too_fast_responses": 0,
+    "valid_go_rt_count": 27,
+    "wrong_key_responses": 0
+  },
+  "task": "dynamic_sart"
+}
