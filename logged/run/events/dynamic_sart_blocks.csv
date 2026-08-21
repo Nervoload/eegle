@@ -1,6 +1,0 @@
-schema,block_index,block_name,phase,planned_trials,completed_trials,correct_trials,start_trial,end_trial,criteria
-eegle.dynamic_sart.block.v3,-1,practice_1,practice,30,30,28,-1,-30,"{""anticipatory_response_rate"":0.0,""go_accuracy"":1.0,""go_correct_count"":26,""go_required_correct_count"":21,""go_trial_count"":26,""maximum_anticipatory_response_rate"":0.15,""no_go_accuracy"":0.5,""no_go_correct_count"":2,""no_go_required_correct_count"":3,""no_go_trial_count"":4,""passed"":false,""response_rule_comprehension_confirmed"":true}"
-eegle.dynamic_sart.block.v3,-2,practice_2,practice,30,30,29,-31,-60,"{""anticipatory_response_rate"":0.0,""go_accuracy"":1.0,""go_correct_count"":26,""go_required_correct_count"":21,""go_trial_count"":26,""maximum_anticipatory_response_rate"":0.15,""no_go_accuracy"":0.75,""no_go_correct_count"":3,""no_go_required_correct_count"":3,""no_go_trial_count"":4,""passed"":true,""response_rule_comprehension_confirmed"":true}"
-eegle.dynamic_sart.block.v3,1,session1_main_smoke_1,support,10,10,9,1,10,
-eegle.dynamic_sart.block.v3,2,session1_main_smoke_2,query,10,10,10,11,20,
-eegle.dynamic_sart.block.v3,3,session1_main_smoke_3,query,10,10,10,21,30,

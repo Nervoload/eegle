@@ -1,0 +1,7 @@
+schema,block_index,block_name,phase,planned_trials,completed_trials,correct_trials,start_trial,end_trial,criteria
+eegle.dynamic_sart.block.v3,-1,practice_1,practice,30,30,27,-1,-30,"{""anticipatory_response_rate"":0.0,""go_accuracy"":0.9615384615384616,""go_correct_count"":25,""go_required_correct_count"":21,""go_trial_count"":26,""maximum_anticipatory_response_rate"":0.15,""no_go_accuracy"":0.5,""no_go_correct_count"":2,""no_go_required_correct_count"":3,""no_go_trial_count"":4,""passed"":false,""response_rule_comprehension_confirmed"":true}"
+eegle.dynamic_sart.block.v3,-2,practice_2,practice,30,30,30,-31,-60,"{""anticipatory_response_rate"":0.0,""go_accuracy"":1.0,""go_correct_count"":26,""go_required_correct_count"":21,""go_trial_count"":26,""maximum_anticipatory_response_rate"":0.15,""no_go_accuracy"":1.0,""no_go_correct_count"":4,""no_go_required_correct_count"":3,""no_go_trial_count"":4,""passed"":true,""response_rule_comprehension_confirmed"":true}"
+eegle.dynamic_sart.block.v3,1,full_section_1_support,support,250,250,56,1,250,
+eegle.dynamic_sart.block.v3,2,full_section_2_support,support,250,250,240,251,500,
+eegle.dynamic_sart.block.v3,3,full_section_3_query,query,250,250,247,501,750,
+eegle.dynamic_sart.block.v3,4,full_section_4_query,query,250,250,247,751,1000,

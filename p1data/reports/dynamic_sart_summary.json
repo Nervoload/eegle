@@ -1,0 +1,99 @@
+{
+  "block_counts": {
+    "full_section_1_support": 250,
+    "full_section_2_support": 250,
+    "full_section_3_query": 250,
+    "full_section_4_query": 250
+  },
+  "experimental_trial_count": 1000,
+  "flag_counts": {
+    "aborted": 0,
+    "commission_error": 16,
+    "invalid": 0,
+    "late_response": 0,
+    "multiple_response": 0,
+    "omission_error": 194,
+    "premature_response": 0,
+    "too_fast_response": 2,
+    "wrong_key_response": 0
+  },
+  "go_accuracy": 0.7717647058823529,
+  "go_trial_count": 850,
+  "labels": {
+    "label_contract_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\p1_raphael1\\sessions\\2026-08-19\\study1_visit_visit-1-20260819T113530_session1_main\\dynamic_sart\\run-20260819T114145\\events\\dynamic_sart_label_contract.json",
+    "label_count": 1000,
+    "labels_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\p1_raphael1\\sessions\\2026-08-19\\study1_visit_visit-1-20260819T113530_session1_main\\dynamic_sart\\run-20260819T114145\\events\\dynamic_sart_labels.csv",
+    "reference_hash": "1817378323dcb3e6ca5a098e5d1b5725e0989ac847dab020b3d8322a37f4a360",
+    "status": "ok",
+    "warnings": []
+  },
+  "marker_trial_parity": {
+    "matches": true,
+    "presented_trial_count": 1060,
+    "stimulus_onset_event_count": 1060
+  },
+  "mean_valid_go_rt_seconds": 0.332846179067667,
+  "median_valid_go_rt_seconds": 0.31515074998605996,
+  "no_go_accuracy": 0.8933333333333333,
+  "no_go_trial_count": 150,
+  "partial_run": false,
+  "phase_counts": {
+    "query": 500,
+    "support": 500
+  },
+  "practice_trial_count": 60,
+  "primary_outcome_counts": {
+    "commission_error": 16,
+    "correct_go": 656,
+    "correct_no_go": 134,
+    "omission_error": 194
+  },
+  "raw_trials_unchanged_by_labels": true,
+  "schema": "eegle.dynamic_sart.summary.v2",
+  "session_dir": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\p1_raphael1\\sessions\\2026-08-19\\study1_visit_visit-1-20260819T113530_session1_main\\dynamic_sart\\run-20260819T114145",
+  "status": "ok",
+  "support_complete_event_count": 1,
+  "support_reference": {
+    "created_at_support_boundary": 1297492.875,
+    "last_included_support_trial": 499,
+    "principal_support_relative_threshold": "q80",
+    "reference_hash": "1817378323dcb3e6ca5a098e5d1b5725e0989ac847dab020b3d8322a37f4a360",
+    "schema": "eegle.dynamic_sart.support_reference.v2",
+    "source_trial_hash": "ad30ef4c2d408621bc5fb52f6e36ef0a7594a0c8bcd9fa907e4ab6306e781467",
+    "support_go_trial_budget": 425,
+    "support_log_rt_mad": 0.11663259267255827,
+    "support_log_rt_median": -1.0954562336837785,
+    "support_log_rt_q80": -0.9416568916602829,
+    "support_log_rt_q95": -0.7662042586515136,
+    "support_log_rt_robust_scale": 0.17291948189633488,
+    "support_log_rt_scale_method": "median_absolute_deviation",
+    "support_q80_confidence": "preferred",
+    "support_q80_preferred_min_valid_go_trials": 100,
+    "support_q80_role": "primary_exploratory",
+    "support_q95_confidence": "preferred",
+    "support_q95_preferred_attainable": true,
+    "support_q95_preferred_min_valid_go_trials": 200,
+    "support_q95_role": "secondary_exploratory",
+    "support_rt_median_seconds": 0.33438719995319843,
+    "support_trial_budget": 500,
+    "valid_support_go_count": 230,
+    "warnings": []
+  },
+  "support_reference_regenerated_hash": "1817378323dcb3e6ca5a098e5d1b5725e0989ac847dab020b3d8322a37f4a360",
+  "support_reference_stable": true,
+  "task_end_event_count": 1,
+  "timing_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\p1_raphael1\\sessions\\2026-08-19\\study1_visit_visit-1-20260819T113530_session1_main\\dynamic_sart\\run-20260819T114145\\reports\\dynamic_sart_timing.csv",
+  "timing_measurement": {
+    "contract": "actual inter-onset intervals are reconstructed from consecutive flip-captured stimulus onsets",
+    "legacy_scheduled_response_close_row_count": 0,
+    "maximum_absolute_next_onset_schedule_drift_seconds": 0.13500000000931323,
+    "maximum_response_window_close_overshoot_seconds": 0.010000000009313226,
+    "mean_next_onset_schedule_drift_seconds": 0.07601706817980863,
+    "mean_response_window_close_overshoot_seconds": 0.009389622549236453,
+    "measured_inter_onset_count": 999,
+    "terminal_or_missing_following_flip_count": 1
+  },
+  "trials_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\participants\\p1_raphael1\\sessions\\2026-08-19\\study1_visit_visit-1-20260819T113530_session1_main\\dynamic_sart\\run-20260819T114145\\events\\dynamic_sart_trials.jsonl",
+  "valid_reaction_time_count": 654,
+  "warnings": []
+}
