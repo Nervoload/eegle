@@ -1,0 +1,29 @@
+{
+  "acquisition_profile": "full_1000_support500_query500_v2",
+  "failed_phase": "preflight",
+  "failure_detail": "RuntimeError: Study 1 preflight did not complete: XDF preflight recording could not be completed: TimeoutError: LabRecorder did not create a growing XDF file at C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\p1_raphael_022\\visits\\visit-1\\visit-1-20260821T141334\\preflight\\xdf_recording_probes\\participants\\p1_raphael_022\\sessions\\2026-08-21\\xdf_preflight_visit_1_preflight\\xdf_preflight\\run-20260821T141411\\raw\\recording.xdf",
+  "failures": [
+    {
+      "error": "RuntimeError: Study 1 preflight did not complete: XDF preflight recording could not be completed: TimeoutError: LabRecorder did not create a growing XDF file at C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\p1_raphael_022\\visits\\visit-1\\visit-1-20260821T141334\\preflight\\xdf_recording_probes\\participants\\p1_raphael_022\\sessions\\2026-08-21\\xdf_preflight_visit_1_preflight\\xdf_preflight\\run-20260821T141411\\raw\\recording.xdf",
+      "phase": "preflight",
+      "timestamp": "2026-08-21T14:14:47"
+    }
+  ],
+  "manifest_file": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\p1_raphael_022\\visits\\visit-1\\visit-1-20260821T141334\\visit_manifest.json",
+  "next_action": "Correct the reported failure, then rerun the same Windows operator command. EEGle will reuse this incomplete visit, skip completed phases, and rerun the failed phase.",
+  "no_go_digit": 3,
+  "participant_id": "p1_raphael_022",
+  "schema": "eegle.study1.visit.v1",
+  "sequence_hashes": {},
+  "session_directories": {},
+  "status": "failed",
+  "visit_id": "visit-1-20260821T141334",
+  "visit_number": 1
+}
+complete 1,000-trial Study 1 run stopped without a successful completion (exit code 1). Read the EEGle failure_detail and next_action printed immediately above; retained raw/session files are not overwritten.
+At C:\Projects\code\eegle\scripts\windows\neuracle64\Common.ps1:101 char:9
++         throw "$Operation stopped without a successful completion (ex ...
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (complete 1,000-...ot overwritten.:String) [], RuntimeException
+    + FullyQualifiedErrorId : complete 1,000-trial Study 1 run stopped without a successful completion (exit code 1). Read the EEGle failure_detail and next_action printed immediately above; retained raw/session files are not overwritten.
+ 

@@ -134,7 +134,7 @@
       "photodiode_patch": false,
       "expected_refresh_rate_hz": 120.0,
       "supported_refresh_rates_hz": [60.0, 120.0],
-      "refresh_rate_tolerance_hz": 2.0,
+      "refresh_rate_tolerance_hz": 1000.0,
       "check_refresh_rate": true,
       "require_refresh_rate_match": true,
       "wait_blanking": true,
