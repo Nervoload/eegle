@@ -78,17 +78,30 @@ class PortabilityTests(unittest.TestCase):
         self.assertIn("eegle.storage_permissions", storage)
         complete = (scripts / "07-Run-Full.ps1").read_text(encoding="utf-8")
         self.assertIn('"--full-1000"', complete)
-        self.assertIn('"--baseline-seconds", "1"', complete)
+        self.assertIn('[double] $BaselineSeconds = 120', complete)
+        self.assertIn('"--baseline-seconds", [string] $BaselineSeconds', complete)
+        self.assertIn('"--skip-baseline"', complete)
+        self.assertIn('"--trials", [string] $Trials', complete)
+        self.assertIn('"--practice-trials", [string] $PracticeTrials', complete)
+        self.assertIn('"--skip-practice"', complete)
         self.assertIn('"--include-practice"', complete)
         self.assertIn('"--retry-incomplete"', complete)
         self.assertNotIn('"--smoke"', complete)
         self.assertIn("$FullScreen", complete)
         self.assertIn('"--result-file", $outcomeFile', complete)
         self.assertIn("Resolve-EegleStudyExit", complete)
+        for script_path in scripts.glob("*.ps1"):
+            if script_path.name == "Common.ps1":
+                continue
+            self.assertIn(
+                "[CmdletBinding(PositionalBinding = $false)]",
+                script_path.read_text(encoding="utf-8"),
+            )
         self.assertIn("function Resolve-EegleStudyExit", common)
         self.assertIn('$reportedStatus -eq "completed" -and $reportedExitCode -eq 0', common)
         self.assertIn('if ($NativeExitCode -ne 0)', common)
         self.assertIn('The contradiction is not masked', common)
+        self.assertIn("DataRoot looks like an unrecognized command option", common)
         study_config = json.loads((ROOT / "configs" / "study1_neuracle64.json").read_text(encoding="utf-8"))
         self.assertEqual(study_config["recording_suite"]["marker_receipt_timeout_seconds"], 2.0)
         self.assertEqual(study_config["processes"]["recorder"]["tail_guard_seconds"], 1.0)

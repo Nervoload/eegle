@@ -1,3 +1,4 @@
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [Parameter(Mandatory = $true)]
     [string] $Participant,
@@ -8,8 +9,18 @@ param(
     [string] $Operator,
     [string] $DataRoot = "",
     [string] $VisitId = "",
-    [ValidateRange(1, 600)]
-    [int] $BaselineSeconds = 60,
+    [ValidateRange(10, 100000)]
+    [int] $Trials = 30,
+    [ValidateRange(10, 10000)]
+    [int] $PracticeTrials = 30,
+    [ValidateRange(1, 9999)]
+    [int] $PracticeNoGoTrials = 4,
+    [ValidateRange(1, 100)]
+    [int] $PracticeMaxRounds = 3,
+    [switch] $SkipPractice,
+    [ValidateRange(0, 600)]
+    [double] $BaselineSeconds = 60,
+    [switch] $SkipBaseline,
     [switch] $Resume,
     [switch] $FullScreen,
     [switch] $ConfirmElectrodes
@@ -22,6 +33,9 @@ $ErrorActionPreference = "Stop"
 if (-not $ConfirmElectrodes) {
     throw "Inspect cap contact/impedance in Collect, then rerun with -ConfirmElectrodes."
 }
+if (-not $SkipPractice -and $PracticeNoGoTrials -ge $PracticeTrials) {
+    throw "-PracticeNoGoTrials must be less than -PracticeTrials."
+}
 $python = Get-EeglePython
 $config = Get-EegleConfigPath "live"
 Update-EegleGeneratedLiveConfigs $python $config
@@ -31,10 +45,20 @@ $outcomeFile = New-EegleStudyOutcomePath $resolvedDataRoot
 
 Write-Host "Starting the complete short Study 1 test:"
 Write-Host "  full preflight, three-second XDF recording probe, and electrode checks"
-Write-Host "  $BaselineSeconds seconds eyes open"
-Write-Host "  $BaselineSeconds seconds eyes closed"
-Write-Host "  participant practice"
-Write-Host "  30 experimental trials (three 10-trial blocks)"
+if ($SkipBaseline) {
+    Write-Host "  resting baseline skipped by operator request"
+}
+else {
+    Write-Host "  $BaselineSeconds seconds eyes open"
+    Write-Host "  $BaselineSeconds seconds eyes closed"
+}
+if ($SkipPractice) {
+    Write-Host "  participant practice skipped by operator request"
+}
+else {
+    Write-Host "  up to $PracticeMaxRounds practice round(s) of $PracticeTrials trials ($PracticeNoGoTrials no-go)"
+}
+Write-Host "  $Trials experimental trials"
 Write-Host "  fixed timing: 250 ms digit + 1350 ms fixation (1600 ms SOI; no jitter)"
 Write-Host "Keep Neuracle Collect LSL streaming. EEGle launches/stops LabRecorder."
 Write-Host "A phase-end liblsl ERR mentioning R_EEGleMarkers is expected when EEGle closes that phase's marker receiver; it is not the Neuracle EEG stream."
@@ -50,14 +74,30 @@ $arguments = @(
     "--task-mode", "psychopy",
     "--no-go-digit", [string] $NoGoDigit,
     "--smoke",
-    "--include-practice",
-    "--baseline-seconds", [string] $BaselineSeconds,
+    "--trials", [string] $Trials,
     "--window-size", "1000", "700",
     "--confirm-electrodes",
     "--session-root", $resolvedDataRoot,
     "--result-file", $outcomeFile,
     "--lsl-wait", "10"
 )
+if ($SkipPractice) {
+    $arguments += "--skip-practice"
+}
+else {
+    $arguments += @(
+        "--include-practice",
+        "--practice-trials", [string] $PracticeTrials,
+        "--practice-no-go-trials", [string] $PracticeNoGoTrials,
+        "--practice-max-rounds", [string] $PracticeMaxRounds
+    )
+}
+if ($SkipBaseline) {
+    $arguments += "--skip-baseline"
+}
+else {
+    $arguments += @("--baseline-seconds", [string] $BaselineSeconds)
+}
 if (-not [string]::IsNullOrWhiteSpace($VisitId)) {
     $arguments += @("--visit-id", $VisitId)
 }

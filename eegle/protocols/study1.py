@@ -396,36 +396,34 @@ def validate_study1_config(config: dict[str, Any]) -> list[dict[str, str]]:
                     )
         except (KeyError, TypeError, ValueError) as exc:
             issues.append(_issue("fail", f"Study 1 segment {name} is invalid: {exc}"))
-    if acquisition_profile == STUDY1_FULL_1000_ACQUISITION_PROFILE:
-        visit_one_baseline = dict(study.get("visits", {}).get("1", {}).get("baseline") or {})
-        if any(
-            abs(float(visit_one_baseline.get(name, 0.0)) - 120.0) > 1e-9
-            for name in ("eyes_open_seconds", "eyes_closed_seconds")
-        ):
-            issues.append(
-                _issue(
-                    "fail",
-                    "full 1000 profile requires 120-second eyes-open and eyes-closed baselines",
-                )
-            )
     return issues
 
 
 def study1_protocol_hash(config: dict[str, Any]) -> str:
+    """Hash the scientific protocol without operational acquisition settings.
+
+    Display probes, recorder timeouts, executable paths, and resting-baseline
+    duration are visit operations. They remain persisted in the visit and child
+    artifacts, but changing them must not create a new participant-level
+    scientific protocol identity. Exact prepared and recorded task-sequence
+    hashes provide the stricter resume gate for an incomplete visit.
+    """
+
     acquisition_profile = str(
         config.get("study1", {}).get("acquisition_profile")
         or STUDY1_STANDARD_ACQUISITION_PROFILE
     )
+    study = copy.deepcopy(config.get("study1") or {})
+    study.pop("visits", None)
     payload = {
+        "hash_contract": "study1_scientific_protocol_v2",
         "declaration": study1_protocol(
             acquisition_profile
             if acquisition_profile == STUDY1_FULL_1000_ACQUISITION_PROFILE
             else None
         ).payload(),
-        "study1": config.get("study1"),
+        "study1": study,
         "dynamic_sart": config.get("tasks", {}).get("dynamic_sart"),
-        "hardware": config.get("hardware"),
-        "recording_suite": config.get("recording_suite"),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()

@@ -28,6 +28,7 @@ from eegle.protocols.study1 import (
     apply_study1_full_1000_profile,
     configure_study1_segment,
     study1_protocol,
+    study1_protocol_hash,
     validate_study1_config,
 )
 from eegle.realtime.epoching import load_eeg_csv_for_epoching
@@ -455,22 +456,54 @@ class Study1Tests(unittest.TestCase):
             {"support_trials": 500, "query_trials": 500},
         )
 
-    def test_full_1000_options_reject_protocol_drift(self) -> None:
+    def test_full_1000_options_allow_operator_run_length_overrides(self) -> None:
         base = dict(
             config_path=CONFIG,
             participant_id="unit",
             visit_number=1,
             full_1000=True,
             include_practice=True,
-            baseline_seconds=1,
+            trials=40,
+            practice_trials=12,
+            practice_no_go_trials=2,
+            practice_max_rounds=1,
+            baseline_seconds=60,
         )
         _validate_options(Study1Options(**base))
+        _validate_options(
+            Study1Options(**{**base, "include_practice": False, "skip_practice": True})
+        )
+        _validate_options(
+            Study1Options(
+                **{**base, "baseline_seconds": None, "skip_baseline": True}
+            )
+        )
         with self.assertRaisesRegex(ValueError, "cannot be combined with --smoke"):
             _validate_options(Study1Options(**base, smoke=True))
-        with self.assertRaisesRegex(ValueError, "requires --baseline-seconds 120"):
-            _validate_options(Study1Options(**{**base, "baseline_seconds": 60.0}))
-        with self.assertRaisesRegex(ValueError, "requires --include-practice"):
-            _validate_options(Study1Options(**{**base, "include_practice": False}))
+        with self.assertRaisesRegex(ValueError, "--trials must be at least 10"):
+            _validate_options(Study1Options(**{**base, "trials": 9}))
+        with self.assertRaisesRegex(ValueError, "must be less than --practice-trials"):
+            _validate_options(
+                Study1Options(
+                    **{**base, "practice_trials": 10, "practice_no_go_trials": 10}
+                )
+            )
+        with self.assertRaisesRegex(ValueError, "either --include-practice or --skip-practice"):
+            _validate_options(Study1Options(**{**base, "skip_practice": True}))
+        with self.assertRaisesRegex(ValueError, "either --baseline-seconds or --skip-baseline"):
+            _validate_options(Study1Options(**{**base, "skip_baseline": True}))
+
+    def test_protocol_hash_ignores_baseline_display_and_recorder_operations(self) -> None:
+        original = load_config(CONFIG)
+        changed = copy.deepcopy(original)
+        changed["study1"]["visits"]["1"]["baseline"]["eyes_open_seconds"] = 7.0
+        changed["hardware"]["display"]["refresh_rate_measurement_attempts"] = 9
+        changed["processes"]["recorder"]["startup_timeout_seconds"] = 99.0
+
+        self.assertEqual(study1_protocol_hash(original), study1_protocol_hash(changed))
+
+        changed["tasks"]["dynamic_sart"]["stimulus_seconds"] = 0.30
+        self.assertNotEqual(study1_protocol_hash(original), study1_protocol_hash(changed))
 
     def test_standard_study1_uses_weighted_strata_and_allows_rare_close_no_go_trials(self) -> None:
         base = load_config(CONFIG)
@@ -741,6 +774,106 @@ class Study1Tests(unittest.TestCase):
         self.assertEqual(manifest["failures"], [])
         self.assertEqual(len(manifest["resolved_failures"]), 1)
         self.assertEqual(len(manifest["phases"]["preflight"]["attempts"]), 2)
+
+    def test_skip_baseline_creates_no_baseline_session_and_honors_task_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_study1_visit(
+                Study1Options(
+                    config_path=CONFIG,
+                    participant_id="skip-baseline-study1",
+                    visit_number=1,
+                    visit_id="skip-baseline-visit",
+                    task_mode="dry-run",
+                    no_go_digit=3,
+                    smoke=True,
+                    include_practice=True,
+                    trials=20,
+                    practice_trials=12,
+                    practice_no_go_trials=1,
+                    practice_max_rounds=1,
+                    skip_baseline=True,
+                    record_eeg=False,
+                    require_eeg=False,
+                    output_root=tmp,
+                )
+            )
+            manifest = json.loads(Path(result["manifest_file"]).read_text(encoding="utf-8"))
+            baseline_attempt = manifest["phases"]["baseline"]["attempts"][0]
+
+        self.assertEqual(result["status"], "completed")
+        self.assertNotIn("baseline", result["session_directories"])
+        self.assertEqual(baseline_attempt["status"], "completed")
+        self.assertEqual(baseline_attempt["result"]["status"], "skipped")
+        self.assertIsNone(baseline_attempt["result"]["session_dir"])
+        self.assertEqual(manifest["task_overrides"]["experimental_trials"], 20)
+        self.assertEqual(manifest["task_overrides"]["practice_trials_per_round"], 12)
+        self.assertEqual(
+            manifest["phases"]["session1_main"]["attempts"][0]["result"]["task_summary"][
+                "experimental_trials"
+            ],
+            20,
+        )
+
+    def test_resume_after_completed_baseline_does_not_run_baseline_again(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            partial_dir = Path(tmp) / "retained-partial-task"
+            partial_dir.mkdir()
+            failed_task = {
+                "status": "partial",
+                "session_dir": str(partial_dir),
+                "error": "synthetic task interruption",
+            }
+            initial_options = Study1Options(
+                config_path=CONFIG,
+                participant_id="resume-after-baseline",
+                visit_number=1,
+                visit_id="resume-after-baseline-visit",
+                task_mode="dry-run",
+                no_go_digit=3,
+                smoke=True,
+                trials=20,
+                baseline_seconds=0.0,
+                record_eeg=False,
+                require_eeg=False,
+                output_root=tmp,
+            )
+            with patch(
+                "eegle.pipelines.study1.run_dsart_child_session",
+                return_value=failed_task,
+            ):
+                first = run_study1_visit(initial_options)
+
+            with patch(
+                "eegle.pipelines.study1.run_resting_baseline",
+                side_effect=AssertionError("completed baseline must not run on resume"),
+            ):
+                resumed = run_study1_visit(
+                    Study1Options(
+                        **{
+                            **initial_options.__dict__,
+                            "visit_id": None,
+                            "trials": 30,
+                            "baseline_seconds": 12.0,
+                            "retry_incomplete": True,
+                        }
+                    )
+                )
+            manifest = json.loads(Path(resumed["manifest_file"]).read_text(encoding="utf-8"))
+
+        self.assertEqual(first["status"], "partial")
+        self.assertEqual(resumed["status"], "completed")
+        self.assertEqual(len(manifest["phases"]["baseline"]["attempts"]), 1)
+        self.assertEqual(len(manifest["phases"]["session1_main"]["attempts"]), 2)
+        self.assertEqual(
+            manifest["phases"]["session1_main"]["attempts"][1]["result"]["task_summary"][
+                "experimental_trials"
+            ],
+            20,
+        )
+        self.assertEqual(
+            manifest["session_directories"]["baseline"],
+            first["session_directories"]["baseline"],
+        )
 
     def test_main_reports_and_returns_process_exit_code_from_final_status(self) -> None:
         completed = {"status": "completed", "participant_id": "unit"}

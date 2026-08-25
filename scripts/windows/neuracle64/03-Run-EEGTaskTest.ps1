@@ -1,3 +1,4 @@
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [ValidateRange(10, 20)]
     [int] $Trials = 20,

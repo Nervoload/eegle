@@ -435,13 +435,29 @@ $VisitId = "$ParticipantId-full-visit1"
 ```
 
 The launcher selects the explicit
-`full_1000_support500_query500_v2` acquisition profile. It cannot be combined
-with the smoke profile, a non-120-second baseline override, Visit 2, or skipped
-practice. The profile name and protocol hash are written to the participant and
-visit manifests, preventing an accidental resume with the standard or short
-protocol.
+`full_1000_support500_query500_v2` acquisition profile by default. Its operator
+controls are real PowerShell parameters rather than edits to the script:
 
-To resume at a completed phase boundary, repeat the exact identity and options:
+- `-BaselineSeconds 30` sets both resting conditions to 30 seconds;
+- `-SkipBaseline` creates no baseline child session and advances from preflight
+  directly to the task;
+- `-Trials 100` requests a deterministic shortened support/query task;
+- `-PracticeTrials 12 -PracticeNoGoTrials 1 -PracticeMaxRounds 1` changes the
+  criterion-gated practice shape; and
+- `-SkipPractice` bypasses practice explicitly.
+
+Every override is persisted in the visit manifest. Baseline duration is an
+operational visit choice and does not change the participant's scientific
+protocol hash. A shortened task retains its own exact prepared sequence hash
+and must not be pooled as the default 1,000-trial acquisition.
+
+PowerShell script parameters use one leading dash (`-Resume`,
+`-BaselineSeconds`), not Python/GNU spellings such as `--resume`. All operator
+scripts disable positional parameter binding, so an unknown double-dash token
+now fails at launch instead of becoming a directory such as `--resume`.
+
+To resume at a completed phase boundary, repeat the participant/visit identity.
+The visit manifest supplies the original task-shaping options:
 
 ```powershell
 .\scripts\windows\neuracle64\07-Run-Full.ps1 `
@@ -455,8 +471,11 @@ To resume at a completed phase boundary, repeat the exact identity and options:
 ```
 
 Resume skips completed baseline/task phases but never appends to or overwrites
-an interrupted recording. A participant who completed the run needs a new
-participant/visit identity for another test.
+an interrupted XDF recording. The original experimental/practice task shape is
+reloaded from the visit manifest, while a completed baseline remains completed
+regardless of the current baseline default. An incomplete task attempt gets a
+fresh run directory using the same prepared sequence. A participant who
+completed the run needs a new participant/visit identity for another test.
 
 Without `-Resume`, rerunning the same `07-Run-Full.ps1` command automatically
 retries an incomplete full visit in the same way as the short-test launcher.

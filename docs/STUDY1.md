@@ -32,7 +32,7 @@ and resume machinery.
 
 The Windows complete-run launcher opts Visit 1 into the separately identified
 `full_1000_support500_query500_v2` profile. It does not change the standard
-600-trial proposal profile above. The complete profile requires:
+600-trial proposal profile above. The complete profile defaults to:
 
 - 120-second eyes-open and 120-second eyes-closed baselines;
 - the standard criterion-gated practice, plus an explicit participant-ready
@@ -40,6 +40,13 @@ The Windows complete-run launcher opts Visit 1 into the separately identified
 - four 250-trial sections with breaks after trials 250, 500, and 750;
 - support trials 1-500, followed by held-out query trials 501-1000; and
 - 150 no-go trials allocated `[38, 37, 38, 37]` across the sections.
+
+The Windows launcher exposes logged operator overrides for baseline duration or
+skip, experimental trial count, practice trial/no-go/round counts, and practice
+skip. These change the visit/task artifacts, not the participant-level
+scientific protocol hash. Exact prepared sequence hashes still prevent a resume
+from silently changing experimental or practice shape. A completed baseline is
+skipped on resume; a requested baseline skip creates no baseline session folder.
 
 The v2 no-go schedule corrects the periodic v1 fallback. Each 250-trial section
 is generated independently from its participant-specific section seed. Its five

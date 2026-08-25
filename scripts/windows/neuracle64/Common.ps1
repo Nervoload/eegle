@@ -16,6 +16,9 @@ function Get-EegleDataRoot([string] $RequestedRoot) {
     $configuredRoot = [Environment]::GetEnvironmentVariable("EEGLE_SESSION_ROOT", "Process")
     $localAppData = [Environment]::GetEnvironmentVariable("LOCALAPPDATA", "Process")
     if (-not [string]::IsNullOrWhiteSpace($RequestedRoot)) {
+        if ($RequestedRoot.TrimStart().StartsWith("-")) {
+            throw "DataRoot looks like an unrecognized command option ('$RequestedRoot'). PowerShell parameters use one leading dash, for example -Resume or -BaselineSeconds 30."
+        }
         $root = $RequestedRoot
     }
     elseif (-not [string]::IsNullOrWhiteSpace($configuredRoot)) {

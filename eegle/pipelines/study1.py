@@ -6,7 +6,7 @@ import argparse
 import copy
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -85,7 +85,13 @@ class Study1Options:
     smoke: bool = False
     full_1000: bool = False
     include_practice: bool = False
+    skip_practice: bool = False
+    trials: int | None = None
+    practice_trials: int | None = None
+    practice_no_go_trials: int | None = None
+    practice_max_rounds: int | None = None
     baseline_seconds: float | None = None
+    skip_baseline: bool = False
     window_size: tuple[int, int] | None = None
     full_screen: bool | None = None
     record_eeg: bool = True
@@ -168,8 +174,30 @@ def build_parser() -> argparse.ArgumentParser:
             "query trials 501-1000, and breaks after trials 250, 500, and 750"
         ),
     )
-    parser.add_argument("--include-practice", action="store_true")
-    parser.add_argument("--baseline-seconds", type=float, default=None)
+    practice_mode = parser.add_mutually_exclusive_group()
+    practice_mode.add_argument("--include-practice", action="store_true")
+    practice_mode.add_argument("--skip-practice", action="store_true")
+    parser.add_argument(
+        "--trials",
+        type=int,
+        default=None,
+        help="Override the experimental trial count for each task segment",
+    )
+    parser.add_argument("--practice-trials", type=int, default=None)
+    parser.add_argument("--practice-no-go-trials", type=int, default=None)
+    parser.add_argument("--practice-max-rounds", type=int, default=None)
+    baseline = parser.add_mutually_exclusive_group()
+    baseline.add_argument(
+        "--baseline-seconds",
+        type=float,
+        default=None,
+        help="Set the duration of each resting-baseline condition in seconds",
+    )
+    baseline.add_argument(
+        "--skip-baseline",
+        action="store_true",
+        help="Record no resting-baseline session and advance directly to the task after preflight",
+    )
     parser.add_argument("--window-size", type=int, nargs=2, metavar=("WIDTH", "HEIGHT"), default=None)
     display_mode = parser.add_mutually_exclusive_group()
     display_mode.add_argument("--fullscreen", dest="full_screen", action="store_true")
@@ -238,7 +266,13 @@ def _options_from_args(args: argparse.Namespace) -> Study1Options:
         smoke=bool(args.smoke),
         full_1000=bool(args.full_1000),
         include_practice=bool(args.include_practice),
+        skip_practice=bool(args.skip_practice),
+        trials=args.trials,
+        practice_trials=args.practice_trials,
+        practice_no_go_trials=args.practice_no_go_trials,
+        practice_max_rounds=args.practice_max_rounds,
         baseline_seconds=args.baseline_seconds,
+        skip_baseline=bool(args.skip_baseline),
         window_size=None if args.window_size is None else (int(args.window_size[0]), int(args.window_size[1])),
         full_screen=args.full_screen,
         record_eeg=not bool(args.skip_eeg),
@@ -395,6 +429,12 @@ def _run_configured_study1_visit(
             f"incomplete test, or use --resume explicitly: {visit_manifest_path}"
         )
     visit_dir.mkdir(parents=True, exist_ok=True)
+    visit_manifest_exists = visit_manifest_path.exists()
+    manifest = _load_json(visit_manifest_path) if visit_manifest_exists else None
+    if visit_manifest_exists and manifest is None:
+        raise ValueError(f"Study 1 visit manifest must contain a JSON object: {visit_manifest_path}")
+    if manifest is not None:
+        options = _resume_options_with_persisted_task_shape(options, manifest)
     segment_seeds = {
         phase: derive_session_seed(options.participant_id, phase, SEGMENT_INDEX[phase], options.master_seed)
         for phase in VISIT_PHASES[options.visit_number]
@@ -406,8 +446,7 @@ def _run_configured_study1_visit(
         assigned_no_go_digit=assigned_no_go_digit,
         segment_seeds=segment_seeds,
     )
-    if visit_manifest_path.exists():
-        manifest = _load_json(visit_manifest_path) or {}
+    if manifest is not None:
         _validate_resume(
             manifest,
             options,
@@ -416,6 +455,7 @@ def _run_configured_study1_visit(
             assigned_no_go_digit,
             segment_seeds,
             config,
+            prepared_sequences,
         )
     else:
         manifest = _new_visit_manifest(
@@ -430,7 +470,7 @@ def _run_configured_study1_visit(
             config,
         )
         _write_json_atomic(visit_manifest_path, manifest)
-    manifest["prepared_sequence_hashes"] = prepared_sequences
+    manifest.setdefault("prepared_sequence_hashes", prepared_sequences)
     _write_json_atomic(visit_manifest_path, manifest)
     _update_participant_visit(
         participant_manifest,
@@ -480,11 +520,19 @@ def _run_configured_study1_visit(
             elif phase == "baseline":
                 if active_preflight is None:
                     raise RuntimeError("Study 1 baseline cannot start without preflight")
-                result = run_resting_baseline(config, dsart_options, visit_id=visit_id, preflight=active_preflight)
-                if result.get("status") != "completed":
-                    raise RuntimeError(_phase_error("Study 1 baseline", result))
-                _accept_post_recording_warnings(result, dsart_options, "Study 1 baseline")
-                manifest.setdefault("session_directories", {})["baseline"] = result.get("session_dir")
+                if _baseline_is_skipped(config):
+                    result = _skipped_baseline_result(config)
+                else:
+                    result = run_resting_baseline(
+                        config,
+                        dsart_options,
+                        visit_id=visit_id,
+                        preflight=active_preflight,
+                    )
+                    if result.get("status") != "completed":
+                        raise RuntimeError(_phase_error("Study 1 baseline", result))
+                    _accept_post_recording_warnings(result, dsart_options, "Study 1 baseline")
+                    manifest.setdefault("session_directories", {})["baseline"] = result.get("session_dir")
             else:
                 if active_preflight is None:
                     raise RuntimeError(f"{phase} cannot start without preflight")
@@ -495,18 +543,18 @@ def _run_configured_study1_visit(
                             "physical cue delivery is intentionally gated; assignment markers are implemented, "
                             "but the auditory delivery contract is not yet locked"
                         )
-                child_config = configure_study1_segment(
+                child_config = _configure_study1_child(
                     config,
                     phase,
+                    options,
                     no_go_digit=assigned_no_go_digit,
                     seed=segment_seeds[phase],
-                    smoke=options.smoke,
-                    include_practice=options.include_practice,
                 )
-                trials = sum(
+                configured_trials = sum(
                     int(block["trials"])
                     for block in child_config["tasks"]["dynamic_sart"]["blocks"]
                 )
+                trials = int(options.trials or configured_trials)
                 dsart_options = _dsart_options(options, trials=trials)
                 result = run_dsart_child_session(
                     child_config,
@@ -712,8 +760,26 @@ def _validate_options(options: Study1Options) -> None:
         raise ValueError("--full-1000 cannot be combined with --preflight-only")
     if options.resume and options.retry_incomplete:
         raise ValueError("choose either --resume or --retry-incomplete, not both")
-    if options.full_1000 and not options.include_practice:
-        raise ValueError("--full-1000 requires --include-practice")
+    if options.include_practice and options.skip_practice:
+        raise ValueError("choose either --include-practice or --skip-practice, not both")
+    if options.baseline_seconds is not None and options.skip_baseline:
+        raise ValueError("choose either --baseline-seconds or --skip-baseline, not both")
+    if options.trials is not None and options.trials < 10:
+        raise ValueError("--trials must be at least 10")
+    if options.practice_trials is not None and options.practice_trials < 10:
+        raise ValueError(
+            "--practice-trials must be at least 10 so the leading/trailing go constraints fit"
+        )
+    if options.practice_no_go_trials is not None and options.practice_no_go_trials < 1:
+        raise ValueError("--practice-no-go-trials must be at least 1")
+    effective_practice_trials = options.practice_trials or 30
+    if (
+        options.practice_no_go_trials is not None
+        and options.practice_no_go_trials >= effective_practice_trials
+    ):
+        raise ValueError("--practice-no-go-trials must be less than --practice-trials")
+    if options.practice_max_rounds is not None and options.practice_max_rounds < 1:
+        raise ValueError("--practice-max-rounds must be at least 1")
     if options.baseline_seconds is not None and options.baseline_seconds < 0:
         raise ValueError("--baseline-seconds must be nonnegative")
     if options.window_size is not None and any(value <= 0 for value in options.window_size):
@@ -732,7 +798,36 @@ def _participant_manifest(
         if existing.get("participant_id") != options.participant_id:
             mismatches.append("participant_id")
         if existing.get("protocol_hash") != protocol_hash:
-            mismatches.append("protocol_hash")
+            expected_profile = (
+                STUDY1_FULL_1000_ACQUISITION_PROFILE
+                if options.full_1000
+                else STUDY1_STANDARD_ACQUISITION_PROFILE
+            )
+            visit = dict(existing.get("visits", {}).get(str(options.visit_number)) or {})
+            compatible_incomplete_retry = bool(
+                _continues_incomplete_visit(options)
+                and visit
+                and visit.get("status") != "completed"
+                and existing.get("protocol_name") == STUDY1_PROTOCOL_NAME
+                and existing.get("acquisition_profile") == expected_profile
+            )
+            if compatible_incomplete_retry:
+                event = {
+                    "recorded_protocol_hash": existing.get("protocol_hash"),
+                    "current_protocol_hash": protocol_hash,
+                    "reason": "incomplete_visit_retry_with_matching_versioned_acquisition_profile",
+                    "timestamp": _now(),
+                }
+                events = existing.setdefault("protocol_hash_compatibility_events", [])
+                if not any(
+                    row.get("recorded_protocol_hash") == event["recorded_protocol_hash"]
+                    and row.get("current_protocol_hash") == event["current_protocol_hash"]
+                    for row in events
+                ):
+                    events.append(event)
+                    _write_json_atomic(path, existing)
+            else:
+                mismatches.append("protocol_hash")
         if int(existing.get("master_seed", -1)) != options.master_seed:
             mismatches.append("master_seed")
         if options.no_go_digit is not None and int(existing.get("no_go_digit", -1)) != options.no_go_digit:
@@ -774,7 +869,14 @@ def _apply_visit_baseline(config: dict[str, Any], options: Study1Options) -> Non
     visits = dict(config.get("study1", {}).get("visits") or {})
     visit = dict(visits.get(str(options.visit_number)) or {})
     baseline = dict(visit.get("baseline") or config.get("recording_suite", {}).get("baseline") or {})
-    if options.smoke and options.baseline_seconds is None:
+    if options.skip_baseline:
+        baseline = {
+            "eyes_open_seconds": 0.0,
+            "eyes_closed_seconds": 0.0,
+            "skipped": True,
+            "skip_reason": "operator_requested",
+        }
+    elif options.smoke and options.baseline_seconds is None:
         baseline = {"eyes_open_seconds": 0.0, "eyes_closed_seconds": 0.0}
     elif options.baseline_seconds is not None:
         baseline = {
@@ -782,6 +884,27 @@ def _apply_visit_baseline(config: dict[str, Any], options: Study1Options) -> Non
             "eyes_closed_seconds": float(options.baseline_seconds),
         }
     config.setdefault("recording_suite", {})["baseline"] = baseline
+
+
+def _baseline_is_skipped(config: dict[str, Any]) -> bool:
+    baseline = dict(config.get("recording_suite", {}).get("baseline", {}) or {})
+    return bool(baseline.get("skipped", False))
+
+
+def _skipped_baseline_result(config: dict[str, Any]) -> dict[str, Any]:
+    baseline = copy.deepcopy(config.get("recording_suite", {}).get("baseline", {}) or {})
+    return {
+        "schema": "eegle.dsart_resting_baseline.v1",
+        "status": "skipped",
+        "skip_reason": str(baseline.get("skip_reason") or "operator_requested"),
+        "baseline": baseline,
+        "session_dir": None,
+        "planned_duration_seconds": 0.0,
+        "actual_duration_seconds": 0.0,
+        "phases": [],
+        "processes": {"status": "skipped", "processes": {}, "notes": []},
+        "validation": {"status": "skipped", "failures": [], "warnings": []},
+    }
 
 
 def _validate_live_readiness(config: dict[str, Any], options: Study1Options) -> None:
@@ -888,6 +1011,42 @@ def _resolve_visit_id(
     return datetime.now().strftime(f"visit-{options.visit_number}-%Y%m%dT%H%M%S")
 
 
+def _task_override_identity(options: Study1Options) -> dict[str, int | bool | None]:
+    return {
+        "experimental_trials": options.trials,
+        "skip_practice": bool(options.skip_practice),
+        "practice_trials_per_round": options.practice_trials,
+        "practice_no_go_trials": options.practice_no_go_trials,
+        "practice_max_rounds": options.practice_max_rounds,
+    }
+
+
+def _resume_options_with_persisted_task_shape(
+    options: Study1Options,
+    manifest: dict[str, Any],
+) -> Study1Options:
+    """Make the original task shape authoritative for a resumed visit.
+
+    Baseline controls intentionally remain operator-selectable because a
+    completed baseline is skipped by the phase ledger and an incomplete one may
+    be retried or explicitly skipped. Experimental and practice shape cannot
+    drift between task attempts, so resume reloads it from the visit manifest.
+    """
+
+    recorded = manifest.get("task_overrides")
+    if not isinstance(recorded, dict):
+        return options
+    return replace(
+        options,
+        include_practice=bool(manifest.get("include_practice", options.include_practice)),
+        skip_practice=bool(recorded.get("skip_practice", options.skip_practice)),
+        trials=recorded.get("experimental_trials"),
+        practice_trials=recorded.get("practice_trials_per_round"),
+        practice_no_go_trials=recorded.get("practice_no_go_trials"),
+        practice_max_rounds=recorded.get("practice_max_rounds"),
+    )
+
+
 def _new_visit_manifest(
     options: Study1Options,
     visit_id: str,
@@ -927,6 +1086,8 @@ def _new_visit_manifest(
             or STUDY1_STANDARD_ACQUISITION_PROFILE
         ),
         "include_practice": options.include_practice,
+        "skip_practice": options.skip_practice,
+        "task_overrides": _task_override_identity(options),
         "baseline": copy.deepcopy(config.get("recording_suite", {}).get("baseline", {})),
         "window_size": list(config.get("hardware", {}).get("display", {}).get("size", [1000, 700])),
         "full_screen": bool(config.get("hardware", {}).get("display", {}).get("full_screen", False)),
@@ -951,12 +1112,12 @@ def _validate_resume(
     no_go_digit: int,
     segment_seeds: dict[str, int],
     config: dict[str, Any],
+    prepared_sequences: dict[str, str],
 ) -> None:
     expected = {
         "participant_id": options.participant_id,
         "visit_number": options.visit_number,
         "visit_id": visit_id,
-        "protocol_hash": protocol_hash,
         "no_go_digit": no_go_digit,
         "master_seed": options.master_seed,
         "segment_seeds": segment_seeds,
@@ -967,7 +1128,6 @@ def _validate_resume(
         "recording_rehearsal": _recording_rehearsal_identity(config),
         "smoke": options.smoke,
         "include_practice": options.include_practice,
-        "baseline": copy.deepcopy(config.get("recording_suite", {}).get("baseline", {})),
         "window_size": list(config.get("hardware", {}).get("display", {}).get("size", [1000, 700])),
         "full_screen": bool(config.get("hardware", {}).get("display", {}).get("full_screen", False)),
     }
@@ -979,8 +1139,31 @@ def _validate_resume(
             }
         )
     mismatches = [key for key, value in expected.items() if manifest.get(key) != value]
+    recorded_overrides = manifest.get("task_overrides")
+    if isinstance(recorded_overrides, dict) and recorded_overrides != _task_override_identity(options):
+        mismatches.append("task_overrides")
+    if manifest.get("protocol_hash") != protocol_hash:
+        expected_profile = (
+            STUDY1_FULL_1000_ACQUISITION_PROFILE
+            if options.full_1000
+            else STUDY1_STANDARD_ACQUISITION_PROFILE
+        )
+        if (
+            manifest.get("protocol_name") != STUDY1_PROTOCOL_NAME
+            or manifest.get("acquisition_profile") != expected_profile
+        ):
+            mismatches.append("protocol_hash")
+    for phase, recorded_hash in dict(manifest.get("prepared_sequence_hashes") or {}).items():
+        if prepared_sequences.get(phase) != recorded_hash:
+            mismatches.append(f"prepared_sequence_hashes.{phase}")
+    for phase, recorded_hash in dict(manifest.get("sequence_hashes") or {}).items():
+        if prepared_sequences.get(phase) != recorded_hash:
+            mismatches.append(f"sequence_hashes.{phase}")
     if mismatches:
-        raise ValueError("resume identity does not match existing Study 1 visit: " + ", ".join(mismatches))
+        raise ValueError(
+            "resume identity does not match existing Study 1 visit: "
+            + ", ".join(dict.fromkeys(mismatches))
+        )
 
 
 def _prepare_visit_sequences(
@@ -994,13 +1177,12 @@ def _prepare_visit_sequences(
 
     prepared: dict[str, str] = {}
     for phase, seed in segment_seeds.items():
-        child = configure_study1_segment(
+        child = _configure_study1_child(
             config,
             phase,
+            options,
             no_go_digit=assigned_no_go_digit,
             seed=seed,
-            smoke=options.smoke,
-            include_practice=options.include_practice,
         )
         parsed = DynamicSartConfig.from_mapping(child["tasks"]["dynamic_sart"])
         # The child runner always supplies its effective trial count explicitly.
@@ -1008,11 +1190,47 @@ def _prepare_visit_sequences(
         # recorded sequence identities are exactly comparable.
         plan = build_dynamic_sart_plan(
             parsed,
-            trial_override=parsed.normal_recipe_trial_count,
+            trial_override=int(options.trials or parsed.normal_recipe_trial_count),
         )
         validate_dynamic_sart_plan(plan, parsed)
         prepared[phase] = str(plan["sequence_id"])
     return prepared
+
+
+def _configure_study1_child(
+    config: dict[str, Any],
+    phase: str,
+    options: Study1Options,
+    *,
+    no_go_digit: int,
+    seed: int,
+) -> dict[str, Any]:
+    child = configure_study1_segment(
+        config,
+        phase,
+        no_go_digit=no_go_digit,
+        seed=seed,
+        smoke=options.smoke,
+        include_practice=options.include_practice,
+    )
+    practice = child.setdefault("tasks", {}).setdefault("dynamic_sart", {}).setdefault(
+        "practice", {}
+    )
+    if options.skip_practice:
+        practice["enabled"] = False
+        practice.pop("require_ready_confirmation", None)
+    if options.practice_trials is not None:
+        practice["trials_per_round"] = int(options.practice_trials)
+    if options.practice_no_go_trials is not None:
+        practice["no_go_trials"] = int(options.practice_no_go_trials)
+    elif options.practice_trials is not None:
+        practice["no_go_trials"] = min(
+            int(options.practice_trials) - 1,
+            max(1, round(int(options.practice_trials) * 0.15)),
+        )
+    if options.practice_max_rounds is not None:
+        practice["max_rounds"] = int(options.practice_max_rounds)
+    return child
 
 
 def _dsart_options(options: Study1Options, *, trials: int) -> DsartRecordingOptions:
@@ -1089,6 +1307,13 @@ def _study1_phase_result_failures(
             failures.append("preflight contains one or more active failures")
         if not bool(dict(result.get("operator_acceptance") or {}).get("accepted")):
             failures.append("preflight lacks an accepted operator decision")
+        return failures
+
+    if phase == "baseline" and result.get("status") == "skipped":
+        if result.get("skip_reason") != "operator_requested":
+            failures.append("skipped baseline lacks the explicit operator-requested reason")
+        if result.get("session_dir") is not None:
+            failures.append("skipped baseline unexpectedly created a session directory")
         return failures
 
     if result.get("status") != "completed":
