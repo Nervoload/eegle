@@ -1,0 +1,110 @@
+{
+  "block_counts": {
+    "query_smoke": 39,
+    "support_smoke": 125
+  },
+  "experimental_trial_count": 164,
+  "flag_counts": {
+    "aborted": 0,
+    "commission_error": 20,
+    "invalid": 0,
+    "late_response": 0,
+    "multiple_response": 6,
+    "omission_error": 3,
+    "premature_response": 0,
+    "too_fast_response": 1,
+    "wrong_key_response": 0
+  },
+  "go_accuracy": 0.9784172661870504,
+  "go_trial_count": 139,
+  "labels": {
+    "label_contract_file": "C:\\Projects\\code\\eegle\\data\\participants\\test25_1\\sessions\\2026-08-25\\study1_visit_visit-1-20260825T135154_session1_main\\dynamic_sart\\run-20260825T135437\\events\\dynamic_sart_label_contract.json",
+    "label_count": 164,
+    "labels_file": "C:\\Projects\\code\\eegle\\data\\participants\\test25_1\\sessions\\2026-08-25\\study1_visit_visit-1-20260825T135154_session1_main\\dynamic_sart\\run-20260825T135437\\events\\dynamic_sart_labels.csv",
+    "reference_hash": "4641e2c26f92dedd59bd7dc4c5d2a45d17d4aed17f4ca96e8b161a3c6522469a",
+    "status": "ok",
+    "warnings": [
+      "valid_support_go_count_below_200_for_q95",
+      "q95_preferred_confidence_unattainable_under_support_go_trial_budget"
+    ]
+  },
+  "marker_trial_parity": {
+    "matches": false,
+    "presented_trial_count": 176,
+    "stimulus_onset_event_count": 177
+  },
+  "mean_valid_go_rt_seconds": 0.3050321755548255,
+  "median_valid_go_rt_seconds": 0.29297419999966223,
+  "no_go_accuracy": 0.2,
+  "no_go_trial_count": 25,
+  "partial_run": true,
+  "phase_counts": {
+    "query": 39,
+    "support": 125
+  },
+  "practice_trial_count": 12,
+  "primary_outcome_counts": {
+    "commission_error": 20,
+    "correct_go": 136,
+    "correct_no_go": 5,
+    "omission_error": 3
+  },
+  "raw_trials_unchanged_by_labels": true,
+  "schema": "eegle.dynamic_sart.summary.v2",
+  "session_dir": "C:\\Projects\\code\\eegle\\data\\participants\\test25_1\\sessions\\2026-08-25\\study1_visit_visit-1-20260825T135154_session1_main\\dynamic_sart\\run-20260825T135437",
+  "status": "ok",
+  "support_complete_event_count": 1,
+  "support_reference": {
+    "created_at_support_boundary": 6380.026336100001,
+    "last_included_support_trial": 125,
+    "principal_support_relative_threshold": "q80",
+    "reference_hash": "4641e2c26f92dedd59bd7dc4c5d2a45d17d4aed17f4ca96e8b161a3c6522469a",
+    "schema": "eegle.dynamic_sart.support_reference.v2",
+    "source_trial_hash": "f2ef6541f97af582a0d85639fbe4e8db979fc0fc0c21fb993d6eb371207e0b27",
+    "support_go_trial_budget": 106,
+    "support_log_rt_mad": 0.10837492967990103,
+    "support_log_rt_median": -1.212531660399249,
+    "support_log_rt_q80": -1.0705870628656395,
+    "support_log_rt_q95": -0.86593149562248,
+    "support_log_rt_robust_scale": 0.16067667074342126,
+    "support_log_rt_scale_method": "median_absolute_deviation",
+    "support_q80_confidence": "preferred",
+    "support_q80_preferred_min_valid_go_trials": 100,
+    "support_q80_role": "primary_exploratory",
+    "support_q95_confidence": "low_unattainable_by_design",
+    "support_q95_preferred_attainable": false,
+    "support_q95_preferred_min_valid_go_trials": 200,
+    "support_q95_role": "secondary_exploratory",
+    "support_rt_median_seconds": 0.2974432999990313,
+    "support_trial_budget": 125,
+    "valid_support_go_count": 105,
+    "warnings": [
+      "valid_support_go_count_below_200_for_q95",
+      "q95_preferred_confidence_unattainable_under_support_go_trial_budget"
+    ]
+  },
+  "support_reference_regenerated_hash": "4641e2c26f92dedd59bd7dc4c5d2a45d17d4aed17f4ca96e8b161a3c6522469a",
+  "support_reference_stable": true,
+  "task_end_event_count": 1,
+  "timing_file": "C:\\Projects\\code\\eegle\\data\\participants\\test25_1\\sessions\\2026-08-25\\study1_visit_visit-1-20260825T135154_session1_main\\dynamic_sart\\run-20260825T135437\\reports\\dynamic_sart_timing.csv",
+  "timing_measurement": {
+    "block_transition_inter_onset_count": 1,
+    "contract": "actual inter-onset intervals are reconstructed from consecutive flip-captured stimulus onsets; drift statistics prefer LSL flip time and exclude block transitions",
+    "duration_timebase": "lsl_flip_preferred_with_high_resolution_monotonic_fallback",
+    "legacy_scheduled_response_close_row_count": 0,
+    "maximum_absolute_next_onset_schedule_drift_seconds": 0.010052900000482534,
+    "maximum_response_window_close_overshoot_seconds": 0.010011299999860057,
+    "mean_next_onset_schedule_drift_seconds": 0.0008141024691369114,
+    "mean_response_window_close_overshoot_seconds": 0.0010130852270694131,
+    "measured_inter_onset_count": 163,
+    "terminal_or_missing_following_flip_count": 1,
+    "within_block_inter_onset_count": 162
+  },
+  "trials_file": "C:\\Projects\\code\\eegle\\data\\participants\\test25_1\\sessions\\2026-08-25\\study1_visit_visit-1-20260825T135154_session1_main\\dynamic_sart\\run-20260825T135437\\events\\dynamic_sart_trials.jsonl",
+  "valid_reaction_time_count": 135,
+  "warnings": [
+    "valid_support_go_count_below_200_for_q95",
+    "q95_preferred_confidence_unattainable_under_support_go_trial_budget",
+    "stimulus_onset_and_presented_trial_counts_differ"
+  ]
+}

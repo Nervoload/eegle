@@ -1,0 +1,8 @@
+{
+  "backend": "disabled",
+  "elapsed_seconds": 0.0,
+  "name": "offline_analyzer",
+  "reason": "offline analyzer disabled by experiment settings",
+  "status": "disabled",
+  "updated_at": "2026-08-25T14:00:13"
+}

@@ -1,0 +1,14 @@
+{
+  "csv_file": "C:\\Projects\\code\\eegle\\data\\participants\\test25_1\\sessions\\2026-08-25\\study1_visit_visit-1-20260825T135154_session1_main\\dynamic_sart\\run-20260825T135437\\raw\\lsl_markers_received.csv",
+  "drain_completed": true,
+  "drain_expected_count": 732,
+  "error": null,
+  "first_local_received_lsl_timestamp": 6147.6729535,
+  "first_lsl_timestamp": 6147.6727329,
+  "last_local_received_lsl_timestamp": 6443.0627807,
+  "last_lsl_timestamp": 6443.0626218,
+  "metadata_file": "C:\\Projects\\code\\eegle\\data\\participants\\test25_1\\sessions\\2026-08-25\\study1_visit_visit-1-20260825T135154_session1_main\\dynamic_sart\\run-20260825T135437\\raw\\lsl_markers_received_metadata.json",
+  "received_count": 732,
+  "source_id": "eegle-markers-dynamic_sart-run-20260825T135437-eb12da85d2c2",
+  "status": "stopped"
+}

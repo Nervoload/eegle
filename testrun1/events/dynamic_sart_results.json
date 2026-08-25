@@ -1,0 +1,167 @@
+{
+  "abort_reason": "escape_abort",
+  "aborted": true,
+  "artifact_files": {
+    "blocks_csv": "C:\\Projects\\code\\eegle\\data\\participants\\test25_1\\sessions\\2026-08-25\\study1_visit_visit-1-20260825T135154_session1_main\\dynamic_sart\\run-20260825T135437\\events\\dynamic_sart_blocks.csv",
+    "key_events_jsonl": "C:\\Projects\\code\\eegle\\data\\participants\\test25_1\\sessions\\2026-08-25\\study1_visit_visit-1-20260825T135154_session1_main\\dynamic_sart\\run-20260825T135437\\events\\dynamic_sart_key_events.jsonl",
+    "probes_jsonl": "C:\\Projects\\code\\eegle\\data\\participants\\test25_1\\sessions\\2026-08-25\\study1_visit_visit-1-20260825T135154_session1_main\\dynamic_sart\\run-20260825T135437\\events\\dynamic_sart_probes.jsonl",
+    "support_reference_json": "C:\\Projects\\code\\eegle\\data\\participants\\test25_1\\sessions\\2026-08-25\\study1_visit_visit-1-20260825T135154_session1_main\\dynamic_sart\\run-20260825T135437\\events\\dynamic_sart_support_reference.json",
+    "trials_csv": "C:\\Projects\\code\\eegle\\data\\participants\\test25_1\\sessions\\2026-08-25\\study1_visit_visit-1-20260825T135154_session1_main\\dynamic_sart\\run-20260825T135437\\events\\dynamic_sart_trials.csv",
+    "trials_jsonl": "C:\\Projects\\code\\eegle\\data\\participants\\test25_1\\sessions\\2026-08-25\\study1_visit_visit-1-20260825T135154_session1_main\\dynamic_sart\\run-20260825T135437\\events\\dynamic_sart_trials.jsonl"
+  },
+  "schema": "eegle.dynamic_sart.summary.v2",
+  "sequence_id": "e8d596164783d0901bc45b86db7db1034afe616aab586a49ee6bee983ead717a",
+  "settings": {
+    "allow_stimulation": false,
+    "allow_task_adaptation": false,
+    "blocks": [
+      {
+        "block_index": 1,
+        "block_name": "full_section_1_support",
+        "break_after": true,
+        "maximum_break_seconds": 60.0,
+        "minimum_break_seconds": 30.0,
+        "phase": "support",
+        "planned_no_go_count": 38,
+        "schema": "eegle.dynamic_sart.block.v3",
+        "study_segment": "session1_main",
+        "trials": 250
+      },
+      {
+        "block_index": 2,
+        "block_name": "full_section_2_support",
+        "break_after": true,
+        "maximum_break_seconds": 60.0,
+        "minimum_break_seconds": 30.0,
+        "phase": "support",
+        "planned_no_go_count": 37,
+        "schema": "eegle.dynamic_sart.block.v3",
+        "study_segment": "session1_main",
+        "trials": 250
+      },
+      {
+        "block_index": 3,
+        "block_name": "full_section_3_query",
+        "break_after": true,
+        "maximum_break_seconds": 60.0,
+        "minimum_break_seconds": 30.0,
+        "phase": "query",
+        "planned_no_go_count": 38,
+        "schema": "eegle.dynamic_sart.block.v3",
+        "study_segment": "session1_main",
+        "trials": 250
+      },
+      {
+        "block_index": 4,
+        "block_name": "full_section_4_query",
+        "break_after": false,
+        "maximum_break_seconds": 30.0,
+        "minimum_break_seconds": 30.0,
+        "phase": "query",
+        "planned_no_go_count": 37,
+        "schema": "eegle.dynamic_sart.block.v3",
+        "study_segment": "session1_main",
+        "trials": 250
+      }
+    ],
+    "completion_auto_close_seconds": 30.0,
+    "countdown_step_seconds": 1.0,
+    "cue_schedule": {
+      "enabled": false
+    },
+    "digits": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "dry_run": {},
+    "escape_keys": [
+      "escape",
+      "q"
+    ],
+    "inter_trial_jitter_max_seconds": 0.0,
+    "inter_trial_jitter_min_seconds": 0.0,
+    "master_seed": 4057163926954412984,
+    "minimum_go_trials_between_no_go": 0,
+    "minimum_leading_go_trials": 4,
+    "minimum_trailing_go_trials": 4,
+    "minimum_valid_rt_seconds": 0.1,
+    "no_go_digit": 3,
+    "no_go_probability": 0.15,
+    "no_go_randomization": {
+      "adjacent_no_go_weight": 0.1,
+      "maximum_consecutive_no_go": 2,
+      "mode": "stratified_weighted",
+      "one_go_gap_weight": 0.35,
+      "stratum_trials": 50
+    },
+    "planned_no_go_count": 150,
+    "post_digit_fixation_seconds": 1.35,
+    "practice": {
+      "enabled": true,
+      "feedback_seconds": 0.35,
+      "go_accuracy": 0.8,
+      "max_anticipatory_response_rate": 0.15,
+      "max_rounds": 3,
+      "no_go_accuracy": 0.6666666667,
+      "no_go_trials": 3,
+      "require_ready_confirmation": true,
+      "trials_per_round": 12
+    },
+    "response_keys": [
+      "space"
+    ],
+    "response_window_seconds": 1.6,
+    "soi_max_seconds": 1.6,
+    "soi_min_seconds": 1.6,
+    "stimulus_seconds": 0.25,
+    "thought_probes": {
+      "after_trials": [],
+      "enabled": false,
+      "exclusion_window_trials": 2,
+      "max_seconds": 10.0,
+      "question": "Where was your attention just before this question?",
+      "response_choices": [
+        "on_task",
+        "mind_wandering",
+        "uncertain"
+      ]
+    }
+  },
+  "summary": {
+    "abort_reason": "escape_abort",
+    "aborted": true,
+    "accuracy": 0.8597560975609756,
+    "commission_errors": 20,
+    "experimental_trials": 164,
+    "go_accuracy": 0.9784172661870504,
+    "go_trial_count": 139,
+    "mean_valid_go_rt_seconds": 0.3050321755548255,
+    "median_valid_go_rt_seconds": 0.29297419999966223,
+    "multiple_responses": 6,
+    "no_go_accuracy": 0.2,
+    "no_go_trial_count": 25,
+    "omission_errors": 3,
+    "partial_run": true,
+    "planned_experimental_trials": 250,
+    "practice_trials": 12,
+    "premature_responses": 0,
+    "query_trials": 39,
+    "schema": "eegle.dynamic_sart.summary.v2",
+    "support_complete": true,
+    "support_trials": 125,
+    "task": "dynamic_sart",
+    "task_version": "1.3",
+    "too_fast_responses": 1,
+    "valid_go_rt_count": 135,
+    "wrong_key_responses": 0
+  },
+  "task": "dynamic_sart"
+}
