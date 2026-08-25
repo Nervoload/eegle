@@ -161,8 +161,15 @@ PsychoPy units and a resize-aware viewport keep digits, fixation, and wrapped
 instructions centered when a window is resized. Full-screen mode is recommended
 for participant acquisition after the display and abort keys have been rehearsed.
 
-Before any baseline or DSART trials, preflight opens the real PsychoPy window,
-measures the actual refresh rate, and opens the asynchronous PTB keyboard queue.
+Before any baseline or DSART trials, preflight uses a disposable Python process
+to open the real PsychoPy window, measure the actual refresh rate, and exercise
+the asynchronous PTB keyboard queue. The queue is stopped explicitly and
+process exit releases any remaining native HID state before the baseline or
+task starts. The accepted preflight report fingerprints the acquisition
+hardware/display/recorder contract, and each later recording phase verifies the
+same fingerprint before it starts. Formal Study 1 refresh measurement uses a
+1 ms frame-interval stability threshold, permits only a measured 60 Hz or 120
+Hz mode within 2 Hz, and retries transient mismatches up to three times.
 Study 1 accepts only measured 60 Hz or 120 Hz modes. The task schedules the
 250 ms digit and 1600 ms SOI as 15/96 frames at 60 Hz or 30/192 frames at 120 Hz,
 using absolute VBlank boundaries rather than cumulative relative sleeps. The
@@ -289,8 +296,11 @@ acceptable. A JSON quality report is retained even if the gate is declined.
   directories. A later crash does not invalidate an earlier completed child.
 - Each PsychoPy task session launches in a fresh Python process. This prevents
   native macOS/Pyglet state left by a closed baseline or prior task window from
-  corrupting the next window. Worker request/result artifacts are retained in
-  the visit's `phase_workers/` directory for diagnosis.
+  corrupting the next window. Worker request/result/status artifacts are
+  retained in the visit's `phase_workers/` directory for diagnosis. The status
+  artifact records whether a worker reached window creation, refresh
+  measurement, PTB keyboard readiness, instruction-key receipt, practice,
+  countdown, a particular experimental block, completion, or cleanup.
 - Trial rows and marker logs flush incrementally. The full planned sequence is
   written before the first experimental trial.
 - During live DSART, a task-independent recorder-health monitor checks the
@@ -319,6 +329,11 @@ acceptable. A JSON quality report is retained even if the gate is declined.
   DSART consistency report is attempted only after the recorder closes; report
   failure is retained as a warning and never turns valid raw EEG into a
   re-record instruction.
+- Mandatory completion validation is fail-closed: if the validator itself
+  crashes, the stimulus manifest is unreadable, or the task and managed
+  recorder outcomes disagree, the phase remains partial/failed. The raw XDF is
+  retained and must not be overwritten; the status means "not yet proven
+  complete," not "data deleted."
 - Pressing Escape/Q aborts the active task and closes its recorder. The visit
   manifest marks the attempt partial.
 - A caught child-session exception writes its full traceback to

@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from eegle.psychopy_input import create_hardware_keyboard, poll_hardware_keyboard, poll_psychopy_keys
+from eegle.psychopy_input import (
+    create_hardware_keyboard,
+    poll_hardware_keyboard,
+    poll_psychopy_keys,
+    stop_hardware_keyboard,
+)
 from eegle.pipelines.dsart_recording import _baseline_instruction
 from eegle.tasks.dynamic_sart import PersistentKeyboardCollector
 
@@ -38,9 +43,13 @@ class _EventModule:
 class _Store:
     def __init__(self) -> None:
         self.rows: list[dict] = []
+        self.checkpoints = 0
 
     def append_key_event(self, row: dict) -> None:
         self.rows.append(row)
+
+    def checkpoint(self) -> None:
+        self.checkpoints += 1
 
 
 class _MalformedKeyPress:
@@ -54,6 +63,7 @@ class _HardwareKeyboard:
         self.clock = _Clock()
         self.events: list[object] = []
         self.cleared = 0
+        self.stopped = 0
 
     def clearEvents(self) -> None:
         self.cleared += 1
@@ -63,6 +73,9 @@ class _HardwareKeyboard:
         values = self.events
         self.events = []
         return values
+
+    def stop(self) -> None:
+        self.stopped += 1
 
 
 class _Window:
@@ -115,6 +128,24 @@ class PsychoPyInputTests(unittest.TestCase):
         self.assertTrue(rows[1]["is_escape_key"])
         self.assertEqual([row["keyboard_time"] for row in rows], [0.1, 0.2])
         self.assertEqual(store.rows, rows)
+        self.assertEqual(store.checkpoints, 0)
+
+    def test_dsart_collector_checkpoints_keys_on_static_instruction_screen(self) -> None:
+        event = _EventModule([])
+        store = _Store()
+        collector = PersistentKeyboardCollector(
+            event,
+            _Clock(),
+            store,
+            response_keys=["space"],
+            escape_keys=["escape", "q"],
+        )
+        event.events = [["SPACE", 0.1]]
+
+        rows = collector.poll(task_state="INSTRUCTIONS")
+
+        self.assertEqual([row["key"] for row in rows], ["space"])
+        self.assertEqual(store.checkpoints, 1)
 
     def test_hardware_keyboard_uses_ptb_queue_and_keydown_timestamps(self) -> None:
         module = type("KeyboardModule", (), {"Keyboard": _HardwareKeyboard})
@@ -127,6 +158,13 @@ class PsychoPyInputTests(unittest.TestCase):
         self.assertEqual(keyboard.cleared, 1)
         self.assertEqual(keyboard.asserted_call, (None, False, True))
         self.assertEqual([(key.name, key.rt) for key in keys], [("space", 0.125)])
+
+        stop_hardware_keyboard(keyboard)
+        self.assertEqual(keyboard.stopped, 1)
+
+    def test_hardware_keyboard_cleanup_requires_public_stop_contract(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "did not expose stop"):
+            stop_hardware_keyboard(object())
 
     def test_baseline_instruction_accepts_space_and_aborts_on_escape(self) -> None:
         self.assertTrue(_baseline_instruction(_Window(), _Visual, _EventModule(["space"]), "Continue"))

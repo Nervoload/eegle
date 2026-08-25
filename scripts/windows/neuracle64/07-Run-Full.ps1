@@ -25,6 +25,7 @@ $config = Get-EegleConfigPath "live"
 Update-EegleGeneratedLiveConfigs $python $config
 $resolvedDataRoot = Get-EegleDataRoot $DataRoot
 $env:EEGLE_SESSION_ROOT = $resolvedDataRoot
+$outcomeFile = New-EegleStudyOutcomePath $resolvedDataRoot
 
 Write-Host "Starting the complete 1,000-trial Study 1 run:"
 Write-Host "  full preflight, three-second XDF recording probe, storage gate, and electrode checks"
@@ -55,6 +56,7 @@ $arguments = @(
     "--window-size", "1000", "700",
     "--confirm-electrodes",
     "--session-root", $resolvedDataRoot,
+    "--result-file", $outcomeFile,
     "--lsl-wait", "10"
 )
 if (-not [string]::IsNullOrWhiteSpace($VisitId)) {
@@ -70,7 +72,10 @@ if ($FullScreen) {
     $arguments += "--fullscreen"
 }
 & $python @arguments
-$studyExitCode = $LASTEXITCODE
-Write-Host "EEGle Study 1 process exit code: $studyExitCode"
+$nativeStudyExitCode = $LASTEXITCODE
+$studyExitCode = Resolve-EegleStudyExit $nativeStudyExitCode $outcomeFile
+Write-Host "EEGle Study 1 native process exit code: $nativeStudyExitCode"
+Write-Host "EEGle Study 1 verified outcome exit code: $studyExitCode"
+Write-Host "EEGle Study 1 outcome file: $outcomeFile"
 Assert-EegleExit "complete 1,000-trial Study 1 run" $studyExitCode
 Write-Host "Complete 1,000-trial Study 1 run completed successfully."

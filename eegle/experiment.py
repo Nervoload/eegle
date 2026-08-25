@@ -34,9 +34,10 @@ class ForwardExperimentResult:
 
     def as_dict(self) -> dict[str, Any]:
         task_aborted = self.task is not None and bool(self.task.summary.get("aborted"))
+        process_incomplete = self.task is not None and (self.processes or {}).get("status") != "complete"
         status = (
             "failed"
-            if self.task is None or task_aborted or (self.processes or {}).get("status") == "failed"
+            if self.task is None or task_aborted or process_incomplete
             else "complete"
         )
         return {

@@ -18,6 +18,7 @@ from eegle.analysis.dynamic_sart_labels import compute_support_reference
 from eegle.devices.lsl_markers import LslMarkerReceiptRecorder
 from eegle.io.events import EventLogger
 from eegle.lsl import LslMarkerOutlet, NullMarkerOutlet, lsl_local_clock, session_marker_source_id
+from eegle.phase_progress import update_dsart_phase_status
 from eegle.psychopy_display import (
     create_psychopy_window,
     measure_psychopy_refresh_rate,
@@ -29,6 +30,7 @@ from eegle.psychopy_input import (
     create_hardware_keyboard,
     poll_hardware_keyboard,
     poll_psychopy_keys,
+    stop_hardware_keyboard,
 )
 from eegle.realtime.policy import TaskAction
 from eegle.realtime.task_feedback import TaskFeedbackClient
@@ -486,6 +488,7 @@ class DynamicSartTask:
         marker_receipt: LslMarkerReceiptRecorder | None = None
         store: DynamicSartArtifactStore | None = None
         win = None
+        hardware_keyboard = None
         aborted = False
         abort_reason = None
         support_complete = False
@@ -506,11 +509,14 @@ class DynamicSartTask:
                 marker_receipt = _start_marker_receipt_recorder(marker_outlet, paths)
             store = DynamicSartArtifactStore(paths, plan, self.task_config, participant)
             feedback_client = _make_task_feedback_client(self.config, paths)
+            update_dsart_phase_status("creating_psychopy_window", session_dir=str(paths.root))
             win = create_psychopy_window(visual, display, title="EEGle Dynamic SART")
+            update_dsart_phase_status("measuring_display_refresh", session_dir=str(paths.root))
             timing = measure_psychopy_refresh_rate(win, display)
             store.set_display_timing(timing)
             digit_stimulus = visual.TextStim(win, text="", height=0.22, color="white")
             fixation_stimulus = visual.TextStim(win, text="+", height=0.08, color="white")
+            update_dsart_phase_status("starting_ptb_keyboard", session_dir=str(paths.root))
             hardware_keyboard = create_hardware_keyboard(
                 keyboard_module,
                 backend=str(display.get("keyboard_backend", "ptb")),
@@ -523,6 +529,7 @@ class DynamicSartTask:
                 self.task_config.escape_keys,
                 hardware=True,
             )
+            update_dsart_phase_status("ptb_keyboard_ready", session_dir=str(paths.root))
             with EventLogger(
                 paths.behavior_csv,
                 paths.events_jsonl,
@@ -537,6 +544,11 @@ class DynamicSartTask:
                 if not _recorder_health_gate(recorder_monitor, logger, marker_outlet):
                     aborted = True
                     abort_reason = "recorder_health_failure"
+                update_dsart_phase_status(
+                    "awaiting_instruction_key",
+                    session_dir=str(paths.root),
+                    expected_key="space",
+                )
                 understood = False if aborted else _show_screen(
                     win,
                     visual,
@@ -551,11 +563,17 @@ class DynamicSartTask:
                     state="INSTRUCTIONS",
                     allowed_continue=self.task_config.response_keys,
                 )
+                update_dsart_phase_status(
+                    "instruction_screen_complete",
+                    session_dir=str(paths.root),
+                    continued=bool(understood),
+                )
                 if not aborted and not understood:
                     aborted = True
                     abort_reason = "instruction_abort"
 
                 if not aborted and self.task_config.practice_enabled:
+                    update_dsart_phase_status("practice", session_dir=str(paths.root))
                     _emit(logger, marker_outlet, marker_label("practice_start"), event_type="SYSTEM")
                     practice_passed = False
                     practice_rounds = list(plan["practice_rounds"])
@@ -656,6 +674,7 @@ class DynamicSartTask:
                             abort_reason = "practice_ready_abort"
 
                 if not aborted:
+                    update_dsart_phase_status("countdown", session_dir=str(paths.root))
                     countdown_ok, countdown_reason = _run_psychopy_countdown(
                         win,
                         visual,
@@ -679,6 +698,12 @@ class DynamicSartTask:
                     if aborted:
                         break
                     block_index = int(block["block_index"])
+                    update_dsart_phase_status(
+                        "experimental_block",
+                        session_dir=str(paths.root),
+                        block_index=block_index,
+                        block_count=len(blocks),
+                    )
                     block_trials = [row for row in plan["planned_trials"] if int(row["block_index"]) == block_index]
                     _emit(
                         logger,
@@ -840,6 +865,11 @@ class DynamicSartTask:
                     planned_experimental_trials=len(plan["planned_trials"]),
                 )
                 store.finalize(summary, aborted=aborted, abort_reason=abort_reason)
+                update_dsart_phase_status(
+                    "completion_screen",
+                    session_dir=str(paths.root),
+                    aborted=aborted,
+                )
                 _show_completion(win, visual, keyboard, paths, summary, self.task_config.completion_auto_close_seconds)
                 return summary
         except KeyboardInterrupt:
@@ -875,6 +905,7 @@ class DynamicSartTask:
             primary_error = exc
             raise
         finally:
+            update_dsart_phase_status("task_cleanup", session_dir=str(paths.root))
             drain_warnings = []
             if marker_receipt is not None and marker_outlet is not None:
                 drain_warning = _drain_emitted_markers(
@@ -890,6 +921,7 @@ class DynamicSartTask:
             )
             cleanup_warnings = _close_task_resources(
                 ("marker outlet", marker_outlet if owns_marker_outlet else None),
+                ("hardware keyboard", _HardwareKeyboardCleanup(hardware_keyboard)),
                 ("PsychoPy window", win),
             )
             _attach_cleanup_warnings(summary, telemetry, [*drain_warnings, *cleanup_warnings])
@@ -1103,6 +1135,16 @@ def _close_task_resources(*resources: tuple[str, Any]) -> list[str]:
     return failures
 
 
+class _HardwareKeyboardCleanup:
+    """Adapt PsychoPy's public ``stop`` lifecycle to task resource cleanup."""
+
+    def __init__(self, keyboard: Any | None) -> None:
+        self.keyboard = keyboard
+
+    def close(self) -> None:
+        stop_hardware_keyboard(self.keyboard)
+
+
 def _attach_cleanup_warnings(
     summary: dict[str, Any] | None,
     telemetry: Telemetry,
@@ -1122,6 +1164,14 @@ def _attach_cleanup_warnings(
 
 class PersistentKeyboardCollector:
     """Drain one persistent keyboard queue without per-trial clearing."""
+
+    _STATIC_CHECKPOINT_STATES = {
+        "INSTRUCTIONS",
+        "PRACTICE_READY",
+        "PRACTICE_FEEDBACK",
+        "BREAK",
+        "COMPLETE",
+    }
 
     def __init__(
         self,
@@ -1204,6 +1254,13 @@ class PersistentKeyboardCollector:
                     **{field: data for field, data in row.items() if field not in {"key", "timestamp_monotonic", "assigned_trial"}},
                 )
             rows.append(row)
+        if rows and task_state in self._STATIC_CHECKPOINT_STATES:
+            # These screens have no stimulus deadline. Persist the exact key
+            # receipt before advancing so a later native freeze cannot erase
+            # the last successful keyboard operation from the artifacts.
+            self.store.checkpoint()
+            if self.logger is not None:
+                self.logger.flush()
         return rows
 
 

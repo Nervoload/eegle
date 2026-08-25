@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import eegle.tasks.dynamic_sart as dynamic_sart_task
 from eegle.factory import make_task_component
 from eegle.psychopy_display import (
     _install_pyglet_resize_handler,
+    _probe_psychopy_display_and_keyboard_inline,
     create_psychopy_window,
     measure_psychopy_refresh_rate,
+    probe_psychopy_display_and_keyboard,
     redraw_psychopy_after_resize,
     service_psychopy_static_window,
 )
@@ -238,6 +241,27 @@ class DynamicSartTaskTests(unittest.TestCase):
                 },
             )
 
+    def test_refresh_measurement_retries_transient_half_rate_result(self) -> None:
+        measurements = iter([30.0, 59.94])
+        getter = MagicMock(side_effect=lambda **_kwargs: next(measurements))
+        result = measure_psychopy_refresh_rate(
+            SimpleNamespace(waitBlanking=True, getActualFrameRate=getter),
+            {
+                "expected_refresh_rate_hz": 120.0,
+                "supported_refresh_rates_hz": [60.0, 120.0],
+                "refresh_rate_tolerance_hz": 2.0,
+                "refresh_rate_stability_threshold_ms": 1.0,
+                "refresh_rate_measurement_attempts": 3,
+                "require_refresh_rate_match": True,
+            },
+        )
+
+        self.assertEqual(result["status"], "measured")
+        self.assertEqual(result["refresh_rate_measurements_hz"], [30.0, 59.94])
+        self.assertEqual(result["refresh_rate_selected_attempt"], 2)
+        self.assertEqual(result["nominal_refresh_rate_hz"], 60.0)
+        self.assertEqual(getter.call_args.kwargs["threshold"], 1.0)
+
     def test_pending_resize_repaints_without_waiting_for_keyboard_input(self) -> None:
         stimulus = SimpleNamespace(draw=MagicMock())
         window = SimpleNamespace(
@@ -267,6 +291,60 @@ class DynamicSartTaskTests(unittest.TestCase):
 
         self.assertFalse(service_psychopy_static_window(window))
         self.assertEqual(Window.dispatches, 1)
+
+    def test_preflight_display_probe_runs_in_disposable_interpreter(self) -> None:
+        captured = {}
+
+        def run_worker(command, *, check, timeout):
+            self.assertFalse(check)
+            result_path = Path(command[command.index("--result") + 1])
+            captured["command"] = command
+            captured["timeout"] = timeout
+            result_path.write_text(
+                json.dumps({"status": "ok", "timing": {"window_opened": True, "keyboard_backend": "ptb"}}),
+                encoding="utf-8",
+            )
+            return SimpleNamespace(returncode=0)
+
+        config = {"hardware": {"display": {"preflight_probe_timeout_seconds": 45}}}
+        with patch("subprocess.run", side_effect=run_worker):
+            result = probe_psychopy_display_and_keyboard(config)
+
+        self.assertTrue(result["window_opened"])
+        self.assertEqual(captured["timeout"], 45.0)
+        self.assertIn("eegle.workers.psychopy_probe", captured["command"])
+
+    def test_inline_preflight_probe_stops_keyboard_before_closing_window(self) -> None:
+        actions = []
+        window = SimpleNamespace(close=lambda: actions.append("window"))
+        keyboard = object()
+        psychopy = ModuleType("psychopy")
+        psychopy.visual = SimpleNamespace()
+        psychopy_hardware = ModuleType("psychopy.hardware")
+        psychopy_hardware.keyboard = SimpleNamespace()
+
+        with patch.dict(
+            sys.modules,
+            {"psychopy": psychopy, "psychopy.hardware": psychopy_hardware},
+        ), patch(
+            "eegle.psychopy_display.create_psychopy_window",
+            return_value=window,
+        ), patch(
+            "eegle.psychopy_display.measure_psychopy_refresh_rate",
+            return_value={"status": "measured"},
+        ), patch(
+            "eegle.psychopy_input.create_hardware_keyboard",
+            return_value=keyboard,
+        ), patch(
+            "eegle.psychopy_input.poll_hardware_keyboard",
+        ), patch(
+            "eegle.psychopy_input.stop_hardware_keyboard",
+            side_effect=lambda value: actions.append("keyboard") if value is keyboard else None,
+        ):
+            result = _probe_psychopy_display_and_keyboard_inline({"hardware": {"display": {}}})
+
+        self.assertTrue(result["window_opened"])
+        self.assertEqual(actions, ["keyboard", "window"])
 
     def test_instruction_screen_services_window_until_space_is_received(self) -> None:
         keyboard = SimpleNamespace(

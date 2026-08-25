@@ -17,6 +17,7 @@ from eegle.pipelines.study1 import (
     Study1Options,
     _apply_visit_baseline,
     _configure_simulated_eeg_rehearsal,
+    _study1_phase_result_failures,
     _validate_options,
     _validate_visit_slot,
     main,
@@ -111,6 +112,9 @@ class Study1Tests(unittest.TestCase):
                 "wait_blanking": False,
                 "check_refresh_rate": False,
                 "require_refresh_rate_match": False,
+                "refresh_rate_tolerance_hz": 1000.0,
+                "refresh_rate_stability_threshold_ms": 1000.0,
+                "refresh_rate_measurement_attempts": 1,
             }
         )
 
@@ -129,6 +133,12 @@ class Study1Tests(unittest.TestCase):
         self.assertTrue(refreshed["hardware"]["display"]["wait_blanking"])
         self.assertTrue(refreshed["hardware"]["display"]["check_refresh_rate"])
         self.assertTrue(refreshed["hardware"]["display"]["require_refresh_rate_match"])
+        self.assertEqual(refreshed["hardware"]["display"]["refresh_rate_tolerance_hz"], 2.0)
+        self.assertEqual(
+            refreshed["hardware"]["display"]["refresh_rate_stability_threshold_ms"],
+            1.0,
+        )
+        self.assertEqual(refreshed["hardware"]["display"]["refresh_rate_measurement_attempts"], 3)
         self.assertIn("m_73393543_eeg", refreshed["hardware"]["eeg"]["lsl_name_patterns"])
         self.assertEqual(
             refreshed["operator_confirmation"],
@@ -594,6 +604,20 @@ class Study1Tests(unittest.TestCase):
         self.assertTrue(any(issue["status"] == "fail" and "CSV mirror" in issue["detail"] for issue in issues))
         self.assertTrue(any(issue["status"] == "fail" and "sample heartbeat" in issue["detail"] for issue in issues))
 
+    def test_protocol_rejects_permissive_refresh_measurement_contract(self) -> None:
+        config = load_config(CONFIG)
+        display = config["hardware"]["display"]
+        display["refresh_rate_tolerance_hz"] = 1000.0
+        display["refresh_rate_stability_threshold_ms"] = 1000.0
+        display["refresh_rate_measurement_attempts"] = 1
+
+        issues = validate_study1_config(config)
+        failures = [issue["detail"] for issue in issues if issue["status"] == "fail"]
+
+        self.assertTrue(any("tolerance" in detail for detail in failures))
+        self.assertTrue(any("stability threshold" in detail for detail in failures))
+        self.assertTrue(any("at least two attempts" in detail for detail in failures))
+
     def test_cue_assignments_are_two_of_four_and_deterministic(self) -> None:
         config = load_config(CONFIG)
         first_config = configure_study1_segment(
@@ -721,18 +745,95 @@ class Study1Tests(unittest.TestCase):
     def test_main_reports_and_returns_process_exit_code_from_final_status(self) -> None:
         completed = {"status": "completed", "participant_id": "unit"}
         failed = {"status": "failed", "participant_id": "unit"}
-        argv = ["--participant", "unit", "--visit", "1"]
 
-        for result, expected in ((completed, 0), (failed, 1)):
-            output = io.StringIO()
-            with self.subTest(status=result["status"]), patch(
-                "eegle.pipelines.study1.run_study1_visit",
-                return_value=copy.deepcopy(result),
-            ), redirect_stdout(output):
-                exit_code = main(argv)
-            printed = json.loads(output.getvalue())
-            self.assertEqual(exit_code, expected)
-            self.assertEqual(printed["process_exit_code"], expected)
+        with tempfile.TemporaryDirectory() as tmp:
+            for result, expected in ((completed, 0), (failed, 1)):
+                outcome_file = Path(tmp) / f"{result['status']}.json"
+                argv = [
+                    "--participant",
+                    "unit",
+                    "--visit",
+                    "1",
+                    "--result-file",
+                    str(outcome_file),
+                ]
+                output = io.StringIO()
+                with self.subTest(status=result["status"]), patch(
+                    "eegle.pipelines.study1.run_study1_visit",
+                    return_value=copy.deepcopy(result),
+                ), redirect_stdout(output):
+                    exit_code = main(argv)
+                printed = json.loads(output.getvalue())
+                persisted = json.loads(outcome_file.read_text(encoding="utf-8"))
+                self.assertEqual(exit_code, expected)
+                self.assertEqual(printed["process_exit_code"], expected)
+                self.assertEqual(persisted, printed)
+                self.assertEqual(persisted["status"], result["status"])
+                self.assertEqual(persisted["outcome_file"], str(outcome_file.resolve()))
+                if expected:
+                    self.assertTrue(persisted["failure_detail"])
+                    self.assertEqual(persisted["failed_phase"], "startup_or_orchestration")
+
+    def test_main_outcome_write_failure_does_not_change_scientific_status(self) -> None:
+        output = io.StringIO()
+        with patch(
+            "eegle.pipelines.study1.run_study1_visit",
+            return_value={"status": "completed", "participant_id": "unit"},
+        ), patch(
+            "eegle.pipelines.study1._write_json_atomic",
+            side_effect=PermissionError("synthetic outcome write failure"),
+        ), redirect_stdout(output):
+            exit_code = main(
+                [
+                    "--participant",
+                    "unit",
+                    "--visit",
+                    "1",
+                    "--result-file",
+                    "unwritable-outcome.json",
+                ]
+            )
+
+        printed = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(printed["status"], "completed")
+        self.assertEqual(printed["process_exit_code"], 0)
+        self.assertIn("PermissionError", printed["outcome_file_error"])
+
+    def test_study1_phase_contract_rejects_contradictory_success_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session_dir = Path(tmp)
+            manifest = {
+                "task_mode": "psychopy",
+                "include_practice": False,
+                "prepared_sequence_hashes": {"session1_main": "prepared-sequence"},
+            }
+            valid = {
+                "status": "completed",
+                "session_dir": str(session_dir),
+                "validation": {"status": "pass", "failures": [], "warnings": []},
+                "forward": {"status": "complete"},
+                "sequence_hash": "prepared-sequence",
+                "phase_worker": {"return_code": 0},
+            }
+            self.assertEqual(
+                _study1_phase_result_failures("session1_main", valid, manifest),
+                [],
+            )
+
+            contradictions = {
+                "recorder failure": {"forward": {"status": "failed"}},
+                "sequence mismatch": {"sequence_hash": "different-sequence"},
+                "worker crash": {"phase_worker": {"return_code": 1}},
+                "missing validation": {"validation": {}},
+            }
+            for label, replacement in contradictions.items():
+                with self.subTest(label=label):
+                    result = copy.deepcopy(valid)
+                    result.update(replacement)
+                    self.assertTrue(
+                        _study1_phase_result_failures("session1_main", result, manifest)
+                    )
 
     def test_retry_incomplete_does_not_overwrite_completed_visit(self) -> None:
         participant = {
@@ -768,6 +869,13 @@ class Study1Tests(unittest.TestCase):
                 )
             )
             self.assertEqual(visit_one["status"], "completed")
+            visit_one_manifest = json.loads(
+                Path(visit_one["manifest_file"]).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                visit_one_manifest["prepared_sequence_hashes"]["session1_main"],
+                visit_one["sequence_hashes"]["session1_main"],
+            )
             baseline_parameters = load_config(
                 Path(visit_one["session_directories"]["baseline"]) / "parameters.json"
             )

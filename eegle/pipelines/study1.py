@@ -119,6 +119,23 @@ def main(argv: list[str] | None = None) -> int:
         }
     exit_code = 0 if result.get("status") == "completed" else 1
     result["process_exit_code"] = exit_code
+    if exit_code:
+        failures = list(result.get("failures") or [])
+        failure_detail = result.get("failure_detail") or result.get("error")
+        if failure_detail is None and failures:
+            latest = failures[-1]
+            failure_detail = latest.get("error") if isinstance(latest, dict) else str(latest)
+        result["failure_detail"] = failure_detail or f"Study 1 status={result.get('status')}"
+        result.setdefault("failed_phase", "startup_or_orchestration")
+    if args.result_file:
+        outcome_path = Path(args.result_file).expanduser().resolve()
+        result["outcome_file"] = str(outcome_path)
+        try:
+            _write_json_atomic(outcome_path, result)
+        except Exception as exc:
+            # The console result and native exit code remain authoritative if
+            # this additional launcher handshake cannot be persisted.
+            result["outcome_file_error"] = f"{type(exc).__name__}: {exc}"
     print(json.dumps(result, indent=2, sort_keys=True))
     return exit_code
 
@@ -188,6 +205,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--session-root", "--output-root", dest="output_root", default=None)
+    parser.add_argument(
+        "--result-file",
+        default=None,
+        help=(
+            "Atomically write the final Study 1 result for an external launcher; "
+            "the experiment data and visit manifest remain in the session root"
+        ),
+    )
     parser.add_argument("--lsl-wait", type=float, default=5.0)
     parser.add_argument("--electrode-quality-file", default=None)
     parser.add_argument("--electrode-note", default=None)
@@ -307,9 +332,25 @@ def _run_study1_preflight_only(
         initial_preflight=None,
         require_display=options.task_mode == "psychopy",
     )
+    if report.get("status") not in {"pass", "warning"} or report.get("failures"):
+        return {
+            "schema": VISIT_SCHEMA,
+            "status": "failed",
+            "mode": "preflight_only",
+            "participant_id": options.participant_id,
+            "visit_number": options.visit_number,
+            "visit_id": check_id,
+            "preflight_status": report.get("status"),
+            "report_file": report.get("report_file"),
+            "electrode_quality_file": report.get("electrode_quality_file"),
+            "channel_contract": report.get("channel_contract"),
+            "failures": list(report.get("failures") or [f"unexpected preflight status={report.get('status')}"]),
+            "warnings": list(report.get("warnings") or []),
+        }
+    _accept_recording_preflight(report, _dsart_options(options, trials=10))
     return {
         "schema": VISIT_SCHEMA,
-        "status": "failed" if report.get("status") == "fail" else "completed",
+        "status": "completed",
         "mode": "preflight_only",
         "participant_id": options.participant_id,
         "visit_number": options.visit_number,
@@ -433,7 +474,7 @@ def _run_configured_study1_visit(
                     require_display=options.task_mode == "psychopy",
                 )
                 active_preflight = result
-                if result.get("status") == "fail":
+                if result.get("status") not in {"pass", "warning"} or result.get("failures"):
                     raise RuntimeError(_phase_error("Study 1 preflight", result))
                 _accept_recording_preflight(result, dsart_options)
             elif phase == "baseline":
@@ -481,6 +522,11 @@ def _run_configured_study1_visit(
                 _accept_post_recording_warnings(result, dsart_options, phase)
                 manifest.setdefault("session_directories", {})[phase] = result.get("session_dir")
                 manifest.setdefault("sequence_hashes", {})[phase] = result.get("sequence_hash")
+            contract_failures = _study1_phase_result_failures(phase, result, manifest)
+            if contract_failures:
+                raise RuntimeError(
+                    f"{phase} completion contract failed: " + "; ".join(contract_failures)
+                )
             _complete_phase(manifest, phase, result)
             _write_json_atomic(visit_manifest_path, manifest)
         except KeyboardInterrupt as exc:
@@ -516,6 +562,38 @@ def _run_configured_study1_visit(
                 status=manifest["status"],
             )
             return _public_result(manifest, visit_manifest_path)
+
+    completion_failures = _study1_visit_completion_failures(manifest)
+    if completion_failures:
+        for phase, failures in completion_failures.items():
+            entry = dict(manifest.get("phases", {}).get(phase, {}) or {})
+            attempts = list(entry.get("attempts") or [])
+            latest_result = dict(attempts[-1].get("result") or {}) if attempts else {}
+            phase_status = "partial" if latest_result.get("session_dir") else "failed"
+            manifest["phases"][phase]["status"] = phase_status
+            if attempts:
+                manifest["phases"][phase]["attempts"][-1]["status"] = phase_status
+                manifest["phases"][phase]["attempts"][-1]["completion_audit_error"] = "; ".join(failures)
+            manifest.setdefault("failures", []).append(
+                {
+                    "phase": phase,
+                    "error": "completion audit failed: " + "; ".join(failures),
+                    "timestamp": _now(),
+                }
+            )
+        manifest["status"] = "partial" if _has_recording(manifest) else "failed"
+        manifest["overall_status"] = manifest["status"]
+        manifest["visit_end"] = _now()
+        _write_json_atomic(visit_manifest_path, manifest)
+        _update_participant_visit(
+            participant_manifest,
+            participant_manifest_path,
+            options.visit_number,
+            visit_id,
+            visit_manifest_path,
+            status=manifest["status"],
+        )
+        return _public_result(manifest, visit_manifest_path)
 
     manifest["status"] = "completed"
     manifest["overall_status"] = "completed"
@@ -931,7 +1009,13 @@ def _prepare_visit_sequences(
             include_practice=options.include_practice,
         )
         parsed = DynamicSartConfig.from_mapping(child["tasks"]["dynamic_sart"])
-        plan = build_dynamic_sart_plan(parsed)
+        # The child runner always supplies its effective trial count explicitly.
+        # Include that same value in the plan hash basis so the prepared and
+        # recorded sequence identities are exactly comparable.
+        plan = build_dynamic_sart_plan(
+            parsed,
+            trial_override=parsed.normal_recipe_trial_count,
+        )
         validate_dynamic_sart_plan(plan, parsed)
         prepared[phase] = str(plan["sequence_id"])
     return prepared
@@ -996,12 +1080,99 @@ def _phase_error(label: str, result: dict[str, Any]) -> str:
     return f"{label} did not complete: {detail}"
 
 
+def _study1_phase_result_failures(
+    phase: str,
+    result: dict[str, Any],
+    manifest: dict[str, Any],
+) -> list[str]:
+    """Reject contradictory or incomplete phase artifacts before advancing."""
+
+    failures: list[str] = []
+    if phase == "preflight":
+        if result.get("status") not in {"pass", "warning"}:
+            failures.append(f"preflight status is {result.get('status')}; expected pass or warning")
+        if result.get("failures"):
+            failures.append("preflight contains one or more active failures")
+        if not bool(dict(result.get("operator_acceptance") or {}).get("accepted")):
+            failures.append("preflight lacks an accepted operator decision")
+        return failures
+
+    if result.get("status") != "completed":
+        failures.append(f"phase result status is {result.get('status')}; expected completed")
+    session_value = result.get("session_dir")
+    if not session_value:
+        failures.append("phase did not report a retained session directory")
+    elif not Path(str(session_value)).exists():
+        failures.append(f"reported session directory does not exist: {session_value}")
+    validation = dict(result.get("validation") or {})
+    if not validation:
+        failures.append("phase did not publish post-recording validation")
+    else:
+        if validation.get("status") not in {"pass", "warning"}:
+            failures.append(f"post-recording validation status is {validation.get('status')}")
+        if validation.get("failures"):
+            failures.append("post-recording validation contains one or more active failures")
+
+    if phase == "baseline":
+        processes = dict(result.get("processes") or {})
+        if processes.get("status") != "complete":
+            failures.append(f"baseline managed-process status is {processes.get('status')}; expected complete")
+        return failures
+
+    forward = dict(result.get("forward") or {})
+    if forward.get("status") != "complete":
+        failures.append(f"forward task/recorder status is {forward.get('status')}; expected complete")
+    expected_hash = dict(manifest.get("prepared_sequence_hashes") or {}).get(phase)
+    if not expected_hash:
+        failures.append("prepared sequence identity is missing from the visit manifest")
+    elif result.get("sequence_hash") != expected_hash:
+        failures.append(
+            f"recorded sequence identity {result.get('sequence_hash')} does not match prepared identity {expected_hash}"
+        )
+    if manifest.get("task_mode") == "psychopy":
+        worker = dict(result.get("phase_worker") or {})
+        if worker.get("return_code") != 0:
+            failures.append(
+                f"isolated PsychoPy phase worker return code is {worker.get('return_code')}; expected 0"
+            )
+    if phase == "session1_main" and manifest.get("include_practice"):
+        if result.get("practice_status") != "passed":
+            failures.append(
+                f"required participant practice status is {result.get('practice_status')}; expected passed"
+            )
+    return failures
+
+
+def _study1_visit_completion_failures(manifest: dict[str, Any]) -> dict[str, list[str]]:
+    failures: dict[str, list[str]] = {}
+    for phase in list(manifest.get("phase_order") or []):
+        phase_failures: list[str] = []
+        if not _phase_is_complete(manifest, phase):
+            phase_failures.append(
+                f"phase ledger status is {manifest.get('phases', {}).get(phase, {}).get('status')}; expected completed"
+            )
+        result = _latest_phase_result(manifest, phase)
+        if result is None:
+            phase_failures.append("completed phase has no completed result artifact")
+        else:
+            phase_failures.extend(_study1_phase_result_failures(phase, result, manifest))
+        if phase_failures:
+            failures[phase] = list(dict.fromkeys(phase_failures))
+    return failures
+
+
 def _continues_incomplete_visit(options: Study1Options) -> bool:
     return bool(options.resume or options.retry_incomplete)
 
 
 def _has_recording(manifest: dict[str, Any]) -> bool:
-    return bool(manifest.get("session_directories")) or _phase_is_complete(manifest, "baseline")
+    if manifest.get("session_directories") or _phase_is_complete(manifest, "baseline"):
+        return True
+    for phase in dict(manifest.get("phases") or {}).values():
+        for attempt in list(dict(phase or {}).get("attempts") or []):
+            if dict(attempt.get("result") or {}).get("session_dir"):
+                return True
+    return False
 
 
 def _archive_resolved_failures(manifest: dict[str, Any], *, resolved_at: str) -> None:

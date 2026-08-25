@@ -296,8 +296,23 @@ def cmd_run_task(args: argparse.Namespace, config: dict[str, Any]) -> int:
     task = args.task or config.get("experiment", {}).get("task", "pvt")
     get_task_spec(task)
     result = make_task_component(task, config, task_mode=args.mode, trials=args.trials, participant_id=args.participant).run()
-    print(json.dumps({"session_dir": str(result.session_dir), "summary": result.summary}, indent=2, sort_keys=True))
-    return 0
+    aborted = bool(result.summary.get("aborted"))
+    status = "failed" if aborted else "completed"
+    exit_code = 1 if aborted else 0
+    print(
+        json.dumps(
+            {
+                "status": status,
+                "process_exit_code": exit_code,
+                "session_dir": str(result.session_dir),
+                "summary": result.summary,
+                "failure_detail": result.summary.get("abort_reason") if aborted else None,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return exit_code
 
 
 def cmd_run_forward(args: argparse.Namespace, config: dict[str, Any]) -> int:
@@ -320,7 +335,45 @@ def cmd_run_forward(args: argparse.Namespace, config: dict[str, Any]) -> int:
         calibration_suite=args.calibration_suite,
     ).run()
     payload = result.as_dict()
+    validation = None
+    if task == "dynamic_sart":
+        from eegle.pipelines.dsart_recording import validate_dynamic_sart_forward_result
+
+        validation = validate_dynamic_sart_forward_result(
+            payload,
+            config,
+            record_eeg=not args.skip_eeg,
+            task_mode=args.task_mode,
+        )["validation"]
+    failure_detail = None
+    validation_failures = list((validation or {}).get("failures") or [])
+    validation_incomplete = validation is not None and validation.get("status") not in {"pass", "warning"}
+    task_summary = dict((payload.get("task") or {}).get("summary") or {})
+    if validation_failures:
+        failure_detail = str(validation_failures[0])
+    elif validation_incomplete:
+        failure_detail = f"Dynamic SART validation status={validation.get('status')}"
+    elif task_summary.get("aborted"):
+        failure_detail = str(task_summary.get("abort_reason") or "task reported aborted=true")
+    elif payload.get("status") != "complete":
+        process_notes = list((payload.get("processes") or {}).get("notes") or [])
+        failed_preflight = [check.__dict__ for check in result.preflight if check.status == "fail"]
+        if process_notes:
+            failure_detail = str(process_notes[0])
+        elif failed_preflight:
+            failure_detail = str(failed_preflight[0].get("detail") or "preflight failed")
+        else:
+            failure_detail = f"forward experiment status={payload.get('status')}"
+    completed = (
+        payload.get("status") == "complete"
+        and not validation_failures
+        and not validation_incomplete
+    )
+    exit_code = 0 if completed else 1
     compact = {
+        "status": "completed" if completed else "failed",
+        "process_exit_code": exit_code,
+        "failure_detail": failure_detail,
         "session_dir": payload["session_dir"],
         "summary_file": payload["summary_file"],
         "task": payload["task"],
@@ -340,9 +393,10 @@ def cmd_run_forward(args: argparse.Namespace, config: dict[str, Any]) -> int:
                 for name, status in payload["processes"].get("processes", {}).items()
             },
         },
+        "validation": validation,
     }
     print(json.dumps(compact, indent=2, sort_keys=True))
-    return 0 if not any(check.status == "fail" for check in result.preflight) else 1
+    return exit_code
 
 
 def cmd_run_realtime(args: argparse.Namespace, config: dict[str, Any]) -> int:

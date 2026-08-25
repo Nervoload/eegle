@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import copy
+import io
 import json
 import os
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from eegle.config import load_config
+from eegle.cli import cmd_run_forward, cmd_run_task
 from eegle.devices.lsl_eeg import (
     LslEegRecorder,
     LslSampleHeartbeat,
@@ -28,10 +31,12 @@ from eegle.lsl import LslMarkerOutlet
 from eegle.pipelines.dsart_recording import (
     DSART8_CHANNELS,
     DsartRecordingOptions,
+    _acquisition_config_sha256,
     _accept_post_recording_warnings,
     _accept_recording_preflight,
     _baseline_phase_aborted,
     _baseline_phase_result,
+    _baseline_recording_validation,
     _child_session_validation,
     _close_resources,
     compare_preflights,
@@ -49,6 +54,7 @@ from eegle.pipelines.dsart_recording import (
     _options_from_args,
     _psychopy_baseline_phase,
     _raw_eeg_integrity,
+    _require_preflight_acquisition_config,
     _run_baseline_dry,
     _run_baseline_psychopy,
     _write_json_atomic,
@@ -59,6 +65,7 @@ from eegle.pipelines.dsart_recording import (
     run_dsart_child_session,
     run_inter_session_break,
     run_recording_preflight,
+    validate_dynamic_sart_forward_result,
     validate_recording_config,
     write_dsart8_overlap_manifest,
 )
@@ -455,6 +462,36 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertEqual(result["status"], "aborted")
         self.assertEqual(result["aborts"][0]["failure_kind"], "operator_interrupt")
 
+    def test_suite_rejects_unknown_preflight_status_instead_of_advancing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            options = DsartRecordingOptions(
+                recipe="dsart8",
+                config_path=CONFIG_8,
+                participant_id="unit",
+                visit_id="visit-unknown-preflight",
+                task_mode="dry-run",
+                trials_per_session=10,
+                baseline_seconds=0.0,
+                break_seconds=0.0,
+                record_eeg=False,
+                require_eeg=False,
+                output_root=tmp,
+            )
+            with patch(
+                "eegle.pipelines.dsart_recording.run_recording_preflight",
+                return_value={
+                    "status": "unknown",
+                    "phase": "initial_preflight",
+                    "checks": [],
+                    "failures": [],
+                    "warnings": [],
+                },
+            ):
+                result = run_recording_suite(options)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["aborts"][0]["phase"], "initial_preflight")
+
     def test_baseline_runtime_exception_retains_its_session_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = load_config(CONFIG_8)
@@ -564,6 +601,18 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertEqual(checks["marker_loopback"]["status"], "skip")
         self.assertIsNone(report["electrode_quality_file"])
         self.assertEqual(report["warnings"], [])
+        self.assertEqual(report["acquisition_config_contract"], "hardware_and_recorder_v1")
+        self.assertEqual(len(report["acquisition_config_sha256"]), 64)
+
+    def test_preflight_acquisition_contract_detects_phase_config_drift(self) -> None:
+        config = load_config(CONFIG_32)
+        preflight = {"acquisition_config_sha256": _acquisition_config_sha256(config)}
+        changed = copy.deepcopy(config)
+        changed["hardware"]["display"]["screen_index"] = 2
+
+        _require_preflight_acquisition_config(config, preflight, phase="baseline")
+        with self.assertRaisesRegex(RuntimeError, "changed after preflight"):
+            _require_preflight_acquisition_config(changed, preflight, phase="task")
 
     def test_xdf_preflight_probe_records_and_surfaces_quality_warnings(self) -> None:
         class NativeOutlet:
@@ -890,6 +939,199 @@ class DsartRecordingTests(unittest.TestCase):
         )
         self.assertEqual(result.as_dict()["status"], "failed")
 
+    def test_forward_result_requires_completed_managed_process_lifecycle(self) -> None:
+        root = Path("/tmp/dsart-process-status-test")
+        for process_status in (None, "running", "partial", "failed"):
+            with self.subTest(process_status=process_status):
+                result = ForwardExperimentResult(
+                    session_dir=root,
+                    preflight=[],
+                    task=TaskRunResult(
+                        task="dynamic_sart",
+                        session_dir=root,
+                        mode="psychopy",
+                        summary={"aborted": False},
+                    ),
+                    eeg=None,
+                    analysis=None,
+                    processes={} if process_status is None else {"status": process_status},
+                    summary_file=root / "session_summary.json",
+                )
+                self.assertEqual(result.as_dict()["status"], "failed")
+
+    def test_run_task_cli_returns_failure_when_dsart_aborts(self) -> None:
+        args = SimpleNamespace(
+            task="dynamic_sart",
+            mode="psychopy",
+            participant="unit",
+            trials=10,
+            window_size=None,
+            full_screen=None,
+        )
+        task_result = TaskRunResult(
+            task="dynamic_sart",
+            session_dir=Path("/retained/display-smoke"),
+            mode="psychopy",
+            summary={"aborted": True, "abort_reason": "keyboard_disconnect"},
+        )
+        component = MagicMock()
+        component.run.return_value = task_result
+        output = io.StringIO()
+        with patch("eegle.cli.make_task_component", return_value=component), redirect_stdout(output):
+            exit_code = cmd_run_task(args, load_config(CONFIG_8))
+
+        printed = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(printed["status"], "failed")
+        self.assertEqual(printed["failure_detail"], "keyboard_disconnect")
+
+    def test_run_forward_cli_does_not_mask_managed_process_failure(self) -> None:
+        args = SimpleNamespace(
+            task="pvt",
+            task_mode="dry-run",
+            participant="unit",
+            trials=2,
+            skip_eeg=False,
+            require_eeg=False,
+            allow_missing_eeg=False,
+            calibration_suite=None,
+            window_size=None,
+            full_screen=None,
+        )
+        forward = MagicMock()
+        forward.preflight = []
+        forward.as_dict.return_value = {
+            "status": "failed",
+            "session_dir": "/retained/session",
+            "summary_file": "/retained/session/session_summary.json",
+            "task": {"task": "pvt", "mode": "dry-run", "summary": {"aborted": False}},
+            "eeg": None,
+            "analysis": None,
+            "processes": {"status": "failed", "notes": ["LabRecorder exited unexpectedly"], "processes": {}},
+        }
+        output = io.StringIO()
+        with patch("eegle.cli.ForwardExperimentRunner") as runner, redirect_stdout(output):
+            runner.return_value.run.return_value = forward
+            exit_code = cmd_run_forward(args, load_config(CONFIG_8))
+
+        printed = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(printed["status"], "failed")
+        self.assertEqual(printed["process_exit_code"], 1)
+        self.assertIn("LabRecorder", printed["failure_detail"])
+
+    def test_run_forward_cli_does_not_mask_dsart_validation_failure(self) -> None:
+        args = SimpleNamespace(
+            task="dynamic_sart",
+            task_mode="dry-run",
+            participant="unit",
+            trials=10,
+            skip_eeg=True,
+            require_eeg=False,
+            allow_missing_eeg=True,
+            calibration_suite=None,
+            window_size=None,
+            full_screen=None,
+        )
+        forward = MagicMock()
+        forward.preflight = []
+        forward.as_dict.return_value = {
+            "status": "complete",
+            "session_dir": "/retained/session",
+            "summary_file": "/retained/session/session_summary.json",
+            "task": {"task": "dynamic_sart", "mode": "dry-run", "summary": {"aborted": False}},
+            "eeg": None,
+            "analysis": None,
+            "processes": {"status": "complete", "notes": [], "processes": {}},
+        }
+        strict_validation = {
+            "validation": {
+                "status": "fail",
+                "failures": ["stimulus manifest is missing"],
+                "warnings": [],
+            }
+        }
+        output = io.StringIO()
+        with patch("eegle.cli.ForwardExperimentRunner") as runner, patch(
+            "eegle.pipelines.dsart_recording.validate_dynamic_sart_forward_result",
+            return_value=strict_validation,
+        ), redirect_stdout(output):
+            runner.return_value.run.return_value = forward
+            exit_code = cmd_run_forward(args, load_config(CONFIG_8))
+
+        printed = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(printed["status"], "failed")
+        self.assertEqual(printed["validation"]["status"], "fail")
+        self.assertIn("stimulus manifest", printed["failure_detail"])
+
+    def test_run_forward_cli_fails_closed_on_inconsistent_validation_status(self) -> None:
+        args = SimpleNamespace(
+            task="dynamic_sart",
+            task_mode="dry-run",
+            participant="unit",
+            trials=10,
+            skip_eeg=True,
+            require_eeg=False,
+            allow_missing_eeg=True,
+            calibration_suite=None,
+            window_size=None,
+            full_screen=None,
+        )
+        forward = MagicMock()
+        forward.preflight = []
+        forward.as_dict.return_value = {
+            "status": "complete",
+            "session_dir": "/retained/session",
+            "summary_file": "/retained/session/session_summary.json",
+            "task": {"task": "dynamic_sart", "mode": "dry-run", "summary": {"aborted": False}},
+            "eeg": None,
+            "analysis": None,
+            "processes": {"status": "complete", "notes": [], "processes": {}},
+        }
+        output = io.StringIO()
+        with patch("eegle.cli.ForwardExperimentRunner") as runner, patch(
+            "eegle.pipelines.dsart_recording.validate_dynamic_sart_forward_result",
+            return_value={
+                "validation": {"status": "fail", "failures": [], "warnings": []}
+            },
+        ), redirect_stdout(output):
+            runner.return_value.run.return_value = forward
+            exit_code = cmd_run_forward(args, load_config(CONFIG_8))
+
+        printed = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(printed["status"], "failed")
+        self.assertEqual(printed["failure_detail"], "Dynamic SART validation status=fail")
+
+    def test_dsart_validation_exception_is_a_failure_with_raw_retained(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp)
+            (session / "events").mkdir()
+            (session / "events" / "stimulus_manifest.json").write_text("{}", encoding="utf-8")
+            with patch(
+                "eegle.pipelines.dsart_recording.analyze_dynamic_sart_session",
+                return_value={},
+            ), patch(
+                "eegle.pipelines.dsart_recording._child_session_validation",
+                side_effect=RuntimeError("synthetic validator defect"),
+            ):
+                validated = validate_dynamic_sart_forward_result(
+                    {
+                        "status": "complete",
+                        "session_dir": str(session),
+                        "task": {"summary": {"aborted": False}},
+                    },
+                    load_config(CONFIG_8),
+                    record_eeg=False,
+                    task_mode="dry-run",
+                )
+
+        validation = validated["validation"]
+        self.assertEqual(validation["status"], "fail")
+        self.assertTrue(any("synthetic validator defect" in row for row in validation["failures"]))
+        self.assertTrue(any("must not be overwritten" in row for row in validation["warnings"]))
+
     def test_psychopy_child_sessions_dispatch_to_fresh_process_isolation(self) -> None:
         options = DsartRecordingOptions(
             recipe="dsart8",
@@ -918,6 +1160,49 @@ class DsartRecordingTests(unittest.TestCase):
         isolated.assert_called_once()
         inline.assert_not_called()
 
+    def test_phase_worker_nonzero_exit_cannot_report_completed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = load_config(CONFIG_8)
+            config["runtime"]["runtime_cache_dir"] = tmp
+            options = DsartRecordingOptions(
+                recipe="dsart8",
+                config_path=CONFIG_8,
+                participant_id="unit",
+                task_mode="psychopy",
+                trials_per_session=10,
+                record_eeg=False,
+                require_eeg=False,
+                output_root=tmp,
+            )
+
+            def start_worker(command):
+                result_path = Path(command[command.index("--result") + 1])
+                result_path.write_text(
+                    json.dumps(
+                        {
+                            "status": "completed",
+                            "session_index": 1,
+                            "session_dir": "/retained/worker-session",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return SimpleNamespace(pid=1234, wait=lambda *, timeout: 7)
+
+            with patch("eegle.pipelines.dsart_recording.subprocess.Popen", side_effect=start_worker):
+                result = _run_dsart_child_session_isolated(
+                    config,
+                    options,
+                    visit_id="visit-worker-mismatch",
+                    session_index=1,
+                    seed=123,
+                    preflight={"checks": []},
+                )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["failure_kind"], "phase_worker_status_mismatch")
+        self.assertEqual(result["phase_worker"]["return_code"], 7)
+
     def test_isolated_child_session_uses_json_request_and_result_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = load_config(CONFIG_8)
@@ -934,8 +1219,7 @@ class DsartRecordingTests(unittest.TestCase):
             )
             captured = {}
 
-            def run_worker(command, *, check):
-                self.assertFalse(check)
+            def run_worker(command):
                 request_path = Path(command[command.index("--request") + 1])
                 result_path = Path(command[command.index("--result") + 1])
                 captured["request"] = json.loads(request_path.read_text())
@@ -943,9 +1227,9 @@ class DsartRecordingTests(unittest.TestCase):
                     json.dumps({"status": "completed", "session_index": 1, "session_dir": "/recording"}),
                     encoding="utf-8",
                 )
-                return SimpleNamespace(returncode=0)
+                return SimpleNamespace(pid=1234, wait=lambda *, timeout: 0)
 
-            with patch("eegle.pipelines.dsart_recording.subprocess.run", side_effect=run_worker):
+            with patch("eegle.pipelines.dsart_recording.subprocess.Popen", side_effect=run_worker):
                 result = _run_dsart_child_session_isolated(
                     config,
                     options,
@@ -958,6 +1242,7 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["phase_worker"]["mode"], "fresh_python_process")
         self.assertEqual(result["phase_worker"]["return_code"], 0)
+        self.assertTrue(result["phase_worker"]["status_file"].endswith(".status.json"))
         self.assertEqual(captured["request"]["session_index"], 1)
         self.assertEqual(captured["request"]["options"]["window_size"], None)
 
@@ -984,9 +1269,12 @@ class DsartRecordingTests(unittest.TestCase):
                 seed=123,
                 preflight={"checks": [{"name": "software", "status": "ok", "detail": "test", "data": {}}]},
             )
+            worker_status = json.loads(Path(result["phase_worker"]["status_file"]).read_text(encoding="utf-8"))
 
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["phase_worker"]["return_code"], 0)
+        self.assertEqual(worker_status["status"], "complete")
+        self.assertEqual(worker_status["stage"], "worker_finished")
         self.assertEqual(result["task_summary"]["experimental_trials"], 10)
         self.assertEqual(result["task_summary"]["practice_trials"], 0)
 
@@ -1027,6 +1315,11 @@ class DsartRecordingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             session = Path(tmp) / "completed-raw-session"
             session.mkdir()
+            (session / "events").mkdir()
+            (session / "events" / "stimulus_manifest.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
             config = load_config(CONFIG_32)
             config["runtime"]["session_root"] = tmp
             options = DsartRecordingOptions(
@@ -1041,7 +1334,11 @@ class DsartRecordingTests(unittest.TestCase):
             )
             forward = MagicMock()
             forward.session_dir = session
-            forward.as_dict.return_value = {"task": {"summary": {}}}
+            forward.as_dict.return_value = {
+                "status": "complete",
+                "session_dir": str(session),
+                "task": {"summary": {}},
+            }
             runner = MagicMock()
             runner.run.return_value = forward
             with patch(
@@ -1267,7 +1564,7 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertEqual(integrity["status"], "fail")
         self.assertIn("managed XDF validation failed", integrity["failures"])
 
-    def test_raw_integrity_keeps_missing_csv_mirror_nonfatal_when_xdf_passes(self) -> None:
+    def test_raw_integrity_skips_csv_checks_when_xdf_mirror_is_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             session = Path(tmp)
             (session / "raw").mkdir()
@@ -1275,7 +1572,35 @@ class DsartRecordingTests(unittest.TestCase):
                 json.dumps(
                     {
                         "hardware": {"eeg": {}},
-                        "processes": {"recorder": {"backend": "labrecorder_xdf"}},
+                        "processes": {
+                            "recorder": {"backend": "labrecorder_xdf", "csv_mirror": False}
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch(
+                "eegle.pipelines.dsart_recording.validate_xdf_recording",
+                return_value={"status": "pass", "failures": [], "warnings": []},
+            ):
+                integrity = _raw_eeg_integrity(session, required=True)
+
+        self.assertEqual(integrity["failures"], [])
+        self.assertEqual(integrity["warnings"], [])
+        self.assertEqual(integrity["status"], "pass")
+        self.assertEqual(integrity["csv_validation_status"], "not_configured")
+
+    def test_raw_integrity_warns_when_enabled_xdf_csv_mirror_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp)
+            (session / "raw").mkdir()
+            (session / "parameters.json").write_text(
+                json.dumps(
+                    {
+                        "hardware": {"eeg": {}},
+                        "processes": {
+                            "recorder": {"backend": "labrecorder_xdf", "csv_mirror": True}
+                        },
                     }
                 ),
                 encoding="utf-8",
@@ -1288,8 +1613,119 @@ class DsartRecordingTests(unittest.TestCase):
 
         self.assertEqual(integrity["failures"], [])
         self.assertEqual(integrity["status"], "warning")
+        self.assertEqual(integrity["csv_validation_status"], "enabled")
+        self.assertTrue(any("CSV mirror warning" in warning for warning in integrity["warnings"]))
+
+    def test_baseline_validation_does_not_require_disabled_xdf_csv_mirror(self) -> None:
+        labels = [
+            "dsart_baseline_eyes_open_start",
+            "dsart_baseline_eyes_open_end",
+            "dsart_baseline_eyes_closed_start",
+            "dsart_baseline_eyes_closed_end",
+        ]
+        phases = [
+            {
+                "phase": "eyes_open",
+                "completion_status": "completed",
+                "aborted": False,
+                "start_monotonic_timestamp": 10.0,
+                "end_monotonic_timestamp": 11.0,
+                "start_lsl_timestamp": 100.0,
+                "end_lsl_timestamp": 101.0,
+            },
+            {
+                "phase": "eyes_closed",
+                "completion_status": "completed",
+                "aborted": False,
+                "start_monotonic_timestamp": 12.0,
+                "end_monotonic_timestamp": 13.0,
+                "start_lsl_timestamp": 102.0,
+                "end_lsl_timestamp": 103.0,
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp)
+            parameters = session / "parameters.json"
+            events = session / "events.jsonl"
+            parameters.write_text(
+                json.dumps({"hardware": {"markers": {"source_id": "marker-source"}}}),
+                encoding="utf-8",
+            )
+            events.write_text(
+                "\n".join(
+                    json.dumps(
+                        {
+                            "label": label,
+                            "metadata": {
+                                "lsl_timestamp": 100.0 + index,
+                                "marker_stream_source_id": "marker-source",
+                                "scheduled_on_flip": label.endswith("_start"),
+                            },
+                        }
+                    )
+                    for index, label in enumerate(labels)
+                ),
+                encoding="utf-8",
+            )
+            paths = SimpleNamespace(root=session, parameters=parameters, events_jsonl=events)
+            with patch(
+                "eegle.pipelines.dsart_recording._marker_receipt_integrity",
+                return_value={"status": "pass", "failures": [], "warnings": []},
+            ), patch(
+                "eegle.pipelines.dsart_recording._raw_eeg_integrity",
+                return_value={
+                    "status": "pass",
+                    "primary_format": "xdf",
+                    "csv_validation_status": "not_configured",
+                    "metadata": {},
+                    "failures": [],
+                    "warnings": [],
+                },
+            ):
+                validation = _baseline_recording_validation(
+                    paths,
+                    {"phases": phases},
+                    record_eeg=True,
+                )
+
+        self.assertEqual(validation["status"], "pass")
+        self.assertEqual(validation["warnings"], [])
+        self.assertEqual(
+            validation["csv_receipt_span_status"],
+            "not_applicable_authoritative_xdf",
+        )
+
+        with patch(
+            "eegle.pipelines.dsart_recording._marker_receipt_integrity",
+            return_value={"status": "pass", "failures": [], "warnings": []},
+        ), patch(
+            "eegle.pipelines.dsart_recording._raw_eeg_integrity",
+            return_value={
+                "status": "pass",
+                "primary_format": "xdf",
+                "csv_validation_status": "not_configured",
+                "metadata": {},
+                "failures": [],
+                "warnings": [],
+            },
+        ):
+            failed_process_validation = _baseline_recording_validation(
+                paths,
+                {
+                    "phases": phases,
+                    "processes": {
+                        "status": "failed",
+                        "notes": ["LabRecorder exited unexpectedly"],
+                    },
+                },
+                record_eeg=True,
+            )
+        self.assertEqual(failed_process_validation["status"], "fail")
         self.assertTrue(
-            any("CSV mirror warning" in warning for warning in integrity["warnings"])
+            any(
+                "LabRecorder exited unexpectedly" in row
+                for row in failed_process_validation["failures"]
+            )
         )
 
     def test_independent_marker_receipt_must_match_ledger_order_and_timestamps(self) -> None:

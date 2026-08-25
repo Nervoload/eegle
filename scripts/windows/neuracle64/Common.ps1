@@ -102,6 +102,51 @@ function Assert-EegleExit([string] $Operation, [int] $ExitCode = $LASTEXITCODE) 
     }
 }
 
+function New-EegleStudyOutcomePath([string] $DataRoot) {
+    $outcomeDirectory = Join-Path $DataRoot "operator_outcomes"
+    New-Item -ItemType Directory -Force -Path $outcomeDirectory | Out-Null
+    $fileName = "study1-$(Get-Date -Format 'yyyyMMdd-HHmmss')-pid$PID.json"
+    return (Join-Path $outcomeDirectory $fileName)
+}
+
+function Resolve-EegleStudyExit([int] $NativeExitCode, [string] $OutcomePath) {
+    if (-not (Test-Path -LiteralPath $OutcomePath -PathType Leaf)) {
+        Write-Warning "Study 1 did not produce its final outcome file. Expected: $OutcomePath"
+        if ($NativeExitCode -ne 0) {
+            return $NativeExitCode
+        }
+        return 1
+    }
+    try {
+        $outcome = Get-Content -LiteralPath $OutcomePath -Raw | ConvertFrom-Json
+        $statusProperty = $outcome.PSObject.Properties["status"]
+        $exitProperty = $outcome.PSObject.Properties["process_exit_code"]
+        if ($null -eq $statusProperty -or $null -eq $exitProperty) {
+            throw "outcome is missing status or process_exit_code"
+        }
+        $reportedStatus = [string] $statusProperty.Value
+        $reportedExitCode = [int] $exitProperty.Value
+    }
+    catch {
+        Write-Warning "Study 1 outcome file is unreadable or incomplete. File: $OutcomePath. Error: $_"
+        if ($NativeExitCode -ne 0) {
+            return $NativeExitCode
+        }
+        return 1
+    }
+    if ($NativeExitCode -ne 0) {
+        if ($reportedStatus -eq "completed" -and $reportedExitCode -eq 0) {
+            Write-Warning "Python returned native exit code $NativeExitCode despite a completed durable Study 1 outcome. The contradiction is not masked; inspect the terminal and outcome file: $OutcomePath"
+        }
+        return $NativeExitCode
+    }
+    if ($reportedStatus -eq "completed" -and $reportedExitCode -eq 0) {
+        return 0
+    }
+    Write-Warning "Python returned native exit code 0 but the durable Study 1 outcome reports status '$reportedStatus' and exit code $reportedExitCode; treating the run as incomplete. File: $OutcomePath"
+    return 1
+}
+
 function New-EegleRunId([string] $Prefix) {
     return "$Prefix-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
 }

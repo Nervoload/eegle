@@ -328,6 +328,14 @@ def validate_study1_config(config: dict[str, Any]) -> list[dict[str, str]]:
         issues.append(_issue("fail", "Study 1 measured refresh rate must match the configured display mode"))
     if list(display.get("supported_refresh_rates_hz") or []) != [60.0, 120.0]:
         issues.append(_issue("fail", "Study 1 display modes must be restricted to measured 60 Hz or 120 Hz"))
+    if float(display.get("refresh_rate_tolerance_hz", float("inf"))) > 2.0:
+        issues.append(_issue("fail", "Study 1 display refresh tolerance must be no greater than 2 Hz"))
+    if float(display.get("refresh_rate_stability_threshold_ms", float("inf"))) > 1.0:
+        issues.append(
+            _issue("fail", "Study 1 display refresh stability threshold must be no greater than 1 ms")
+        )
+    if int(display.get("refresh_rate_measurement_attempts", 0)) < 2:
+        issues.append(_issue("fail", "Study 1 display refresh measurement must allow at least two attempts"))
     if str(display.get("keyboard_backend", "")).lower() != "ptb":
         issues.append(_issue("fail", "Study 1 requires PsychoPy's asynchronous PTB keyboard backend"))
     for name in STUDY1_SEGMENTS:

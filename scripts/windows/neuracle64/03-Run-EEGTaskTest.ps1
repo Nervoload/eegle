@@ -34,7 +34,7 @@ $preflightId = New-EegleRunId "task-test-preflight"
     --lsl-wait 10
 Assert-EegleExit "full Neuracle/LSL/electrode/LabRecorder preflight"
 
-Write-Host "Starting $Trials experimental Dynamic SART trials with XDF + CSV recording."
+Write-Host "Starting $Trials experimental Dynamic SART trials with authoritative XDF recording."
 Write-Host "Keep Neuracle Collect LSL streaming. Do not start LabRecorder manually."
 $taskArguments = @(
     "-m", "eegle.cli", "run-forward",

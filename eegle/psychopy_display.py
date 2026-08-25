@@ -57,22 +57,53 @@ def measure_psychopy_refresh_rate(win: Any, display: dict[str, Any]) -> dict[str
     tolerance = max(0.0, float(display.get("refresh_rate_tolerance_hz", 10.0)))
     check_enabled = bool(display.get("check_refresh_rate", True))
     check_required = bool(display.get("require_refresh_rate_match", False))
-    measured = None
-    error = None
+    measured_value = None
+    measurement_values: list[float | None] = []
+    measurement_errors: list[str] = []
+    selected_attempt = None
+    maximum_attempts = max(1, int(display.get("refresh_rate_measurement_attempts", 3)))
+    target_rates = supported or [expected]
     if check_enabled:
         getter = getattr(win, "getActualFrameRate", None)
         if callable(getter):
-            try:
-                measured = getter(
-                    nIdentical=int(display.get("refresh_rate_identical_frames", 10)),
-                    nMaxFrames=int(display.get("refresh_rate_max_frames", 120)),
-                    nWarmUpFrames=int(display.get("refresh_rate_warmup_frames", 10)),
-                    threshold=float(display.get("refresh_rate_stability_threshold_ms", 1000.0)),
-                    infoMsg=str(display.get("refresh_rate_check_message", "Checking display refresh rate...")),
-                )
-            except Exception as exc:  # pragma: no cover - hardware/backend specific
-                error = f"{type(exc).__name__}: {exc}"
-    measured_value = _positive_float(measured)
+            for attempt in range(1, maximum_attempts + 1):
+                try:
+                    measured = getter(
+                        nIdentical=int(display.get("refresh_rate_identical_frames", 10)),
+                        nMaxFrames=int(display.get("refresh_rate_max_frames", 120)),
+                        nWarmUpFrames=int(display.get("refresh_rate_warmup_frames", 10)),
+                        # PsychoPy defines this value in milliseconds. A former
+                        # 1000 ms fallback made virtually any startup cadence
+                        # look stable, including the observed false 30 Hz mode.
+                        threshold=float(display.get("refresh_rate_stability_threshold_ms", 1.0)),
+                        infoMsg=str(
+                            display.get("refresh_rate_check_message", "Checking display refresh rate...")
+                        ),
+                    )
+                except Exception as exc:  # pragma: no cover - hardware/backend specific
+                    measurement_errors.append(f"attempt {attempt}: {type(exc).__name__}: {exc}")
+                    measurement_values.append(None)
+                    continue
+                candidate = _positive_float(measured)
+                measurement_values.append(candidate)
+                if candidate is None:
+                    continue
+                nearest_target = min(target_rates, key=lambda value: abs(value - candidate))
+                if abs(candidate - nearest_target) <= tolerance:
+                    measured_value = candidate
+                    selected_attempt = attempt
+                    break
+        else:
+            measurement_errors.append("PsychoPy window has no getActualFrameRate method")
+    if measured_value is None:
+        usable_measurements = [value for value in measurement_values if value is not None]
+        if usable_measurements:
+            # Preserve the closest observed value for an actionable mismatch
+            # report after all retries have failed.
+            measured_value = min(
+                usable_measurements,
+                key=lambda candidate: min(abs(candidate - target) for target in target_rates),
+            )
     nominal = (
         min(supported, key=lambda value: abs(value - measured_value))
         if measured_value is not None and supported
@@ -96,8 +127,8 @@ def measure_psychopy_refresh_rate(win: Any, display: dict[str, Any]) -> dict[str
                 f"measured refresh {measured_value:.3f} Hz differs from the nearest supported "
                 f"mode ({nominal:.3f} Hz) by more than {tolerance:.3f} Hz"
             )
-        if error:
-            detail += f" ({error})"
+        if measurement_errors:
+            detail += f" ({'; '.join(measurement_errors)})"
         raise RuntimeError(
             f"DSART display refresh check failed: {detail}. "
             "Use a supported 60 Hz or 120 Hz Windows display mode, or correct the display settings."
@@ -127,7 +158,13 @@ def measure_psychopy_refresh_rate(win: Any, display: dict[str, Any]) -> dict[str
         "refresh_rate_within_tolerance": within_tolerance,
         "refresh_rate_check_enabled": check_enabled,
         "refresh_rate_match_required": check_required,
-        "refresh_rate_measurement_error": error,
+        "refresh_rate_measurement_attempts": len(measurement_values),
+        "refresh_rate_maximum_attempts": maximum_attempts,
+        "refresh_rate_measurements_hz": measurement_values,
+        "refresh_rate_selected_attempt": selected_attempt,
+        "refresh_rate_measurement_error": (
+            "; ".join(measurement_errors) if measurement_errors else None
+        ),
         "wait_blanking": wait_blanking,
         "expected_frame_interval_ms": 1000.0 / effective,
         "stimulus_frame_count": stimulus_frames,
@@ -278,15 +315,85 @@ def _whole_frame_count(seconds: float, refresh_rate_hz: float) -> int:
 
 
 def probe_psychopy_display_and_keyboard(config: dict[str, Any]) -> dict[str, Any]:
-    """Open the real task window and PTB keyboard before acquisition starts."""
+    """Probe the live display and keyboard in a disposable interpreter.
+
+    PsychoPy's PTB backend keeps process-global native keyboard state.  The
+    recording-suite parent also owns the baseline window, so constructing the
+    preflight keyboard there can leave a queue competing with the later visual
+    task.  A short-lived worker makes process exit the final resource boundary.
+    """
+
+    import json
+    import subprocess
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    display = dict(config.get("hardware", {}).get("display", {}) or {})
+    timeout_seconds = float(display.get("preflight_probe_timeout_seconds", 60.0))
+    if timeout_seconds <= 0.0:
+        raise ValueError("display.preflight_probe_timeout_seconds must be positive")
+
+    with tempfile.TemporaryDirectory(prefix="eegle-psychopy-probe-") as temporary_dir:
+        directory = Path(temporary_dir)
+        request_path = directory / "request.json"
+        result_path = directory / "result.json"
+        request_path.write_text(json.dumps({"config": config}), encoding="utf-8")
+        command = [
+            sys.executable,
+            "-m",
+            "eegle.workers.psychopy_probe",
+            "--request",
+            str(request_path),
+            "--result",
+            str(result_path),
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                check=False,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"PsychoPy display/input probe did not finish within {timeout_seconds:g} seconds"
+            ) from exc
+
+        if not result_path.exists():
+            raise RuntimeError(
+                f"PsychoPy display/input probe exited with code {completed.returncode} "
+                "without a result artifact"
+            )
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"PsychoPy display/input probe returned an unreadable result: {exc}") from exc
+        if not isinstance(result, dict):
+            raise RuntimeError("PsychoPy display/input probe result is not a JSON object")
+        if completed.returncode != 0 or result.get("status") != "ok":
+            detail = result.get("error") or f"worker exit code {completed.returncode}"
+            raise RuntimeError(f"PsychoPy display/input probe failed: {detail}")
+        timing = result.get("timing")
+        if not isinstance(timing, dict):
+            raise RuntimeError("PsychoPy display/input probe did not return timing metadata")
+        return timing
+
+
+def _probe_psychopy_display_and_keyboard_inline(config: dict[str, Any]) -> dict[str, Any]:
+    """Open the real task window and PTB queue inside the disposable worker."""
 
     from psychopy import visual
     from psychopy.hardware import keyboard as keyboard_module
 
-    from eegle.psychopy_input import create_hardware_keyboard, poll_hardware_keyboard
+    from eegle.psychopy_input import (
+        create_hardware_keyboard,
+        poll_hardware_keyboard,
+        stop_hardware_keyboard,
+    )
 
     display = dict(config.get("hardware", {}).get("display", {}) or {})
     win = None
+    keyboard = None
     try:
         win = create_psychopy_window(visual, display, title="EEGle preflight")
         timing = measure_psychopy_refresh_rate(win, display)
@@ -301,5 +408,9 @@ def probe_psychopy_display_and_keyboard(config: dict[str, Any]) -> dict[str, Any
         timing["window_opened"] = True
         return timing
     finally:
-        if win is not None:
-            win.close()
+        try:
+            if keyboard is not None:
+                stop_hardware_keyboard(keyboard)
+        finally:
+            if win is not None:
+                win.close()

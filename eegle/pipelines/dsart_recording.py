@@ -107,8 +107,10 @@ def main(argv: list[str] | None = None) -> int:
             "status": "failed",
             "error": f"{type(exc).__name__}: {exc}",
         }
+    exit_code = 0 if result.get("status") == "completed" else 1
+    result["process_exit_code"] = exit_code
     print(json.dumps(result, indent=2, sort_keys=True))
-    return 0 if result.get("status") == "completed" else 1
+    return exit_code
 
 
 def main_dsart8(argv: list[str] | None = None) -> int:
@@ -355,7 +357,7 @@ def run_recording_suite(options: DsartRecordingOptions) -> dict[str, Any]:
                     else:
                         manifest["second_preflight"] = result
                     current_preflight = result
-                    if result["status"] == "fail":
+                    if result.get("status") not in {"pass", "warning"} or result.get("failures"):
                         raise RuntimeError(f"{phase} failed; acquisition stopped")
                     _accept_recording_preflight(result, options)
                 elif phase == "baseline":
@@ -876,6 +878,8 @@ def run_recording_preflight(
         "visit_id": visit_id,
         "recipe": recipe,
         "created_at": _now(),
+        "acquisition_config_sha256": _acquisition_config_sha256(config),
+        "acquisition_config_contract": "hardware_and_recorder_v1",
         "checks": check_payloads,
         "eeg_probe": probe,
         "channel_contract": channel_contract,
@@ -1381,6 +1385,7 @@ def run_resting_baseline(
     visit_id: str,
     preflight: dict[str, Any],
 ) -> dict[str, Any]:
+    _require_preflight_acquisition_config(config, preflight, phase="resting baseline")
     baseline_config = copy.deepcopy(config)
     baseline_task = "study1_baseline" if options.recipe == "study1" else "dsart_baseline"
     recorder_backend = str(
@@ -1487,11 +1492,11 @@ def run_resting_baseline(
         baseline_validation = _baseline_recording_validation(paths, result, record_eeg=options.record_eeg)
     except Exception as exc:
         baseline_validation = {
-            "status": "warning",
-            "failures": [],
-            "warnings": [
-                f"baseline validation report was unavailable ({type(exc).__name__}: {exc}); raw recording was retained"
+            "status": "fail",
+            "failures": [
+                f"baseline validation could not be completed: {type(exc).__name__}: {exc}"
             ],
+            "warnings": ["raw recording was retained and must not be overwritten"],
         }
     result["validation"] = baseline_validation
     if baseline_validation["failures"]:
@@ -1984,6 +1989,7 @@ def _run_dsart_child_session_isolated(
     attempt_token = datetime.now().strftime("%Y%m%dT%H%M%S%f")
     request_path = worker_dir / f"session-{session_index}-{attempt_token}.request.json"
     result_path = worker_dir / f"session-{session_index}-{attempt_token}.result.json"
+    status_path = worker_dir / f"session-{session_index}-{attempt_token}.status.json"
     request = {
         "schema": PHASE_WORKER_SCHEMA,
         "config": config,
@@ -2003,14 +2009,55 @@ def _run_dsart_child_session_isolated(
         str(request_path),
         "--result",
         str(result_path),
+        "--status",
+        str(status_path),
     ]
-    completed = subprocess.run(command, check=False)
+    try:
+        process = subprocess.Popen(command)
+    except OSError as exc:
+        return {
+            "status": "failed",
+            "session_index": session_index,
+            "session_dir": None,
+            "seed": int(seed),
+            "error": f"DSART phase worker could not start: {type(exc).__name__}: {exc}",
+            "failure_kind": "phase_worker_start_failure",
+            "practice_status": "unknown",
+            "phase_worker": {
+                "mode": "fresh_python_process",
+                "return_code": None,
+                "request_file": str(request_path),
+                "result_file": str(result_path),
+                "status_file": str(status_path),
+            },
+        }
+    print(
+        f"DSART task worker started (pid {process.pid}); progress: {status_path}",
+        flush=True,
+    )
+    last_stage: str | None = None
+    while True:
+        try:
+            return_code = int(process.wait(timeout=1.0))
+            break
+        except subprocess.TimeoutExpired:
+            try:
+                status_payload = _load_json(status_path) or {}
+            except (OSError, json.JSONDecodeError):
+                # Progress reporting is diagnostic only. A transient Windows
+                # reader/replace race must not interrupt the visual task.
+                status_payload = {}
+            stage = status_payload.get("stage")
+            if stage and stage != last_stage:
+                print(f"DSART task worker stage: {stage}", flush=True)
+                last_stage = str(stage)
     result = _load_json(result_path)
     worker_metadata = {
         "mode": "fresh_python_process",
-        "return_code": int(completed.returncode),
+        "return_code": return_code,
         "request_file": str(request_path),
         "result_file": str(result_path),
+        "status_file": str(status_path),
     }
     if result is None:
         return {
@@ -2018,15 +2065,15 @@ def _run_dsart_child_session_isolated(
             "session_index": session_index,
             "session_dir": None,
             "seed": int(seed),
-            "error": f"DSART phase worker exited with code {completed.returncode} without a result artifact",
+            "error": f"DSART phase worker exited with code {return_code} without a result artifact",
             "failure_kind": "phase_worker_failure",
             "practice_status": "unknown",
             "phase_worker": worker_metadata,
         }
     result["phase_worker"] = worker_metadata
-    if completed.returncode != 0 and result.get("status") == "completed":
+    if return_code != 0 and result.get("status") == "completed":
         result["status"] = "failed"
-        result["error"] = f"DSART phase worker exited with code {completed.returncode} after reporting completion"
+        result["error"] = f"DSART phase worker exited with code {return_code} after reporting completion"
         result["failure_kind"] = "phase_worker_status_mismatch"
     return result
 
@@ -2057,6 +2104,7 @@ def _run_dsart_child_session_inline(
     seed: int,
     preflight: dict[str, Any],
 ) -> dict[str, Any]:
+    _require_preflight_acquisition_config(config, preflight, phase="Dynamic SART task")
     child_config = copy.deepcopy(config)
     child_config.setdefault("runtime", {})["session_root"] = str(
         Path(child_config.get("runtime", {}).get("session_root", "data")).expanduser().resolve()
@@ -2126,18 +2174,11 @@ def _run_dsart_child_session_inline(
     session_dir = Path(forward.session_dir)
     post_recording_warnings: list[str] = []
     task_summary = dict((forward_payload.get("task") or {}).get("summary") or {})
-    sequence_manifest: dict[str, Any] = {}
     try:
         _write_json_atomic(session_dir / "logs" / "suite_preflight.json", preflight)
     except Exception as exc:
         post_recording_warnings.append(
             f"preflight copy could not be published ({type(exc).__name__}: {exc}); raw recording was retained"
-        )
-    try:
-        sequence_manifest = _load_json(session_dir / "events" / "stimulus_manifest.json") or {}
-    except Exception as exc:
-        post_recording_warnings.append(
-            f"stimulus manifest could not be re-read ({type(exc).__name__}: {exc}); raw recording was retained"
         )
     if options.recipe == "dsart32":
         try:
@@ -2146,32 +2187,14 @@ def _run_dsart_child_session_inline(
             post_recording_warnings.append(
                 f"channel-overlap report could not be published ({type(exc).__name__}: {exc}); raw recording was retained"
             )
-    analysis_error = None
-    try:
-        dynamic_report = analyze_dynamic_sart_session(session_dir, child_config)
-    except Exception as exc:
-        dynamic_report = {}
-        analysis_error = f"{type(exc).__name__}: {exc}"
-    try:
-        validation = _child_session_validation(
-            session_dir,
-            task_summary,
-            sequence_manifest,
-            record_eeg=options.record_eeg,
-            task_mode=options.task_mode,
-            dynamic_report=dynamic_report,
-            analysis_error=analysis_error,
-        )
-    except Exception as exc:
-        validation = {
-            "status": "warning",
-            "failures": [],
-            "warnings": [
-                f"post-recording validation report was unavailable ({type(exc).__name__}: {exc}); "
-                "raw recording was retained"
-            ],
-        }
-        post_recording_warnings.extend(validation["warnings"])
+    validated = validate_dynamic_sart_forward_result(
+        forward_payload,
+        child_config,
+        record_eeg=options.record_eeg,
+        task_mode=options.task_mode,
+    )
+    sequence_manifest = dict(validated["stimulus_manifest"])
+    validation = dict(validated["validation"])
     status = "completed" if not validation["failures"] else "partial"
     return {
         "status": status,
@@ -2190,6 +2213,82 @@ def _run_dsart_child_session_inline(
         "warnings": list(dict.fromkeys([*post_recording_warnings, *list(validation.get("warnings") or [])])),
         "raw_recording_retained": True,
         "forward": forward_payload,
+    }
+
+
+def validate_dynamic_sart_forward_result(
+    forward_payload: dict[str, Any],
+    config: dict[str, Any],
+    *,
+    record_eeg: bool,
+    task_mode: str,
+) -> dict[str, Any]:
+    """Run the strict DSART completion checks used by suites and direct smoke runs."""
+
+    session_value = forward_payload.get("session_dir")
+    if not session_value:
+        return {
+            "stimulus_manifest": {},
+            "dynamic_report": {},
+            "analysis_error": None,
+            "validation": {
+                "status": "fail",
+                "failures": ["forward experiment did not report a session directory"],
+                "warnings": [],
+            },
+        }
+    session_dir = Path(str(session_value)).expanduser().resolve()
+    task_summary = dict((forward_payload.get("task") or {}).get("summary") or {})
+    stimulus_manifest: dict[str, Any] = {}
+    manifest_error: str | None = None
+    try:
+        stimulus_manifest = _load_json(session_dir / "events" / "stimulus_manifest.json") or {}
+    except Exception as exc:
+        manifest_error = f"{type(exc).__name__}: {exc}"
+    analysis_error: str | None = None
+    try:
+        dynamic_report = analyze_dynamic_sart_session(session_dir, config)
+    except Exception as exc:
+        dynamic_report = {}
+        analysis_error = f"{type(exc).__name__}: {exc}"
+    try:
+        validation = _child_session_validation(
+            session_dir,
+            task_summary,
+            stimulus_manifest,
+            record_eeg=record_eeg,
+            task_mode=task_mode,
+            dynamic_report=dynamic_report,
+            analysis_error=analysis_error,
+        )
+    except Exception as exc:
+        validation = {
+            "status": "fail",
+            "failures": [
+                f"post-recording validation could not be completed: {type(exc).__name__}: {exc}"
+            ],
+            "warnings": ["raw recording was retained and must not be overwritten"],
+        }
+    failures = list(validation.get("failures") or [])
+    warnings = list(validation.get("warnings") or [])
+    if manifest_error:
+        failures.append(f"stimulus manifest could not be read: {manifest_error}")
+    if forward_payload.get("status") != "complete":
+        failures.append(
+            f"forward experiment did not complete successfully (status={forward_payload.get('status')})"
+        )
+    validation["failures"] = list(dict.fromkeys(str(item) for item in failures if str(item)))
+    validation["warnings"] = list(dict.fromkeys(str(item) for item in warnings if str(item)))
+    validation["status"] = (
+        "fail"
+        if validation["failures"]
+        else ("warning" if validation["warnings"] else "pass")
+    )
+    return {
+        "stimulus_manifest": stimulus_manifest,
+        "dynamic_report": dynamic_report,
+        "analysis_error": analysis_error,
+        "validation": validation,
     }
 
 
@@ -2380,9 +2479,7 @@ def _child_session_validation(
         }
     else:
         expected = {}
-        warnings.append(
-            "stimulus manifest was unavailable for trial-plan validation; raw recording was retained"
-        )
+        failures.append("stimulus manifest is missing; trial-plan and sequence identity cannot be validated")
     for field, value in expected.items():
         if int(task_summary.get(field, -1)) != value:
             failures.append(f"{field}={task_summary.get(field)}; expected {value}")
@@ -2983,9 +3080,10 @@ def _raw_eeg_integrity(session_dir: Path, *, required: bool) -> dict[str, Any]:
     stream = dict(metadata.get("stream", {}) or {})
     parameters = _load_json(session_dir / "parameters.json") or {}
     eeg_config = dict(parameters.get("hardware", {}).get("eeg", {}) or {})
-    recorder_backend = str(
-        parameters.get("processes", {}).get("recorder", {}).get("backend", "lsl_csv")
-    )
+    recorder_config = dict(parameters.get("processes", {}).get("recorder", {}) or {})
+    recorder_backend = str(recorder_config.get("backend", "lsl_csv"))
+    csv_mirror_enabled = bool(recorder_config.get("csv_mirror", False))
+    csv_validation_enabled = recorder_backend != "labrecorder_xdf" or csv_mirror_enabled
     expected_channels: list[str] = []
     try:
         if eeg_config.get("profile"):
@@ -3005,7 +3103,7 @@ def _raw_eeg_integrity(session_dir: Path, *, required: bool) -> dict[str, Any]:
         else:
             failures.append(message)
 
-    if required:
+    if required and csv_validation_enabled:
         if not raw_path.exists():
             record_csv_issue("raw EEG CSV is missing")
         if metadata.get("status") != "stopped":
@@ -3059,6 +3157,8 @@ def _raw_eeg_integrity(session_dir: Path, *, required: bool) -> dict[str, Any]:
         "raw_header": header,
         "expected_channel_order": expected_channels,
         "recorded_channel_order": header[4:],
+        "csv_mirror_enabled": csv_mirror_enabled,
+        "csv_validation_status": "enabled" if csv_validation_enabled else "not_configured",
         "failures": failures,
         "warnings": warnings,
     }
@@ -3094,6 +3194,13 @@ def _baseline_recording_validation(
 ) -> dict[str, Any]:
     failures = []
     warnings = []
+    process_summary = dict(result.get("processes") or {})
+    if process_summary and process_summary.get("status") != "complete":
+        notes = list(process_summary.get("notes") or [])
+        detail = f": {notes[0]}" if notes else ""
+        failures.append(
+            f"baseline managed-process lifecycle did not complete (status={process_summary.get('status')}){detail}"
+        )
     phases = list(result.get("phases") or [])
     expected_phases = ["eyes_open", "eyes_closed"]
     if [row.get("phase") for row in phases] != expected_phases:
@@ -3179,7 +3286,9 @@ def _baseline_recording_validation(
     raw = _raw_eeg_integrity(paths.root, required=record_eeg)
     failures.extend(raw["failures"])
     warnings.extend(raw["warnings"])
-    if record_eeg and phases:
+    csv_receipt_span_status = "not_required"
+    if record_eeg and phases and raw.get("csv_validation_status") == "enabled":
+        csv_receipt_span_status = "checked"
         raw_metadata = dict(raw.get("metadata") or {})
         raw_first = _optional_float(raw_metadata.get("first_local_received_time"))
         raw_last = _optional_float(raw_metadata.get("last_local_received_time"))
@@ -3207,6 +3316,8 @@ def _baseline_recording_validation(
                 "CSV mirror PC-local receipt-time span does not cover the complete resting baseline; "
                 "authoritative XDF coverage is validated separately"
             )
+    elif record_eeg and raw.get("primary_format") == "xdf":
+        csv_receipt_span_status = "not_applicable_authoritative_xdf"
     return {
         "status": "fail" if failures else ("warning" if warnings else "pass"),
         "failures": failures,
@@ -3221,6 +3332,7 @@ def _baseline_recording_validation(
         "boundary_duration_alignment": duration_alignment,
         "independent_marker_receipt": marker_receipt,
         "raw_integrity": raw,
+        "csv_receipt_span_status": csv_receipt_span_status,
     }
 
 
@@ -3912,6 +4024,38 @@ def _load_json(path: Path) -> dict[str, Any] | None:
 def _hash_payload(payload: Any) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _acquisition_config_sha256(config: dict[str, Any]) -> str:
+    """Identify the hardware/recorder contract actually checked by preflight."""
+
+    return _hash_payload(
+        {
+            "hardware": config.get("hardware", {}),
+            "recorder": config.get("processes", {}).get("recorder", {}),
+        }
+    )
+
+
+def _require_preflight_acquisition_config(
+    config: dict[str, Any],
+    preflight: dict[str, Any],
+    *,
+    phase: str,
+) -> None:
+    """Prevent a phase from silently using a different acquisition contract."""
+
+    checked = str(preflight.get("acquisition_config_sha256") or "").strip()
+    if not checked:
+        # Retain compatibility with resumable preflight reports created before
+        # this provenance field was introduced.
+        return
+    current = _acquisition_config_sha256(config)
+    if current != checked:
+        raise RuntimeError(
+            f"{phase} acquisition configuration changed after preflight; rerun preflight "
+            "before recording"
+        )
 
 
 def _safe_token(value: str) -> str:

@@ -13,11 +13,11 @@ The eight operator PowerShell scripts are under
 | `00-Setup.ps1` | Create/check the Python 3.10 environment | No |
 | `01-DryRun-Task.ps1` | Show a 10-trial Dynamic SART task | No |
 | `02-Test-NeuracleLsl.ps1` | Discover Collect, lock the confirmed cap contract, and run physical preflight | No recording session |
-| `03-Run-EEGTaskTest.ps1` | Full preflight followed by a 10-20 trial recorded task | Yes: XDF + CSV |
-| `04-Run-FullShortTest.ps1` | Preflight, resting controls, practice, and 30 experimental trials | Yes: XDF + CSV |
+| `03-Run-EEGTaskTest.ps1` | Full preflight followed by a 10-20 trial recorded task | Yes: authoritative XDF |
+| `04-Run-FullShortTest.ps1` | Preflight, resting controls, practice, and 30 experimental trials | Yes: authoritative XDF |
 | `05-Diagnose-Lsl.ps1` | Separate local pylsl/config failures from a missing external outlet | No |
 | `06-Test-StorageAccess.ps1` | Reproduce parent/child recording permission operations without EEG | No |
-| `07-Run-Full.ps1` | Complete two-minute baselines, practice gate, and 1,000-trial task | Yes: XDF + CSV |
+| `07-Run-Full.ps1` | Complete two-minute baselines, practice gate, and 1,000-trial task | Yes: authoritative XDF |
 
 Run every command below from a 64-bit Windows PowerShell terminal. Do not use
 Git Bash or WSL for the hardware run.
@@ -327,6 +327,9 @@ mapping, LSL name patterns, reference, ground, EOG allocation, and LabRecorder
 path, but replaces stale task/display parameters. The rebuilt config is
 validated before preflight or recording. A protocol/configuration failure or a
 failed hardware preflight prevents the baseline recorder and task from starting.
+The accepted preflight report fingerprints the hardware, display, marker, and
+recorder settings; baseline and task startup reject any change to that contract.
+The baseline's post-recording XDF validation is not a second preflight.
 
 The short test uses the same timing contract as a genuine Study 1 run: a 250 ms
 digit, 1350 ms post-digit fixation, fixed 1600 ms SOI, no intentional jitter,
@@ -595,6 +598,9 @@ baseline/task reports that the primary acquisition has already failed.
 Dynamic SART uses PsychoPy's asynchronous PTB keyboard queue. On Windows,
 multiple physical keyboards are intentionally exposed to PTB as one combined
 keyboard, so connecting a second keyboard does not require a device selection.
+The preflight display/input check runs in a disposable Python process and stops
+its PTB queue before exit, so it cannot leave an active queue competing with the
+later task process. The task also stops its queue during guarded cleanup.
 EEGle services the native PsychoPy/pyglet event queue while instruction,
 practice, countdown, probe, break, and completion screens wait for input. This
 keeps those static screens responsive without adding GUI-event work to the
@@ -604,6 +610,11 @@ Run `01-DryRun-Task.ps1` before repeating a recorded run. Confirm that the
 instruction screen remains responsive and that SPACE from the intended response
 keyboard advances into practice. If it does not, retain the generated task
 session and terminal transcript; do not proceed to a participant recording.
+The terminal prints the current task-worker stage and the retained
+`phase_workers\*.status.json` path. A final stage of
+`awaiting_instruction_key` means the worker created the window and PTB queue but
+did not return from the instruction-key wait; `instruction_screen_complete`
+proves that SPACE reached the Python task code.
 
 ### Task window is on the wrong display
 
@@ -613,7 +624,26 @@ correct Windows display index. Add `-FullScreen` to scripts 01, 03, or 04 after
 the abort keys have been tested. Before LabRecorder starts, EEGle opens the real
 window, measures the refresh rate, and verifies the PTB keyboard queue. A
 measured 60 Hz or 120 Hz mode is selected automatically (within 2 Hz); other
-display modes fail preflight.
+display modes fail preflight. Measurement uses PsychoPy's 1 ms stability
+threshold and retries up to three times, so a transient half-rate startup sample
+is remeasured rather than accepted as the display mode.
+
+### Script reports exit code 1 after the task window closes
+
+The window closing is not the end of a Study 1 phase: LabRecorder still has to
+stop, finalize, and pass XDF/marker validation. The final JSON object reports
+`status`, `process_exit_code`, and, on failure, `failed_phase`,
+`failure_detail`, and `next_action`. The Windows launchers also atomically save
+that object under `operator_outcomes` in the selected data root and verify it
+after Python exits. Only `status: completed` together with
+`process_exit_code: 0` is accepted as success; a partial or failed durable
+outcome remains exit code 1. A nonzero native Python exit is never masked, even
+if the durable outcome says completed; the launcher prints both values and the
+outcome path so that contradiction can be diagnosed. A missing or unreadable
+requested outcome file also fails the launcher handshake. With Study 1's configured
+`csv_mirror: false`, the absence of
+`raw\eeg.csv` is no longer emitted as a post-recording warning or treated as an
+incomplete phase.
 
 ### Windows blocks data writes
 

@@ -55,6 +55,24 @@ def poll_hardware_keyboard(keyboard: Any) -> list[PsychoPyKeyEvent]:
     return normalized
 
 
+def stop_hardware_keyboard(keyboard: Any | None) -> None:
+    """Stop a PsychoPy hardware queue without depending on private PTB APIs.
+
+    PsychoPy's PTB keyboard backend owns a native queue and a background
+    thread.  Closing the task window does not stop that queue.  In particular,
+    leaving a preflight queue active can compete with the fresh task process
+    for Windows' combined keyboard device.  ``Keyboard.stop`` is the public,
+    backend-neutral lifecycle operation and is safe to call during cleanup.
+    """
+
+    if keyboard is None:
+        return
+    stop = getattr(keyboard, "stop", None)
+    if not callable(stop):
+        raise RuntimeError("PsychoPy hardware Keyboard did not expose stop()")
+    stop()
+
+
 def clear_psychopy_keys(event_module: Any) -> None:
     """Clear queued legacy PsychoPy keyboard events."""
     event_module.clearEvents(eventType="keyboard")

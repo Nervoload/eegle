@@ -73,8 +73,11 @@ into the next; the parent and child exchange JSON request/result artifacts
 under the visit ledger. Resume skips only completed parent phases and allocates a
 new child run directory for an incomplete attempt; it never appends a new task
 to a stopped raw file. Live inference and managed offline analysis are disabled
-during acquisition. Task-aware validation is attempted after recorder shutdown,
-but its failure is a warning rather than a request to overwrite valid raw data.
+during acquisition. Task-aware validation runs after recorder shutdown. A
+nonessential analysis-report failure is retained as a warning, while an
+incomplete validator or a failed recording-integrity check keeps the phase
+partial/failed and preserves the raw data for diagnosis rather than requesting
+that it be overwritten.
 `eegle.recording_health` is the task-independent live guard used by DSART to
 detect recorder exit, stale status heartbeats, and a non-advancing sample count
 at trial boundaries.
