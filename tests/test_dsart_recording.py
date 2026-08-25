@@ -644,6 +644,15 @@ class DsartRecordingTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "changed after preflight"):
             _require_preflight_acquisition_config(changed, preflight, phase="task")
 
+    def test_preflight_acquisition_contract_allows_windowed_to_fullscreen_safety_upgrade(self) -> None:
+        current = load_config(CONFIG_32)
+        current["hardware"]["display"]["full_screen"] = True
+        previous = copy.deepcopy(current)
+        previous["hardware"]["display"]["full_screen"] = False
+        preflight = {"acquisition_config_sha256": _acquisition_config_sha256(previous)}
+
+        _require_preflight_acquisition_config(current, preflight, phase="task")
+
     def test_xdf_preflight_probe_records_and_surfaces_quality_warnings(self) -> None:
         class NativeOutlet:
             def push_sample(self, sample, timestamp=None) -> None:

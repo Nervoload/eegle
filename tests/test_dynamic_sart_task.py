@@ -288,6 +288,40 @@ class DynamicSartTaskTests(unittest.TestCase):
         window.getActualFrameRate.assert_not_called()
         self.assertEqual(result["refresh_rate_measurement_method"], "blank_flip_robust_median_v1")
 
+    def test_required_windowed_pyglet_check_fails_clearly_on_windows(self) -> None:
+        screen = SimpleNamespace(
+            x=0,
+            y=0,
+            width=1920,
+            height=1080,
+            get_mode=lambda: SimpleNamespace(
+                rate=60.0,
+                width=1920,
+                height=1080,
+                depth=32,
+            ),
+        )
+        handle = SimpleNamespace(
+            display=SimpleNamespace(get_screens=lambda: [screen]),
+            get_window_screen=lambda: screen,
+        )
+        window = _FlipWindow([], win_handle=handle)
+        window.fullscr = False
+
+        with patch("eegle.psychopy_display.sys.platform", "win32"):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "windowed PsychoPy/pyglet window on Windows.*#0 active 1920x1080@60.000Hz",
+            ):
+                measure_psychopy_refresh_rate(
+                    window,
+                    {
+                        "win_type": "pyglet",
+                        "full_screen": False,
+                        "require_refresh_rate_match": True,
+                    },
+                )
+
     def test_refresh_measurement_uses_monitor_containing_most_of_moved_window(self) -> None:
         screens = [
             SimpleNamespace(
@@ -325,6 +359,7 @@ class DynamicSartTaskTests(unittest.TestCase):
         self.assertEqual(result["active_monitor"]["index"], 1)
         self.assertEqual(result["active_monitor"]["refresh_rate_hz"], 60.0)
         self.assertEqual(result["nominal_refresh_rate_hz"], 60.0)
+        self.assertEqual(len(result["monitor_inventory"]), 2)
 
     def test_windowed_screen_index_centres_window_on_requested_monitor(self) -> None:
         screens = [

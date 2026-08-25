@@ -425,6 +425,7 @@ def cmd_run_realtime(args: argparse.Namespace, config: dict[str, Any]) -> int:
 
 def _add_display_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--window-size", type=int, nargs=2, metavar=("WIDTH", "HEIGHT"), default=None)
+    parser.add_argument("--screen-index", type=int, default=None)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--fullscreen", dest="full_screen", action="store_true")
     mode.add_argument("--windowed", dest="full_screen", action="store_false")
@@ -441,6 +442,11 @@ def _apply_display_overrides(config: dict[str, Any], args: argparse.Namespace) -
     full_screen = getattr(args, "full_screen", None)
     if full_screen is not None:
         display["full_screen"] = bool(full_screen)
+    screen_index = getattr(args, "screen_index", None)
+    if screen_index is not None:
+        if int(screen_index) < 0:
+            raise ValueError("--screen-index must be nonnegative")
+        display["screen_index"] = int(screen_index)
 
 
 def cmd_replay_realtime(args: argparse.Namespace, config: dict[str, Any]) -> int:

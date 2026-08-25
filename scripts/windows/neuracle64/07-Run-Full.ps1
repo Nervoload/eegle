@@ -25,12 +25,18 @@ param(
     [int] $ScreenIndex = 0,
     [switch] $Resume,
     [switch] $FullScreen,
+    [switch] $Windowed,
     [switch] $ConfirmElectrodes
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Common.ps1")
+
+if ($FullScreen -and $Windowed) {
+    throw "-FullScreen and -Windowed cannot be used together. Fullscreen is the Windows default."
+}
+$useFullScreen = -not $Windowed
 
 if (-not $ConfirmElectrodes) {
     throw "Inspect cap contact/impedance in Collect, then rerun with -ConfirmElectrodes."
@@ -47,7 +53,7 @@ $outcomeFile = New-EegleStudyOutcomePath $resolvedDataRoot
 
 Write-Host "Starting the Study 1 Visit 1 run ($Trials experimental trials):"
 Write-Host "  full preflight, three-second XDF recording probe, storage gate, and electrode checks"
-Write-Host "  PsychoPy monitor index $ScreenIndex (window moves are detected before refresh measurement)"
+Write-Host "  PsychoPy monitor index $ScreenIndex in $(if ($useFullScreen) { 'fullscreen VBlank-synchronized' } else { 'windowed diagnostic-only' }) mode"
 if ($SkipBaseline) {
     Write-Host "  resting baseline skipped by operator request"
 }
@@ -119,8 +125,11 @@ if ($Resume) {
 else {
     $arguments += "--retry-incomplete"
 }
-if ($FullScreen) {
+if ($useFullScreen) {
     $arguments += "--fullscreen"
+}
+else {
+    $arguments += "--windowed"
 }
 & $python @arguments
 $nativeStudyExitCode = $LASTEXITCODE

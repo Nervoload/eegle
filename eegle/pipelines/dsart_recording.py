@@ -4060,7 +4060,7 @@ def _require_preflight_acquisition_config(
 
 
 def _operational_display_upgrade_hashes(config: dict[str, Any]) -> set[str]:
-    """Recognize the additive checker settings introduced after a preflight.
+    """Recognize narrowly scoped Windows timing-safety upgrades after preflight.
 
     Every visual phase measures its own live window, so these fields change how
     that local measurement is performed rather than the EEG/marker/recorder
@@ -4068,6 +4068,7 @@ def _operational_display_upgrade_hashes(config: dict[str, Any]) -> set[str]:
     v1 hash of an otherwise identical preflight; all other drift stays fatal.
     """
 
+    compatible: list[dict[str, Any]] = []
     legacy = copy.deepcopy(config)
     display = legacy.setdefault("hardware", {}).setdefault("display", {})
     removed = False
@@ -4078,7 +4079,18 @@ def _operational_display_upgrade_hashes(config: dict[str, Any]) -> set[str]:
         "refresh_rate_sample_frames",
     ):
         removed = display.pop(name, None) is not None or removed
-    return {_acquisition_config_sha256(legacy)} if removed else set()
+    if removed:
+        compatible.append(legacy)
+    current_display = config.get("hardware", {}).get("display", {})
+    if bool(current_display.get("full_screen", False)):
+        windowed = copy.deepcopy(config)
+        windowed["hardware"]["display"]["full_screen"] = False
+        compatible.append(windowed)
+        if removed:
+            legacy_windowed = copy.deepcopy(legacy)
+            legacy_windowed["hardware"]["display"]["full_screen"] = False
+            compatible.append(legacy_windowed)
+    return {_acquisition_config_sha256(candidate) for candidate in compatible}
 
 
 def _safe_token(value: str) -> str:

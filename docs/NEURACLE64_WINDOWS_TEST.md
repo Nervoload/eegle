@@ -455,12 +455,19 @@ controls are real PowerShell parameters rather than edits to the script:
 - `-SkipPractice` bypasses practice explicitly; and
 - `-ScreenIndex 1` initially opens the PsychoPy windows on the second monitor.
 
-`-ScreenIndex` is zero-based. In windowed mode, moving the window remains
-supported: the refresh check follows the monitor that actually contains most of
-the window rather than continuing to trust its original index. For the most
-reliable scientific timing, place the window entirely on one display before the
-measurement begins; `-FullScreen -ScreenIndex N` is preferable when the operator
-does not need a movable window.
+`-ScreenIndex` is zero-based. The Windows task launchers now use fullscreen by
+default because Pyglet deliberately disables OpenGL swap-interval VSync for
+windowed windows while the Windows Desktop Window Manager is active. Windowed
+`flip()` cadence can therefore appear stable with one display but become
+irregular with two displays, and it cannot validate physical VBlank timing.
+Use `-ScreenIndex N` by itself for acquisition; `-FullScreen` remains accepted
+for backward-compatible commands. `-Windowed` is diagnostic-only and the strict
+display gate explains why it cannot certify an acquisition run.
+
+On failure, the terminal now lists every Pyglet screen index, bounds, resolution,
+and current mode. Compare that inventory with Windows **Settings > System >
+Display > Advanced display** for the selected display. This directly exposes an
+index reversal or a Windows/driver mode such as 100 Hz when 60 Hz was expected.
 
 Every override is persisted in the visit manifest. Baseline duration is an
 operational visit choice and does not change the participant's scientific
@@ -653,15 +660,15 @@ proves that SPACE reached the Python task code.
 
 ### Task window is on the wrong display
 
-The generated configs use screen 0 and a resizable 1000 by 700 window for safe
-testing. Change only the local generated display settings after verifying the
-correct Windows display index. Add `-FullScreen` to scripts 01, 03, or 04 after
-the abort keys have been tested. Before LabRecorder starts, EEGle opens the real
-window, measures the refresh rate, and verifies the PTB keyboard queue. A
-measured 60 Hz or 120 Hz mode is selected automatically (within 2 Hz); other
-display modes fail preflight. Measurement uses PsychoPy's 1 ms stability
-threshold and retries up to three times, so a transient half-rate startup sample
-is remeasured rather than accepted as the display mode.
+Pass `-ScreenIndex 0` or `-ScreenIndex 1`; do not edit the generated config.
+Scripts 01, 03, 04, and 07 use fullscreen by default so Pyglet's Windows backend
+keeps swap-interval VSync enabled. Before LabRecorder starts, EEGle opens the
+real window, measures the refresh rate, verifies the PTB keyboard queue, and
+prints a complete monitor inventory. A measured 60 Hz or 120 Hz mode is selected
+automatically (within 2 Hz); other display modes fail preflight. If the inventory
+reports 100 Hz for the selected display, check that same display in Windows
+Advanced display settings and disable Dynamic Refresh Rate or Variable Refresh
+Rate for the acquisition test before retrying at a fixed supported mode.
 
 ### Script reports exit code 1 after the task window closes
 

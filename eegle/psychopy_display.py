@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from contextlib import contextmanager
 from statistics import median, pstdev
 from time import monotonic, sleep
@@ -89,6 +90,19 @@ def measure_psychopy_refresh_rate(win: Any, display: dict[str, Any]) -> dict[str
         0.0,
         float(display.get("refresh_rate_stability_threshold_ms", 1.0)),
     )
+    monitor_inventory = psychopy_monitor_inventory(win)
+    if check_enabled:
+        print(f"[display] {_monitor_inventory_summary(monitor_inventory)}", flush=True)
+    if check_required and _windows_windowed_pyglet_vsync_unavailable(win, display):
+        raise RuntimeError(
+            "DSART display refresh check cannot validate a windowed PsychoPy/pyglet "
+            "window on Windows: pyglet disables OpenGL swap-interval VSync while the "
+            "Desktop Window Manager is composing the window, so flip cadence is not a "
+            "physical-monitor VBlank clock; "
+            f"{_monitor_inventory_summary(monitor_inventory)}. "
+            "Rerun the Windows operator script in its default fullscreen mode and select "
+            "the target with -ScreenIndex N (do not pass -Windowed)."
+        )
     if settle_seconds:
         _wait_for_psychopy_window_settle(win, settle_seconds)
     if check_enabled:
@@ -201,6 +215,7 @@ def measure_psychopy_refresh_rate(win: Any, display: dict[str, Any]) -> dict[str
         detail += f"; {_active_monitor_summary(active_monitor)}"
         if measurement_values:
             detail += f"; attempts={measurement_values}"
+        detail += f"; {_monitor_inventory_summary(monitor_inventory)}"
         raise RuntimeError(
             f"DSART display refresh check failed: {detail}. "
             "Use a supported 60 Hz or 120 Hz Windows display mode, or correct the display settings."
@@ -267,6 +282,7 @@ def measure_psychopy_refresh_rate(win: Any, display: dict[str, Any]) -> dict[str
         ),
         "refresh_rate_stability_threshold_ms": stability_threshold_ms,
         "active_monitor": active_monitor,
+        "monitor_inventory": monitor_inventory,
         "refresh_rate_measurement_error": (
             "; ".join(measurement_errors) if measurement_errors else None
         ),
@@ -467,7 +483,71 @@ def active_psychopy_monitor(win: Any) -> dict[str, Any] | None:
             and getattr(mode, "height", None) is not None
             else None
         ),
+        "mode_depth_bits": (
+            int(getattr(mode, "depth"))
+            if mode is not None and getattr(mode, "depth", None) is not None
+            else None
+        ),
+        "device_name": _pyglet_screen_device_name(selected),
     }
+
+
+def psychopy_monitor_inventory(win: Any) -> list[dict[str, Any]]:
+    """Return every Pyglet monitor mode visible to the live window.
+
+    The inventory is intentionally derived from the same display object and
+    ordering used by PsychoPy. This makes a Windows ``-ScreenIndex`` mismatch
+    visible in the terminal without introducing a second enumeration scheme.
+    """
+
+    handle = getattr(win, "winHandle", None)
+    display = getattr(handle, "display", None)
+    get_screens = getattr(display, "get_screens", None)
+    if not callable(get_screens):
+        return []
+    try:
+        screens = list(get_screens())
+    except Exception:
+        return []
+    current = None
+    get_window_screen = getattr(handle, "get_window_screen", None)
+    if callable(get_window_screen):
+        try:
+            current = get_window_screen()
+        except Exception:
+            current = None
+    inventory: list[dict[str, Any]] = []
+    for index, screen in enumerate(screens):
+        mode = None
+        get_mode = getattr(screen, "get_mode", None)
+        if callable(get_mode):
+            try:
+                mode = get_mode()
+            except Exception:
+                mode = None
+        bounds = _screen_bounds(screen)
+        inventory.append(
+            {
+                "index": index,
+                "active": screen is current,
+                "bounds": list(bounds) if bounds else None,
+                "mode_size": (
+                    [int(getattr(mode, "width")), int(getattr(mode, "height"))]
+                    if mode is not None
+                    and getattr(mode, "width", None) is not None
+                    and getattr(mode, "height", None) is not None
+                    else None
+                ),
+                "refresh_rate_hz": _positive_float(getattr(mode, "rate", None)),
+                "mode_depth_bits": (
+                    int(getattr(mode, "depth"))
+                    if mode is not None and getattr(mode, "depth", None) is not None
+                    else None
+                ),
+                "device_name": _pyglet_screen_device_name(screen),
+            }
+        )
+    return inventory
 
 
 def _position_window_on_configured_screen(win: Any, screen_index: int) -> None:
@@ -529,7 +609,52 @@ def _active_monitor_summary(monitor: dict[str, Any] | None) -> str:
     index = monitor.get("index")
     rate = _positive_float(monitor.get("refresh_rate_hz"))
     rate_text = "unknown mode" if rate is None else f"mode={rate:.3f} Hz"
-    return f"active monitor index={index} {rate_text}"
+    size = monitor.get("mode_size")
+    size_text = "" if not size else f" {size[0]}x{size[1]}"
+    device = monitor.get("device_name")
+    device_text = "" if not device else f" device={device}"
+    return f"active monitor index={index}{device_text}{size_text} {rate_text}"
+
+
+def _monitor_inventory_summary(inventory: list[dict[str, Any]]) -> str:
+    if not inventory:
+        return "monitor inventory unavailable"
+    rows = []
+    for monitor in inventory:
+        index = monitor.get("index")
+        active = " active" if monitor.get("active") else ""
+        device = monitor.get("device_name")
+        device_text = "" if not device else f" {device}"
+        size = monitor.get("mode_size") or []
+        size_text = "unknown-size" if len(size) != 2 else f"{size[0]}x{size[1]}"
+        rate = _positive_float(monitor.get("refresh_rate_hz"))
+        rate_text = "unknown-Hz" if rate is None else f"{rate:.3f}Hz"
+        bounds = monitor.get("bounds")
+        rows.append(
+            f"#{index}{active}{device_text} {size_text}@{rate_text} bounds={bounds}"
+        )
+    return "monitors=[" + "; ".join(rows) + "]"
+
+
+def _pyglet_screen_device_name(screen: Any) -> str | None:
+    for attribute in ("device_name", "_device_name", "name", "_name"):
+        value = getattr(screen, attribute, None)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def _windows_windowed_pyglet_vsync_unavailable(
+    win: Any,
+    display: dict[str, Any],
+) -> bool:
+    """Identify Pyglet's intentionally unpaced Windows/DWM windowed path."""
+
+    if sys.platform != "win32":
+        return False
+    if str(display.get("win_type", "pyglet")).lower() != "pyglet":
+        return False
+    return not bool(getattr(win, "fullscr", display.get("full_screen", False)))
 
 
 def _monitor_or_window_changed(

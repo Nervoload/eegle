@@ -4,12 +4,20 @@ param(
     [int] $Trials = 10,
     [string] $Participant = "neuracle-display-check",
     [string] $DataRoot = "",
-    [switch] $FullScreen
+    [ValidateRange(0, 16)]
+    [int] $ScreenIndex = 0,
+    [switch] $FullScreen,
+    [switch] $Windowed
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Common.ps1")
+
+if ($FullScreen -and $Windowed) {
+    throw "-FullScreen and -Windowed cannot be used together. Fullscreen is the Windows default."
+}
+$useFullScreen = -not $Windowed
 
 $python = Get-EeglePython
 $config = Get-EegleConfigPath "display"
@@ -18,6 +26,7 @@ $resolvedDataRoot = Get-EegleDataRoot $DataRoot
 $env:EEGLE_SESSION_ROOT = $resolvedDataRoot
 
 Write-Host "Starting a Dynamic SART display test with $Trials experimental trials."
+Write-Host "Using PsychoPy monitor index $ScreenIndex in $(if ($useFullScreen) { 'fullscreen VBlank-synchronized' } else { 'windowed diagnostic-only' }) mode."
 Write-Host "No EEG or LabRecorder is used. Press ESCAPE or Q to abort."
 $arguments = @(
     "-m", "eegle.cli", "run-forward",
@@ -26,11 +35,15 @@ $arguments = @(
     "--task-mode", "psychopy",
     "--trials", [string] $Trials,
     "--participant", $Participant,
+    "--screen-index", [string] $ScreenIndex,
     "--skip-eeg",
     "--allow-missing-eeg"
 )
-if ($FullScreen) {
+if ($useFullScreen) {
     $arguments += "--fullscreen"
+}
+else {
+    $arguments += "--windowed"
 }
 & $python @arguments
 Assert-EegleExit "display-only task run"
