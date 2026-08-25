@@ -779,7 +779,10 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["models"], {})
         self.assertEqual(result["epoch_preparation"]["status"], "failed")
-        self.assertIn("raw/eeg.csv is not available", result["epoch_preparation"]["reason"])
+        self.assertIn(
+            "neither raw/eeg.csv nor raw/recording.xdf is available",
+            result["epoch_preparation"]["reason"],
+        )
         train_model.assert_not_called()
 
     def test_attention8_pilot_suite_writes_phase_configs(self) -> None:

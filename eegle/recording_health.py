@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from time import monotonic, time
+from time import monotonic, sleep, time
 from typing import Any
 
 from eegle.workers.common import load_status
@@ -37,17 +37,15 @@ class RecorderHealthMonitor:
         self._last_data_file_size: int | None = None
         self._last_progress_at = monotonic()
         self._last_payload: dict[str, Any] | None = None
+        self._last_status_elapsed_seconds: float | None = None
+        self._last_status_progress_at = monotonic()
         self._active_warning_kind: str | None = None
 
     def check(self) -> RecordingHealth:
         if not self.required:
             return RecordingHealth(True, None, {"status": "not_required"})
         read_problem: str | None = None
-        try:
-            payload = load_status(self.status_file)
-        except (OSError, ValueError) as exc:
-            payload = None
-            read_problem = f"recorder status file could not be read: {type(exc).__name__}: {exc}"
+        payload, read_problem = self._read_status_with_retry()
         if payload is None:
             if self._last_payload is None:
                 return RecordingHealth(False, read_problem or "recorder status file is missing", {})
@@ -58,10 +56,8 @@ class RecorderHealthMonitor:
         status = str(payload.get("status", "missing"))
         if status != "recording":
             return RecordingHealth(False, f"recorder status changed to {status}", payload)
-        try:
-            status_age = max(0.0, time() - self.status_file.stat().st_mtime)
-        except OSError:
-            status_age = float("inf")
+        now = monotonic()
+        status_age = self._status_payload_age(payload, now)
         summary = dict(payload.get("summary", {}) or {})
         heartbeat = dict(summary.get("lsl_sample_heartbeat") or {})
         heartbeat_degraded = (
@@ -73,7 +69,6 @@ class RecorderHealthMonitor:
         except (TypeError, ValueError):
             sample_count = 0
         data_file_size = _recorded_data_file_size(summary)
-        now = monotonic()
         sample_progress = self._last_sample_count is None or sample_count > self._last_sample_count
         file_progress = (
             data_file_size is not None
@@ -119,6 +114,36 @@ class RecorderHealthMonitor:
             return RecordingHealth(True, reason if is_new else None, payload, warning=is_new)
         self._active_warning_kind = None
         return RecordingHealth(True, None, payload)
+
+    def _read_status_with_retry(self) -> tuple[dict[str, Any] | None, str | None]:
+        last_error: BaseException | None = None
+        for delay in (0.0, 0.005, 0.02):
+            if delay:
+                sleep(delay)
+            try:
+                return load_status(self.status_file), None
+            except (OSError, ValueError) as exc:
+                last_error = exc
+        assert last_error is not None
+        return None, (
+            "recorder status file could not be read after retries: "
+            f"{type(last_error).__name__}: {last_error}"
+        )
+
+    def _status_payload_age(self, payload: dict[str, Any], now: float) -> float:
+        """Prefer payload progress over filesystem mtimes, which are unreliable on Windows."""
+
+        try:
+            elapsed = float(payload["elapsed_seconds"])
+        except (KeyError, TypeError, ValueError):
+            try:
+                return max(0.0, time() - self.status_file.stat().st_mtime)
+            except OSError:
+                return float("inf")
+        if self._last_status_elapsed_seconds is None or elapsed > self._last_status_elapsed_seconds:
+            self._last_status_elapsed_seconds = elapsed
+            self._last_status_progress_at = now
+        return max(0.0, now - self._last_status_progress_at)
 
 
 def _recorded_data_file_size(summary: dict[str, Any]) -> int | None:

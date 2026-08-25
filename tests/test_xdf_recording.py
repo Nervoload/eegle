@@ -24,10 +24,12 @@ from eegle.devices.labrecorder_xdf import (
     required_labrecorder_streams,
     validate_labrecorder_xdf_path,
 )
+from eegle.devices.xdf_clock import load_xdf_clock_normalization
 from eegle.devices.xdf_integrity import validate_xdf_recording
 from eegle.feedback_manager import normalize_processes
 from eegle.hardware.neuracle import NEURACLE_W64_LSL_CHANNELS
 from eegle.session import paths_for_existing_session
+from eegle.realtime.epoching import extract_epochs_for_session, load_eeg_xdf_for_epoching
 
 
 CHANNELS = list(NEURACLE_W64_LSL_CHANNELS)
@@ -428,6 +430,166 @@ class ManagedXdfTests(unittest.TestCase):
 
 
 class XdfIntegrityTests(unittest.TestCase):
+    def test_epoch_loader_requires_and_applies_validated_affine_clock_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            raw = root / "raw"
+            raw.mkdir()
+            xdf_path = raw / "recording.xdf"
+            xdf_path.write_bytes(b"XDF:test")
+            parameters_path = root / "parameters.json"
+            parameters_path.write_text(
+                json.dumps({"hardware": {"eeg": {}}}),
+                encoding="utf-8",
+            )
+            normalization = {
+                "schema": "eegle.xdf_clock_normalization.v1",
+                "method": "affine_eeg_source_to_pc_local_lsl",
+                "origin_local_lsl_timestamp": 110.0,
+                "eeg_source_to_local_scale": 2.0,
+                "eeg_source_to_local_offset_seconds": 90.0,
+            }
+            metadata_path = raw / "xdf_metadata.json"
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "validation": {
+                            "status": "pass",
+                            "eeg": {
+                                "stream": {"stream_id": 7, "nominal_srate": 1.0},
+                                "mapped_channel_names": ["Fz", "Cz"],
+                                "effective_sample_rate_hz": 1.0,
+                            },
+                            "recording_coverage": {
+                                "clock_normalization": normalization,
+                            },
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            calls = []
+
+            def load_xdf(*_args, **kwargs):
+                calls.append(kwargs)
+                return [
+                    {
+                        "time_stamps": np.asarray([10.0, 10.5, 11.0]),
+                        "time_series": np.asarray(
+                            [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]
+                        ),
+                    }
+                ], {}
+
+            with patch.dict(sys.modules, {"pyxdf": types.SimpleNamespace(load_xdf=load_xdf)}):
+                bundle = load_eeg_xdf_for_epoching(
+                    xdf_path,
+                    metadata_path=metadata_path,
+                    parameters_path=parameters_path,
+                )
+            normalizer, _metadata = load_xdf_clock_normalization(metadata_path)
+
+        np.testing.assert_allclose(bundle.timestamps, [0.0, 1.0, 2.0])
+        np.testing.assert_allclose(bundle.data, [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+        self.assertEqual(bundle.channel_names, ["Fz", "Cz"])
+        self.assertEqual(bundle.timestamp_column, "xdf_clock_normalized_seconds")
+        self.assertFalse(calls[0]["synchronize_clocks"])
+        self.assertAlmostEqual(normalizer.normalize_marker_timestamp(110.5), 0.5)
+
+    def test_session_epoch_export_normalizes_xdf_and_lsl_markers_together(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            raw = root / "raw"
+            events = root / "events"
+            raw.mkdir()
+            events.mkdir()
+            xdf_path = raw / "recording.xdf"
+            xdf_path.write_bytes(b"XDF:test")
+            parameters = {
+                "hardware": {"eeg": {}},
+                "realtime": {
+                    "epoching": {
+                        "marker_prefix": "dynamic_sart_stimulus_onset",
+                        "tmin_seconds": -0.1,
+                        "tmax_seconds": 0.2,
+                    }
+                },
+            }
+            (root / "parameters.json").write_text(
+                json.dumps(parameters),
+                encoding="utf-8",
+            )
+            normalization = {
+                "schema": "eegle.xdf_clock_normalization.v1",
+                "method": "affine_eeg_source_to_pc_local_lsl",
+                "origin_local_lsl_timestamp": 110.0,
+                "eeg_source_to_local_scale": 1.0,
+                "eeg_source_to_local_offset_seconds": 100.0,
+            }
+            (raw / "xdf_metadata.json").write_text(
+                json.dumps(
+                    {
+                        "validation": {
+                            "status": "pass",
+                            "eeg": {
+                                "stream": {"stream_id": 7, "nominal_srate": 100.0},
+                                "mapped_channel_names": ["Cz"],
+                            },
+                            "recording_coverage": {
+                                "clock_normalization": normalization,
+                            },
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (events / "stimulus_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "task_name": "dynamic_sart",
+                        "trials": [
+                            {
+                                "global_trial_index": 1,
+                                "phase": "support",
+                                "condition": "go",
+                                "digit": 1,
+                                "is_practice": False,
+                                "presented": True,
+                                "aborted": False,
+                                "invalid": False,
+                                "stimulus_marker_label": (
+                                    "dynamic_sart_stimulus_onset__v=1__trial=1"
+                                    "__condition=go__digit=1__block=1__phase=support__practice=0"
+                                ),
+                                "stimulus_onset_lsl": 110.5,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            source_timestamps = np.linspace(9.0, 12.0, 301)
+
+            def load_xdf(*_args, **_kwargs):
+                return [
+                    {
+                        "time_stamps": source_timestamps,
+                        "time_series": np.arange(301, dtype=float)[:, np.newaxis],
+                    }
+                ], {}
+
+            with patch.dict(sys.modules, {"pyxdf": types.SimpleNamespace(load_xdf=load_xdf)}):
+                result = extract_epochs_for_session(
+                    root,
+                    parameters,
+                    source="stimulus_manifest",
+                )
+
+        self.assertEqual(result["epoch_count"], 1)
+        self.assertEqual(result["raw_file"], str(xdf_path.resolve()))
+        self.assertEqual(result["timestamp_column"], "xdf_clock_normalized_seconds")
+        self.assertEqual(result["clock_normalization"], normalization)
+
     def _session(
         self,
         root: Path,

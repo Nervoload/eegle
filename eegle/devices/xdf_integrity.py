@@ -12,6 +12,10 @@ from typing import Any
 
 import numpy as np
 
+from eegle.devices.xdf_clock import (
+    build_affine_xdf_clock_normalization,
+    build_direct_xdf_clock_normalization,
+)
 from eegle.hardware.eeg_device import matching_eeg_streams
 from eegle.hardware.profiles import configured_channel_types, expected_profile, mapped_channel_names
 
@@ -970,27 +974,15 @@ def _source_preserving_csv_coverage_evidence(
             )
             xdf_start_lag = xdf_first_local - marker_first_reference_timestamp
             xdf_end_shortfall = marker_last_reference_timestamp - xdf_last_local
-            clock_normalization = {
-                "schema": "eegle.xdf_clock_normalization.v1",
-                "method": "affine_eeg_source_to_pc_local_lsl",
-                "evidence_source": evidence_source,
-                "origin_definition": "first_required_marker_pyxdf_synchronized_timestamp",
-                "origin_local_lsl_timestamp": marker_first_reference_timestamp,
-                "eeg_source_to_local_scale": source_to_local_scale,
-                "eeg_source_to_local_offset_seconds": source_to_local_offset,
-                "formula": (
-                    "normalized_seconds = eeg_source_lsl_timestamp * "
-                    "eeg_source_to_local_scale + eeg_source_to_local_offset_seconds - "
-                    "origin_local_lsl_timestamp"
-                ),
-                "normalized_eeg_start_seconds": xdf_first_local - marker_first_reference_timestamp,
-                "normalized_eeg_end_seconds": xdf_last_local - marker_first_reference_timestamp,
-                "normalized_marker_start_seconds": 0.0,
-                "normalized_marker_end_seconds": (
-                    marker_last_reference_timestamp - marker_first_reference_timestamp
-                ),
-                "raw_xdf_timestamps_modified": False,
-            }
+            clock_normalization = build_affine_xdf_clock_normalization(
+                evidence_source=evidence_source,
+                origin_local_lsl_timestamp=marker_first_reference_timestamp,
+                scale=source_to_local_scale,
+                offset_seconds=source_to_local_offset,
+                eeg_start_source_timestamp=xdf_first_source_timestamp,
+                eeg_end_source_timestamp=xdf_last_source_timestamp,
+                marker_end_local_lsl_timestamp=marker_last_reference_timestamp,
+            )
             if xdf_start_lag > boundary_tolerance_seconds:
                 reasons.append(
                     "XDF EEG source data starts after the first required marker by "
@@ -1071,18 +1063,12 @@ def _direct_clock_normalization(
     first_marker: float,
     last_marker: float,
 ) -> dict[str, Any]:
-    return {
-        "schema": "eegle.xdf_clock_normalization.v1",
-        "method": "pyxdf_synchronized_timestamps",
-        "evidence_source": "xdf",
-        "origin_definition": "first_required_marker_pyxdf_synchronized_timestamp",
-        "origin_local_lsl_timestamp": first_marker,
-        "normalized_eeg_start_seconds": first_eeg - first_marker,
-        "normalized_eeg_end_seconds": last_eeg - first_marker,
-        "normalized_marker_start_seconds": 0.0,
-        "normalized_marker_end_seconds": last_marker - first_marker,
-        "raw_xdf_timestamps_modified": False,
-    }
+    return build_direct_xdf_clock_normalization(
+        first_eeg=first_eeg,
+        last_eeg=last_eeg,
+        first_marker=first_marker,
+        last_marker=last_marker,
+    )
 
 
 def _marker_receipt_clock_span(path: Path) -> dict[str, float | None]:

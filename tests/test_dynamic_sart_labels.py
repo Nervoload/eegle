@@ -198,7 +198,7 @@ class DynamicSartLabelTests(unittest.TestCase):
             )
             result = analyze_dynamic_sart_session(root, {"tasks": {"dynamic_sart": {}}})
             timing_rows = (root / "reports" / "dynamic_sart_timing.csv").read_text().splitlines()
-        self.assertIn(result["status"], {"ok", "warn"})
+        self.assertEqual(result["status"], "warn")
         self.assertEqual(result["flag_counts"]["commission_error"], 0)
         self.assertEqual(result["flag_counts"]["omission_error"], 0)
         self.assertTrue(result["partial_run"])

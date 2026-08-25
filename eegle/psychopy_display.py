@@ -158,8 +158,19 @@ def measure_psychopy_refresh_rate(win: Any, display: dict[str, Any]) -> dict[str
             detail["within_tolerance"] = bool(
                 candidate is not None and abs(candidate - nearest_target) <= tolerance
             )
+            interval_mad_ms = _nonnegative_float(sample.get("interval_mad_ms"))
+            detail["interval_stable"] = bool(
+                interval_mad_ms is not None and interval_mad_ms <= stability_threshold_ms
+            )
+            if detail["within_tolerance"] and not detail["interval_stable"]:
+                detail["status"] = "unstable"
+                measurement_errors.append(
+                    f"attempt {attempt}: frame-interval MAD "
+                    f"{interval_mad_ms if interval_mad_ms is not None else float('nan'):.3f} ms "
+                    f"exceeds {stability_threshold_ms:.3f} ms"
+                )
             attempt_details.append(detail)
-            if detail["within_tolerance"]:
+            if detail["within_tolerance"] and detail["interval_stable"]:
                 measured_value = candidate
                 selected_attempt = attempt
                 selected_measurement = sample
@@ -795,6 +806,14 @@ def _positive_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if number > 0.0 else None
+
+
+def _nonnegative_float(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number >= 0.0 else None
 
 
 def _positive_rates(values: Any) -> list[float]:

@@ -602,6 +602,8 @@ class DynamicSartTask:
                                 fixation_stimulus=fixation_stimulus,
                             )
                             if trial_aborted:
+                                if record is not None:
+                                    round_records.append(record)
                                 aborted = True
                                 abort_reason = "escape_abort"
                                 break
@@ -771,6 +773,8 @@ class DynamicSartTask:
                             last_break_monotonic=last_break_monotonic,
                         )
                         if trial_aborted:
+                            if record is not None:
+                                block_records.append(record)
                             aborted = True
                             abort_reason = "escape_abort"
                             break
@@ -1041,7 +1045,14 @@ class DynamicSartArtifactStore:
         )
         if target is not None:
             target.update(deepcopy(immutable))
-            target["completion_status"] = "complete"
+            target["completion_status"] = (
+                "aborted" if bool(immutable.get("aborted")) else "complete"
+            )
+            target["abort_status"] = immutable.get("abort_reason")
+            if bool(immutable.get("aborted")):
+                # Escape is an exceptional terminal boundary; persist its manifest
+                # state immediately rather than waiting for the normal block checkpoint.
+                _write_json_atomic(self.manifest_path, self.manifest)
 
     def append_key_event(self, event: dict[str, Any]) -> None:
         immutable = deepcopy(event)
@@ -1086,7 +1097,14 @@ class DynamicSartArtifactStore:
         self.manifest["aborted"] = aborted
         self.manifest["abort_reason"] = abort_reason
         self.manifest["presented_trial_count"] = len(self.records)
-        self.manifest["completed_experimental_trial_count"] = sum(int(not row.get("is_practice")) for row in self.records)
+        self.manifest["completed_experimental_trial_count"] = sum(
+            int(
+                not row.get("is_practice")
+                and not row.get("aborted")
+                and not row.get("invalid")
+            )
+            for row in self.records
+        )
         _write_json_atomic(self.manifest_path, self.manifest)
         _write_json_atomic(
             self.results_path,
@@ -1550,21 +1568,33 @@ def summarize_dynamic_sart(
 ) -> dict[str, Any]:
     rows = list(records)
     experimental = [row for row in rows if not bool(row.get("is_practice"))]
+    completed_experimental = [
+        row
+        for row in experimental
+        if not bool(row.get("aborted")) and not bool(row.get("invalid"))
+    ]
     practice = [row for row in rows if bool(row.get("is_practice"))]
-    go = [row for row in experimental if row.get("condition") == "go"]
-    no_go = [row for row in experimental if row.get("condition") == "no_go"]
+    go = [row for row in completed_experimental if row.get("condition") == "go"]
+    no_go = [row for row in completed_experimental if row.get("condition") == "no_go"]
     valid_rts = [float(row["reaction_time_seconds"]) for row in go if row.get("reaction_time_seconds") is not None and not row.get("too_fast_response")]
     return {
         "schema": SUMMARY_SCHEMA,
         "task": TASK_NAME,
         "task_version": TASK_VERSION,
         "planned_experimental_trials": planned_experimental_trials,
-        "experimental_trials": len(experimental),
+        "experimental_trials": len(completed_experimental),
+        "presented_experimental_trials": len(experimental),
+        "aborted_experimental_trials": len(experimental) - len(completed_experimental),
         "practice_trials": len(practice),
-        "support_trials": sum(int(row.get("phase") == "support") for row in experimental),
-        "query_trials": sum(int(row.get("phase") == "query") for row in experimental),
+        "support_trials": sum(int(row.get("phase") == "support") for row in completed_experimental),
+        "query_trials": sum(int(row.get("phase") == "query") for row in completed_experimental),
         "support_complete": support_complete,
-        "accuracy": sum(int(bool(row.get("correct"))) for row in experimental) / len(experimental) if experimental else 0.0,
+        "accuracy": (
+            sum(int(bool(row.get("correct"))) for row in completed_experimental)
+            / len(completed_experimental)
+            if completed_experimental
+            else 0.0
+        ),
         "go_accuracy": sum(int(bool(row.get("correct"))) for row in go) / len(go) if go else None,
         "no_go_accuracy": sum(int(bool(row.get("correct"))) for row in no_go) / len(no_go) if no_go else None,
         "valid_go_rt_count": len(valid_rts),
@@ -1580,7 +1610,7 @@ def summarize_dynamic_sart(
         "wrong_key_responses": sum(int(bool(row.get("wrong_key_response"))) for row in experimental),
         "aborted": aborted,
         "abort_reason": abort_reason,
-        "partial_run": aborted or len(experimental) != planned_experimental_trials,
+        "partial_run": aborted or len(completed_experimental) != planned_experimental_trials,
     }
 
 
@@ -1974,7 +2004,29 @@ def _present_psychopy_trial(
     flip_request_lead = frame_period * 0.75
     scheduled_offset_flip = onset_flip + (stimulus_frames * frame_period)
     scheduled_boundary_flip = onset_flip + (soi_frames * frame_period)
+    scheduled_response_close = onset + (soi_frames * frame_period)
+    scheduled_response_close_lsl = (
+        None if onset_lsl is None else onset_lsl + (soi_frames * frame_period)
+    )
     events = list(premature_events)
+    if any(row["is_escape_key"] for row in events):
+        record = _append_aborted_psychopy_trial(
+            logger,
+            marker_outlet,
+            store,
+            planned,
+            config,
+            timing,
+            task_start,
+            holder,
+            events,
+            abort_stage="preflipped_stimulus_onset",
+            scheduled_response_close=scheduled_response_close,
+            scheduled_response_close_lsl=scheduled_response_close_lsl,
+            applied_task_actions=applied_task_actions,
+            last_break_monotonic=last_break_monotonic,
+        )
+        return record, True, [], None
     while monotonic() < scheduled_offset_flip - flip_request_lead:
         redraw_psychopy_after_resize(win, digit)
         polled = keyboard.poll(
@@ -1985,13 +2037,28 @@ def _present_psychopy_trial(
         )
         events.extend(polled)
         if any(row["is_escape_key"] for row in polled):
-            return None, True, [], None
+            record = _append_aborted_psychopy_trial(
+                logger,
+                marker_outlet,
+                store,
+                planned,
+                config,
+                timing,
+                task_start,
+                holder,
+                events,
+                abort_stage="stimulus_visible",
+                scheduled_response_close=scheduled_response_close,
+                scheduled_response_close_lsl=scheduled_response_close_lsl,
+                applied_task_actions=applied_task_actions,
+                last_break_monotonic=last_break_monotonic,
+            )
+            return record, True, [], None
         sleep(0.002)
     fixation.draw()
     win.callOnFlip(_capture_flip_event, holder, marker_outlet, marker_label("stimulus_offset", planned), planned, timing, "offset")
     win.flip()
     _log_captured_flip_event(holder, logger, "offset")
-    scheduled_response_close = onset + (soi_frames * frame_period)
     if next_trial is not None:
         _set_stimulus_text(digit, str(next_trial["digit"]))
         _emit_planned_cue(logger, marker_outlet, next_trial)
@@ -2005,11 +2072,26 @@ def _present_psychopy_trial(
         )
         events.extend(polled)
         if any(row["is_escape_key"] for row in polled):
-            return None, True, [], None
+            record = _append_aborted_psychopy_trial(
+                logger,
+                marker_outlet,
+                store,
+                planned,
+                config,
+                timing,
+                task_start,
+                holder,
+                events,
+                abort_stage="response_window",
+                scheduled_response_close=scheduled_response_close,
+                scheduled_response_close_lsl=scheduled_response_close_lsl,
+                applied_task_actions=applied_task_actions,
+                last_break_monotonic=last_break_monotonic,
+            )
+            return record, True, [], None
         sleep(0.002)
     boundary: dict[str, Any] = {}
     (digit if next_trial is not None else fixation).draw()
-    scheduled_response_close_lsl = None if onset_lsl is None else onset_lsl + config.response_window_seconds
     win.callOnFlip(
         _capture_response_close_event,
         boundary,
@@ -2064,8 +2146,24 @@ def _present_psychopy_trial(
             upcoming.append(row)
         else:
             events.append(row)
-    if any(row["is_escape_key"] for row in boundary_rows):
-        return None, True, upcoming, next_holder
+    if any(row["is_escape_key"] for row in events):
+        record = _append_aborted_psychopy_trial(
+            logger,
+            marker_outlet,
+            store,
+            planned,
+            config,
+            timing,
+            task_start,
+            holder,
+            events,
+            abort_stage="response_window_boundary",
+            scheduled_response_close=scheduled_response_close,
+            scheduled_response_close_lsl=scheduled_response_close_lsl,
+            applied_task_actions=applied_task_actions,
+            last_break_monotonic=last_break_monotonic,
+        )
+        return record, True, upcoming, next_holder
     previous_experimental = max((int(row["global_trial_index"]) for row in store.records if not row.get("is_practice")), default=None)
     record = score_dynamic_sart_trial(
         planned,
@@ -2115,6 +2213,99 @@ def _present_psychopy_trial(
         **_marker_metadata(planned),
     )
     return record, False, upcoming, next_holder
+
+
+def _append_aborted_psychopy_trial(
+    logger: EventLogger,
+    marker_outlet: LslMarkerOutlet | NullMarkerOutlet,
+    store: DynamicSartArtifactStore,
+    planned: dict[str, Any],
+    config: DynamicSartConfig,
+    timing: dict[str, Any],
+    task_start: float,
+    holder: dict[str, Any],
+    events: list[dict[str, Any]],
+    *,
+    abort_stage: str,
+    scheduled_response_close: float,
+    scheduled_response_close_lsl: float | None,
+    applied_task_actions: list[dict[str, Any]] | None,
+    last_break_monotonic: float | None,
+) -> dict[str, Any]:
+    """Persist a presented Escape-interrupted trial without scoring it as behavior."""
+
+    escape = next(row for row in events if bool(row.get("is_escape_key")))
+    abort_monotonic = float(escape["timestamp_monotonic"])
+    abort_lsl = _optional_float(escape.get("timestamp_lsl_if_available"))
+    onset = float(holder["onset_monotonic"])
+    onset_lsl = _optional_float(holder.get("onset_lsl"))
+    offset = _optional_float(holder.get("offset_monotonic"))
+    offset_lsl = _optional_float(holder.get("offset_lsl"))
+    previous_experimental = max(
+        (
+            int(row["global_trial_index"])
+            for row in store.records
+            if not row.get("is_practice")
+        ),
+        default=None,
+    )
+    record = score_dynamic_sart_trial(
+        planned,
+        events,
+        config,
+        session_id=store.paths.root.name,
+        participant_id=store.participant_id,
+        task_start_monotonic=task_start,
+        stimulus_onset_monotonic=onset,
+        stimulus_onset_lsl=onset_lsl,
+        stimulus_offset_monotonic=offset if offset is not None else abort_monotonic,
+        stimulus_offset_lsl=offset_lsl,
+        scheduled_response_window_close_monotonic=scheduled_response_close,
+        scheduled_response_window_close_lsl=scheduled_response_close_lsl,
+        response_window_close_monotonic=abort_monotonic,
+        response_window_close_lsl=abort_lsl,
+        scheduled_next_trial_onset_monotonic=onset + float(planned["planned_soi_seconds"]),
+        display_timing=timing,
+        time_since_break_seconds=(
+            None if last_break_monotonic is None else onset - last_break_monotonic
+        ),
+        previous_trial_index=previous_experimental,
+        trials_since_no_go=_trials_since_no_go(store.records),
+        applied_task_actions=applied_task_actions,
+    )
+    record.update(
+        {
+            "stimulus_offset_monotonic": offset,
+            "stimulus_offset_lsl": offset_lsl,
+            "response_window_close_monotonic": None,
+            "response_window_close_lsl": None,
+            "response_window_close_overshoot_seconds": None,
+            "actual_stimulus_seconds": None if offset is None else offset - onset,
+            "actual_response_window_seconds": None,
+            "timing_finalization_status": f"aborted_{abort_stage}",
+            "primary_outcome": "aborted",
+            "correct": False,
+            "commission_error": False,
+            "omission_error": False,
+            "aborted": True,
+            "invalid": True,
+            "abort_reason": "escape_abort",
+            "abort_stage": abort_stage,
+        }
+    )
+    store.append_trial(record)
+    _emit(
+        logger,
+        marker_outlet,
+        marker_label("trial_aborted", planned),
+        timestamp=abort_monotonic,
+        lsl_timestamp=abort_lsl,
+        trial=int(planned["global_trial_index"]),
+        reason="escape_abort",
+        abort_stage=abort_stage,
+        **_marker_metadata(planned),
+    )
+    return record
 
 
 def _set_stimulus_text(stimulus: Any, value: str) -> None:
@@ -2781,7 +2972,10 @@ def _block_result(
         "block_name": first.get("block_name"),
         "phase": first.get("phase"),
         "planned_trials": len(planned),
-        "completed_trials": len(completed),
+        "completed_trials": sum(
+            int(not row.get("aborted") and not row.get("invalid"))
+            for row in completed
+        ),
         "correct_trials": sum(int(bool(row.get("correct"))) for row in completed),
         "start_trial": first.get("global_trial_index"),
         "end_trial": planned[-1].get("global_trial_index") if planned else None,

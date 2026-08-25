@@ -26,6 +26,7 @@ from eegle.session import create_session
 from eegle.tasks.dynamic_sart import (
     DynamicSartArtifactStore,
     DynamicSartTask,
+    _append_aborted_psychopy_trial,
     _block_timing_warning,
     _capture_countdown_flip,
     _capture_flip_event,
@@ -287,6 +288,27 @@ class DynamicSartTaskTests(unittest.TestCase):
         self.assertEqual(result["nominal_refresh_rate_hz"], 60.0)
         window.getActualFrameRate.assert_not_called()
         self.assertEqual(result["refresh_rate_measurement_method"], "blank_flip_robust_median_v1")
+
+    def test_refresh_measurement_retries_in_tolerance_but_unstable_result(self) -> None:
+        unstable = [1.0 / 60.0] + [1.0 / 50.0, 1.0 / 75.0] * 6
+        stable = [1.0 / 60.0] * 13
+        result = measure_psychopy_refresh_rate(
+            _FlipWindow(unstable + stable),
+            {
+                "expected_refresh_rate_hz": 60.0,
+                "refresh_rate_tolerance_hz": 2.0,
+                "refresh_rate_stability_threshold_ms": 1.0,
+                "refresh_rate_measurement_attempts": 2,
+                "refresh_rate_warmup_frames": 0,
+                "refresh_rate_sample_frames": 12,
+                "require_refresh_rate_match": True,
+            },
+        )
+
+        self.assertEqual(result["refresh_rate_selected_attempt"], 2)
+        self.assertEqual(result["refresh_rate_attempt_details"][0]["status"], "unstable")
+        self.assertFalse(result["refresh_rate_attempt_details"][0]["interval_stable"])
+        self.assertTrue(result["refresh_rate_interval_stable"])
 
     def test_required_windowed_pyglet_check_fails_clearly_on_windows(self) -> None:
         screen = SimpleNamespace(
@@ -786,6 +808,122 @@ class DynamicSartTaskTests(unittest.TestCase):
         self.assertEqual(sum(row["phase"] == "query" for row in plan["planned_trials"]), 12)
         self.assertGreaterEqual(sum(row["phase"] == "support" and row["is_no_go"] for row in plan["planned_trials"]), 1)
         self.assertGreaterEqual(sum(row["phase"] == "query" and row["is_no_go"] for row in plan["planned_trials"]), 1)
+
+    def test_custom_and_practice_plans_preserve_weighted_no_go_run_limit(self) -> None:
+        mapping = _config()["tasks"]["dynamic_sart"]
+        mapping.update(
+            {
+                "blocks": [
+                    {"name": "support", "phase": "support", "trials": 250},
+                    {"name": "query", "phase": "query", "trials": 250},
+                ],
+                "no_go_probability": 0.15,
+                "minimum_go_trials_between_no_go": 0,
+                "minimum_leading_go_trials": 4,
+                "minimum_trailing_go_trials": 4,
+                "no_go_randomization": {
+                    "mode": "stratified_weighted",
+                    "stratum_trials": 50,
+                    "maximum_consecutive_no_go": 2,
+                    "adjacent_no_go_weight": 0.10,
+                    "one_go_gap_weight": 0.35,
+                },
+                "practice": {
+                    **mapping["practice"],
+                    "trials_per_round": 12,
+                    "no_go_trials": 3,
+                },
+            }
+        )
+        config = DynamicSartConfig.from_mapping(mapping)
+        plan = build_dynamic_sart_plan(config, trial_override=250)
+        validate_dynamic_sart_plan(plan, config)
+
+        for rows in [plan["planned_trials"], *plan["practice_rounds"]]:
+            self.assertTrue(
+                all(
+                    row["no_go_randomization_mode"] == "stratified_weighted"
+                    for row in rows
+                )
+            )
+            self.assertFalse(
+                any(
+                    rows[index]["is_no_go"]
+                    and rows[index + 1]["is_no_go"]
+                    and rows[index + 2]["is_no_go"]
+                    for index in range(len(rows) - 2)
+                )
+            )
+        custom_strata = {
+            row["no_go_stratum_index"]: row["planned_no_go_count_in_stratum"]
+            for row in plan["planned_trials"]
+            if row["block_index"] == 1
+        }
+        self.assertEqual(custom_strata, {1: 8, 2: 7, 3: 4})
+
+    def test_escape_interrupted_presented_trial_is_persisted_as_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_mapping = _config()
+            config = DynamicSartConfig.from_mapping(
+                config_mapping["tasks"]["dynamic_sart"]
+            )
+            plan = build_dynamic_sart_plan(config)
+            paths = create_session(
+                config_mapping,
+                task="dynamic_sart",
+                participant_id="unit",
+                root=Path(tmp),
+            )
+            store = DynamicSartArtifactStore(paths, plan, config, "unit")
+            planned = plan["planned_trials"][0]
+            escape = {
+                "event_id": "key-escape",
+                "key": "escape",
+                "timestamp_monotonic": 10.4,
+                "timestamp_lsl_if_available": 110.4,
+                "is_response_key": False,
+                "is_escape_key": True,
+            }
+            try:
+                record = _append_aborted_psychopy_trial(
+                    MagicMock(),
+                    MagicMock(),
+                    store,
+                    planned,
+                    config,
+                    {"status": "measured"},
+                    5.0,
+                    {
+                        "onset_monotonic": 10.0,
+                        "onset_lsl": 110.0,
+                        "offset_monotonic": 10.25,
+                        "offset_lsl": 110.25,
+                    },
+                    [escape],
+                    abort_stage="response_window",
+                    scheduled_response_close=11.6,
+                    scheduled_response_close_lsl=111.6,
+                    applied_task_actions=None,
+                    last_break_monotonic=5.0,
+                )
+            finally:
+                store.close()
+            manifest = json.loads(
+                (paths.events / "stimulus_manifest.json").read_text(encoding="utf-8")
+            )
+            manifest_row = next(
+                row
+                for row in manifest["trials"]
+                if row["global_trial_index"] == planned["global_trial_index"]
+            )
+
+        self.assertEqual(record["primary_outcome"], "aborted")
+        self.assertTrue(record["presented"])
+        self.assertTrue(record["aborted"])
+        self.assertTrue(record["invalid"])
+        self.assertEqual(record["all_key_event_ids"], ["key-escape"])
+        self.assertEqual(manifest_row["completion_status"], "aborted")
+        self.assertEqual(manifest_row["abort_status"], "escape_abort")
 
     def test_scoring_keeps_primary_outcome_and_orthogonal_flags_separate(self) -> None:
         config = DynamicSartConfig.from_mapping(_config()["tasks"]["dynamic_sart"])

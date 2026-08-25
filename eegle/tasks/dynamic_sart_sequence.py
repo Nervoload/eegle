@@ -32,9 +32,8 @@ def build_dynamic_sart_plan(
     for block_index, block in enumerate(blocks, start=1):
         block_seed = _derived_seed(config.master_seed, block_index, block.name)
         block_seeds[str(block_index)] = block_seed
-        block_config = replace(config, no_go_randomization={}) if smoke_test_override else config
         block_trials = _build_block_trials(
-            block_config,
+            config,
             block,
             block_index,
             block_seed,
@@ -135,8 +134,7 @@ def validate_dynamic_sart_plan(plan: dict[str, Any], config: DynamicSartConfig) 
         gap = config.minimum_go_trials_between_no_go
         if any(right - left - 1 < gap for left, right in zip(no_go_positions, no_go_positions[1:])):
             raise ValueError(f"dynamic_sart block {block['block_name']} violates no-go spacing")
-        if not bool(plan.get("smoke_test_override")):
-            _validate_no_go_randomization_block(rows, config, block)
+        _validate_no_go_randomization_block(rows, config, block)
         go_counts: dict[int, int] = {}
         for row in rows:
             if not bool(row["is_no_go"]):
@@ -292,11 +290,7 @@ def _build_practice_rounds(config: DynamicSartConfig) -> list[list[dict[str, Any
             phase="practice",
             trials=config.practice_trials_per_round,
         )
-        practice_config = replace(
-            config,
-            no_go_probability=practice_probability,
-            no_go_randomization={},
-        )
+        practice_config = replace(config, no_go_probability=practice_probability)
         seed = _derived_seed(config.master_seed, -round_index, block.name)
         rows = _build_block_trials(practice_config, block, -round_index, seed)
         for row in rows:
@@ -451,13 +445,20 @@ def _no_go_positions(
     if mode != "stratified_weighted":
         raise ValueError(f"unsupported dynamic_sart no-go randomization mode {mode}")
     stratum_trials = int(randomization["stratum_trials"])
-    stratum_count = length // stratum_trials
-    base, extra = divmod(count, stratum_count)
-    counts = [base + 1] * extra + [base] * (stratum_count - extra)
-    rng.shuffle(counts)
+    stratum_lengths = [
+        min(stratum_trials, length - start)
+        for start in range(0, length, stratum_trials)
+    ]
+    if length % stratum_trials == 0:
+        # Preserve the established deterministic full-session sequence exactly.
+        base, extra = divmod(count, len(stratum_lengths))
+        counts = [base + 1] * extra + [base] * (len(stratum_lengths) - extra)
+        rng.shuffle(counts)
+    else:
+        counts = _proportional_stratum_counts(stratum_lengths, count, rng)
     positions = _weighted_stratified_positions(
         length=length,
-        stratum_trials=stratum_trials,
+        stratum_lengths=stratum_lengths,
         stratum_no_go_counts=counts,
         minimum_go_gap=config.minimum_go_trials_between_no_go,
         minimum_leading_go_trials=config.minimum_leading_go_trials,
@@ -473,7 +474,7 @@ def _no_go_positions(
 def _weighted_stratified_positions(
     *,
     length: int,
-    stratum_trials: int,
+    stratum_lengths: list[int],
     stratum_no_go_counts: list[int],
     minimum_go_gap: int,
     minimum_leading_go_trials: int,
@@ -486,6 +487,22 @@ def _weighted_stratified_positions(
     """Sample an exact-count schedule while softly discouraging close no-go trials."""
 
     no_go_weights = (adjacent_no_go_weight, one_go_gap_weight, 1.0)
+    stratum_starts: list[int] = []
+    stratum_stops: list[int] = []
+    cursor = 0
+    for stratum_length in stratum_lengths:
+        stratum_starts.append(cursor)
+        cursor += stratum_length
+        stratum_stops.append(cursor)
+    if cursor != length or len(stratum_lengths) != len(stratum_no_go_counts):
+        raise ValueError("dynamic_sart weighted no-go strata do not cover the block")
+
+    def stratum_for_trial(trial_index: int) -> int:
+        return next(
+            index
+            for index, stop in enumerate(stratum_stops)
+            if trial_index < stop
+        )
 
     @lru_cache(maxsize=None)
     def suffix_weight(
@@ -496,16 +513,16 @@ def _weighted_stratified_positions(
     ) -> float:
         if trial_index == length:
             return 1.0 if used_in_stratum == stratum_no_go_counts[-1] else 0.0
-        stratum_index = trial_index // stratum_trials
-        local_index = trial_index % stratum_trials
+        stratum_index = stratum_for_trial(trial_index)
+        local_index = trial_index - stratum_starts[stratum_index]
         required = stratum_no_go_counts[stratum_index]
-        remaining_slots = stratum_trials - local_index
+        remaining_slots = stratum_lengths[stratum_index] - local_index
         remaining_no_go = required - used_in_stratum
         if remaining_no_go < 0 or remaining_no_go > remaining_slots:
             return 0.0
 
         next_trial = trial_index + 1
-        boundary = next_trial % stratum_trials == 0
+        boundary = next_trial == stratum_stops[stratum_index]
         go_used = used_in_stratum
         go_branch = 0.0
         if not boundary or go_used == required:
@@ -547,10 +564,10 @@ def _weighted_stratified_positions(
     go_since_no_go = 2
     consecutive_no_go = 0
     while trial_index < length:
-        stratum_index = trial_index // stratum_trials
+        stratum_index = stratum_for_trial(trial_index)
         required = stratum_no_go_counts[stratum_index]
         next_trial = trial_index + 1
-        boundary = next_trial % stratum_trials == 0
+        boundary = next_trial == stratum_stops[stratum_index]
 
         go_weight = 0.0
         if not boundary or used_in_stratum == required:
@@ -595,6 +612,31 @@ def _weighted_stratified_positions(
     return positions
 
 
+def _proportional_stratum_counts(
+    stratum_lengths: list[int],
+    count: int,
+    rng: random.Random,
+) -> list[int]:
+    """Allocate exact no-go counts without overloading a short final stratum."""
+
+    total_length = sum(stratum_lengths)
+    if total_length <= 0:
+        raise ValueError("dynamic_sart no-go strata must contain trials")
+    exact = [count * length / total_length for length in stratum_lengths]
+    counts = [int(value) for value in exact]
+    remaining = count - sum(counts)
+    tie_breakers = list(range(len(stratum_lengths)))
+    rng.shuffle(tie_breakers)
+    tie_rank = {index: rank for rank, index in enumerate(tie_breakers)}
+    order = sorted(
+        range(len(stratum_lengths)),
+        key=lambda index: (-(exact[index] - counts[index]), tie_rank[index]),
+    )
+    for index in order[:remaining]:
+        counts[index] += 1
+    return counts
+
+
 def _validate_no_go_randomization_block(
     rows: list[dict[str, Any]],
     config: DynamicSartConfig,
@@ -611,15 +653,18 @@ def _validate_no_go_randomization_block(
             raise ValueError(
                 f"dynamic_sart block {block['block_name']} violates the consecutive no-go limit"
             )
-    stratum_trials = int(randomization["stratum_trials"])
-    counts = [
-        sum(int(bool(row["is_no_go"])) for row in rows[start : start + stratum_trials])
-        for start in range(0, len(rows), stratum_trials)
-    ]
-    if counts and max(counts) - min(counts) > 1:
-        raise ValueError(
-            f"dynamic_sart block {block['block_name']} does not balance no-go strata"
-        )
+    strata: dict[int, list[dict[str, Any]]] = {}
+    for row in rows:
+        stratum_index = int(row.get("no_go_stratum_index") or 0)
+        strata.setdefault(stratum_index, []).append(row)
+    for stratum_index, stratum_rows in strata.items():
+        planned_count = stratum_rows[0].get("planned_no_go_count_in_stratum")
+        actual_count = sum(int(bool(row["is_no_go"])) for row in stratum_rows)
+        if planned_count is None or actual_count != int(planned_count):
+            raise ValueError(
+                f"dynamic_sart block {block['block_name']} stratum {stratum_index} "
+                "does not match its planned no-go count"
+            )
 
 
 def _maximum_spaced_events(

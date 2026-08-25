@@ -62,6 +62,11 @@ def analyze_dynamic_sart_session(session_dir: str | Path, config: dict[str, Any]
     raw_hash_after = _sha256(trials_path)
     experimental = [row for row in rows if not bool(row.get("is_practice")) and row.get("phase") in {"support", "query"}]
     practice = [row for row in rows if bool(row.get("is_practice")) or row.get("phase") == "practice"]
+    valid_experimental = [
+        row
+        for row in experimental
+        if not bool(row.get("aborted")) and not bool(row.get("invalid"))
+    ]
     outcomes = Counter(str(row.get("primary_outcome", "invalid")) for row in experimental)
     flags = {
         field: sum(int(bool(row.get(field))) for row in experimental)
@@ -77,8 +82,8 @@ def analyze_dynamic_sart_session(session_dir: str | Path, config: dict[str, Any]
             "invalid",
         )
     }
-    go_rows = [row for row in experimental if row.get("condition") == "go"]
-    no_go_rows = [row for row in experimental if row.get("condition") == "no_go"]
+    go_rows = [row for row in valid_experimental if row.get("condition") == "go"]
+    no_go_rows = [row for row in valid_experimental if row.get("condition") == "no_go"]
     valid_go_rts = [
         float(row["reaction_time_seconds"])
         for row in go_rows
@@ -115,13 +120,22 @@ def analyze_dynamic_sart_session(session_dir: str | Path, config: dict[str, Any]
     block_counts = Counter(str(row.get("block_name")) for row in experimental)
     task_results = _load_json(results_path) or {}
     run_aborted = bool(task_results.get("aborted"))
+    marker_parity_matches = onset_count == presented_count
+    partial_run = run_aborted or event_counts.get("dynamic_sart_task_end", 0) == 0
+    report_ok = (
+        reference_matches
+        and raw_hash_before == raw_hash_after
+        and marker_parity_matches
+        and not partial_run
+    )
     result = {
         "schema": SUMMARY_SCHEMA,
-        "status": "ok" if reference_matches and raw_hash_before == raw_hash_after else "warn",
+        "status": "ok" if report_ok else "warn",
         "session_dir": str(root),
         "trials_file": str(trials_path),
         "timing_file": str(timing_path),
         "experimental_trial_count": len(experimental),
+        "valid_experimental_trial_count": len(valid_experimental),
         "practice_trial_count": len(practice),
         "phase_counts": dict(sorted(phase_counts.items())),
         "block_counts": dict(sorted(block_counts.items())),
@@ -173,11 +187,11 @@ def analyze_dynamic_sart_session(session_dir: str | Path, config: dict[str, Any]
         "marker_trial_parity": {
             "stimulus_onset_event_count": onset_count,
             "presented_trial_count": presented_count,
-            "matches": onset_count == presented_count,
+            "matches": marker_parity_matches,
         },
         "support_complete_event_count": support_complete_count,
         "task_end_event_count": event_counts.get("dynamic_sart_task_end", 0),
-        "partial_run": run_aborted or event_counts.get("dynamic_sart_task_end", 0) == 0,
+        "partial_run": partial_run,
         "labels": labels,
         "warnings": [
             *list(saved_reference.get("warnings") or []),

@@ -2583,6 +2583,39 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertTrue(stalled.warning)
         self.assertIn("has not advanced", str(stalled.reason))
 
+    def test_recorder_monitor_retries_transient_read_and_prefers_payload_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            status_path = Path(tmp) / "recorder.status.json"
+            status_path.write_text("{}", encoding="utf-8")
+            stale_time = status_path.stat().st_mtime - 60.0
+            os.utime(status_path, (stale_time, stale_time))
+            first_payload = {
+                "status": "recording",
+                "elapsed_seconds": 10.0,
+                "summary": {"sample_count": 100},
+            }
+            second_payload = {
+                "status": "recording",
+                "elapsed_seconds": 11.0,
+                "summary": {"sample_count": 101},
+            }
+            monitor = RecorderHealthMonitor(
+                status_path,
+                required=True,
+                status_stale_seconds=1.0,
+            )
+            with patch(
+                "eegle.recording_health.load_status",
+                side_effect=[PermissionError("locked"), first_payload, second_payload],
+            ):
+                first = monitor.check()
+                second = monitor.check()
+
+        self.assertTrue(first.ok)
+        self.assertFalse(first.warning)
+        self.assertTrue(second.ok)
+        self.assertFalse(second.warning)
+
     def test_recorder_monitor_does_not_abort_xdf_when_csv_mirror_is_degraded(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

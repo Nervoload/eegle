@@ -11,6 +11,7 @@ from typing import Any, Iterable
 
 import numpy as np
 
+from eegle.devices.xdf_clock import load_xdf_clock_normalization
 from eegle.eeg_csv import eeg_channel_columns
 from eegle.hardware.profiles import analysis_channel_indices, mapped_channel_names
 
@@ -154,6 +155,8 @@ class EegCsvBundle:
     channel_names: list[str]
     sample_rate_hz: float
     timestamp_column: str
+    raw_path: Path | None = None
+    clock_normalization: dict[str, Any] | None = None
 
 
 class RealtimeEpocher:
@@ -387,6 +390,67 @@ def load_eeg_csv_for_epoching(
         channel_names=channel_names,
         sample_rate_hz=sample_rate,
         timestamp_column=timestamp_column,
+        raw_path=raw,
+    )
+
+
+def load_eeg_xdf_for_epoching(
+    xdf_path: str | Path,
+    *,
+    metadata_path: str | Path,
+    parameters_path: str | Path,
+) -> EegCsvBundle:
+    """Load validated XDF EEG and place it in the task marker's normalized clock."""
+
+    raw = Path(xdf_path).expanduser().resolve()
+    normalizer, metadata = load_xdf_clock_normalization(metadata_path)
+    validation = dict(metadata.get("validation") or {})
+    eeg_validation = dict(validation.get("eeg") or {})
+    stream = dict(eeg_validation.get("stream") or {})
+    stream_id = stream.get("stream_id")
+    if stream_id is None:
+        raise ValueError("validated XDF metadata does not identify the EEG stream")
+    try:
+        import pyxdf
+    except Exception as exc:  # pragma: no cover - optional runtime dependency
+        raise RuntimeError(
+            "XDF epoch extraction requires the optional pyxdf runtime dependency"
+        ) from exc
+    loaded, _header = pyxdf.load_xdf(
+        str(raw),
+        select_streams=[int(stream_id)],
+        synchronize_clocks=normalizer.synchronize_xdf_clocks,
+        dejitter_timestamps=False,
+        verbose=False,
+    )
+    if len(loaded) != 1:
+        raise ValueError("validated XDF EEG stream could not be loaded uniquely")
+    loaded_stream = loaded[0]
+    timestamps = normalizer.normalize_eeg_timestamps(loaded_stream.get("time_stamps", []))
+    data = np.asarray(loaded_stream.get("time_series", []), dtype=float)
+    if data.ndim == 1:
+        data = data[:, np.newaxis]
+    if data.ndim != 2 or data.shape[0] != timestamps.shape[0]:
+        raise ValueError("XDF EEG sample values and timestamps have incompatible shapes")
+    parameters = _load_json(parameters_path)
+    eeg_config = dict(parameters.get("hardware", {}).get("eeg", {}) or {})
+    all_channel_names = list(eeg_validation.get("mapped_channel_names") or [])
+    if len(all_channel_names) != data.shape[1]:
+        all_channel_names = [f"channel_{index + 1}" for index in range(data.shape[1])]
+    selected_indices = analysis_channel_indices(all_channel_names, eeg_config)
+    channel_names = [all_channel_names[index] for index in selected_indices]
+    # Infer after normalization so a measured affine drift scale is reflected in
+    # the epoch sample grid instead of silently reusing the device-clock rate.
+    sample_rate = _infer_sample_rate(timestamps, {}, parameters)
+    coverage = dict(validation.get("recording_coverage") or {})
+    return EegCsvBundle(
+        timestamps=timestamps,
+        data=data[:, selected_indices],
+        channel_names=channel_names,
+        sample_rate_hz=sample_rate,
+        timestamp_column="xdf_clock_normalized_seconds",
+        raw_path=raw,
+        clock_normalization=dict(coverage.get("clock_normalization") or {}),
     )
 
 
@@ -409,7 +473,12 @@ def load_markers_jsonl(path: str | Path, config: EpochingConfig) -> list[MarkerE
     return markers
 
 
-def load_events_jsonl(path: str | Path, config: EpochingConfig) -> list[MarkerEvent]:
+def load_events_jsonl(
+    path: str | Path,
+    config: EpochingConfig,
+    *,
+    timebase: str = "local_received",
+) -> list[MarkerEvent]:
     markers: list[MarkerEvent] = []
     target = Path(path)
     if not target.exists():
@@ -420,12 +489,20 @@ def load_events_jsonl(path: str | Path, config: EpochingConfig) -> list[MarkerEv
                 continue
             row = json.loads(line)
             label = str(row.get("label", ""))
+            metadata = dict(row.get("metadata") or {})
+            timestamp_value = (
+                metadata.get("lsl_timestamp")
+                if timebase == "lsl"
+                else row.get("timestamp")
+            )
+            if timestamp_value is None:
+                continue
             marker = MarkerEvent(
                 label=label,
-                timestamp=float(row["timestamp"]),
-                timebase="local_received",
+                timestamp=float(timestamp_value),
+                timebase="lsl" if timebase == "lsl" else "local_received",
                 source=str(target),
-                metadata=dict(row.get("metadata") or {}),
+                metadata=metadata,
             )
             if should_epoch_marker(marker, config):
                 markers.append(marker)
@@ -444,6 +521,12 @@ def load_stimulus_manifest_markers(
         return []
     markers = []
     for trial in manifest.get("trials", []):
+        if (
+            trial.get("presented") is False
+            or bool(trial.get("aborted"))
+            or bool(trial.get("invalid"))
+        ):
+            continue
         stimulus = dict(trial.get("stimulus") or {})
         condition = trial.get("condition") or ("no_go" if stimulus.get("is_no_go") else "go")
         trial_value = trial.get("global_trial_index", trial.get("trial"))
@@ -501,8 +584,15 @@ def extract_epochs_for_session(
 ) -> dict[str, Any]:
     root = Path(session_dir).expanduser().resolve()
     epoch_cfg = EpochingConfig.from_dict(config.get("realtime", {}).get("epoching", {}))
-    selected_source, marker_path, markers = _load_session_markers(root, source, epoch_cfg)
-    if selected_source == "markers_jsonl":
+    raw_path = _epoch_raw_path(root)
+    xdf_only = raw_path.suffix.lower() == ".xdf"
+    selected_source, marker_path, markers = _load_session_markers(
+        root,
+        source,
+        epoch_cfg,
+        timebase="lsl" if xdf_only else "local_received",
+    )
+    if xdf_only or selected_source == "markers_jsonl":
         timebase = "lsl"
     else:
         timebase = "local_received"
@@ -549,13 +639,14 @@ def extract_epochs_for_session(
         epochs=epochs,
         rejected=rejected,
         output_dir=target_dir,
-        raw_path=root / "raw" / "eeg.csv",
+        raw_path=selected_eeg.raw_path or raw_path,
         marker_source_path=marker_path,
         source=selected_source,
         timestamp_column=selected_eeg.timestamp_column,
         config=selected_epoch_cfg,
         channel_names=selected_eeg.channel_names,
         sample_rate_hz=sample_rate_hz,
+        clock_normalization=selected_eeg.clock_normalization,
     )
 
 
@@ -566,13 +657,35 @@ def _attempt_epochs_for_timebase(
     markers: list[MarkerEvent],
     timebase: str,
 ) -> tuple[EpochingConfig, EegCsvBundle, float, list[EpochAttempt]]:
-    candidate_cfg = replace(epoch_cfg, timebase=timebase)
-    eeg = load_eeg_csv_for_epoching(
-        root / "raw" / "eeg.csv",
-        metadata_path=root / "raw" / "eeg_metadata.json",
-        parameters_path=root / "parameters.json",
-        timebase=timebase,
-    )
+    raw_path = _epoch_raw_path(root)
+    if raw_path.suffix.lower() == ".xdf":
+        if timebase != "lsl":
+            raise ValueError("XDF epoch extraction requires LSL marker timestamps")
+        eeg = load_eeg_xdf_for_epoching(
+            raw_path,
+            metadata_path=root / "raw" / "xdf_metadata.json",
+            parameters_path=root / "parameters.json",
+        )
+        from eegle.devices.xdf_clock import XdfClockNormalization
+
+        normalizer = XdfClockNormalization.from_mapping(eeg.clock_normalization or {})
+        markers = [
+            replace(
+                marker,
+                timestamp=normalizer.normalize_marker_timestamp(marker.timestamp),
+                timebase="xdf_clock_normalized",
+            )
+            for marker in markers
+        ]
+        candidate_cfg = replace(epoch_cfg, timebase="xdf_clock_normalized")
+    else:
+        candidate_cfg = replace(epoch_cfg, timebase=timebase)
+        eeg = load_eeg_csv_for_epoching(
+            raw_path,
+            metadata_path=root / "raw" / "eeg_metadata.json",
+            parameters_path=root / "parameters.json",
+            timebase=timebase,
+        )
     eeg_timestamps = eeg.timestamps
     eeg_data = eeg.data
     sample_rate_hz = eeg.sample_rate_hz
@@ -613,6 +726,7 @@ def write_epoch_dataset(
     config: EpochingConfig,
     channel_names: list[str],
     sample_rate_hz: float,
+    clock_normalization: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     raw = Path(raw_path).expanduser().resolve()
     target = Path(output_dir).expanduser().resolve()
@@ -680,6 +794,7 @@ def write_epoch_dataset(
         "marker_source_file": None if marker_source_path is None else str(Path(marker_source_path).expanduser().resolve()),
         "marker_source_sha256": marker_hash,
         "timestamp_column": timestamp_column,
+        "clock_normalization": clock_normalization,
         "epoch_count": len(epochs),
         "rejected_count": len(rejected),
         "sample_rate_hz": sample_rate_hz,
@@ -713,7 +828,13 @@ def file_sha256(path: str | Path) -> str:
     return digest.hexdigest()
 
 
-def _load_session_markers(root: Path, source: str, config: EpochingConfig) -> tuple[str, Path | None, list[MarkerEvent]]:
+def _load_session_markers(
+    root: Path,
+    source: str,
+    config: EpochingConfig,
+    *,
+    timebase: str = "local_received",
+) -> tuple[str, Path | None, list[MarkerEvent]]:
     options: list[tuple[str, Path, Iterable[MarkerEvent]]]
     marker_jsonl = root / "realtime" / "markers.jsonl"
     events_jsonl = root / "events" / "events.jsonl"
@@ -721,16 +842,32 @@ def _load_session_markers(root: Path, source: str, config: EpochingConfig) -> tu
     if source == "markers_jsonl":
         return source, marker_jsonl, load_markers_jsonl(marker_jsonl, config)
     if source == "events_jsonl":
-        return source, events_jsonl, load_events_jsonl(events_jsonl, config)
+        return source, events_jsonl, load_events_jsonl(
+            events_jsonl,
+            config,
+            timebase=timebase,
+        )
     if source == "stimulus_manifest":
-        return source, stimulus_manifest, load_stimulus_manifest_markers(stimulus_manifest, config)
+        return source, stimulus_manifest, load_stimulus_manifest_markers(
+            stimulus_manifest,
+            config,
+            timebase=timebase,
+        )
     if source != "auto":
         raise ValueError(f"unknown marker source '{source}'")
 
     loaded_options = [
         ("markers_jsonl", marker_jsonl, list(load_markers_jsonl(marker_jsonl, config))),
-        ("stimulus_manifest", stimulus_manifest, list(load_stimulus_manifest_markers(stimulus_manifest, config))),
-        ("events_jsonl", events_jsonl, list(load_events_jsonl(events_jsonl, config))),
+        (
+            "stimulus_manifest",
+            stimulus_manifest,
+            list(load_stimulus_manifest_markers(stimulus_manifest, config, timebase=timebase)),
+        ),
+        (
+            "events_jsonl",
+            events_jsonl,
+            list(load_events_jsonl(events_jsonl, config, timebase=timebase)),
+        ),
     ]
     non_empty = [(name, path, markers) for name, path, markers in loaded_options if markers]
     if not non_empty:
@@ -742,6 +879,16 @@ def _load_session_markers(root: Path, source: str, config: EpochingConfig) -> tu
             return markers_option
         return strongest
     return non_empty[0]
+
+
+def _epoch_raw_path(root: Path) -> Path:
+    csv_path = root / "raw" / "eeg.csv"
+    if csv_path.exists():
+        return csv_path
+    xdf_path = root / "raw" / "recording.xdf"
+    if xdf_path.exists():
+        return xdf_path
+    raise FileNotFoundError("session contains neither raw/eeg.csv nor raw/recording.xdf")
 
 
 def _unique_time_to_sample_index(times: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

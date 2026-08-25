@@ -672,10 +672,14 @@ def _prepare_training_epochs(
         exported = False
         manifest: dict[str, Any] | None = None
         if not epochs_npz.exists():
-            if not (session / "raw" / "eeg.csv").exists():
+            if not any(
+                (session / "raw" / name).exists()
+                for name in ("eeg.csv", "recording.xdf")
+            ):
                 return _epoch_preparation_failure(
                     sessions,
-                    f"epochs.npz is missing and raw/eeg.csv is not available for export: {session}",
+                    "epochs.npz is missing and neither raw/eeg.csv nor "
+                    f"raw/recording.xdf is available for export: {session}",
                 )
             if not (session / "parameters.json").exists():
                 return _epoch_preparation_failure(

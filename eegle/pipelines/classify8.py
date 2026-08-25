@@ -116,7 +116,10 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
     result = _run_forward(config, args)
     session = Path(result.session_dir)
     epochs = None
-    if (session / "raw" / "eeg.csv").exists():
+    if any(
+        (session / "raw" / name).exists()
+        for name in ("eeg.csv", "recording.xdf")
+    ):
         epochs = extract_epochs_for_session(
             session,
             load_config(session / "parameters.json"),
