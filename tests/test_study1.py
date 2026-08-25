@@ -452,7 +452,7 @@ class Study1Tests(unittest.TestCase):
             visit_number=1,
             full_1000=True,
             include_practice=True,
-            baseline_seconds=120.0,
+            baseline_seconds=1,
         )
         _validate_options(Study1Options(**base))
         with self.assertRaisesRegex(ValueError, "cannot be combined with --smoke"):

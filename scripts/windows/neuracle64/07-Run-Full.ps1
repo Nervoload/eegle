@@ -51,7 +51,7 @@ $arguments = @(
     "--no-go-digit", [string] $NoGoDigit,
     "--full-1000",
     "--include-practice",
-    "--baseline-seconds", "120",
+    "--baseline-seconds", "1",
     "--window-size", "1000", "700",
     "--confirm-electrodes",
     "--session-root", $resolvedDataRoot,
