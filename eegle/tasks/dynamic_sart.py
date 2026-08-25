@@ -22,6 +22,7 @@ from eegle.psychopy_display import (
     create_psychopy_window,
     measure_psychopy_refresh_rate,
     redraw_psychopy_after_resize,
+    service_psychopy_static_window,
 )
 from eegle.psychopy_input import (
     clear_psychopy_keys,
@@ -1777,7 +1778,7 @@ def _present_psychopy_probe(
     selected_key = None
     selected_response = None
     while monotonic() < deadline:
-        redraw_psychopy_after_resize(win, prompt)
+        service_psychopy_static_window(win, prompt)
         rows = keyboard.poll(
             task_state="PROBE",
             assigned_block=int(anchor["block_index"]),
@@ -2464,7 +2465,7 @@ def _run_psychopy_countdown(
         _log_captured_countdown_flip(holder, logger)
         deadline = monotonic() + float(step_seconds)
         while monotonic() < deadline:
-            redraw_psychopy_after_resize(win, prompt)
+            service_psychopy_static_window(win, prompt)
             rows = keyboard.poll(task_state="COUNTDOWN")
             if any(row["is_escape_key"] for row in rows):
                 return False, "escape_abort"
@@ -2492,7 +2493,7 @@ def _show_screen(
     prompt.draw()
     win.flip()
     while True:
-        redraw_psychopy_after_resize(win, prompt)
+        service_psychopy_static_window(win, prompt)
         rows = keyboard.poll(task_state=state)
         if any(row["is_escape_key"] for row in rows):
             return False
@@ -2533,7 +2534,7 @@ def _show_bounded_break(
     maximum_deadline = started + maximum_seconds
     ignored_early_continue_presses = 0
     while monotonic() < maximum_deadline:
-        redraw_psychopy_after_resize(win, prompt)
+        service_psychopy_static_window(win, prompt)
         rows = keyboard.poll(task_state="BREAK")
         if any(row["is_escape_key"] for row in rows):
             ended = monotonic()
@@ -2582,7 +2583,7 @@ def _show_timed_text(
     win.flip()
     deadline = monotonic() + max(0.0, seconds)
     while monotonic() < deadline:
-        redraw_psychopy_after_resize(win, prompt)
+        service_psychopy_static_window(win, prompt)
         rows = keyboard.poll(task_state="PRACTICE_FEEDBACK")
         if any(row["is_escape_key"] for row in rows):
             return False
@@ -2609,7 +2610,7 @@ def _show_completion(
     win.flip()
     deadline = monotonic() + max(0.0, max_wait)
     while monotonic() < deadline:
-        redraw_psychopy_after_resize(win, prompt)
+        service_psychopy_static_window(win, prompt)
         rows = keyboard.poll(task_state="COMPLETE")
         if any(row["is_response_key"] or row["is_escape_key"] for row in rows):
             return

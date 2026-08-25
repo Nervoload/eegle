@@ -590,6 +590,21 @@ baseline/task reports that the primary acquisition has already failed.
 - Keep Collect streaming before starting EEGle; the managed recorder requires
   both the chosen EEG stream and EEGle's prestarted marker stream.
 
+### Dynamic SART instruction window says Not Responding
+
+Dynamic SART uses PsychoPy's asynchronous PTB keyboard queue. On Windows,
+multiple physical keyboards are intentionally exposed to PTB as one combined
+keyboard, so connecting a second keyboard does not require a device selection.
+EEGle services the native PsychoPy/pyglet event queue while instruction,
+practice, countdown, probe, break, and completion screens wait for input. This
+keeps those static screens responsive without adding GUI-event work to the
+frame-locked experimental trial loops.
+
+Run `01-DryRun-Task.ps1` before repeating a recorded run. Confirm that the
+instruction screen remains responsive and that SPACE from the intended response
+keyboard advances into practice. If it does not, retain the generated task
+session and terminal transcript; do not proceed to a participant recording.
+
 ### Task window is on the wrong display
 
 The generated configs use screen 0 and a resizable 1000 by 700 window for safe
