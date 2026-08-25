@@ -1,9 +1,12 @@
-PS C:\Projects\code\eegle> .\scripts\windows\neuracle64\07-Run-Full.ps1 `
->>   -Participant "p1_raphael_024" `
+(.venv) PS C:\Projects\code\eegle> .\scripts\windows\neuracle64\07-Run-Full.ps1 `
+>>   -Participant "crashfix2" `
 >>   -ConfirmElectrodes `
->>   -DataRoot $EegleData `
 >>   -NoGoDigit 3 `
->>   -Operator "john" 
+>>   -Operator "john" `
+>>   -BaselineSeconds 30 `
+>>   -Trials 40 `
+>>   -PracticeTrials 12 `
+>>   -PracticeNoGoTrials 3
 {
   "written_configs": [
     "C:\\Projects\\code\\eegle\\.runtime\\windows-neuracle64\\display-only.json",
@@ -11,61 +14,130 @@ PS C:\Projects\code\eegle> .\scripts\windows\neuracle64\07-Run-Full.ps1 `
     "C:\\Projects\\code\\eegle\\.runtime\\windows-neuracle64\\short-live-task.json"
   ]
 }
-Starting the complete 1,000-trial Study 1 run:
+Starting the Study 1 Visit 1 run (40 experimental trials):
   full preflight, three-second XDF recording probe, storage gate, and electrode checks
-  120 seconds eyes open
-  120 seconds eyes closed
-  criterion-gated participant practice, then a participant-ready confirmation
-  1,000 experimental trials in four 250-trial sections
-  trials 1-500 are support; trials 501-1000 are held-out query
-  breaks after trials 250, 500, and 750 (continue from 30 seconds; automatic at 60)
+  30 seconds eyes open
+  30 seconds eyes closed
+  up to 3 criterion-gated practice round(s) of 12 trials (3 no-go), then participant-ready confirmation
+  40 experimental trials using the deterministic shortened support/query plan
   fixed timing: 250 ms digit + 1350 ms fixation (1600 ms SOI; no jitter)
-The main task lasts about 26 minutes 40 seconds before practice and breaks.
+The experimental trials last about 1.1 minutes before practice and breaks.
 Keep Neuracle Collect LSL streaming. EEGle launches/stops LabRecorder.
 A phase-end liblsl ERR mentioning R_EEGleMarkers is expected when EEGle closes that phase's marker receiver; it is not the Neuracle EEG stream.
 LabRecorder may buffer XDF disk writes; paused XDF growth and CSV-mirror degradation are warnings. Primary XDF failure remains fatal.
 Review each numbered preflight/post-recording warning list; type YES only if you accept it.
-2026-08-21 14:32:03.753 (   0.031s) [        2125838D]      netinterfaces.cpp:36    INFO| netif '{874AEFF9-2B3C-476A-B3F0-0F685E6CDB31}' (status: 2, multicast: 1
-2026-08-21 14:32:03.753 (   0.031s) [        2125838D]      netinterfaces.cpp:36    INFO| netif '{50635E82-F596-4DD4-A07E-758006593EC2}' (status: 1, multicast: 1
-2026-08-21 14:32:03.753 (   0.031s) [        2125838D]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 9
-2026-08-21 14:32:03.753 (   0.031s) [        2125838D]      netinterfaces.cpp:36    INFO| netif '{4D8CF894-7764-40B7-B5F8-52C7C859FBA5}' (status: 2, multicast: 1
-2026-08-21 14:32:03.753 (   0.031s) [        2125838D]      netinterfaces.cpp:36    INFO| netif '{8E26F3A3-0C9F-4C70-A709-35E90EC0A844}' (status: 2, multicast: 1
-2026-08-21 14:32:03.753 (   0.031s) [        2125838D]      netinterfaces.cpp:36    INFO| netif '{94A5AEF1-4F4C-4BED-9205-860D4599A3B1}' (status: 1, multicast: 1
-2026-08-21 14:32:03.753 (   0.031s) [        2125838D]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 19
-2026-08-21 14:32:03.754 (   0.031s) [        2125838D]      netinterfaces.cpp:36    INFO| netif '{ABA8E1FB-58AD-424E-8FC2-3EE30AAB2410}' (status: 2, multicast: 1
-2026-08-21 14:32:03.754 (   0.031s) [        2125838D]      netinterfaces.cpp:36    INFO| netif '{999E4E5F-9892-11EE-A20A-806E6F6E6963}' (status: 1, multicast: 1
-2026-08-21 14:32:03.754 (   0.032s) [        2125838D]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 1
-2026-08-21 14:32:03.754 (   0.032s) [        2125838D]         api_config.cpp:126   INFO| Loaded default config
-2026-08-21 14:32:18.975 (  15.254s) [        2125838D]             common.cpp:78    INFO| git:64988c6a14b8dc3b3f270ece58eab4f480bfab43/branch:refs/tags/v1.17.7/build:Release/compiler:MSVC-19.29.30159.0/link:SHARED
-8.5381  WARNING         Monitor specification not found. Creating a temporary one...
-9.5670  WARNING         t of last frame was 34.43ms (=1/29)
-9.5988  WARNING         t of last frame was 31.74ms (=1/31)
-9.6198  WARNING         t of last frame was 21.03ms (=1/47)
-9.6489  WARNING         t of last frame was 29.07ms (=1/34)
-9.6832  WARNING         Multiple dropped frames have occurred - I'll stop bothering you about them!
-2026-08-21 14:33:17.746 (  74.029s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
-2026-08-21 14:33:17.815 (  74.098s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
+2026-08-25 12:54:14.825 (   0.028s) [        90E7C049]      netinterfaces.cpp:36    INFO| netif '{874AEFF9-2B3C-476A-B3F0-0F685E6CDB31}' (status: 2, multicast: 1
+2026-08-25 12:54:14.825 (   0.028s) [        90E7C049]      netinterfaces.cpp:36    INFO| netif '{50635E82-F596-4DD4-A07E-758006593EC2}' (status: 1, multicast: 1
+2026-08-25 12:54:14.825 (   0.028s) [        90E7C049]      netinterfaces.cpp:58    INFO| IPv6 ifindex 9
+2026-08-25 12:54:14.826 (   0.028s) [        90E7C049]      netinterfaces.cpp:36    INFO| netif '{4D8CF894-7764-40B7-B5F8-52C7C859FBA5}' (status: 2, multicast: 1
+2026-08-25 12:54:14.826 (   0.028s) [        90E7C049]      netinterfaces.cpp:36    INFO| netif '{8E26F3A3-0C9F-4C70-A709-35E90EC0A844}' (status: 2, multicast: 1
+2026-08-25 12:54:14.826 (   0.028s) [        90E7C049]      netinterfaces.cpp:36    INFO| netif '{94A5AEF1-4F4C-4BED-9205-860D4599A3B1}' (status: 1, multicast: 1
+2026-08-25 12:54:14.826 (   0.028s) [        90E7C049]      netinterfaces.cpp:58    INFO| IPv6 ifindex 20
+2026-08-25 12:54:14.826 (   0.028s) [        90E7C049]      netinterfaces.cpp:36    INFO| netif '{ABA8E1FB-58AD-424E-8FC2-3EE30AAB2410}' (status: 2, multicast: 1
+2026-08-25 12:54:14.826 (   0.028s) [        90E7C049]      netinterfaces.cpp:36    INFO| netif '{999E4E5F-9892-11EE-A20A-806E6F6E6963}' (status: 1, multicast: 1
+2026-08-25 12:54:14.826 (   0.028s) [        90E7C049]      netinterfaces.cpp:58    INFO| IPv6 ifindex 1
+2026-08-25 12:54:14.826 (   0.028s) [        90E7C049]         api_config.cpp:126   INFO| Loaded default config
+2026-08-25 12:54:14.826 (   0.029s) [        90E7C049]             common.cpp:78    INFO| git:64988c6a14b8dc3b3f270ece58eab4f480bfab43/branch:refs/tags/v1.17.7/build:Release/compiler:MSVC-19.29.30159.0/link:SHARED
+[feedback_manager] Feedback manager starting enabled processes
+[feedback_manager] Starting recorder
+[feedback_manager] recorder status: recording
+[realtime_processor] realtime_processor disabled
+[dashboard] dashboard disabled
+[dsart.baseline] dsart_baseline_eyes_open_start
+[dsart.baseline] dsart_baseline_recorder_warning
+[dsart.baseline] dsart_baseline_eyes_open_end
+[dsart.baseline] dsart_baseline_eyes_closed_start
+[dsart.baseline] dsart_baseline_eyes_closed_end
+2026-08-25 12:56:01.719 ( 106.921s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
+7.5188  WARNING         Monitor specification not found. Creating a temporary one...
+88.4785         WARNING         No default speaker specified in Preferences / Hardware, using first speaker found: Speakers (Cirrus Logic XU (with APO Extensions))
+[feedback_manager] Feedback manager stopping processes
+[feedback_manager] Stopping recorder
+Task is complete; recorder is still processing (0.0s): recording. No forced kill will be used.
+[feedback_manager] Task is complete; recorder is still processing (0.0s): recording. No forced kill will be used.
+Task is complete; recorder is still processing (5.0s): Task is complete; LabRecorder is retaining the configured marker/EEG tail before stop. No forced kill will be used.
+[feedback_manager] Task is complete; recorder is still processing (5.0s): Task is complete; LabRecorder is retaining the configured marker/EEG tail before stop. No forced kill will be used.
+[feedback_manager] recorder stopped
+[feedback_manager] Feedback manager summary: complete
+DSART task worker started (pid 23004); progress: C:\Users\Surettej\AppData\Local\eegle\data\recording_suites\crashfix2\visit-1-20260825T124207\study1\phase_workers\session-1-20260825T125609804435.status.json
+[experiment] Session initialized: C:\Users\Surettej\AppData\Local\EEGle\data\participants\crashfix2\sessions\2026-08-25\study1_visit_visit-1-20260825T124207_session1_main\dynamic_sart\run-20260825T125611
+[experiment] Using preflight results accepted by the enclosing pipeline
+DSART task worker stage: starting_session
+[feedback_manager] Feedback manager starting enabled processes
+[feedback_manager] Starting recorder
+[feedback_manager] recorder status: recording
+[realtime_processor] realtime_processor disabled
+[dashboard] dashboard disabled
+[experiment] Starting task dynamic_sart
+DSART task worker stage: creating_psychopy_window
+DSART task worker stage: measuring_display_refresh
+DSART task worker stage: starting_ptb_keyboard
+[task.dynamic_sart] dynamic_sart_task_start
+2026-08-25 12:56:38.469 (  26.573s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
+7.7600  WARNING         Monitor specification not found. Creating a temporary one...
+[feedback_manager] Feedback manager stopping processes
+[feedback_manager] Stopping recorder
+Task is complete; recorder is still processing (0.0s): recording. No forced kill will be used.
+[feedback_manager] Task is complete; recorder is still processing (0.0s): recording. No forced kill will be used.
+DSART task worker stage: task_cleanup
+Task is complete; recorder is still processing (5.0s): Task is complete; LabRecorder is retaining the configured marker/EEG tail before stop. No forced kill will be used.
+[feedback_manager] Task is complete; recorder is still processing (5.0s): Task is complete; LabRecorder is retaining the configured marker/EEG tail before stop. No forced kill will be used.
+[feedback_manager] recorder stopped
+[experiment] Experiment failed: AttributeError: type object 'Window' has no attribute 'backend'
 {
   "acquisition_profile": "full_1000_support500_query500_v2",
-  "failed_phase": "preflight",
-  "failure_detail": "RuntimeError: Study 1 preflight did not complete: XDF preflight recording could not be completed: TimeoutError: LabRecorder acknowledged its update, filename, and start commands but did not create an observable XDF file at C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\p1_raphael_024\\visits\\visit-1\\visit-1-20260821T143200\\preflight\\xdf_recording_probes\\participants\\p1_raphael_024\\sessions\\2026-08-21\\xdf_preflight_visit_1_preflight\\xdf_preflight\\run-20260821T143237\\raw\\recording.xdf within 20.0 seconds; process_alive=True; heartbeat_status=recording; heartbeat_samples=23800. This is a LabRecorder path/start failure, not an EEGle write restriction; inspect C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\p1_raphael_024\\visits\\visit-1\\visit-1-20260821T143200\\preflight\\xdf_recording_probes\\participants\\p1_raphael_024\\sessions\\2026-08-21\\xdf_preflight_visit_1_preflight\\xdf_preflight\\run-20260821T143237\\logs\\processes\\labrecorder.stdout.log and C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\p1_raphael_024\\visits\\visit-1\\visit-1-20260821T143200\\preflight\\xdf_recording_probes\\participants\\p1_raphael_024\\sessions\\2026-08-21\\xdf_preflight_visit_1_preflight\\xdf_preflight\\run-20260821T143237\\logs\\processes\\labrecorder.stderr.log.",
+  "failed_phase": "session1_main",
+  "failure_detail": "RuntimeError: session1_main did not complete: AttributeError: type object 'Window' has no attribute 'backend'",
   "failures": [
     {
-      "error": "RuntimeError: Study 1 preflight did not complete: XDF preflight recording could not be completed: TimeoutError: LabRecorder acknowledged its update, filename, and start commands but did not create an observable XDF file at C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\p1_raphael_024\\visits\\visit-1\\visit-1-20260821T143200\\preflight\\xdf_recording_probes\\participants\\p1_raphael_024\\sessions\\2026-08-21\\xdf_preflight_visit_1_preflight\\xdf_preflight\\run-20260821T143237\\raw\\recording.xdf within 20.0 seconds; process_alive=True; heartbeat_status=recording; heartbeat_samples=23800. This is a LabRecorder path/start failure, not an EEGle write restriction; inspect C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\p1_raphael_024\\visits\\visit-1\\visit-1-20260821T143200\\preflight\\xdf_recording_probes\\participants\\p1_raphael_024\\sessions\\2026-08-21\\xdf_preflight_visit_1_preflight\\xdf_preflight\\run-20260821T143237\\logs\\processes\\labrecorder.stdout.log and C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\p1_raphael_024\\visits\\visit-1\\visit-1-20260821T143200\\preflight\\xdf_recording_probes\\participants\\p1_raphael_024\\sessions\\2026-08-21\\xdf_preflight_visit_1_preflight\\xdf_preflight\\run-20260821T143237\\logs\\processes\\labrecorder.stderr.log.",
+      "error": "RuntimeError: Study 1 preflight did not complete: no Neuracle EEG LSL stream matched",
       "phase": "preflight",
-      "timestamp": "2026-08-21T14:33:17"
+      "timestamp": "2026-08-25T12:42:43"
+    },
+    {
+      "error": "RuntimeError: Study 1 baseline did not complete: RuntimeError: DSART display refresh check failed: measured refresh 29.901 Hz differs from the nearest supported mode (60.000 Hz) by more than 2.000 Hz. Use a supported 60 Hz or 120 Hz Windows display mode, or correct the display settings.",
+      "phase": "baseline",
+      "timestamp": "2026-08-25T12:51:33"
+    },
+    {
+      "error": "RuntimeError: Study 1 baseline did not complete: RuntimeError: DSART display refresh check failed: PsychoPy could not obtain a stable measured refresh rate. Use a supported 60 Hz or 120 Hz Windows display mode, or correct the display settings.",
+      "phase": "baseline",
+      "timestamp": "2026-08-25T12:53:24"
+    },
+    {
+      "error": "RuntimeError: session1_main did not complete: AttributeError: type object 'Window' has no attribute 'backend'",
+      "phase": "session1_main",
+      "timestamp": "2026-08-25T12:56:46"
     }
   ],
-  "manifest_file": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\p1_raphael_024\\visits\\visit-1\\visit-1-20260821T143200\\visit_manifest.json",
+  "manifest_file": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\crashfix2\\visits\\visit-1\\visit-1-20260825T124207\\visit_manifest.json",
   "next_action": "Correct the reported failure, then rerun the same Windows operator command. EEGle will reuse this incomplete visit, skip completed phases, and rerun the failed phase.",
   "no_go_digit": 3,
-  "participant_id": "p1_raphael_024",
+  "outcome_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\operator_outcomes\\study1-20260825-125410-pid22660.json",
+  "participant_id": "crashfix2",
   "process_exit_code": 1,
   "resolved_failures": [],
+  "retained_session_directory": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\participants\\crashfix2\\sessions\\2026-08-25\\study1_visit_visit-1-20260825T124207_session1_main\\dynamic_sart\\run-20260825T125611",
   "schema": "eegle.study1.visit.v1",
   "sequence_hashes": {},
-  "session_directories": {},
-  "status": "failed",
-  "visit_id": "visit-1-20260821T143200",
+  "session_directories": {
+    "baseline": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\participants\\crashfix2\\sessions\\2026-08-25\\study1_visit_visit-1-20260825T124207\\study1_baseline\\run-20260825T125414"
+  },
+  "status": "partial",
+  "visit_id": "visit-1-20260825T124207",
   "visit_number": 1
 }
+EEGle Study 1 native process exit code: 1
+EEGle Study 1 verified outcome exit code: 1
+EEGle Study 1 outcome file: C:\Users\Surettej\AppData\Local\EEGle\data\operator_outcomes\study1-20260825-125410-pid22660.json
+Study 1 Visit 1 run stopped without a successful completion (exit code 1). Read the EEGle 
+failure_detail and next_action printed immediately above; retained raw/session files are 
+not overwritten.
+At C:\Projects\code\eegle\scripts\windows\neuracle64\Common.ps1:104 char:9
++         throw "$Operation stopped without a successful completion (ex ...
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (Study 1 Visit 1...ot overwritten.:String 
+   ) [], RuntimeException
+    + FullyQualifiedErrorId : Study 1 Visit 1 run stopped without a successful completion 
+    (exit code 1). Read the EEGle failure_detail and next_action printed immediately abo  
+  ve; retained raw/session files are not overwritten.
