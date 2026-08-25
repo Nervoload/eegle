@@ -1,0 +1,12 @@
+{
+  "acquisition_profile": "full_1000_support500_query500_v2",
+  "allocation_method": "explicit_counterbalance_allocation",
+  "created_at": "2026-08-21T16:05:47",
+  "master_seed": 42,
+  "no_go_digit": 3,
+  "participant_id": "p1_raphael2",
+  "protocol_hash": "925d64b77c7e39eb1e7d813dd02d091e0a806a819a567d5e03aeee848a1f0c19",
+  "protocol_name": "study1_dynamic_sart_v1",
+  "schema": "eegle.study1.participant.v1",
+  "visits": {}
+}

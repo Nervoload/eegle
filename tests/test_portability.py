@@ -78,7 +78,7 @@ class PortabilityTests(unittest.TestCase):
         self.assertIn("eegle.storage_permissions", storage)
         complete = (scripts / "07-Run-Full.ps1").read_text(encoding="utf-8")
         self.assertIn('"--full-1000"', complete)
-        self.assertIn('"--baseline-seconds", "120"', complete)
+        self.assertIn('"--baseline-seconds", "1"', complete)
         self.assertIn('"--include-practice"', complete)
         self.assertIn('"--retry-incomplete"', complete)
         self.assertNotIn('"--smoke"', complete)

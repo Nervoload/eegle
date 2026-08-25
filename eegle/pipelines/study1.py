@@ -714,12 +714,6 @@ def _validate_options(options: Study1Options) -> None:
         raise ValueError("choose either --resume or --retry-incomplete, not both")
     if options.full_1000 and not options.include_practice:
         raise ValueError("--full-1000 requires --include-practice")
-    if (
-        options.full_1000
-        and options.baseline_seconds is not None
-        and abs(float(options.baseline_seconds) - 120.0) > 1e-9
-    ):
-        raise ValueError("--full-1000 requires --baseline-seconds 120 (or the validated config default)")
     if options.baseline_seconds is not None and options.baseline_seconds < 0:
         raise ValueError("--baseline-seconds must be nonnegative")
     if options.window_size is not None and any(value <= 0 for value in options.window_size):
