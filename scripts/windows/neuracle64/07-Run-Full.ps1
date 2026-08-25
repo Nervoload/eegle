@@ -21,6 +21,8 @@ param(
     [ValidateRange(0, 86400)]
     [double] $BaselineSeconds = 120,
     [switch] $SkipBaseline,
+    [ValidateRange(0, 16)]
+    [int] $ScreenIndex = 0,
     [switch] $Resume,
     [switch] $FullScreen,
     [switch] $ConfirmElectrodes
@@ -45,6 +47,7 @@ $outcomeFile = New-EegleStudyOutcomePath $resolvedDataRoot
 
 Write-Host "Starting the Study 1 Visit 1 run ($Trials experimental trials):"
 Write-Host "  full preflight, three-second XDF recording probe, storage gate, and electrode checks"
+Write-Host "  PsychoPy monitor index $ScreenIndex (window moves are detected before refresh measurement)"
 if ($SkipBaseline) {
     Write-Host "  resting baseline skipped by operator request"
 }
@@ -83,6 +86,7 @@ $arguments = @(
     "--no-go-digit", [string] $NoGoDigit,
     "--full-1000",
     "--trials", [string] $Trials,
+    "--screen-index", [string] $ScreenIndex,
     "--window-size", "1000", "700",
     "--confirm-electrodes",
     "--session-root", $resolvedDataRoot,

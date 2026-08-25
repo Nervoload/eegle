@@ -140,6 +140,11 @@ class Study1Tests(unittest.TestCase):
             1.0,
         )
         self.assertEqual(refreshed["hardware"]["display"]["refresh_rate_measurement_attempts"], 3)
+        self.assertEqual(refreshed["hardware"]["display"]["refresh_rate_sample_frames"], 90)
+        self.assertEqual(
+            refreshed["hardware"]["display"]["refresh_rate_window_settle_seconds"],
+            2.0,
+        )
         self.assertIn("m_73393543_eeg", refreshed["hardware"]["eeg"]["lsl_name_patterns"])
         self.assertEqual(
             refreshed["operator_confirmation"],
@@ -649,7 +654,7 @@ class Study1Tests(unittest.TestCase):
 
         self.assertTrue(any("tolerance" in detail for detail in failures))
         self.assertTrue(any("stability threshold" in detail for detail in failures))
-        self.assertTrue(any("at least two attempts" in detail for detail in failures))
+        self.assertTrue(any("at least three attempts" in detail for detail in failures))
 
     def test_cue_assignments_are_two_of_four_and_deterministic(self) -> None:
         config = load_config(CONFIG)

@@ -4051,11 +4051,34 @@ def _require_preflight_acquisition_config(
         # this provenance field was introduced.
         return
     current = _acquisition_config_sha256(config)
-    if current != checked:
+    compatible_operational_display_upgrade = checked in _operational_display_upgrade_hashes(config)
+    if current != checked and not compatible_operational_display_upgrade:
         raise RuntimeError(
             f"{phase} acquisition configuration changed after preflight; rerun preflight "
             "before recording"
         )
+
+
+def _operational_display_upgrade_hashes(config: dict[str, Any]) -> set[str]:
+    """Recognize the additive checker settings introduced after a preflight.
+
+    Every visual phase measures its own live window, so these fields change how
+    that local measurement is performed rather than the EEG/marker/recorder
+    acquisition contract.  Removing only this exact allowlist reconstructs the
+    v1 hash of an otherwise identical preflight; all other drift stays fatal.
+    """
+
+    legacy = copy.deepcopy(config)
+    display = legacy.setdefault("hardware", {}).setdefault("display", {})
+    removed = False
+    for name in (
+        "refresh_rate_window_settle_seconds",
+        "refresh_rate_retry_settle_seconds",
+        "refresh_rate_warmup_frames",
+        "refresh_rate_sample_frames",
+    ):
+        removed = display.pop(name, None) is not None or removed
+    return {_acquisition_config_sha256(legacy)} if removed else set()
 
 
 def _safe_token(value: str) -> str:

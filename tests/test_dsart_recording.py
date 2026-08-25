@@ -190,9 +190,11 @@ class DsartRecordingTests(unittest.TestCase):
 
         class Window:
             waitBlanking = True
+            timestamp = 100.0
 
-            def getActualFrameRate(self, **_kwargs) -> float:
-                return 60.0
+            def flip(self) -> float:
+                self.timestamp += 1.0 / 60.0
+                return self.timestamp
 
             def close(self) -> None:
                 closed.append("window")
@@ -611,6 +613,34 @@ class DsartRecordingTests(unittest.TestCase):
         changed["hardware"]["display"]["screen_index"] = 2
 
         _require_preflight_acquisition_config(config, preflight, phase="baseline")
+        with self.assertRaisesRegex(RuntimeError, "changed after preflight"):
+            _require_preflight_acquisition_config(changed, preflight, phase="task")
+
+    def test_preflight_acquisition_contract_allows_additive_display_checker_upgrade(self) -> None:
+        current = load_config(CONFIG_32)
+        display = current["hardware"]["display"]
+        display.update(
+            {
+                "refresh_rate_window_settle_seconds": 2.0,
+                "refresh_rate_retry_settle_seconds": 1.0,
+                "refresh_rate_warmup_frames": 20,
+                "refresh_rate_sample_frames": 90,
+            }
+        )
+        previous = copy.deepcopy(current)
+        for name in (
+            "refresh_rate_window_settle_seconds",
+            "refresh_rate_retry_settle_seconds",
+            "refresh_rate_warmup_frames",
+            "refresh_rate_sample_frames",
+        ):
+            previous["hardware"]["display"].pop(name)
+        preflight = {"acquisition_config_sha256": _acquisition_config_sha256(previous)}
+
+        _require_preflight_acquisition_config(current, preflight, phase="task")
+
+        changed = copy.deepcopy(current)
+        changed["hardware"]["eeg"]["expected_sample_rate_hz"] = 123.0
         with self.assertRaisesRegex(RuntimeError, "changed after preflight"):
             _require_preflight_acquisition_config(changed, preflight, phase="task")
 

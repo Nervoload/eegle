@@ -335,6 +335,13 @@ The short test uses the same timing contract as a genuine Study 1 run: a 250 ms
 digit, 1350 ms post-digit fixation, fixed 1600 ms SOI, no intentional jitter,
 VBlank waiting, and a required measured refresh-rate match.
 
+The refresh probe leaves the new window available for two seconds before
+sampling. Move it to the intended monitor during that interval. EEGle identifies
+the active monitor from the largest window/monitor overlap, reads that monitor's
+current video mode, and measures lightweight blank flips without PsychoPy's
+costly frame-rate splash. If the first result is bad or the window moves during
+sampling, it discards that attempt and makes up to three measurements.
+
 ```powershell
 $TestId = "systemtest-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
 
@@ -343,6 +350,7 @@ $TestId = "systemtest-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
   -VisitId "$TestId-visit1" `
   -NoGoDigit 3 `
   -Operator "operator-initials" `
+  -ScreenIndex 0 `
   -BaselineSeconds 60 `
   -ConfirmElectrodes `
   -DataRoot $EegleData
@@ -444,7 +452,15 @@ controls are real PowerShell parameters rather than edits to the script:
 - `-Trials 100` requests a deterministic shortened support/query task;
 - `-PracticeTrials 12 -PracticeNoGoTrials 1 -PracticeMaxRounds 1` changes the
   criterion-gated practice shape; and
-- `-SkipPractice` bypasses practice explicitly.
+- `-SkipPractice` bypasses practice explicitly; and
+- `-ScreenIndex 1` initially opens the PsychoPy windows on the second monitor.
+
+`-ScreenIndex` is zero-based. In windowed mode, moving the window remains
+supported: the refresh check follows the monitor that actually contains most of
+the window rather than continuing to trust its original index. For the most
+reliable scientific timing, place the window entirely on one display before the
+measurement begins; `-FullScreen -ScreenIndex N` is preferable when the operator
+does not need a movable window.
 
 Every override is persisted in the visit manifest. Baseline duration is an
 operational visit choice and does not change the participant's scientific

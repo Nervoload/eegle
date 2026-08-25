@@ -12,6 +12,7 @@ import eegle.tasks.dynamic_sart as dynamic_sart_task
 from eegle.factory import make_task_component
 from eegle.psychopy_display import (
     _install_pyglet_resize_handler,
+    _position_window_on_configured_screen,
     _probe_psychopy_display_and_keyboard_inline,
     create_psychopy_window,
     measure_psychopy_refresh_rate,
@@ -45,6 +46,22 @@ from eegle.analysis.dynamic_sart_labels import reconstruct_dynamic_sart_timing
 from eegle.tasks.dynamic_sart_schema import DynamicSartConfig
 from eegle.tasks.dynamic_sart_sequence import build_dynamic_sart_plan, validate_dynamic_sart_plan
 from eegle.tasks.registry import get_task_spec, list_task_specs
+
+
+class _FlipWindow:
+    def __init__(self, periods: list[float], *, win_handle=None, screen: int = 0) -> None:
+        self.waitBlanking = True
+        self._periods = iter(periods)
+        self._timestamp = 100.0
+        self.winHandle = win_handle
+        self.screen = screen
+        self.getActualFrameRate = MagicMock(
+            side_effect=AssertionError("the heavyweight PsychoPy splash probe must not be used")
+        )
+
+    def flip(self) -> float:
+        self._timestamp += next(self._periods)
+        return self._timestamp
 
 
 def _config(*, seed: int = 42, abort_after: int | None = None) -> dict:
@@ -205,12 +222,14 @@ class DynamicSartTaskTests(unittest.TestCase):
         self.assertEqual(kwargs["size"], (1920, 1080))
 
     def test_refresh_measurement_accepts_match_and_rejects_mismatch(self) -> None:
-        window = SimpleNamespace(waitBlanking=True, getActualFrameRate=lambda **_kwargs: 59.94)
+        window = _FlipWindow([1.0 / 59.94] * 13)
         measured = measure_psychopy_refresh_rate(
             window,
             {
                 "expected_refresh_rate_hz": 60.0,
                 "refresh_rate_tolerance_hz": 1.0,
+                "refresh_rate_warmup_frames": 0,
+                "refresh_rate_sample_frames": 12,
                 "require_refresh_rate_match": True,
             },
         )
@@ -219,48 +238,154 @@ class DynamicSartTaskTests(unittest.TestCase):
         self.assertAlmostEqual(window.monitorFramePeriod, 1.0 / 59.94)
         self.assertAlmostEqual(window.refreshThreshold, (1.0 / 59.94) * 1.2)
         adaptive = measure_psychopy_refresh_rate(
-            SimpleNamespace(waitBlanking=True, getActualFrameRate=lambda **_kwargs: 59.94),
+            _FlipWindow([1.0 / 59.94] * 13),
             {
                 "expected_refresh_rate_hz": 120.0,
                 "supported_refresh_rates_hz": [60.0, 120.0],
                 "refresh_rate_tolerance_hz": 2.0,
+                "refresh_rate_warmup_frames": 0,
+                "refresh_rate_sample_frames": 12,
                 "require_refresh_rate_match": True,
             },
         )
         self.assertEqual(adaptive["nominal_refresh_rate_hz"], 60.0)
         self.assertEqual(adaptive["stimulus_frame_count"], 15)
         self.assertEqual(adaptive["soi_frame_count"], 96)
-        mismatch = SimpleNamespace(waitBlanking=True, getActualFrameRate=lambda **_kwargs: 120.0)
+        mismatch = _FlipWindow([1.0 / 120.0] * (13 * 3))
         with self.assertRaisesRegex(RuntimeError, "measured refresh 120.000 Hz"):
             measure_psychopy_refresh_rate(
                 mismatch,
                 {
                     "expected_refresh_rate_hz": 60.0,
                     "refresh_rate_tolerance_hz": 2.0,
+                    "refresh_rate_warmup_frames": 0,
+                    "refresh_rate_sample_frames": 12,
                     "require_refresh_rate_match": True,
                 },
             )
 
     def test_refresh_measurement_retries_transient_half_rate_result(self) -> None:
-        measurements = iter([30.0, 59.94])
-        getter = MagicMock(side_effect=lambda **_kwargs: next(measurements))
+        window = _FlipWindow([1.0 / 30.0] * 13 + [1.0 / 59.94] * 13)
         result = measure_psychopy_refresh_rate(
-            SimpleNamespace(waitBlanking=True, getActualFrameRate=getter),
+            window,
             {
                 "expected_refresh_rate_hz": 120.0,
                 "supported_refresh_rates_hz": [60.0, 120.0],
                 "refresh_rate_tolerance_hz": 2.0,
                 "refresh_rate_stability_threshold_ms": 1.0,
                 "refresh_rate_measurement_attempts": 3,
+                "refresh_rate_warmup_frames": 0,
+                "refresh_rate_sample_frames": 12,
                 "require_refresh_rate_match": True,
             },
         )
 
         self.assertEqual(result["status"], "measured")
-        self.assertEqual(result["refresh_rate_measurements_hz"], [30.0, 59.94])
+        self.assertAlmostEqual(result["refresh_rate_measurements_hz"][0], 30.0)
+        self.assertAlmostEqual(result["refresh_rate_measurements_hz"][1], 59.94)
         self.assertEqual(result["refresh_rate_selected_attempt"], 2)
         self.assertEqual(result["nominal_refresh_rate_hz"], 60.0)
-        self.assertEqual(getter.call_args.kwargs["threshold"], 1.0)
+        window.getActualFrameRate.assert_not_called()
+        self.assertEqual(result["refresh_rate_measurement_method"], "blank_flip_robust_median_v1")
+
+    def test_refresh_measurement_uses_monitor_containing_most_of_moved_window(self) -> None:
+        screens = [
+            SimpleNamespace(
+                x=0,
+                y=0,
+                width=1920,
+                height=1080,
+                get_mode=lambda: SimpleNamespace(rate=120.0, width=1920, height=1080),
+            ),
+            SimpleNamespace(
+                x=1920,
+                y=0,
+                width=1920,
+                height=1080,
+                get_mode=lambda: SimpleNamespace(rate=60.0, width=1920, height=1080),
+            ),
+        ]
+        handle = SimpleNamespace(
+            display=SimpleNamespace(get_screens=lambda: screens),
+            get_location=lambda: (2100, 100),
+            get_size=lambda: (1000, 700),
+        )
+        result = measure_psychopy_refresh_rate(
+            _FlipWindow([1.0 / 60.0] * 13, win_handle=handle),
+            {
+                "expected_refresh_rate_hz": 120.0,
+                "supported_refresh_rates_hz": [60.0, 120.0],
+                "refresh_rate_tolerance_hz": 2.0,
+                "refresh_rate_warmup_frames": 0,
+                "refresh_rate_sample_frames": 12,
+                "require_refresh_rate_match": True,
+            },
+        )
+
+        self.assertEqual(result["active_monitor"]["index"], 1)
+        self.assertEqual(result["active_monitor"]["refresh_rate_hz"], 60.0)
+        self.assertEqual(result["nominal_refresh_rate_hz"], 60.0)
+
+    def test_windowed_screen_index_centres_window_on_requested_monitor(self) -> None:
+        screens = [
+            SimpleNamespace(x=0, y=0, width=1920, height=1080),
+            SimpleNamespace(x=1920, y=-200, width=2560, height=1440),
+        ]
+        handle = SimpleNamespace(
+            display=SimpleNamespace(get_screens=lambda: screens),
+            get_size=lambda: (1000, 700),
+            set_location=MagicMock(),
+        )
+
+        _position_window_on_configured_screen(
+            SimpleNamespace(fullscr=False, winHandle=handle),
+            1,
+        )
+
+        handle.set_location.assert_called_once_with(2700, 170)
+
+    def test_refresh_measurement_discards_attempt_during_monitor_move(self) -> None:
+        screens = [
+            SimpleNamespace(
+                x=0,
+                y=0,
+                width=1920,
+                height=1080,
+                get_mode=lambda: SimpleNamespace(rate=60.0, width=1920, height=1080),
+            ),
+            SimpleNamespace(
+                x=1920,
+                y=0,
+                width=1920,
+                height=1080,
+                get_mode=lambda: SimpleNamespace(rate=60.0, width=1920, height=1080),
+            ),
+        ]
+        locations = iter([(100, 100), (2100, 100), (2100, 100), (2100, 100), (2100, 100)])
+        handle = SimpleNamespace(
+            display=SimpleNamespace(get_screens=lambda: screens),
+            get_location=lambda: next(locations),
+            get_size=lambda: (1000, 700),
+        )
+        result = measure_psychopy_refresh_rate(
+            _FlipWindow([1.0 / 60.0] * 26, win_handle=handle),
+            {
+                "expected_refresh_rate_hz": 60.0,
+                "supported_refresh_rates_hz": [60.0, 120.0],
+                "refresh_rate_tolerance_hz": 2.0,
+                "refresh_rate_measurement_attempts": 3,
+                "refresh_rate_warmup_frames": 0,
+                "refresh_rate_sample_frames": 12,
+                "require_refresh_rate_match": True,
+            },
+        )
+
+        self.assertEqual(result["refresh_rate_selected_attempt"], 2)
+        self.assertEqual(
+            result["refresh_rate_attempt_details"][0]["status"],
+            "discarded_window_moved",
+        )
+        self.assertEqual(result["active_monitor"]["index"], 1)
 
     def test_pending_resize_repaints_without_waiting_for_keyboard_input(self) -> None:
         stimulus = SimpleNamespace(draw=MagicMock())
@@ -280,17 +405,16 @@ class DynamicSartTaskTests(unittest.TestCase):
 
     def test_static_screen_services_native_window_events_while_waiting_for_ptb(self) -> None:
         class Window:
-            dispatches = 0
-
             @classmethod
             def dispatchAllWindowEvents(cls) -> None:
-                cls.dispatches += 1
+                raise AssertionError("PsychoPy's broken class dispatcher must not be called")
 
         window = Window()
         window._eegle_resize_redraw_pending = False
+        window.backend = SimpleNamespace(dispatchEvents=MagicMock())
 
         self.assertFalse(service_psychopy_static_window(window))
-        self.assertEqual(Window.dispatches, 1)
+        window.backend.dispatchEvents.assert_called_once_with()
 
     def test_preflight_display_probe_runs_in_disposable_interpreter(self) -> None:
         captured = {}

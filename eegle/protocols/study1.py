@@ -334,8 +334,14 @@ def validate_study1_config(config: dict[str, Any]) -> list[dict[str, str]]:
         issues.append(
             _issue("fail", "Study 1 display refresh stability threshold must be no greater than 1 ms")
         )
-    if int(display.get("refresh_rate_measurement_attempts", 0)) < 2:
-        issues.append(_issue("fail", "Study 1 display refresh measurement must allow at least two attempts"))
+    if int(display.get("refresh_rate_measurement_attempts", 0)) < 3:
+        issues.append(_issue("fail", "Study 1 display refresh measurement must allow at least three attempts"))
+    if int(display.get("refresh_rate_sample_frames", 0)) < 60:
+        issues.append(_issue("fail", "Study 1 display refresh measurement must sample at least 60 frames"))
+    if float(display.get("refresh_rate_window_settle_seconds", 0.0)) < 1.0:
+        issues.append(
+            _issue("fail", "Study 1 display refresh measurement must allow the window to settle")
+        )
     if str(display.get("keyboard_backend", "")).lower() != "ptb":
         issues.append(_issue("fail", "Study 1 requires PsychoPy's asynchronous PTB keyboard backend"))
     for name in STUDY1_SEGMENTS:

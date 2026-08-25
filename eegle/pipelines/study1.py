@@ -93,6 +93,7 @@ class Study1Options:
     baseline_seconds: float | None = None
     skip_baseline: bool = False
     window_size: tuple[int, int] | None = None
+    screen_index: int | None = None
     full_screen: bool | None = None
     record_eeg: bool = True
     require_eeg: bool = True
@@ -199,6 +200,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Record no resting-baseline session and advance directly to the task after preflight",
     )
     parser.add_argument("--window-size", type=int, nargs=2, metavar=("WIDTH", "HEIGHT"), default=None)
+    parser.add_argument(
+        "--screen-index",
+        type=int,
+        default=None,
+        help="Open each PsychoPy window on this zero-based monitor; active-monitor checks follow later moves",
+    )
     display_mode = parser.add_mutually_exclusive_group()
     display_mode.add_argument("--fullscreen", dest="full_screen", action="store_true")
     display_mode.add_argument("--windowed", dest="full_screen", action="store_false")
@@ -274,6 +281,7 @@ def _options_from_args(args: argparse.Namespace) -> Study1Options:
         baseline_seconds=args.baseline_seconds,
         skip_baseline=bool(args.skip_baseline),
         window_size=None if args.window_size is None else (int(args.window_size[0]), int(args.window_size[1])),
+        screen_index=args.screen_index,
         full_screen=args.full_screen,
         record_eeg=not bool(args.skip_eeg),
         require_eeg=not bool(args.allow_missing_eeg) and not bool(args.skip_eeg),
@@ -318,6 +326,10 @@ def run_study1_visit(options: Study1Options) -> dict[str, Any]:
     config["runtime"]["runtime_cache_dir"] = str(_runtime_cache_root(config, output_root))
     if options.window_size is not None:
         config.setdefault("hardware", {}).setdefault("display", {})["size"] = list(options.window_size)
+    if options.screen_index is not None:
+        config.setdefault("hardware", {}).setdefault("display", {})["screen_index"] = int(
+            options.screen_index
+        )
     if options.full_screen is not None:
         config.setdefault("hardware", {}).setdefault("display", {})["full_screen"] = bool(options.full_screen)
     _probe_session_root_writable(output_root)
@@ -784,6 +796,8 @@ def _validate_options(options: Study1Options) -> None:
         raise ValueError("--baseline-seconds must be nonnegative")
     if options.window_size is not None and any(value <= 0 for value in options.window_size):
         raise ValueError("--window-size values must be positive")
+    if options.screen_index is not None and options.screen_index < 0:
+        raise ValueError("--screen-index must be nonnegative")
 
 
 def _participant_manifest(
@@ -1090,6 +1104,9 @@ def _new_visit_manifest(
         "task_overrides": _task_override_identity(options),
         "baseline": copy.deepcopy(config.get("recording_suite", {}).get("baseline", {})),
         "window_size": list(config.get("hardware", {}).get("display", {}).get("size", [1000, 700])),
+        "configured_screen_index": int(
+            config.get("hardware", {}).get("display", {}).get("screen_index", 0)
+        ),
         "full_screen": bool(config.get("hardware", {}).get("display", {}).get("full_screen", False)),
         "visit_interval": interval,
         "warnings": [issue["detail"] for issue in config_issues if issue["status"] == "warn"],

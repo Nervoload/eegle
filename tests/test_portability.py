@@ -82,6 +82,8 @@ class PortabilityTests(unittest.TestCase):
         self.assertIn('"--baseline-seconds", [string] $BaselineSeconds', complete)
         self.assertIn('"--skip-baseline"', complete)
         self.assertIn('"--trials", [string] $Trials', complete)
+        self.assertIn('[int] $ScreenIndex = 0', complete)
+        self.assertIn('"--screen-index", [string] $ScreenIndex', complete)
         self.assertIn('"--practice-trials", [string] $PracticeTrials', complete)
         self.assertIn('"--skip-practice"', complete)
         self.assertIn('"--include-practice"', complete)
