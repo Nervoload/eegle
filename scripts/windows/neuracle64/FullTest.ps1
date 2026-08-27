@@ -101,7 +101,7 @@ $arguments = @(
     "--window-size", "1000", "700",
     "--session-root", $resolvedDataRoot,
     "--result-file", $outcomeFile,
-    "--lsl-wait", "10"
+    "--lsl-wait", "4"
 )
 if (-not [string]::IsNullOrWhiteSpace($Participant)) {
     $arguments += @("--participant", $Participant)

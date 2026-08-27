@@ -9,6 +9,9 @@ commands, module launches, and explicit hardware checks.
 - Package import and public APIs: OS-agnostic Python.
 - CLI commands: installed `eegle`, `alpha8`, `inhibition8`, `classify8`,
   `attention8`, `dsart8`, `dsart32`, and `study1` scripts, or module forms.
+- Guarded Study 1 launchers: `FullTest` and `FullRun` after
+  `00-Setup.ps1 -AddCommandsToUserPath`, with `FullTest.ps1` and `FullRun.ps1`
+  retained as repository-relative forms.
 - Worker processes: launched with the current Python executable, `-m`, and
   `shell=False`.
 - Session output: created through `pathlib`, with relative paths documented for

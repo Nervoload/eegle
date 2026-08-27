@@ -50,6 +50,8 @@ class LabRecorderXdfRecorder:
         paths: SessionPaths,
         *,
         startup_timeout_seconds: float = 20.0,
+        preferred_eeg_stream: dict[str, Any] | None = None,
+        prevalidated_environment: dict[str, Any] | None = None,
     ) -> None:
         self.config = config
         self.paths = paths
@@ -99,6 +101,7 @@ class LabRecorderXdfRecorder:
         self._heartbeat = LslSampleHeartbeat(
             self.eeg_config,
             stream_timeout_seconds=float(self.eeg_config.get("stream_timeout_seconds", 5.0)),
+            preferred_stream_identity=preferred_eeg_stream,
         )
         self._process: subprocess.Popen[bytes] | None = None
         self._rcs_socket: socket.socket | None = None
@@ -106,6 +109,8 @@ class LabRecorderXdfRecorder:
         self._stderr_handle: BinaryIO | None = None
         self._executable: Path | None = None
         self._executable_sha256: str | None = None
+        self._executable_sha256_source: str | None = None
+        self._prevalidated_environment = dict(prevalidated_environment or {})
         self._commands: list[str] = []
         self._rcs_acknowledgements: list[dict[str, str]] = []
         self._launch_command: list[str] = []
@@ -137,7 +142,13 @@ class LabRecorderXdfRecorder:
         self._executable = resolve_labrecorder_executable(
             str(self.recorder_config.get("executable") or "LabRecorder.exe")
         )
-        self._executable_sha256 = sha256_file(self._executable)
+        (
+            self._executable_sha256,
+            self._executable_sha256_source,
+        ) = labrecorder_executable_sha256(
+            self._executable,
+            prevalidated_environment=self._prevalidated_environment,
+        )
         require_loopback_port_available(self.rcs_port)
         self._status = "starting"
         try:
@@ -151,13 +162,18 @@ class LabRecorderXdfRecorder:
                 else:
                     mirror = self._mirror.snapshot()
                     self._selected_eeg_stream = dict(mirror.get("stream") or {})
+            if self.heartbeat_enabled:
+                if self._selected_eeg_stream:
+                    self._heartbeat.preferred_stream_identity = dict(self._selected_eeg_stream)
+                self._start_heartbeat()
+                heartbeat_stream = dict(self._heartbeat.snapshot().get("stream") or {})
+                if heartbeat_stream:
+                    self._selected_eeg_stream = heartbeat_stream
             if not self._selected_eeg_stream:
                 self._selected_eeg_stream = resolve_eeg_stream_identity(
                     self.eeg_config,
                     timeout=float(self.eeg_config.get("stream_timeout_seconds", 5.0)),
                 )
-            if self.heartbeat_enabled:
-                self._start_heartbeat()
             self._selected_marker_stream = resolve_labrecorder_marker_stream(
                 self.marker_config,
                 timeout_seconds=float(self.eeg_config.get("stream_timeout_seconds", 5.0)),
@@ -298,6 +314,7 @@ class LabRecorderXdfRecorder:
             "labrecorder_returncode": None if self._process is None else self._process.poll(),
             "labrecorder_executable": None if self._executable is None else str(self._executable),
             "labrecorder_executable_sha256": self._executable_sha256,
+            "labrecorder_executable_sha256_source": self._executable_sha256_source,
             "labrecorder_config": str(self.labrecorder_config),
             "labrecorder_config_contents": self._generated_config,
             "labrecorder_launch_command": list(self._launch_command),
@@ -736,13 +753,44 @@ def labrecorder_environment(config: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError(f"pyxdf {version} is outside the supported range pyxdf>=1.17.5,<2")
     port = int(recorder.get("rcs_port", 22345))
     require_loopback_port_available(port)
+    executable_sha256 = sha256_file(executable)
+    executable_stat = executable.stat()
     return {
         "executable": str(executable),
-        "executable_sha256": sha256_file(executable),
+        "executable_sha256": executable_sha256,
+        "executable_size_bytes": int(executable_stat.st_size),
+        "executable_mtime_ns": int(executable_stat.st_mtime_ns),
         "pyxdf_version": version,
         "rcs_host": "127.0.0.1",
         "rcs_port": port,
     }
+
+
+def labrecorder_executable_sha256(
+    executable: Path,
+    *,
+    prevalidated_environment: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    """Reuse the preflight digest only while the executable identity is unchanged."""
+
+    environment = dict(prevalidated_environment or {})
+    expected_path = str(environment.get("executable") or "").strip()
+    expected_sha256 = str(environment.get("executable_sha256") or "").strip().lower()
+    try:
+        expected_size = int(environment["executable_size_bytes"])
+        expected_mtime_ns = int(environment["executable_mtime_ns"])
+        actual_stat = executable.stat()
+        same_path = Path(expected_path).resolve() == executable.resolve()
+    except (KeyError, OSError, TypeError, ValueError):
+        same_path = False
+    if (
+        same_path
+        and re.fullmatch(r"[0-9a-f]{64}", expected_sha256)
+        and int(actual_stat.st_size) == expected_size
+        and int(actual_stat.st_mtime_ns) == expected_mtime_ns
+    ):
+        return expected_sha256, "prevalidated_environment"
+    return sha256_file(executable), "computed_at_start"
 
 
 def require_loopback_port_available(port: int) -> None:

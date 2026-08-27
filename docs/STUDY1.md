@@ -67,14 +67,14 @@ The Windows Visit 1 launchers accept these minimal resume selectors:
 
 ```powershell
 # Most recent incomplete Visit 1 for this participant.
-.\scripts\windows\neuracle64\07-Run-Full.ps1 -Participant "sub-001" -Resume
+FullRun -Participant "sub-001" -Resume
 
 # A visit ID or child run/session directory name under the selected data root.
-.\scripts\windows\neuracle64\07-Run-Full.ps1 -Resume -ResumeTarget "visit-1-20260825T120000"
-.\scripts\windows\neuracle64\07-Run-Full.ps1 -Resume -ResumeTarget "run-20260825T121500"
+FullRun -Resume -ResumeTarget "visit-1-20260825T120000"
+FullRun -Resume -ResumeTarget "run-20260825T121500"
 
 # An exact visit directory, visit_manifest.json, or retained child session path.
-.\scripts\windows\neuracle64\07-Run-Full.ps1 -Resume -ResumeTarget "D:\EEGleData\study1\sub-001\visits\visit-1\visit-id\visit_manifest.json"
+FullRun -Resume -ResumeTarget "D:\EEGleData\study1\sub-001\visits\visit-1\visit-id\visit_manifest.json"
 ```
 
 `-VisitId` may be used instead of `-ResumeTarget`. For a new acquisition,

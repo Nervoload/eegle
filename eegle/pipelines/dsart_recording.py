@@ -806,6 +806,7 @@ def run_recording_preflight(
     )
     check_payloads.append(storage.__dict__)
     recorder_backend = str(config.get("processes", {}).get("recorder", {}).get("backend", "lsl_csv"))
+    xdf_probe: CheckResult | None = None
     if record_eeg and recorder_backend == "labrecorder_xdf":
         try:
             environment = labrecorder_environment(config)
@@ -830,6 +831,8 @@ def run_recording_preflight(
                 participant_id=participant_id,
                 phase=phase,
                 output_dir=output_dir,
+                eeg_stream_identity=dict(probe.get("stream") or {}),
+                prevalidated_recorder_environment=environment,
             )
             check_payloads.append(xdf_probe.__dict__)
     identity = CheckResult(
@@ -839,7 +842,14 @@ def run_recording_preflight(
         {"participant_id": participant_id, "visit_id": visit_id, "recipe": recipe},
     )
     check_payloads.append(identity.__dict__)
-    marker = _marker_loopback_check(config, participant_id, visit_id, phase, enabled=record_eeg)
+    marker = _marker_preflight_check(
+        config,
+        participant_id,
+        visit_id,
+        phase,
+        enabled=record_eeg,
+        xdf_probe=xdf_probe,
+    )
     check_payloads.append(marker.__dict__)
 
     electrode_path: Path | None = None
@@ -959,6 +969,8 @@ def _run_xdf_preflight_probe(
     participant_id: str,
     phase: str,
     output_dir: Path,
+    eeg_stream_identity: dict[str, Any] | None = None,
+    prevalidated_recorder_environment: dict[str, Any] | None = None,
 ) -> CheckResult:
     """Make and validate a short real XDF before a full acquisition phase."""
 
@@ -1002,6 +1014,8 @@ def _run_xdf_preflight_probe(
             persisted_config,
             paths,
             startup_timeout_seconds=float(recorder_config.get("startup_timeout_seconds", 20.0)),
+            preferred_eeg_stream=eeg_stream_identity,
+            prevalidated_environment=prevalidated_recorder_environment,
         )
         recorder_summary = recorder.start()
         recorder_started = True
@@ -3498,7 +3512,64 @@ def _electrode_report(
     }
 
 
-def _marker_loopback_check(
+def _marker_preflight_check(
+    config: dict[str, Any],
+    participant_id: str,
+    visit_id: str,
+    phase: str,
+    *,
+    enabled: bool,
+    xdf_probe: CheckResult | None,
+) -> CheckResult:
+    if enabled and _xdf_probe_covers_marker_loopback(xdf_probe):
+        validation = dict((xdf_probe.data if xdf_probe is not None else {}).get("validation") or {})
+        markers = dict(validation.get("markers") or {})
+        coverage = dict(validation.get("recording_coverage") or {})
+        return CheckResult(
+            "marker_loopback",
+            "skip",
+            "standalone marker loopback omitted because the successful XDF probe already verified "
+            "independent receipt, exact marker order, synchronized timestamps, and EEG/marker coverage",
+            {
+                "skipped": True,
+                "covered_by": "xdf_recording_probe",
+                "marker_sample_count": int(markers.get("sample_count") or 0),
+                "recording_coverage_status": coverage.get("status"),
+            },
+        )
+    return _standalone_marker_loopback_check(
+        config,
+        participant_id,
+        visit_id,
+        phase,
+        enabled=enabled,
+    )
+
+
+def _xdf_probe_covers_marker_loopback(xdf_probe: CheckResult | None) -> bool:
+    if xdf_probe is None or xdf_probe.status not in {"ok", "warn"}:
+        return False
+    validation = dict(xdf_probe.data.get("validation") or {})
+    markers = dict(validation.get("markers") or {})
+    coverage = dict(validation.get("recording_coverage") or {})
+    timestamps = (
+        _optional_float(markers.get("synchronized_first_timestamp")),
+        _optional_float(markers.get("synchronized_last_timestamp")),
+    )
+    try:
+        marker_sample_count = int(markers.get("sample_count") or 0)
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        not validation.get("failures")
+        and markers.get("sequence_matches_receipt") is True
+        and marker_sample_count >= 2
+        and all(value is not None and math.isfinite(value) for value in timestamps)
+        and coverage.get("status") in {"pass", "warning"}
+    )
+
+
+def _standalone_marker_loopback_check(
     config: dict[str, Any],
     participant_id: str,
     visit_id: str,

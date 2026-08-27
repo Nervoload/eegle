@@ -20,6 +20,7 @@ from eegle.devices.labrecorder_xdf import (
     LABRECORDER_WINDOWS_PATH_BUDGET,
     LabRecorderXdfRecorder,
     build_labrecorder_config,
+    labrecorder_executable_sha256,
     labrecorder_environment,
     required_labrecorder_streams,
     validate_labrecorder_xdf_path,
@@ -266,6 +267,62 @@ class ManagedXdfTests(unittest.TestCase):
             self.assertIn("RequiredStreams=", metadata["labrecorder_config_contents"])
             self.assertEqual(metadata["labrecorder_launch_command"], popen.call_args.args[0])
 
+    def test_sample_heartbeat_identity_avoids_redundant_eeg_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = paths_for_existing_session(tmp)
+            executable = Path(tmp) / "LabRecorder.exe"
+            executable.write_bytes(b"test executable")
+            config = self._config(str(executable))
+            config["processes"]["recorder"].update(  # type: ignore[index]
+                {"csv_mirror": False, "lsl_sample_heartbeat": True}
+            )
+            recorder = LabRecorderXdfRecorder(
+                config,
+                paths,
+                preferred_eeg_stream={"source_id": "neuracle-test"},
+            )
+            recorder._heartbeat = _Mirror()  # type: ignore[assignment]
+            process = _Process()
+
+            def create_xdf() -> None:
+                paths.eeg_xdf.write_bytes(b"XDF:test-data")
+
+            with patch(
+                "eegle.devices.labrecorder_xdf.require_loopback_port_available"
+            ), patch(
+                "eegle.devices.labrecorder_xdf.resolve_labrecorder_marker_stream",
+                return_value={
+                    "name": "EEGleMarkers",
+                    "type": "Markers",
+                    "source_id": "marker-test",
+                    "hostname": "TASK-PC",
+                    "uid": "marker-uid",
+                },
+            ), patch(
+                "eegle.devices.labrecorder_xdf.resolve_eeg_stream_identity",
+            ) as resolve_eeg, patch(
+                "eegle.devices.labrecorder_xdf.subprocess.Popen",
+                return_value=process,
+            ), patch.object(
+                recorder,
+                "_connect_rcs",
+                return_value=_Socket(),
+            ), patch.object(
+                recorder,
+                "_wait_for_xdf_growth",
+                side_effect=create_xdf,
+            ), patch.object(
+                recorder,
+                "_wait_for_xdf_settle",
+            ):
+                started = recorder.start()
+                stopped = recorder.stop(reason="unit_test")
+
+            self.assertEqual(started["status"], "recording")
+            self.assertEqual(started["stream"]["source_id"], "neuracle-test")
+            self.assertEqual(stopped["status"], "stopped")
+            resolve_eeg.assert_not_called()
+
     def test_remote_commands_wait_for_labrecorder_acknowledgement(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             recorder = LabRecorderXdfRecorder(self._config("LabRecorder.exe"), paths_for_existing_session(tmp))
@@ -337,6 +394,40 @@ class ManagedXdfTests(unittest.TestCase):
         self.assertEqual(environment["executable"], str(executable.resolve()))
         self.assertEqual(environment["pyxdf_version"], "1.17.5")
         self.assertEqual(len(environment["executable_sha256"]), 64)
+        self.assertEqual(environment["executable_size_bytes"], len(b"labrecorder"))
+        self.assertIsInstance(environment["executable_mtime_ns"], int)
+
+    def test_preflight_executable_hash_is_reused_only_while_file_identity_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            executable = Path(tmp) / "LabRecorder.exe"
+            executable.write_bytes(b"labrecorder")
+            with patch(
+                "eegle.devices.labrecorder_xdf.importlib.metadata.version",
+                return_value="1.17.5",
+            ), patch("eegle.devices.labrecorder_xdf.require_loopback_port_available"):
+                environment = labrecorder_environment(self._config(str(executable)))
+
+            with patch("eegle.devices.labrecorder_xdf.sha256_file") as sha256:
+                digest, source = labrecorder_executable_sha256(
+                    executable,
+                    prevalidated_environment=environment,
+                )
+            sha256.assert_not_called()
+            self.assertEqual(digest, environment["executable_sha256"])
+            self.assertEqual(source, "prevalidated_environment")
+
+            executable.write_bytes(b"changed executable")
+            with patch(
+                "eegle.devices.labrecorder_xdf.sha256_file",
+                return_value="b" * 64,
+            ) as sha256:
+                digest, source = labrecorder_executable_sha256(
+                    executable,
+                    prevalidated_environment=environment,
+                )
+            sha256.assert_called_once_with(executable)
+            self.assertEqual(digest, "b" * 64)
+            self.assertEqual(source, "computed_at_start")
 
     def test_environment_preflight_reports_missing_pyxdf_actionably(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

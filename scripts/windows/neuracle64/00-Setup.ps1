@@ -62,17 +62,34 @@ Assert-EegleExit "runtime import/version check"
 Assert-EegleExit "software/display setup check"
 
 if ($AddCommandsToUserPath) {
-    $scriptsPath = Join-Path $script:EegleRepoRoot ".venv\Scripts"
+    $commandPaths = @(
+        (Join-Path $script:EegleRepoRoot ".venv\Scripts"),
+        $PSScriptRoot
+    )
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     $entries = @($userPath -split ";" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    if (-not ($entries | Where-Object { $_.TrimEnd("\") -ieq $scriptsPath.TrimEnd("\") })) {
-        $updated = (@($entries) + $scriptsPath) -join ";"
-        [Environment]::SetEnvironmentVariable("Path", $updated, "User")
-        Write-Host "Added to user PATH for future terminals: $scriptsPath"
+    $pathChanged = $false
+    foreach ($commandPath in $commandPaths) {
+        if (-not ($entries | Where-Object { $_.TrimEnd("\") -ieq $commandPath.TrimEnd("\") })) {
+            $entries += $commandPath
+            $pathChanged = $true
+            Write-Host "Added to user PATH for future terminals: $commandPath"
+        }
+        else {
+            Write-Host "EEGle command directory is already on the user PATH: $commandPath"
+        }
     }
-    else {
-        Write-Host "EEGle command directory is already on the user PATH."
+    if ($pathChanged) {
+        [Environment]::SetEnvironmentVariable("Path", ($entries -join ";"), "User")
     }
+    $currentEntries = @($env:Path -split ";" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    foreach ($commandPath in $commandPaths) {
+        if (-not ($currentEntries | Where-Object { $_.TrimEnd("\") -ieq $commandPath.TrimEnd("\") })) {
+            $currentEntries += $commandPath
+        }
+    }
+    $env:Path = $currentEntries -join ";"
+    Write-Host "FullRun and FullTest are now available without a repository-relative path in this and future terminals."
 }
 
 Write-Host ""

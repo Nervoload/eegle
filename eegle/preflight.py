@@ -143,6 +143,7 @@ def run_preflight(
             eeg,
             seconds=float(eeg.get("sample_probe_seconds", 2.0)),
             timeout=float(eeg.get("stream_timeout_seconds", 5.0)),
+            preferred_stream_identity=eeg_matches[0],
         )
         if probe.get("status") == "ok":
             checks.append(CheckResult("eeg_sample_probe", "ok", f"read {probe.get('sample_count')} samples", probe))

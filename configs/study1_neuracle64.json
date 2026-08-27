@@ -148,7 +148,7 @@
       "refresh_rate_tolerance_hz": 2.0,
       "refresh_rate_stability_threshold_ms": 1.0,
       "refresh_rate_measurement_attempts": 3,
-      "refresh_rate_window_settle_seconds": 2.0,
+      "refresh_rate_window_settle_seconds": 1.0,
       "refresh_rate_retry_settle_seconds": 1.0,
       "refresh_rate_warmup_frames": 20,
       "refresh_rate_sample_frames": 90,

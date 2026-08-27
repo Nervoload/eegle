@@ -67,7 +67,7 @@ $resolvedDataRoot = Get-EegleDataRoot $DataRoot
 $env:EEGLE_SESSION_ROOT = $resolvedDataRoot
 $outcomeFile = New-EegleStudyOutcomePath $resolvedDataRoot
 
-Write-Host "Starting the Study 1 Visit 1 run ($Trials experimental trials):"
+Write-Host "Starting the Study 1 Visit 1 full run ($Trials experimental trials):"
 Write-Host "  full preflight, three-second XDF recording probe, storage gate, and electrode checks"
 Write-Host "  PsychoPy monitor index $ScreenIndex in $(if ($useFullScreen) { 'fullscreen VBlank-synchronized' } else { 'windowed diagnostic-only' }) mode"
 if ($SkipBaseline) {
@@ -109,7 +109,7 @@ $arguments = @(
     "--window-size", "1000", "700",
     "--session-root", $resolvedDataRoot,
     "--result-file", $outcomeFile,
-    "--lsl-wait", "10"
+    "--lsl-wait", "4"
 )
 if (-not [string]::IsNullOrWhiteSpace($Participant)) {
     $arguments += @("--participant", $Participant)

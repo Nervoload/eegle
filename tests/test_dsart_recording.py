@@ -42,6 +42,7 @@ from eegle.pipelines.dsart_recording import (
     compare_preflights,
     _configure_practice_policy,
     _countdown_event_integrity,
+    _marker_preflight_check,
     _marker_receipt_integrity,
     _run_dsart_child_session_inline,
     _run_dsart_child_session_isolated,
@@ -608,6 +609,65 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertEqual(report["acquisition_config_contract"], "hardware_and_recorder_v1")
         self.assertEqual(len(report["acquisition_config_sha256"]), 64)
 
+    def test_successful_xdf_probe_replaces_redundant_standalone_marker_loopback(self) -> None:
+        xdf_probe = CheckResult(
+            "xdf_recording_probe",
+            "ok",
+            "validated",
+            {
+                "validation": {
+                    "failures": [],
+                    "markers": {
+                        "sample_count": 2,
+                        "sequence_matches_receipt": True,
+                        "synchronized_first_timestamp": 10.0,
+                        "synchronized_last_timestamp": 13.0,
+                    },
+                    "recording_coverage": {"status": "pass"},
+                }
+            },
+        )
+        with patch(
+            "eegle.pipelines.dsart_recording._standalone_marker_loopback_check"
+        ) as standalone:
+            result = _marker_preflight_check(
+                {},
+                "participant",
+                "visit",
+                "phase",
+                enabled=True,
+                xdf_probe=xdf_probe,
+            )
+
+        standalone.assert_not_called()
+        self.assertEqual(result.status, "skip")
+        self.assertEqual(result.data["covered_by"], "xdf_recording_probe")
+        self.assertIn("exact marker order", result.detail)
+
+    def test_failed_xdf_probe_keeps_standalone_marker_loopback_diagnostic(self) -> None:
+        expected = CheckResult("marker_loopback", "ok", "standalone passed")
+        with patch(
+            "eegle.pipelines.dsart_recording._standalone_marker_loopback_check",
+            return_value=expected,
+        ) as standalone:
+            result = _marker_preflight_check(
+                {},
+                "participant",
+                "visit",
+                "phase",
+                enabled=True,
+                xdf_probe=CheckResult("xdf_recording_probe", "fail", "failed"),
+            )
+
+        standalone.assert_called_once_with(
+            {},
+            "participant",
+            "visit",
+            "phase",
+            enabled=True,
+        )
+        self.assertIs(result, expected)
+
     def test_missing_audio_output_is_preflight_warning_not_failure(self) -> None:
         config = load_config(CONFIG_32)
         config["hardware"]["audio"] = {
@@ -799,7 +859,7 @@ class DsartRecordingTests(unittest.TestCase):
             ), patch(
                 "eegle.pipelines.dsart_recording.LabRecorderXdfRecorder",
                 return_value=Recorder(),
-            ), patch(
+            ) as recorder_factory, patch(
                 "eegle.pipelines.dsart_recording.validate_xdf_recording",
                 return_value=validation,
             ), patch(
@@ -811,6 +871,11 @@ class DsartRecordingTests(unittest.TestCase):
                     participant_id="unit-xdf-probe",
                     phase="initial_preflight",
                     output_dir=Path(tmp),
+                    eeg_stream_identity={"source_id": "unit-eeg"},
+                    prevalidated_recorder_environment={
+                        "executable": "C:/LabRecorder.exe",
+                        "executable_sha256": "a" * 64,
+                    },
                 )
 
         self.assertEqual(result.status, "warn")
@@ -821,6 +886,14 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertIn("xdfp", probe_session.parts)
         self.assertNotIn("xdf_recording_probes", probe_session.parts)
         self.assertNotIn("xdf_preflight_initial_preflight", probe_session.parts)
+        self.assertEqual(
+            recorder_factory.call_args.kwargs["preferred_eeg_stream"],
+            {"source_id": "unit-eeg"},
+        )
+        self.assertEqual(
+            recorder_factory.call_args.kwargs["prevalidated_environment"]["executable_sha256"],
+            "a" * 64,
+        )
 
     def test_preflight_comparison_returns_its_quality_result(self) -> None:
         initial = {

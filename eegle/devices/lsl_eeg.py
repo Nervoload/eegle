@@ -426,9 +426,15 @@ class LslSampleHeartbeat:
     warnings, never exceptions that can stop authoritative XDF acquisition.
     """
 
-    def __init__(self, eeg_config: dict[str, Any], stream_timeout_seconds: float = 5.0) -> None:
+    def __init__(
+        self,
+        eeg_config: dict[str, Any],
+        stream_timeout_seconds: float = 5.0,
+        preferred_stream_identity: dict[str, Any] | None = None,
+    ) -> None:
         self.eeg_config = dict(eeg_config)
         self.stream_timeout_seconds = float(stream_timeout_seconds)
+        self.preferred_stream_identity = dict(preferred_stream_identity or {})
         self.maximum_timestamp_gap_seconds = max(
             0.01,
             float(eeg_config.get("maximum_timestamp_gap_seconds", 0.1)),
@@ -487,7 +493,12 @@ class LslSampleHeartbeat:
         try:
             import pylsl
 
-            info, stream = _select_lsl_info(pylsl, self.eeg_config, self.stream_timeout_seconds)
+            info, stream = _select_lsl_info(
+                pylsl,
+                self.eeg_config,
+                self.stream_timeout_seconds,
+                preferred_stream_identity=self.preferred_stream_identity,
+            )
             if info is None:
                 raise RuntimeError("no matching LSL EEG stream found for the sample heartbeat")
             inlet = pylsl.StreamInlet(
@@ -567,14 +578,24 @@ class LslSampleHeartbeat:
                         )
 
 
-def probe_eeg_stream(eeg_config: dict[str, Any], seconds: float = 2.0, timeout: float = 5.0) -> dict[str, Any]:
+def probe_eeg_stream(
+    eeg_config: dict[str, Any],
+    seconds: float = 2.0,
+    timeout: float = 5.0,
+    preferred_stream_identity: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Connect to a matching EEG stream and count samples for a short period."""
     try:
         import pylsl
     except Exception as exc:
         return {"status": "failed", "error": f"pylsl import failed: {type(exc).__name__}: {exc}"}
 
-    info, stream = _select_lsl_info(pylsl, eeg_config, timeout)
+    info, stream = _select_lsl_info(
+        pylsl,
+        eeg_config,
+        timeout,
+        preferred_stream_identity=preferred_stream_identity,
+    )
     if info is None:
         return {"status": "missing", "error": "no matching LSL EEG stream found"}
 
@@ -874,8 +895,44 @@ def _eeg_inlet_processing_flags(pylsl: Any, eeg_config: dict[str, Any]) -> int:
     return lsl_processing_flags(pylsl, dejitter=True)
 
 
-def _select_lsl_info(pylsl: Any, eeg_config: dict[str, Any], timeout: float) -> tuple[Any | None, dict[str, Any] | None]:
+def _select_lsl_info(
+    pylsl: Any,
+    eeg_config: dict[str, Any],
+    timeout: float,
+    preferred_stream_identity: dict[str, Any] | None = None,
+) -> tuple[Any | None, dict[str, Any] | None]:
+    """Resolve one configured EEG stream, reusing an exact prior identity when available.
+
+    ``resolve_streams`` deliberately waits for its complete discovery window even
+    when the desired outlet is already visible. Preflight has already done that
+    broad scan, so subsequent consumers can verify its unique ``source_id`` with
+    ``resolve_byprop``, which returns as soon as the requested stream is found.
+    If that exact identity has disappeared or no longer matches the configured
+    EEG contract, selection fails so the caller cannot silently switch devices.
+    """
+
+    preferred = dict(preferred_stream_identity or {})
+    source_id = str(preferred.get("source_id") or "").strip()
+    if source_id:
+        try:
+            preferred_infos = pylsl.resolve_byprop(
+                "source_id",
+                source_id,
+                minimum=1,
+                timeout=max(0.1, float(timeout)),
+            )
+        except Exception:
+            return None, None
+        return _select_unique_lsl_info(preferred_infos, eeg_config)
+
     infos = pylsl.resolve_streams(wait_time=timeout)
+    return _select_unique_lsl_info(infos, eeg_config)
+
+
+def _select_unique_lsl_info(
+    infos: list[Any],
+    eeg_config: dict[str, Any],
+) -> tuple[Any | None, dict[str, Any] | None]:
     stream_infos = [_stream_dict(info) for info in infos]
     matches = matching_eeg_streams(stream_infos, eeg_config)
     if len(matches) == 1:

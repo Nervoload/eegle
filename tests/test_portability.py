@@ -36,13 +36,17 @@ class PortabilityTests(unittest.TestCase):
             "01-DryRun-Task.ps1",
             "02-Test-NeuracleLsl.ps1",
             "03-Run-EEGTaskTest.ps1",
-            "04-Run-FullShortTest.ps1",
             "05-Diagnose-Lsl.ps1",
             "06-Test-StorageAccess.ps1",
-            "07-Run-Full.ps1",
             "Common.ps1",
+            "FullRun.ps1",
+            "FullTest.ps1",
         }
         self.assertEqual({path.name for path in scripts.glob("*.ps1")}, expected)
+        self.assertEqual(
+            {path.name for path in scripts.glob("*.cmd")},
+            {"FullRun.cmd", "FullTest.cmd"},
+        )
         common = (scripts / "Common.ps1").read_text(encoding="utf-8")
         self.assertIn(r".venv\Scripts\python.exe", common)
         dry_run = (scripts / "01-DryRun-Task.ps1").read_text(encoding="utf-8")
@@ -69,7 +73,7 @@ class PortabilityTests(unittest.TestCase):
         self.assertIn("$useFullScreen = -not $Windowed", short_task)
         self.assertIn("authoritative XDF recording", short_task)
         self.assertNotIn("XDF + CSV recording", short_task)
-        full = (scripts / "04-Run-FullShortTest.ps1").read_text(encoding="utf-8")
+        full = (scripts / "FullTest.ps1").read_text(encoding="utf-8")
         self.assertIn("Update-EegleGeneratedLiveConfigs", full)
         self.assertIn('"--smoke"', full)
         self.assertIn('"--include-practice"', full)
@@ -82,13 +86,14 @@ class PortabilityTests(unittest.TestCase):
         self.assertIn('[string] $AudioOutputDevice = ""', full)
         self.assertIn('"--audio-output-device", $AudioOutputDevice', full)
         self.assertIn('"--result-file", $outcomeFile', full)
+        self.assertIn('"--lsl-wait", "4"', full)
         self.assertIn("Resolve-EegleStudyExit", full)
         diagnostics = (scripts / "05-Diagnose-Lsl.ps1").read_text(encoding="utf-8")
         self.assertIn("eegle.lsl_diagnostics", diagnostics)
         self.assertIn("--ignore-lsl-config", diagnostics)
         storage = (scripts / "06-Test-StorageAccess.ps1").read_text(encoding="utf-8")
         self.assertIn("eegle.storage_permissions", storage)
-        complete = (scripts / "07-Run-Full.ps1").read_text(encoding="utf-8")
+        complete = (scripts / "FullRun.ps1").read_text(encoding="utf-8")
         self.assertIn('"--full-1000"', complete)
         self.assertIn('[double] $BaselineSeconds = 120', complete)
         self.assertIn('"--baseline-seconds", [string] $BaselineSeconds', complete)
@@ -107,11 +112,20 @@ class PortabilityTests(unittest.TestCase):
         self.assertIn('[string] $AudioOutputDevice = ""', complete)
         self.assertIn('"--audio-output-device", $AudioOutputDevice', complete)
         self.assertIn('"--result-file", $outcomeFile', complete)
+        self.assertIn('"--lsl-wait", "4"', complete)
         self.assertIn('[string] $ResumeTarget = ""', complete)
         self.assertIn('$PSBoundParameters.ContainsKey("NoGoDigit")', complete)
         self.assertIn('-Resume requires -Participant, -VisitId, or -ResumeTarget', complete)
         self.assertIn('"--resume-target", $ResumeTarget', complete)
         self.assertIn("Resolve-EegleStudyExit", complete)
+        for command_name in ("FullRun", "FullTest"):
+            wrapper = (scripts / f"{command_name}.cmd").read_text(encoding="utf-8")
+            self.assertIn(f'"%~dp0{command_name}.ps1" %*', wrapper)
+            self.assertIn("exit /b %ERRORLEVEL%", wrapper)
+        setup = (scripts / "00-Setup.ps1").read_text(encoding="utf-8")
+        self.assertIn("$PSScriptRoot", setup)
+        self.assertIn("$env:Path = $currentEntries", setup)
+        self.assertIn("FullRun and FullTest", setup)
         for script_path in scripts.glob("*.ps1"):
             if script_path.name == "Common.ps1":
                 continue
@@ -400,7 +414,7 @@ class PortabilityTests(unittest.TestCase):
         ), patch(
             "eegle.preflight.probe_eeg_stream",
             return_value={"status": "ok", "sample_count": 8},
-        ):
+        ) as probe:
             results = run_preflight(config, lsl_wait=0, require_eeg=True)
         by_name = {result.name: result for result in results}
 
@@ -408,6 +422,12 @@ class PortabilityTests(unittest.TestCase):
         self.assertEqual(by_name["eeg_device"].data["detector"], "neuracle_lsl")
         self.assertEqual(by_name["neuracle_lsl"].status, "ok")
         self.assertEqual(by_name["eeg_sample_probe"].status, "ok")
+        probe.assert_called_once_with(
+            config["hardware"]["eeg"],
+            seconds=0.01,
+            timeout=0.01,
+            preferred_stream_identity=stream.as_dict(),
+        )
 
     def test_preflight_names_configured_device_when_lsl_is_unavailable(self) -> None:
         config = {

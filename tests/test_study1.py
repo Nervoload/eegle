@@ -152,7 +152,7 @@ class Study1Tests(unittest.TestCase):
         self.assertEqual(refreshed["hardware"]["display"]["refresh_rate_sample_frames"], 90)
         self.assertEqual(
             refreshed["hardware"]["display"]["refresh_rate_window_settle_seconds"],
-            2.0,
+            1.0,
         )
         self.assertIn("m_73393543_eeg", refreshed["hardware"]["eeg"]["lsl_name_patterns"])
         self.assertEqual(
@@ -509,8 +509,9 @@ class Study1Tests(unittest.TestCase):
 
     def test_full_windows_launcher_argument_vectors_match_study1_cli(self) -> None:
         launcher = (
-            ROOT / "scripts" / "windows" / "neuracle64" / "07-Run-Full.ps1"
+            ROOT / "scripts" / "windows" / "neuracle64" / "FullRun.ps1"
         ).read_text(encoding="utf-8")
+        self.assertIn('"--lsl-wait", "4"', launcher)
         emitted_flags = set(re.findall(r'"(--[a-z0-9-]+)"', launcher))
         common = [
             "--config",
@@ -532,7 +533,7 @@ class Study1Tests(unittest.TestCase):
             "--result-file",
             "/tmp/eegle-study1/outcome.json",
             "--lsl-wait",
-            "10",
+            "4",
             "--include-practice",
             "--practice-trials",
             "30",

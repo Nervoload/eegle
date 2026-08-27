@@ -81,9 +81,23 @@ class _FakePylsl:
     def __init__(self, infos: list[_FakeInfo]) -> None:
         self.infos = infos
         self.inlets: list[_FakeInlet] = []
+        self.resolve_streams_calls = 0
+        self.resolve_byprop_calls = 0
 
     def resolve_streams(self, wait_time: float) -> list[_FakeInfo]:
+        self.resolve_streams_calls += 1
         return self.infos
+
+    def resolve_byprop(
+        self,
+        prop: str,
+        value: str,
+        minimum: int,
+        timeout: float,
+    ) -> list[_FakeInfo]:
+        self.resolve_byprop_calls += 1
+        getter_name = prop if prop != "source_id" else "source_id"
+        return [info for info in self.infos if getattr(info, getter_name)() == value]
 
     def StreamInlet(self, info: _FakeInfo, **kwargs: object) -> _FakeInlet:
         inlet = _FakeInlet(info, **kwargs)
@@ -258,6 +272,36 @@ class RealtimeSynchronyTests(unittest.TestCase):
 
         self.assertIs(info, neuracle)
         self.assertEqual(stream["name"], "Neuracle EEG")
+
+    def test_eeg_selection_reuses_preflight_source_id_without_broad_rediscovery(self) -> None:
+        neuracle = _FakeInfo(
+            "Neuracle EEG",
+            "EEG",
+            "neuracle-lsl",
+            channel_count=65,
+            nominal_srate=1000.0,
+        )
+        pylsl = _FakePylsl([neuracle])
+        config = {
+            "family": "Neuracle",
+            "profile": "neuracle64",
+            "lsl_stream_type": "EEG",
+            "lsl_name_patterns": ["neuracle"],
+            "expected_channel_counts": [65],
+            "expected_sample_rate_hz": 1000,
+        }
+
+        info, stream = _select_lsl_info(
+            pylsl,
+            config,
+            5.0,
+            preferred_stream_identity={"source_id": "neuracle-lsl"},
+        )
+
+        self.assertIs(info, neuracle)
+        self.assertEqual(stream["source_id"], "neuracle-lsl")
+        self.assertEqual(pylsl.resolve_byprop_calls, 1)
+        self.assertEqual(pylsl.resolve_streams_calls, 0)
 
     def test_flip_marker_uses_modeled_visual_timestamp_before_logging(self) -> None:
         logger = _FakeLogger()

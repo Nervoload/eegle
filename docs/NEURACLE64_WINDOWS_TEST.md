@@ -14,10 +14,10 @@ The eight operator PowerShell scripts are under
 | `01-DryRun-Task.ps1` | Show a 10-trial Dynamic SART task | No |
 | `02-Test-NeuracleLsl.ps1` | Discover Collect, lock the confirmed cap contract, and run physical preflight | No recording session |
 | `03-Run-EEGTaskTest.ps1` | Full preflight followed by a 10-20 trial recorded task | Yes: authoritative XDF |
-| `04-Run-FullShortTest.ps1` | Preflight, resting controls, practice, and 30 experimental trials | Yes: authoritative XDF |
+| `FullTest.ps1` | Preflight, resting controls, practice, and 30 experimental trials | Yes: authoritative XDF |
 | `05-Diagnose-Lsl.ps1` | Separate local pylsl/config failures from a missing external outlet | No |
 | `06-Test-StorageAccess.ps1` | Reproduce parent/child recording permission operations without EEG | No |
-| `07-Run-Full.ps1` | Complete two-minute baselines, practice gate, and 1,000-trial task | Yes: authoritative XDF |
+| `FullRun.ps1` | Complete two-minute baselines, practice gate, and 1,000-trial task | Yes: authoritative XDF |
 
 Run every command below from a 64-bit Windows PowerShell terminal. Do not use
 Git Bash or WSL for the hardware run.
@@ -147,8 +147,12 @@ Python executable directly. To add `eegle.exe` and `study1.exe` to the user
   -AddCommandsToUserPath
 ```
 
-Close and reopen PowerShell after changing the user `PATH`. The operator `.ps1`
-scripts still run by repository-relative path, from the repository root.
+Setup adds both the Python command directory and the guarded launcher directory
+to the current terminal and the user `PATH`, so the complete launchers can be
+invoked immediately from any directory as `FullTest` and `FullRun`. Their
+PowerShell parameters are forwarded unchanged. Without that setup option, use
+`.\scripts\windows\neuracle64\FullTest.ps1` or
+`.\scripts\windows\neuracle64\FullRun.ps1` from the repository root.
 
 ## 2. Display-only dry run: 10 trials
 
@@ -353,7 +357,7 @@ sampling, it discards that attempt and makes up to three measurements.
 ```powershell
 $TestId = "systemtest-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
 
-.\scripts\windows\neuracle64\04-Run-FullShortTest.ps1 `
+FullTest `
   -Participant $TestId `
   -VisitId "$TestId-visit1" `
   -NoGoDigit 3 `
@@ -398,7 +402,7 @@ choice, not a scientific protocol change.
 ### Retry or resume an interrupted complete short test
 
 For a failed or interrupted test, first correct the reported cause and rerun the
-same `04-Run-FullShortTest.ps1` command. The launcher now selects
+same `FullTest` command. The launcher now selects
 `--retry-incomplete` by default: it detects the participant's incomplete Visit
 1, reuses the original visit ID, skips completed phases, and reruns the failed
 phase into a new session directory. You do not need to find or rename the old
@@ -409,7 +413,7 @@ identity. It uses the same participant, no-go digit, operator, baseline
 duration, and visit identity:
 
 ```powershell
-.\scripts\windows\neuracle64\04-Run-FullShortTest.ps1 `
+FullTest `
   -Participant $TestId `
   -VisitId "$TestId-visit1" `
   -NoGoDigit 3 `
@@ -425,7 +429,7 @@ new `$TestId` instead.
 
 ## 6. Complete 1,000-trial run
 
-Use `07-Run-Full.ps1` only after the dry task, storage probe, LSL preflight, and
+Use `FullRun` only after the dry task, storage probe, LSL preflight, and
 short recorded tests pass. The complete profile is a validated Visit 1
 acquisition contract:
 
@@ -468,7 +472,7 @@ must show varied inter-no-go gaps rather than a repeating 6/7-trial rhythm.
 $ParticipantId = "sub-001"
 $VisitId = "$ParticipantId-full-visit1"
 
-.\scripts\windows\neuracle64\07-Run-Full.ps1 `
+FullRun `
   -Participant $ParticipantId `
   -VisitId $VisitId `
   -NoGoDigit 3 `
@@ -519,7 +523,7 @@ To resume at a completed phase boundary, repeat the participant/visit identity.
 The visit manifest supplies the original task-shaping options:
 
 ```powershell
-.\scripts\windows\neuracle64\07-Run-Full.ps1 `
+FullRun `
   -Participant $ParticipantId `
   -VisitId $VisitId `
   -NoGoDigit 3 `
@@ -536,7 +540,7 @@ regardless of the current baseline default. An incomplete task attempt gets a
 fresh run directory using the same prepared sequence. A participant who
 completed the run needs a new participant/visit identity for another test.
 
-Without `-Resume`, rerunning the same `07-Run-Full.ps1` command automatically
+Without `-Resume`, rerunning the same `FullRun` command automatically
 retries an incomplete full visit in the same way as the short-test launcher.
 
 ## Troubleshooting gates
