@@ -37,15 +37,21 @@ from eegle.tasks.dynamic_sart import (
     _practice_status_text,
     _run_psychopy_countdown,
     _show_bounded_break,
+    _show_practice_failure_choice,
     _show_practice_ready,
     _show_screen,
     audit_dynamic_sart_action,
     practice_criteria,
+    practice_no_go_target_status,
     score_dynamic_sart_trial,
 )
 from eegle.analysis.dynamic_sart_labels import reconstruct_dynamic_sart_timing
 from eegle.tasks.dynamic_sart_schema import DynamicSartConfig
-from eegle.tasks.dynamic_sart_sequence import build_dynamic_sart_plan, validate_dynamic_sart_plan
+from eegle.tasks.dynamic_sart_sequence import (
+    build_dynamic_sart_plan,
+    build_dynamic_sart_practice_round,
+    validate_dynamic_sart_plan,
+)
 from eegle.tasks.registry import get_task_spec, list_task_specs
 
 
@@ -1075,6 +1081,35 @@ class DynamicSartTaskTests(unittest.TestCase):
         self.assertEqual(result["no_go_required_correct_count"], 2)
         self.assertTrue(result["passed"])
 
+    def test_practice_stops_only_when_no_go_target_is_unreachable(self) -> None:
+        mapping = _config()["tasks"]["dynamic_sart"]
+        mapping["practice"].update({"no_go_trials": 3, "trials_per_round": 27})
+        config = DynamicSartConfig.from_mapping(mapping)
+        wrong_no_go = {"condition": "no_go", "correct": False}
+        remaining_two = [
+            {"condition": "no_go", "is_no_go": True},
+            {"condition": "no_go", "is_no_go": True},
+        ]
+
+        recoverable = practice_no_go_target_status(
+            [wrong_no_go],
+            remaining_two,
+            config,
+            planned_no_go_trials=3,
+        )
+        unreachable = practice_no_go_target_status(
+            [wrong_no_go, wrong_no_go],
+            remaining_two[1:],
+            config,
+            planned_no_go_trials=3,
+        )
+
+        self.assertTrue(recoverable["reachable"])
+        self.assertEqual(recoverable["maximum_possible_correct_no_go_count"], 2)
+        self.assertFalse(unreachable["reachable"])
+        self.assertEqual(unreachable["maximum_possible_correct_no_go_count"], 1)
+        self.assertEqual(unreachable["required_correct_no_go_count"], 2)
+
     def test_practice_feedback_distinguishes_repeat_from_final_failure(self) -> None:
         mapping = _config()["tasks"]["dynamic_sart"]
         mapping["practice"].update({"no_go_trials": 3, "trials_per_round": 27})
@@ -1088,14 +1123,111 @@ class DynamicSartTaskTests(unittest.TestCase):
             "no_go_required_correct_count": 2,
             "anticipatory_response_rate": 0.0,
             "maximum_anticipatory_response_rate": 0.15,
+            "ended_early": True,
         }
         repeat = _practice_status_text(criteria, config, will_repeat=True)
         final = _practice_status_text(criteria, config, will_repeat=False)
         self.assertIn("Practice will repeat", repeat)
         self.assertIn("1/3", repeat)
         self.assertIn("need 2", repeat)
+        self.assertIn("ended early", repeat)
         self.assertNotIn("will repeat", final)
-        self.assertIn("experimental session will not start", final)
+        self.assertIn("1 — Retry practice", final)
+        self.assertIn("2 — Proceed to the main SART task", final)
+
+    def test_failed_practice_choice_supports_retry_and_proceed(self) -> None:
+        config = DynamicSartConfig.from_mapping(_config()["tasks"]["dynamic_sart"])
+        criteria = {
+            "go_correct_count": 6,
+            "go_trial_count": 8,
+            "go_required_correct_count": 7,
+            "no_go_correct_count": 0,
+            "no_go_trial_count": 1,
+            "no_go_required_correct_count": 1,
+            "anticipatory_response_rate": 0.0,
+            "maximum_anticipatory_response_rate": 0.15,
+        }
+
+        class Stimulus:
+            def __init__(self, _win, **kwargs) -> None:
+                self.text = kwargs["text"]
+
+            def draw(self) -> None:
+                pass
+
+        class Window:
+            def flip(self) -> None:
+                pass
+
+        for key, expected in (("1", "retry"), ("2", "proceed")):
+            with self.subTest(key=key), patch(
+                "eegle.tasks.dynamic_sart.service_psychopy_static_window"
+            ), patch("eegle.tasks.dynamic_sart.sleep"):
+                keyboard = SimpleNamespace(
+                    poll=MagicMock(
+                        return_value=[
+                            {"key": key, "is_escape_key": False, "is_response_key": False}
+                        ]
+                    )
+                )
+                decision = _show_practice_failure_choice(
+                    Window(),
+                    SimpleNamespace(TextStim=Stimulus),
+                    keyboard,
+                    criteria,
+                    config,
+                    2,
+                )
+
+            self.assertEqual(decision, expected)
+            self.assertEqual(keyboard.poll.call_args.kwargs["task_state"], "PRACTICE_DECISION")
+
+    def test_practice_retry_rounds_extend_deterministically_beyond_configured_plan(self) -> None:
+        config_mapping = _config()
+        config = DynamicSartConfig.from_mapping(config_mapping["tasks"]["dynamic_sart"])
+        plan = build_dynamic_sart_plan(config)
+        self.assertEqual(len(plan["practice_rounds"]), 2)
+        extra_rounds = [
+            build_dynamic_sart_practice_round(
+                config,
+                round_index,
+                sequence_id=plan["sequence_id"],
+            )
+            for round_index in (3, 4)
+        ]
+        repeated_round_four = build_dynamic_sart_practice_round(
+            config,
+            4,
+            sequence_id=plan["sequence_id"],
+        )
+        self.assertEqual(extra_rounds[1], repeated_round_four)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = create_session(
+                config_mapping,
+                task="dynamic_sart",
+                participant_id="unit",
+                root=Path(tmp),
+            )
+            store = DynamicSartArtifactStore(paths, plan, config, "unit")
+            try:
+                for practice_round in extra_rounds:
+                    store.ensure_practice_round_planned(practice_round)
+                store.ensure_practice_round_planned(extra_rounds[-1])
+                manifest = json.loads(store.manifest_path.read_text(encoding="utf-8"))
+            finally:
+                store.close()
+
+        practice_rows = [row for row in manifest["planned_trials"] if row["is_practice"]]
+        indexes = [row["global_trial_index"] for row in practice_rows]
+        self.assertEqual(len(practice_rows), config.practice_trials_per_round * 4)
+        self.assertEqual(len(indexes), len(set(indexes)))
+        self.assertEqual(manifest["runtime_extended_practice_rounds"], [3, 4])
+        self.assertFalse(
+            manifest["practice_failure_policy"]["practice_failure_terminates_task"]
+        )
+        self.assertIsNone(manifest["practice_failure_policy"]["retry_limit"])
+        self.assertTrue(all(row["sequence_id"] == plan["sequence_id"] for row in practice_rows))
 
     def test_practice_ready_screen_waits_for_explicit_participant_continue(self) -> None:
         config = DynamicSartConfig.from_mapping(_config()["tasks"]["dynamic_sart"])

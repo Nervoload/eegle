@@ -362,7 +362,8 @@ qualification flow. Full 600-trial participant runs include session-1 practice
 automatically.
 
 Do not add `--confirm-electrodes` during normal interactive acquisition. The
-suite prints the signal/contact report and requires the operator to type `YES`
+suite prints the signal/contact report and requires the operator to type `Y`/`YES`
+(case-insensitive), or `N`/`NO` to decline
 after both the initial and post-break electrode checks. The flag exists only
 for a deliberately noninteractive, externally documented contact check.
 
@@ -377,6 +378,14 @@ task attempt gets a new run directory and is linked as a partial recording:
 ```bash
 dsart8 --participant sub-001 --visit-id visit-20260716 --operator operator-id --resume
 ```
+
+The Study 1 Windows launchers additionally accept `-Participant ... -Resume` to
+find that participant's most recent incomplete visit, or `-ResumeTarget` with a
+visit ID, child run/session name, visit directory, exact `visit_manifest.json`,
+or retained child session path. Completed baselines are always skipped. If the
+recording completed and only its final warning response was rejected or misread,
+resume re-runs the warning review and reuses the existing recording rather than
+reacquiring the phase.
 
 See `docs/DSART_RECORDING.md` for the tomorrow-of-acquisition checklist,
 software-only rehearsal, artifact layout, and stop/restart rules.
@@ -417,7 +426,12 @@ montage. Task and calibration durations also live in the selected config.
 digits 1 through 9, records a response to frequent go digits, and uses one
 fixed configurable digit as the no-go stimulus. The default pilot plan is six
 160-trial blocks: two support blocks followed by four query blocks. Practice is
-criterion based. Digits are shown for 250 ms, followed by 1350 ms of fixation,
+criterion based. The first failed practice repeats automatically; after the
+second and every later failure, `1` retries practice and `2` proceeds to the
+main task. A practice round ends early once the configured no-go target is no
+longer mathematically reachable from its remaining no-go trials; a recoverable
+single miss does not end it. Practice failure never terminates DSART. Digits are
+shown for 250 ms, followed by 1350 ms of fixation,
 for a fixed 1600 ms SOI with zero intentional jitter. The complete
 behavior-independent plan, seeds, conditions, fixed timing, phase assignments,
 and marker labels are written before experimental execution.

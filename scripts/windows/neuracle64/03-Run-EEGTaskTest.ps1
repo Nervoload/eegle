@@ -6,6 +6,7 @@ param(
     [string] $DataRoot = "",
     [ValidateRange(0, 16)]
     [int] $ScreenIndex = 0,
+    [string] $AudioOutputDevice = "",
     [switch] $FullScreen,
     [switch] $Windowed,
     [switch] $ConfirmElectrodes
@@ -49,6 +50,9 @@ if ($useFullScreen) {
 }
 else {
     $preflightArguments += "--windowed"
+}
+if (-not [string]::IsNullOrWhiteSpace($AudioOutputDevice)) {
+    $preflightArguments += @("--audio-output-device", $AudioOutputDevice)
 }
 & $python @preflightArguments
 Assert-EegleExit "full Neuracle/LSL/electrode/LabRecorder preflight"

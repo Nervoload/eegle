@@ -35,8 +35,11 @@ The Windows complete-run launcher opts Visit 1 into the separately identified
 600-trial proposal profile above. The complete profile defaults to:
 
 - 120-second eyes-open and 120-second eyes-closed baselines;
-- the standard criterion-gated practice, plus an explicit participant-ready
-  confirmation before the main countdown;
+- the standard criterion-gated practice; after two failed rounds, the operator
+  can retry without a fixed cutoff or proceed to the main task, followed by an
+  explicit participant-ready confirmation before the main countdown. A round
+  ends early only when the no-go target has become impossible to reach with its
+  remaining planned no-go trials;
 - four 250-trial sections with breaks after trials 250, 500, and 750;
 - support trials 1-500, followed by held-out query trials 501-1000; and
 - 150 no-go trials allocated `[38, 37, 38, 37]` across the sections.
@@ -45,8 +48,41 @@ The Windows launcher exposes logged operator overrides for baseline duration or
 skip, experimental trial count, practice trial/no-go/round counts, and practice
 skip. These change the visit/task artifacts, not the participant-level
 scientific protocol hash. Exact prepared sequence hashes still prevent a resume
-from silently changing experimental or practice shape. A completed baseline is
-skipped on resume; a requested baseline skip creates no baseline session folder.
+from silently changing experimental or initially planned practice shape. Any
+operator-requested extra practice rounds are deterministically derived, assigned
+unique negative trial IDs, and appended to the stimulus manifest. A completed
+baseline is skipped on resume; a requested baseline skip creates no baseline
+session folder.
+
+## Resume and retained recordings
+
+Study 1 resume is phase-aware. It never appends to an existing XDF and never
+restarts a phase already recorded as completed. A completed baseline is reused.
+If acquisition and validation completed but the final warning response was
+declined or misread, resume presents that warning decision again and promotes
+the same retained baseline/task session after acceptance; it does not reacquire
+the baseline or experimental task.
+
+The Windows Visit 1 launchers accept these minimal resume selectors:
+
+```powershell
+# Most recent incomplete Visit 1 for this participant.
+.\scripts\windows\neuracle64\07-Run-Full.ps1 -Participant "sub-001" -Resume
+
+# A visit ID or child run/session directory name under the selected data root.
+.\scripts\windows\neuracle64\07-Run-Full.ps1 -Resume -ResumeTarget "visit-1-20260825T120000"
+.\scripts\windows\neuracle64\07-Run-Full.ps1 -Resume -ResumeTarget "run-20260825T121500"
+
+# An exact visit directory, visit_manifest.json, or retained child session path.
+.\scripts\windows\neuracle64\07-Run-Full.ps1 -Resume -ResumeTarget "D:\EEGleData\study1\sub-001\visits\visit-1\visit-id\visit_manifest.json"
+```
+
+`-VisitId` may be used instead of `-ResumeTarget`. For a new acquisition,
+`-Participant`, `-NoGoDigit`, `-Operator`, and `-ConfirmElectrodes` remain
+required. Resume reloads the no-go digit, operator identity, and experimental/
+practice shape from the durable participant and visit manifests. If a phase was
+actually interrupted, its partial files are retained and that phase restarts in
+a new child run directory.
 
 The v2 no-go schedule corrects the periodic v1 fallback. Each 250-trial section
 is generated independently from its participant-specific section seed. Its five
@@ -160,7 +196,8 @@ fraction rather than trusting only the stream's declared rate. It also checks
 for non-finite samples, flat or failed channels, long constant runs, repeated
 extrema consistent with clipping, and excessive line noise. These acquisition-
 quality findings are warnings: the operator receives a concise numbered list
-and must type `YES` to continue a live run. Missing required streams, invalid
+and must type `Y`/`YES` (case-insensitive) to continue a live run, or `N`/`NO`
+to decline. Missing required streams, invalid
 channel identity/order, unavailable storage, and an unavailable XDF recorder
 remain blocking setup errors.
 

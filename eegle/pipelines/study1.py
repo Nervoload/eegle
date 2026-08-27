@@ -94,10 +94,12 @@ class Study1Options:
     skip_baseline: bool = False
     window_size: tuple[int, int] | None = None
     screen_index: int | None = None
+    audio_output_device: str | None = None
     full_screen: bool | None = None
     record_eeg: bool = True
     require_eeg: bool = True
     resume: bool = False
+    resume_target: str | Path | None = None
     retry_incomplete: bool = False
     output_root: str | Path | None = None
     lsl_wait_seconds: float = 5.0
@@ -112,15 +114,20 @@ class Study1Options:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    options = _options_from_args(args)
+    options: Study1Options | None = None
     try:
+        options = _options_from_args(args)
         result = run_study1_visit(options)
     except Exception as exc:
         result = {
             "schema": VISIT_SCHEMA,
             "status": "failed",
-            "participant_id": options.participant_id,
-            "visit_number": options.visit_number,
+            "participant_id": (
+                options.participant_id if options is not None else getattr(args, "participant", None)
+            ),
+            "visit_number": (
+                options.visit_number if options is not None else getattr(args, "visit_number", None)
+            ),
             "error": f"{type(exc).__name__}: {exc}",
             "next_action": _exception_next_action(exc),
         }
@@ -153,8 +160,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run one independently recorded visit of the Study 1 Dynamic SART protocol",
     )
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
-    parser.add_argument("--participant", required=True)
-    parser.add_argument("--visit", dest="visit_number", type=int, choices=[1, 2], required=True)
+    parser.add_argument("--participant", default=None)
+    parser.add_argument("--visit", dest="visit_number", type=int, choices=[1, 2], default=None)
     parser.add_argument("--visit-id", default=None)
     parser.add_argument("--operator", default=None)
     parser.add_argument("--task-mode", choices=["psychopy", "dry-run"], default="psychopy")
@@ -186,7 +193,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--practice-trials", type=int, default=None)
     parser.add_argument("--practice-no-go-trials", type=int, default=None)
-    parser.add_argument("--practice-max-rounds", type=int, default=None)
+    parser.add_argument(
+        "--practice-max-rounds",
+        type=int,
+        default=None,
+        help=(
+            "Set the number of deterministic practice rounds materialized initially; "
+            "participant-selected retries can extend beyond it"
+        ),
+    )
     baseline = parser.add_mutually_exclusive_group()
     baseline.add_argument(
         "--baseline-seconds",
@@ -205,6 +220,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Open each PsychoPy window on this zero-based monitor; active-monitor checks follow later moves",
+    )
+    parser.add_argument(
+        "--audio-output-device",
+        default=None,
+        help="Prefer this exact PsychoPy speaker name; unavailable audio remains a warning",
     )
     display_mode = parser.add_mutually_exclusive_group()
     display_mode.add_argument("--fullscreen", dest="full_screen", action="store_true")
@@ -231,6 +251,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run the full Neuracle/LSL/channel/sample/electrode/LabRecorder gate without creating a visit",
     )
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--resume-target",
+        default=None,
+        help=(
+            "Resolve a resume from a visit ID, child run/session name, visit directory, "
+            "child session directory, or visit_manifest.json path"
+        ),
+    )
     parser.add_argument(
         "--retry-incomplete",
         action="store_true",
@@ -261,11 +289,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _options_from_args(args: argparse.Namespace) -> Study1Options:
+    participant_id, visit_number, visit_id, output_root = _resolve_cli_resume_identity(args)
     return Study1Options(
         config_path=args.config,
-        participant_id=str(args.participant),
-        visit_number=int(args.visit_number),
-        visit_id=args.visit_id,
+        participant_id=participant_id,
+        visit_number=visit_number,
+        visit_id=visit_id,
         operator=args.operator,
         task_mode=str(args.task_mode),
         master_seed=int(args.master_seed),
@@ -282,12 +311,14 @@ def _options_from_args(args: argparse.Namespace) -> Study1Options:
         skip_baseline=bool(args.skip_baseline),
         window_size=None if args.window_size is None else (int(args.window_size[0]), int(args.window_size[1])),
         screen_index=args.screen_index,
+        audio_output_device=args.audio_output_device,
         full_screen=args.full_screen,
         record_eeg=not bool(args.skip_eeg),
         require_eeg=not bool(args.allow_missing_eeg) and not bool(args.skip_eeg),
         resume=bool(args.resume),
+        resume_target=args.resume_target,
         retry_incomplete=bool(args.retry_incomplete),
-        output_root=args.output_root,
+        output_root=output_root,
         lsl_wait_seconds=float(args.lsl_wait),
         electrode_quality_file=args.electrode_quality_file,
         electrode_note=args.electrode_note,
@@ -297,6 +328,157 @@ def _options_from_args(args: argparse.Namespace) -> Study1Options:
         labrecorder_executable=args.labrecorder_executable,
         preflight_only=bool(args.preflight_only),
     )
+
+
+def _resolve_cli_resume_identity(
+    args: argparse.Namespace,
+) -> tuple[str, int, str | None, str | Path | None]:
+    """Resolve CLI identity, optionally deriving it from a durable resume target."""
+
+    participant = str(args.participant or "").strip()
+    visit_number = args.visit_number
+    visit_id = args.visit_id
+    output_root: str | Path | None = args.output_root
+    target = str(args.resume_target or "").strip()
+    if target and not bool(args.resume):
+        raise ValueError("--resume-target requires --resume")
+    if target:
+        selection = _find_resume_manifest(
+            target,
+            config_path=args.config,
+            output_root=output_root,
+        )
+        selected_participant = str(selection["manifest"].get("participant_id") or "").strip()
+        selected_visit = int(selection["manifest"].get("visit_number") or 0)
+        selected_visit_id = str(selection["manifest"].get("visit_id") or "").strip()
+        if participant and participant != selected_participant:
+            raise ValueError("--participant does not match --resume-target")
+        if visit_number is not None and int(visit_number) != selected_visit:
+            raise ValueError("--visit does not match --resume-target")
+        if visit_id is not None and _safe_token(str(visit_id)) != selected_visit_id:
+            raise ValueError("--visit-id does not match --resume-target")
+        participant = selected_participant
+        visit_number = selected_visit
+        visit_id = selected_visit_id
+        output_root = selection["output_root"]
+    if not participant:
+        raise ValueError(
+            "--participant is required unless --resume is combined with --resume-target"
+        )
+    if visit_number is None:
+        raise ValueError("--visit is required unless it can be derived from --resume-target")
+    return participant, int(visit_number), visit_id, output_root
+
+
+def _find_resume_manifest(
+    target: str,
+    *,
+    config_path: str | Path,
+    output_root: str | Path | None,
+) -> dict[str, Any]:
+    """Find one Study 1 visit from an ID, run/session name, or exact artifact path."""
+
+    candidate_path = Path(target).expanduser()
+    direct_manifest = _manifest_from_resume_path(candidate_path) if candidate_path.exists() else None
+    if direct_manifest is not None:
+        return {
+            "manifest_path": direct_manifest,
+            "manifest": _required_visit_manifest(direct_manifest),
+            "output_root": _study1_output_root(direct_manifest),
+        }
+
+    config = load_config(config_path)
+    root = resolve_session_root(config, output_root)
+    manifests = list((root / "study1").glob("*/visits/visit-*/*/visit_manifest.json"))
+    matches = []
+    target_token = target.casefold()
+    target_resolved = candidate_path.resolve() if candidate_path.is_absolute() else None
+    for path in manifests:
+        payload = _load_json(path) or {}
+        if _resume_manifest_matches(payload, path, target_token, target_resolved):
+            matches.append((path, payload))
+    if not matches:
+        raise FileNotFoundError(
+            f"--resume-target {target!r} did not match a Study 1 visit under {root}"
+        )
+    matches.sort(key=lambda row: row[0].stat().st_mtime, reverse=True)
+    if len(matches) > 1:
+        choices = ", ".join(str(path) for path, _payload in matches[:5])
+        raise ValueError(
+            f"--resume-target {target!r} is ambiguous; pass an exact path. Matches: {choices}"
+        )
+    path, payload = matches[0]
+    return {"manifest_path": path, "manifest": payload, "output_root": root}
+
+
+def _manifest_from_resume_path(path: Path) -> Path | None:
+    resolved = path.resolve()
+    if resolved.is_file() and resolved.name == "visit_manifest.json":
+        return resolved
+    if resolved.is_dir() and (resolved / "visit_manifest.json").is_file():
+        return resolved / "visit_manifest.json"
+    for parent in (resolved, *resolved.parents):
+        manifest = parent / "visit_manifest.json"
+        if manifest.is_file():
+            return manifest
+    inferred_root = next(
+        (parent.parent for parent in (resolved, *resolved.parents) if parent.name == "participants"),
+        None,
+    )
+    if inferred_root is None:
+        return None
+    matches = []
+    for manifest in (inferred_root / "study1").glob("*/visits/visit-*/*/visit_manifest.json"):
+        payload = _load_json(manifest) or {}
+        if _resume_manifest_matches(payload, manifest, resolved.name.casefold(), resolved):
+            matches.append(manifest)
+    return matches[0] if len(matches) == 1 else None
+
+
+def _required_visit_manifest(path: Path) -> dict[str, Any]:
+    payload = _load_json(path)
+    if not isinstance(payload, dict) or payload.get("schema") != VISIT_SCHEMA:
+        raise ValueError(f"resume target is not a Study 1 visit manifest: {path}")
+    return payload
+
+
+def _study1_output_root(manifest_path: Path) -> Path:
+    for parent in manifest_path.parents:
+        if parent.name == "study1":
+            return parent.parent
+    raise ValueError(f"visit manifest is not under a study1 directory: {manifest_path}")
+
+
+def _resume_manifest_matches(
+    payload: dict[str, Any],
+    manifest_path: Path,
+    target_token: str,
+    target_path: Path | None,
+) -> bool:
+    if payload.get("schema") != VISIT_SCHEMA:
+        return False
+    names = {
+        str(payload.get("visit_id") or "").casefold(),
+        manifest_path.parent.name.casefold(),
+    }
+    paths = []
+    for value in _nested_string_values(payload):
+        value_path = Path(value).expanduser()
+        names.add(value_path.name.casefold())
+        if value_path.is_absolute():
+            paths.append(value_path.resolve())
+    return target_token in names or (target_path is not None and target_path in paths)
+
+
+def _nested_string_values(value: Any):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _nested_string_values(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _nested_string_values(item)
 
 
 def run_study1_visit(options: Study1Options) -> dict[str, Any]:
@@ -330,6 +512,10 @@ def run_study1_visit(options: Study1Options) -> dict[str, Any]:
         config.setdefault("hardware", {}).setdefault("display", {})["screen_index"] = int(
             options.screen_index
         )
+    if options.audio_output_device is not None:
+        config.setdefault("hardware", {}).setdefault("audio", {})["output_device_name"] = str(
+            options.audio_output_device
+        ).strip()
     if options.full_screen is not None:
         config.setdefault("hardware", {}).setdefault("display", {})["full_screen"] = bool(options.full_screen)
     _probe_session_root_writable(output_root)
@@ -502,6 +688,13 @@ def _run_configured_study1_visit(
                 _write_json_atomic(visit_manifest_path, manifest)
             if phase == "preflight":
                 active_preflight = _latest_phase_result(manifest, phase)
+            continue
+        if _continues_incomplete_visit(options) and _recover_post_recording_acceptance(
+            manifest,
+            phase,
+            _dsart_options(options, trials=int(options.trials or 10)),
+        ):
+            _write_json_atomic(visit_manifest_path, manifest)
             continue
         _start_phase(manifest, phase)
         _write_json_atomic(visit_manifest_path, manifest)
@@ -760,6 +953,8 @@ def _validate_options(options: Study1Options) -> None:
         raise ValueError("--preflight-only requires EEG; do not combine it with --skip-eeg or --allow-missing-eeg")
     if options.preflight_only and options.resume:
         raise ValueError("--preflight-only cannot be combined with --resume")
+    if options.resume_target is not None and not options.resume:
+        raise ValueError("--resume-target requires --resume")
     if options.preflight_only and options.retry_incomplete:
         raise ValueError("--preflight-only cannot be combined with --retry-incomplete")
     if options.preflight_only and options.simulate_eeg:
@@ -798,6 +993,8 @@ def _validate_options(options: Study1Options) -> None:
         raise ValueError("--window-size values must be positive")
     if options.screen_index is not None and options.screen_index < 0:
         raise ValueError("--screen-index must be nonnegative")
+    if options.audio_output_device is not None and not options.audio_output_device.strip():
+        raise ValueError("--audio-output-device must not be blank")
 
 
 def _participant_manifest(
@@ -1052,13 +1249,106 @@ def _resume_options_with_persisted_task_shape(
         return options
     return replace(
         options,
+        operator=options.operator or manifest.get("operator"),
         include_practice=bool(manifest.get("include_practice", options.include_practice)),
         skip_practice=bool(recorded.get("skip_practice", options.skip_practice)),
         trials=recorded.get("experimental_trials"),
         practice_trials=recorded.get("practice_trials_per_round"),
         practice_no_go_trials=recorded.get("practice_no_go_trials"),
         practice_max_rounds=recorded.get("practice_max_rounds"),
+        electrodes_confirmed=_persisted_electrode_confirmation(
+            manifest,
+            fallback=options.electrodes_confirmed,
+        ),
     )
+
+
+def _persisted_electrode_confirmation(
+    manifest: dict[str, Any],
+    *,
+    fallback: bool,
+) -> bool:
+    """Restore the original cap-confirmation gate, including older manifests."""
+
+    recorded = manifest.get("electrodes_confirmed")
+    if isinstance(recorded, bool):
+        return recorded
+    attempts = list(
+        dict(manifest.get("phases", {}).get("preflight", {}) or {}).get("attempts") or []
+    )
+    for attempt in reversed(attempts):
+        result = attempt.get("result")
+        if not isinstance(result, dict):
+            continue
+        acceptance = dict(result.get("operator_acceptance") or {})
+        if acceptance.get("method") == "--confirm-electrodes":
+            return True
+        for check in list(result.get("checks") or []):
+            if check.get("name") != "electrode_quality":
+                continue
+            confirmed = dict(check.get("data") or {}).get("operator_confirmed")
+            if isinstance(confirmed, bool):
+                return confirmed
+    return bool(fallback)
+
+
+def _recover_post_recording_acceptance(
+    manifest: dict[str, Any],
+    phase: str,
+    options: DsartRecordingOptions,
+) -> bool:
+    """Re-review warnings for a completed acquisition without rerunning the phase."""
+
+    if phase == "preflight":
+        return False
+    entry = dict(manifest.get("phases", {}).get(phase, {}) or {})
+    attempts = list(entry.get("attempts") or [])
+    if not attempts:
+        return False
+    attempt = attempts[-1]
+    result = attempt.get("result")
+    if not isinstance(result, dict) or result.get("status") != "completed":
+        return False
+    acceptance = result.get("operator_warning_acceptance")
+    if not isinstance(acceptance, dict) or acceptance.get("accepted") is not False:
+        return False
+    if not result.get("session_dir") or not Path(str(result["session_dir"])).exists():
+        return False
+    contract_failures = _study1_phase_result_failures(phase, result, manifest)
+    if contract_failures:
+        return False
+
+    label = "Study 1 baseline" if phase == "baseline" else phase
+    _accept_post_recording_warnings(result, options, label)
+    accepted = dict(result.get("operator_warning_acceptance") or {}).get("accepted") is True
+    if not accepted:
+        return False
+
+    original_error = attempt.pop("error", None)
+    recovered_at = _now()
+    attempt.update(
+        {
+            "status": "completed",
+            "completed_at": recovered_at,
+            "result": result,
+            "acceptance_recovered_without_reacquisition": True,
+            "acceptance_recovered_at": recovered_at,
+        }
+    )
+    if original_error:
+        attempt["original_acceptance_error"] = original_error
+    manifest["phases"][phase]["status"] = "completed"
+    manifest.setdefault("session_directories", {})[phase] = result.get("session_dir")
+    if phase != "baseline":
+        manifest.setdefault("sequence_hashes", {})[phase] = result.get("sequence_hash")
+    manifest.setdefault("resumed_phases", []).append(
+        {
+            "phase": phase,
+            "action": "post_recording_warning_acceptance_recovered_without_reacquisition",
+            "timestamp": recovered_at,
+        }
+    )
+    return True
 
 
 def _new_visit_manifest(
@@ -1085,6 +1375,7 @@ def _new_visit_manifest(
         "status": "planned",
         "overall_status": "planned",
         "operator": options.operator or os.environ.get("USER") or os.environ.get("USERNAME") or "unspecified",
+        "electrodes_confirmed": bool(options.electrodes_confirmed),
         "no_go_digit": no_go_digit,
         "master_seed": options.master_seed,
         "segment_seeds": segment_seeds,
@@ -1107,6 +1398,9 @@ def _new_visit_manifest(
         "configured_screen_index": int(
             config.get("hardware", {}).get("display", {}).get("screen_index", 0)
         ),
+        "configured_audio_output_device": config.get("hardware", {})
+        .get("audio", {})
+        .get("output_device_name"),
         "full_screen": bool(config.get("hardware", {}).get("display", {}).get("full_screen", False)),
         "visit_interval": interval,
         "warnings": [issue["detail"] for issue in config_issues if issue["status"] == "warn"],
@@ -1372,9 +1666,11 @@ def _study1_phase_result_failures(
                 f"isolated PsychoPy phase worker return code is {worker.get('return_code')}; expected 0"
             )
     if phase == "session1_main" and manifest.get("include_practice"):
-        if result.get("practice_status") != "passed":
+        accepted_practice_statuses = {"passed", "proceeded_without_passing"}
+        if result.get("practice_status") not in accepted_practice_statuses:
             failures.append(
-                f"required participant practice status is {result.get('practice_status')}; expected passed"
+                "required participant practice status is "
+                f"{result.get('practice_status')}; expected passed or proceeded_without_passing"
             )
     return failures
 

@@ -286,7 +286,7 @@ and phase, and support calibration must require target-specific
 `available_at_support_complete=true` rather than filtering on anchor phase.
 
 At each live preflight the terminal prints the report path and warnings. Inspect
-NIC contact/impedance and type the uppercase word `YES` only when the montage is
+NIC contact/impedance and type `Y`/`YES` (case-insensitive) only when the montage is
 acceptable. A JSON quality report is retained even if the gate is declined.
 
 ## Failure and resume rules

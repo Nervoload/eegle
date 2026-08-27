@@ -911,6 +911,7 @@ def _probe_psychopy_display_and_keyboard_inline(config: dict[str, Any]) -> dict[
         poll_hardware_keyboard,
         stop_hardware_keyboard,
     )
+    from eegle.psychopy_audio import probe_psychopy_audio_output
 
     display = dict(config.get("hardware", {}).get("display", {}) or {})
     win = None
@@ -927,6 +928,9 @@ def _probe_psychopy_display_and_keyboard_inline(config: dict[str, Any]) -> dict[
         poll_hardware_keyboard(keyboard)
         timing["keyboard_backend"] = str(display.get("keyboard_backend", "ptb"))
         timing["window_opened"] = True
+        # Audio is an optional operator cue. Its probe is deliberately
+        # best-effort and reports warn/skip instead of failing this worker.
+        timing["audio_output"] = probe_psychopy_audio_output(config)
         return timing
     finally:
         try:

@@ -73,6 +73,17 @@
     "session_2": {"repeat_practice": false}
   },
   "hardware": {
+    "audio": {
+      "output_enabled": true,
+      "required_for_run": false,
+      "failure_policy": "warn",
+      "output_device_name": null,
+      "preferred_output_name_patterns": ["speakers", "realtek", "built-in", "internal"],
+      "avoid_output_name_patterns": ["nvidia high definition audio", "amd high definition audio", "intel display audio", "display audio", "hdmi", "monitor"],
+      "latency_class": 0,
+      "end_signal_frequency_hz": 880.0,
+      "end_signal_seconds": 0.5
+    },
     "eeg": {
       "family": "Neuracle",
       "profile": "neuracle64",

@@ -64,6 +64,8 @@ class PortabilityTests(unittest.TestCase):
         self.assertIn("$FullScreen", short_task)
         self.assertIn("$Windowed", short_task)
         self.assertIn('"--screen-index", [string] $ScreenIndex', short_task)
+        self.assertIn('[string] $AudioOutputDevice = ""', short_task)
+        self.assertIn('"--audio-output-device", $AudioOutputDevice', short_task)
         self.assertIn("$useFullScreen = -not $Windowed", short_task)
         self.assertIn("authoritative XDF recording", short_task)
         self.assertNotIn("XDF + CSV recording", short_task)
@@ -77,6 +79,8 @@ class PortabilityTests(unittest.TestCase):
         self.assertIn("$FullScreen", full)
         self.assertIn("$Windowed", full)
         self.assertIn("$useFullScreen = -not $Windowed", full)
+        self.assertIn('[string] $AudioOutputDevice = ""', full)
+        self.assertIn('"--audio-output-device", $AudioOutputDevice', full)
         self.assertIn('"--result-file", $outcomeFile', full)
         self.assertIn("Resolve-EegleStudyExit", full)
         diagnostics = (scripts / "05-Diagnose-Lsl.ps1").read_text(encoding="utf-8")
@@ -100,7 +104,13 @@ class PortabilityTests(unittest.TestCase):
         self.assertIn("$FullScreen", complete)
         self.assertIn("$Windowed", complete)
         self.assertIn("$useFullScreen = -not $Windowed", complete)
+        self.assertIn('[string] $AudioOutputDevice = ""', complete)
+        self.assertIn('"--audio-output-device", $AudioOutputDevice', complete)
         self.assertIn('"--result-file", $outcomeFile', complete)
+        self.assertIn('[string] $ResumeTarget = ""', complete)
+        self.assertIn('$PSBoundParameters.ContainsKey("NoGoDigit")', complete)
+        self.assertIn('-Resume requires -Participant, -VisitId, or -ResumeTarget', complete)
+        self.assertIn('"--resume-target", $ResumeTarget', complete)
         self.assertIn("Resolve-EegleStudyExit", complete)
         for script_path in scripts.glob("*.ps1"):
             if script_path.name == "Common.ps1":
@@ -115,6 +125,14 @@ class PortabilityTests(unittest.TestCase):
         self.assertIn('The contradiction is not masked', common)
         self.assertIn("DataRoot looks like an unrecognized command option", common)
         study_config = json.loads((ROOT / "configs" / "study1_neuracle64.json").read_text(encoding="utf-8"))
+        self.assertTrue(study_config["hardware"]["audio"]["output_enabled"])
+        self.assertFalse(study_config["hardware"]["audio"]["required_for_run"])
+        self.assertEqual(study_config["hardware"]["audio"]["failure_policy"], "warn")
+        self.assertIn("realtek", study_config["hardware"]["audio"]["preferred_output_name_patterns"])
+        self.assertIn(
+            "nvidia high definition audio",
+            study_config["hardware"]["audio"]["avoid_output_name_patterns"],
+        )
         self.assertEqual(study_config["recording_suite"]["marker_receipt_timeout_seconds"], 2.0)
         self.assertEqual(study_config["processes"]["recorder"]["tail_guard_seconds"], 1.0)
         self.assertEqual(study_config["processes"]["recorder"]["rcs_ack_timeout_seconds"], 5.0)

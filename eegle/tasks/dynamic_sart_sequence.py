@@ -281,32 +281,51 @@ def _build_block_trials(
 def _build_practice_rounds(config: DynamicSartConfig) -> list[list[dict[str, Any]]]:
     if not config.practice_enabled:
         return []
-    rounds = []
-    negative_index = -1
+    return [
+        build_dynamic_sart_practice_round(config, round_index)
+        for round_index in range(1, config.practice_max_rounds + 1)
+    ]
+
+
+def build_dynamic_sart_practice_round(
+    config: DynamicSartConfig,
+    round_index: int,
+    *,
+    sequence_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Build any numbered practice round deterministically.
+
+    Runtime retries may extend beyond the initially materialized rounds. The
+    negative trial indexes remain unique and stable for every round number.
+    """
+
+    if round_index < 1:
+        raise ValueError("practice round index must be at least 1")
+    block = DynamicSartBlock(
+        name=f"practice_{round_index}",
+        phase="practice",
+        trials=config.practice_trials_per_round,
+    )
     practice_probability = config.practice_no_go_trials / config.practice_trials_per_round
-    for round_index in range(1, config.practice_max_rounds + 1):
-        block = DynamicSartBlock(
-            name=f"practice_{round_index}",
-            phase="practice",
-            trials=config.practice_trials_per_round,
+    practice_config = replace(config, no_go_probability=practice_probability)
+    seed = _derived_seed(config.master_seed, -round_index, block.name)
+    rows = _build_block_trials(practice_config, block, -round_index, seed)
+    negative_index = -((round_index - 1) * config.practice_trials_per_round + 1)
+    for row in rows:
+        row.update(
+            {
+                "global_trial_index": negative_index,
+                "trial": negative_index,
+                "phase": "practice",
+                "is_practice": True,
+                "practice_round": round_index,
+                "planned_onset_offset_seconds": None,
+            }
         )
-        practice_config = replace(config, no_go_probability=practice_probability)
-        seed = _derived_seed(config.master_seed, -round_index, block.name)
-        rows = _build_block_trials(practice_config, block, -round_index, seed)
-        for row in rows:
-            row.update(
-                {
-                    "global_trial_index": negative_index,
-                    "trial": negative_index,
-                    "phase": "practice",
-                    "is_practice": True,
-                    "practice_round": round_index,
-                    "planned_onset_offset_seconds": None,
-                }
-            )
-            negative_index -= 1
-        rounds.append(rows)
-    return rounds
+        if sequence_id is not None:
+            row["sequence_id"] = sequence_id
+        negative_index -= 1
+    return rows
 
 
 def _smoke_blocks(trials: int, config: DynamicSartConfig) -> tuple[DynamicSartBlock, ...]:

@@ -49,7 +49,12 @@ from eegle.tasks.dynamic_sart_schema import (
     TRIAL_SCHEMA,
     DynamicSartConfig,
 )
-from eegle.tasks.dynamic_sart_sequence import build_dynamic_sart_plan, marker_label, validate_dynamic_sart_plan
+from eegle.tasks.dynamic_sart_sequence import (
+    build_dynamic_sart_plan,
+    build_dynamic_sart_practice_round,
+    marker_label,
+    validate_dynamic_sart_plan,
+)
 from eegle.telemetry import Telemetry
 
 
@@ -78,6 +83,16 @@ def monotonic() -> float:
 
 
 EXPERIMENTAL_COUNTDOWN = ("5", "4", "3", "2", "1", "GO!")
+PRACTICE_RETRY_CHOICE_AFTER_FAILED_ROUNDS = 2
+PRACTICE_FAILURE_POLICY = {
+    "schema": "eegle.dynamic_sart.practice_failure_policy.v1",
+    "first_failure_action": "automatic_retry_after_feedback",
+    "choice_after_failed_rounds": PRACTICE_RETRY_CHOICE_AFTER_FAILED_ROUNDS,
+    "available_choices": ["retry", "proceed"],
+    "retry_limit": None,
+    "round_early_stop": "no_go_target_mathematically_unreachable",
+    "practice_failure_terminates_task": False,
+}
 
 
 TRIAL_CSV_FIELDS = (
@@ -493,6 +508,9 @@ class DynamicSartTask:
         abort_reason = None
         support_complete = False
         support_reference = None
+        practice_passed = not self.task_config.practice_enabled
+        practice_proceeded_without_passing = False
+        practice_rounds_completed = 0
         task_start = monotonic()
         primary_error: BaseException | None = None
         summary: dict[str, Any] | None = None
@@ -576,10 +594,25 @@ class DynamicSartTask:
                     update_dsart_phase_status("practice", session_dir=str(paths.root))
                     _emit(logger, marker_outlet, marker_label("practice_start"), event_type="SYSTEM")
                     practice_passed = False
+                    practice_proceeded_without_passing = False
                     practice_rounds = list(plan["practice_rounds"])
-                    for practice_round_index, practice_plan in enumerate(practice_rounds, start=1):
+                    practice_round_index = 1
+                    while not aborted and not practice_passed and not practice_proceeded_without_passing:
+                        if practice_round_index <= len(practice_rounds):
+                            practice_plan = practice_rounds[practice_round_index - 1]
+                        else:
+                            practice_plan = build_dynamic_sart_practice_round(
+                                self.task_config,
+                                practice_round_index,
+                                sequence_id=str(plan["sequence_id"]),
+                            )
+                            store.ensure_practice_round_planned(practice_plan)
                         round_records = []
                         practice_premature: list[dict[str, Any]] = []
+                        practice_early_stop: dict[str, Any] | None = None
+                        planned_no_go_trials = sum(
+                            int(bool(row.get("is_no_go"))) for row in practice_plan
+                        )
                         for trial_index, trial in enumerate(practice_plan):
                             if not _recorder_health_gate(recorder_monitor, logger, marker_outlet, trial=trial):
                                 aborted = True
@@ -621,35 +654,112 @@ class DynamicSartTask:
                                     aborted = True
                                     abort_reason = "escape_abort"
                                     break
-                        criteria = practice_criteria(round_records, self.task_config, comprehension_confirmed=True)
+                                no_go_status = practice_no_go_target_status(
+                                    round_records,
+                                    practice_plan[trial_index + 1 :],
+                                    self.task_config,
+                                    planned_no_go_trials=planned_no_go_trials,
+                                )
+                                if not no_go_status["reachable"]:
+                                    practice_early_stop = no_go_status
+                                    _emit(
+                                        logger,
+                                        marker_outlet,
+                                        marker_label(
+                                            "practice_round_early_stop",
+                                            round=practice_round_index,
+                                            reason="no_go_target_unreachable",
+                                        ),
+                                        event_type="SYSTEM",
+                                        practice_round=practice_round_index,
+                                        reason="no_go_target_unreachable",
+                                        completed_trials=len(round_records),
+                                        planned_trials=len(practice_plan),
+                                        no_go_target=no_go_status,
+                                    )
+                                    break
+                        criteria = practice_criteria(
+                            round_records,
+                            self.task_config,
+                            comprehension_confirmed=True,
+                            planned_no_go_trials=planned_no_go_trials,
+                        )
+                        if practice_early_stop is not None:
+                            criteria.update(
+                                {
+                                    "ended_early": True,
+                                    "early_stop_reason": "no_go_target_unreachable",
+                                    "completed_trial_count": len(round_records),
+                                    "planned_trial_count": len(practice_plan),
+                                    "unpresented_trial_count": len(practice_plan) - len(round_records),
+                                    "no_go_target_status": practice_early_stop,
+                                }
+                            )
+                        practice_rounds_completed = practice_round_index
                         store.append_block(_block_result(practice_plan, round_records, criteria=criteria))
                         if aborted or criteria["passed"]:
                             practice_passed = criteria["passed"]
                             break
-                        final_practice_round = practice_round_index == len(practice_rounds)
-                        continued = _show_screen(
+                        if practice_round_index < PRACTICE_RETRY_CHOICE_AFTER_FAILED_ROUNDS:
+                            continued = _show_screen(
+                                win,
+                                visual,
+                                keyboard,
+                                _practice_status_text(
+                                    criteria,
+                                    self.task_config,
+                                    will_repeat=True,
+                                ),
+                                state="PRACTICE_FEEDBACK",
+                                allowed_continue=self.task_config.response_keys,
+                            )
+                            if not continued:
+                                aborted = True
+                                abort_reason = "practice_abort"
+                                break
+                            practice_round_index += 1
+                            continue
+                        decision = _show_practice_failure_choice(
                             win,
                             visual,
                             keyboard,
-                            _practice_status_text(
-                                criteria,
-                                self.task_config,
-                                will_repeat=not final_practice_round,
-                            ),
-                            state="PRACTICE_FEEDBACK",
-                            allowed_continue=self.task_config.response_keys,
+                            criteria,
+                            self.task_config,
+                            practice_round_index,
                         )
-                        if not continued:
+                        _emit(
+                            logger,
+                            marker_outlet,
+                            marker_label(
+                                "practice_decision",
+                                round=practice_round_index,
+                                action=decision,
+                            ),
+                            event_type="SYSTEM",
+                            practice_round=practice_round_index,
+                            decision=decision,
+                            criteria=criteria,
+                        )
+                        if decision == "abort":
                             aborted = True
                             abort_reason = "practice_abort"
                             break
-                    _emit(logger, marker_outlet, marker_label("practice_end"), event_type="SYSTEM", passed=practice_passed)
-                    if not aborted and not practice_passed:
-                        aborted = True
-                        abort_reason = "practice_criteria_not_met"
-                    elif (
+                        if decision == "proceed":
+                            practice_proceeded_without_passing = True
+                            break
+                        practice_round_index += 1
+                    _emit(
+                        logger,
+                        marker_outlet,
+                        marker_label("practice_end"),
+                        event_type="SYSTEM",
+                        passed=practice_passed,
+                        proceeded_without_passing=practice_proceeded_without_passing,
+                        rounds_completed=practice_round_index,
+                    )
+                    if (
                         not aborted
-                        and practice_passed
+                        and (practice_passed or practice_proceeded_without_passing)
                         and self.task_config.practice_require_ready_confirmation
                     ):
                         _emit(
@@ -663,6 +773,7 @@ class DynamicSartTask:
                             visual,
                             keyboard,
                             self.task_config,
+                            passed=practice_passed,
                         )
                         _emit(
                             logger,
@@ -868,6 +979,14 @@ class DynamicSartTask:
                     support_complete=support_complete,
                     planned_experimental_trials=len(plan["planned_trials"]),
                 )
+                summary.update(
+                    {
+                        "practice_passed": practice_passed,
+                        "practice_proceeded_without_passing": practice_proceeded_without_passing,
+                        "practice_rounds_completed": practice_rounds_completed,
+                        "practice_failure_policy": deepcopy(PRACTICE_FAILURE_POLICY),
+                    }
+                )
                 store.finalize(summary, aborted=aborted, abort_reason=abort_reason)
                 update_dsart_phase_status(
                     "completion_screen",
@@ -1021,6 +1140,7 @@ class DynamicSartArtifactStore:
             "smoke_test_override": self.plan["smoke_test_override"],
             "requested_trial_override": self.plan["requested_trial_override"],
             "normal_recipe_trial_count": self.plan["normal_recipe_trial_count"],
+            "practice_failure_policy": deepcopy(PRACTICE_FAILURE_POLICY),
             "trials": mutable,
             "support_complete": False,
             "aborted": False,
@@ -1028,6 +1148,53 @@ class DynamicSartArtifactStore:
 
     def set_display_timing(self, timing: dict[str, Any]) -> None:
         self.manifest["display_timing"] = deepcopy(timing)
+        _write_json_atomic(self.manifest_path, self.manifest)
+
+    def ensure_practice_round_planned(self, practice_plan: list[dict[str, Any]]) -> None:
+        """Add an on-demand retry round to the manifest before it is presented."""
+
+        if not practice_plan:
+            raise ValueError("practice retry plan must contain trials")
+        round_index = int(practice_plan[0]["practice_round"])
+        if any(
+            int(row.get("practice_round") or 0) == round_index
+            for row in self.manifest["planned_trials"]
+            if bool(row.get("is_practice"))
+        ):
+            return
+        planned = [deepcopy(row) for row in practice_plan]
+        for row in planned:
+            row["stimulus_marker_label"] = marker_label("stimulus_onset", row)
+        mutable = [
+            {
+                **deepcopy(row),
+                "presented": False,
+                "completion_status": "planned",
+                "abort_status": None,
+            }
+            for row in planned
+        ]
+        planned_insert = next(
+            (
+                index
+                for index, row in enumerate(self.manifest["planned_trials"])
+                if not bool(row.get("is_practice"))
+            ),
+            len(self.manifest["planned_trials"]),
+        )
+        trial_insert = next(
+            (
+                index
+                for index, row in enumerate(self.manifest["trials"])
+                if not bool(row.get("is_practice"))
+            ),
+            len(self.manifest["trials"]),
+        )
+        self.manifest["planned_trials"][planned_insert:planned_insert] = planned
+        self.manifest["trials"][trial_insert:trial_insert] = mutable
+        extended = self.manifest.setdefault("runtime_extended_practice_rounds", [])
+        if round_index not in extended:
+            extended.append(round_index)
         _write_json_atomic(self.manifest_path, self.manifest)
 
     def append_trial(self, record: dict[str, Any]) -> None:
@@ -1185,6 +1352,7 @@ class PersistentKeyboardCollector:
 
     _STATIC_CHECKPOINT_STATES = {
         "INSTRUCTIONS",
+        "PRACTICE_DECISION",
         "PRACTICE_READY",
         "PRACTICE_FEEDBACK",
         "BREAK",
@@ -1422,6 +1590,7 @@ def practice_criteria(
     config: DynamicSartConfig,
     *,
     comprehension_confirmed: bool,
+    planned_no_go_trials: int | None = None,
 ) -> dict[str, Any]:
     rows = list(records)
     go = [row for row in rows if row.get("condition") == "go"]
@@ -1431,12 +1600,19 @@ def practice_criteria(
     go_accuracy = correct_go_count / len(go) if go else 0.0
     no_go_accuracy = correct_no_go_count / len(no_go) if no_go else 0.0
     required_correct_go_count = _required_correct_count(config.practice_go_accuracy, len(go))
-    required_correct_no_go_count = _required_correct_count(config.practice_no_go_accuracy, len(no_go))
+    planned_no_go_count = max(
+        len(no_go),
+        int(config.practice_no_go_trials if planned_no_go_trials is None else planned_no_go_trials),
+    )
+    required_correct_no_go_count = _required_correct_count(
+        config.practice_no_go_accuracy,
+        planned_no_go_count,
+    )
     anticipatory_rate = sum(int(bool(row.get("premature_response"))) for row in rows) / len(rows) if rows else 1.0
     passed = (
         correct_go_count >= required_correct_go_count
         and correct_no_go_count >= required_correct_no_go_count
-        and len(no_go) >= config.practice_no_go_trials
+        and len(no_go) >= planned_no_go_count
         and anticipatory_rate <= config.practice_max_anticipatory_rate
         and comprehension_confirmed
     )
@@ -1449,10 +1625,48 @@ def practice_criteria(
         "go_required_correct_count": required_correct_go_count,
         "no_go_correct_count": correct_no_go_count,
         "no_go_trial_count": len(no_go),
+        "planned_no_go_trial_count": planned_no_go_count,
         "no_go_required_correct_count": required_correct_no_go_count,
         "anticipatory_response_rate": anticipatory_rate,
         "maximum_anticipatory_response_rate": config.practice_max_anticipatory_rate,
         "response_rule_comprehension_confirmed": comprehension_confirmed,
+    }
+
+
+def practice_no_go_target_status(
+    records: Iterable[dict[str, Any]],
+    remaining_trials: Iterable[dict[str, Any]],
+    config: DynamicSartConfig,
+    *,
+    planned_no_go_trials: int | None = None,
+) -> dict[str, Any]:
+    """Report whether the no-go practice target remains mathematically reachable."""
+
+    rows = list(records)
+    remaining = list(remaining_trials)
+    presented_no_go = [row for row in rows if row.get("condition") == "no_go"]
+    remaining_no_go_count = sum(
+        int(bool(row.get("is_no_go")) or row.get("condition") == "no_go")
+        for row in remaining
+    )
+    total_no_go_count = max(
+        len(presented_no_go) + remaining_no_go_count,
+        int(config.practice_no_go_trials if planned_no_go_trials is None else planned_no_go_trials),
+    )
+    required_correct_count = _required_correct_count(
+        config.practice_no_go_accuracy,
+        total_no_go_count,
+    )
+    correct_count = sum(int(bool(row.get("correct"))) for row in presented_no_go)
+    maximum_possible_correct_count = correct_count + remaining_no_go_count
+    return {
+        "reachable": maximum_possible_correct_count >= required_correct_count,
+        "correct_no_go_count": correct_count,
+        "presented_no_go_count": len(presented_no_go),
+        "remaining_no_go_count": remaining_no_go_count,
+        "planned_no_go_count": total_no_go_count,
+        "required_correct_no_go_count": required_correct_count,
+        "maximum_possible_correct_no_go_count": maximum_possible_correct_count,
     }
 
 
@@ -1468,22 +1682,76 @@ def _practice_status_text(
     *,
     will_repeat: bool,
 ) -> str:
-    heading = "Practice will repeat." if will_repeat else "Practice did not meet the required criteria."
+    heading = (
+        "Practice will repeat."
+        if will_repeat
+        else "Practice did not meet the target criteria."
+    )
     next_step = (
         f"Remember: press SPACE for every digit except {config.no_go_digit}.\n\nPress SPACE to repeat practice."
         if will_repeat
-        else "The experimental session will not start.\n\nPress SPACE to continue."
+        else (
+            "Choose the next step:\n\n"
+            "1 — Retry practice\n"
+            "2 — Proceed to the main SART task\n\n"
+            "Press ESCAPE only if you need to stop the task."
+        )
+    )
+    early_stop = (
+        "This practice round ended early because the no-go target could no longer be reached.\n\n"
+        if bool(criteria.get("ended_early"))
+        else ""
+    )
+    planned_no_go_count = int(
+        criteria.get("planned_no_go_trial_count", criteria.get("no_go_trial_count", 0))
     )
     return (
-        f"{heading}\n\n"
+        f"{heading}\n\n{early_stop}"
         f"Go responses: {int(criteria.get('go_correct_count', 0))}/{int(criteria.get('go_trial_count', 0))} correct "
         f"(need {int(criteria.get('go_required_correct_count', 0))}).\n"
-        f"No-go withholding: {int(criteria.get('no_go_correct_count', 0))}/{int(criteria.get('no_go_trial_count', 0))} correct "
-        f"(need {int(criteria.get('no_go_required_correct_count', 0))}).\n"
+        f"No-go withholding: {int(criteria.get('no_go_correct_count', 0))}/{int(criteria.get('no_go_trial_count', 0))} correct so far "
+        f"(need {int(criteria.get('no_go_required_correct_count', 0))} of {planned_no_go_count} planned).\n"
         f"Premature-response rate: {float(criteria.get('anticipatory_response_rate', 0.0)):.1%} "
         f"(maximum {float(criteria.get('maximum_anticipatory_response_rate', 0.0)):.1%}).\n\n"
         f"{next_step}"
     )
+
+
+def _show_practice_failure_choice(
+    win: Any,
+    visual: Any,
+    keyboard: "PersistentKeyboardCollector",
+    criteria: dict[str, Any],
+    config: DynamicSartConfig,
+    round_index: int,
+) -> str:
+    """Offer retry/proceed after the second and every later failed round."""
+
+    prompt = visual.TextStim(
+        win,
+        text=(
+            f"Practice round {round_index} did not meet the target criteria.\n\n"
+            + _practice_status_text(criteria, config, will_repeat=False)
+        ),
+        height=0.045,
+        color="white",
+        wrapWidth=1.5,
+    )
+    prompt.draw()
+    win.flip()
+    retry_keys = {"1", "num_1", "num1", "r"}
+    proceed_keys = {"2", "num_2", "num2", "p"}
+    while True:
+        service_psychopy_static_window(win, prompt)
+        rows = keyboard.poll(task_state="PRACTICE_DECISION")
+        if any(row["is_escape_key"] for row in rows):
+            return "abort"
+        keys = {str(row.get("key") or "").strip().lower() for row in rows}
+        if keys & retry_keys:
+            return "retry"
+        if keys & proceed_keys:
+            return "proceed"
+        sleep(0.01)
 
 
 def _show_practice_ready(
@@ -1491,14 +1759,20 @@ def _show_practice_ready(
     visual: Any,
     keyboard: "PersistentKeyboardCollector",
     config: DynamicSartConfig,
+    *,
+    passed: bool = True,
 ) -> bool:
     return _show_screen(
         win,
         visual,
         keyboard,
         (
-            "Practice complete.\n\n"
-            "The main task will begin after a short countdown.\n\n"
+            (
+                "Practice complete.\n\n"
+                if passed
+                else "Practice section complete. You chose to proceed.\n\n"
+            )
+            + "The main task will begin after a short countdown.\n\n"
             "Press SPACE when you are ready to begin."
         ),
         state="PRACTICE_READY",

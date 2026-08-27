@@ -274,8 +274,16 @@ the underlying `study1 --preflight-only` command with
 
 If the live inlet or XDF probe finds nonfatal sample-rate, sample-retention,
 timestamp, or signal-quality concerns, preflight prints a numbered warning
-list. A live run proceeds only after the operator types `YES`;
+list. A live run proceeds after the operator types `Y`/`YES` (case-insensitive),
+or declines after `N`/`NO`;
 `-ConfirmElectrodes` does not bypass warnings.
+
+For an incomplete Visit 1, the same launcher can resume from only the participant
+ID (`-Participant ... -Resume`), a visit/run name (`-ResumeTarget ...`), or an
+exact visit manifest/session path. Completed phases, including the baseline, are
+skipped. A completed recording awaiting warning acceptance is re-reviewed without
+running the baseline or task again. New acquisitions still require the participant,
+counterbalanced no-go digit, operator, and electrode confirmation parameters.
 
 ## 4. Short EEG task test: 10-20 trials
 
@@ -364,6 +372,29 @@ The current implemented order is eyes open followed by eyes closed. Both phases
 show instructions and emit LSL boundary markers. Keep the participant still and
 do not stop Collect between the baseline and task.
 
+### Baseline speaker selection
+
+The eyes-closed completion tone is an optional operator cue and never blocks a
+visit. During the disposable PsychoPy preflight, EEGle enumerates playback-only
+speaker endpoints and opens the first usable candidate. Laptop-style outputs
+such as `Speakers (Realtek(R) Audio)` are preferred; HDMI/display endpoints such
+as `C34H89x (NVIDIA High Definition Audio)` are tried only as a last resort.
+The selected name is printed as an `[audio]` terminal line; all available and
+attempted outputs are written to the preflight report.
+
+The baseline opens that selected class of speaker explicitly and passes it to
+the PsychoPy tone instead of allowing PsychoPy to silently use the first device
+in its list. If enumeration, opening, playback, or cleanup fails, the report is
+`warn`, the recording continues without an audio-warning confirmation prompt,
+and the participant-facing instruction asks the operator to announce the end
+of the eyes-closed interval. Optional audio is excluded from the acquisition
+hash, so a speaker change cannot prevent resume.
+
+To force a specific endpoint on a particular machine, pass the exact PsychoPy
+device name printed by preflight or listed in its report, for example
+`-AudioOutputDevice "Speakers (Realtek(R) Audio)"`. This is an operational
+choice, not a scientific protocol change.
+
 ### Retry or resume an interrupted complete short test
 
 For a failed or interrupted test, first correct the reported cause and rerun the
@@ -401,8 +432,12 @@ acquisition contract:
 1. full hardware, display, storage, LSL, channel, and LabRecorder preflight;
 2. 120 seconds eyes open;
 3. 120 seconds eyes closed;
-4. 30-trial criterion-gated practice rounds (up to three), followed by a
-   participant-controlled ready screen;
+4. 30-trial criterion-gated practice rounds; the first failure repeats, and
+   after the second or any later failure choose `1` to retry or `2` to proceed
+   to the main SART task. Retries have no three-round cutoff, and either choice
+   is followed by a participant-controlled ready screen. Within a practice
+   round, presentation stops early once even perfect performance on every
+   remaining no-go trial could not reach the configured no-go target;
 5. 1,000 experimental trials in four equal 250-trial sections; and
 6. bounded breaks after trials 250, 500, and 750. SPACE continues after 30
    seconds; the task continues automatically at 60 seconds.
@@ -451,7 +486,8 @@ controls are real PowerShell parameters rather than edits to the script:
   directly to the task;
 - `-Trials 100` requests a deterministic shortened support/query task;
 - `-PracticeTrials 12 -PracticeNoGoTrials 1 -PracticeMaxRounds 1` changes the
-  criterion-gated practice shape; and
+  criterion-gated practice shape and the number of rounds materialized before
+  on-demand retries; retries after the second failure can extend beyond it;
 - `-SkipPractice` bypasses practice explicitly; and
 - `-ScreenIndex 1` initially opens the PsychoPy windows on the second monitor.
 

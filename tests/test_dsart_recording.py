@@ -53,6 +53,7 @@ from eegle.pipelines.dsart_recording import (
     _trial_stimulus_duration,
     _options_from_args,
     _psychopy_baseline_phase,
+    _practice_status_from_task_summary,
     _raw_eeg_integrity,
     _require_preflight_acquisition_config,
     _run_baseline_dry,
@@ -223,7 +224,8 @@ class DsartRecordingTests(unittest.TestCase):
             ), patch(
                 "eegle.pipelines.dsart_recording._psychopy_baseline_phase", side_effect=phases
             ), patch(
-                "eegle.pipelines.dsart_recording._play_baseline_end_signal"
+                "eegle.pipelines.dsart_recording._play_baseline_end_signal",
+                return_value={"status": "played", "detail": "test end signal"},
             ):
                 result = _run_baseline_psychopy(config, paths, MagicMock(), 2.0, 2.0)
 
@@ -606,6 +608,87 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertEqual(report["acquisition_config_contract"], "hardware_and_recorder_v1")
         self.assertEqual(len(report["acquisition_config_sha256"]), 64)
 
+    def test_missing_audio_output_is_preflight_warning_not_failure(self) -> None:
+        config = load_config(CONFIG_32)
+        config["hardware"]["audio"] = {
+            "output_enabled": True,
+            "required_for_run": False,
+            "failure_policy": "warn",
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "eegle.pipelines.dsart_recording.run_preflight",
+            return_value=[CheckResult("display_ready", "ok", "ready")],
+        ), patch(
+            "eegle.pipelines.dsart_recording.probe_psychopy_display_and_keyboard",
+            return_value={
+                "status": "measured",
+                "window_opened": True,
+                "keyboard_backend": "ptb",
+                "audio_output": {
+                    "status": "warn",
+                    "detail": "no audio playback devices were found",
+                    "failure_policy": "warn",
+                },
+            },
+        ), patch(
+            "eegle.pipelines.dsart_recording.prepare_psychopy_runtime",
+        ):
+            report = run_recording_preflight(
+                config,
+                recipe="dsart32",
+                participant_id="unit-no-speaker",
+                visit_id="visit-no-speaker",
+                phase="initial_preflight",
+                output_dir=Path(tmp),
+                require_eeg=False,
+                record_eeg=False,
+                lsl_wait_seconds=1.0,
+                electrode_quality_file=None,
+                electrode_note=None,
+                electrodes_confirmed=False,
+                initial_preflight=None,
+                require_display=True,
+            )
+
+        checks = {row["name"]: row for row in report["checks"]}
+        self.assertEqual(checks["audio_output"]["status"], "warn")
+        self.assertEqual(report["status"], "warning")
+        self.assertEqual(report["failures"], [])
+        self.assertIn("no audio playback devices were found", report["warnings"])
+        self.assertEqual(
+            report["nonblocking_warnings"],
+            ["no audio playback devices were found"],
+        )
+
+    def test_audio_only_preflight_warning_never_prompts_or_blocks(self) -> None:
+        options = DsartRecordingOptions(
+            recipe="dsart32",
+            config_path=CONFIG_32,
+            participant_id="unit",
+            task_mode="psychopy",
+            trials_per_session=10,
+            record_eeg=True,
+            require_eeg=True,
+            electrodes_confirmed=True,
+        )
+        warning = "no audio playback devices were found"
+        report = {
+            "phase": "initial_preflight",
+            "status": "warning",
+            "warnings": [warning],
+            "nonblocking_warnings": [warning],
+            "channel_contract": {"status": "ok"},
+        }
+
+        with patch("builtins.input", side_effect=AssertionError("audio warning prompted")):
+            _accept_recording_preflight(report, options)
+
+        acceptance = report["operator_acceptance"]
+        self.assertTrue(acceptance["accepted"])
+        self.assertEqual(acceptance["method"], "--confirm-electrodes")
+        self.assertEqual(acceptance["blocking_warning_count"], 0)
+        self.assertEqual(acceptance["nonblocking_warning_count"], 1)
+
     def test_preflight_acquisition_contract_detects_phase_config_drift(self) -> None:
         config = load_config(CONFIG_32)
         preflight = {"acquisition_config_sha256": _acquisition_config_sha256(config)}
@@ -652,6 +735,19 @@ class DsartRecordingTests(unittest.TestCase):
         preflight = {"acquisition_config_sha256": _acquisition_config_sha256(previous)}
 
         _require_preflight_acquisition_config(current, preflight, phase="task")
+
+    def test_preflight_acquisition_contract_allows_optional_audio_upgrade(self) -> None:
+        current = load_config(CONFIG_32)
+        current["hardware"]["audio"] = {
+            "output_enabled": True,
+            "required_for_run": False,
+            "failure_policy": "warn",
+        }
+        previous = copy.deepcopy(current)
+        previous["hardware"].pop("audio")
+        preflight = {"acquisition_config_sha256": _acquisition_config_sha256(previous)}
+
+        _require_preflight_acquisition_config(current, preflight, phase="baseline")
 
     def test_xdf_preflight_probe_records_and_surfaces_quality_warnings(self) -> None:
         class NativeOutlet:
@@ -977,6 +1073,56 @@ class DsartRecordingTests(unittest.TestCase):
             summary_file=root / "session_summary.json",
         )
         self.assertEqual(result.as_dict()["status"], "failed")
+
+    def test_operator_proceed_after_failed_practice_keeps_forward_run_complete(self) -> None:
+        root = Path("/tmp/dsart-practice-proceed-test")
+        summary = {
+            "aborted": False,
+            "practice_trials": 8,
+            "practice_passed": False,
+            "practice_proceeded_without_passing": True,
+            "experimental_trials": 10,
+        }
+        result = ForwardExperimentResult(
+            session_dir=root,
+            preflight=[],
+            task=TaskRunResult(
+                task="dynamic_sart",
+                session_dir=root,
+                mode="psychopy",
+                summary=summary,
+            ),
+            eeg=None,
+            analysis=None,
+            processes={"status": "complete"},
+            summary_file=root / "session_summary.json",
+        )
+
+        self.assertEqual(result.as_dict()["status"], "complete")
+        self.assertEqual(
+            _practice_status_from_task_summary(summary, practice_enabled=True),
+            "proceeded_without_passing",
+        )
+
+    def test_practice_status_translation_preserves_older_completed_summaries(self) -> None:
+        self.assertEqual(
+            _practice_status_from_task_summary(
+                {"practice_trials": 12},
+                practice_enabled=True,
+            ),
+            "passed",
+        )
+        self.assertEqual(
+            _practice_status_from_task_summary(
+                {"practice_trials": 0, "practice_passed": False},
+                practice_enabled=True,
+            ),
+            "not_recorded",
+        )
+        self.assertEqual(
+            _practice_status_from_task_summary({}, practice_enabled=False),
+            "skipped",
+        )
 
     def test_forward_result_requires_completed_managed_process_lifecycle(self) -> None:
         root = Path("/tmp/dsart-process-status-test")
@@ -2452,6 +2598,58 @@ class DsartRecordingTests(unittest.TestCase):
         with patch("builtins.input", return_value="YES"):
             _accept_post_recording_warnings(result, options, "DSART session 1")
 
+        self.assertTrue(result["operator_warning_acceptance"]["accepted"])
+
+    def test_live_warning_acceptance_allows_case_insensitive_yes_variants(self) -> None:
+        options = DsartRecordingOptions(
+            recipe="dsart32",
+            config_path=CONFIG_32,
+            participant_id="unit",
+            task_mode="psychopy",
+            trials_per_session=10,
+            record_eeg=True,
+            require_eeg=True,
+        )
+        for answer in ("Y", "y", "YES", "Yes", "yes"):
+            with self.subTest(answer=answer):
+                result = {"warnings": ["XDF signal quality warning"]}
+                with patch("builtins.input", return_value=answer):
+                    _accept_post_recording_warnings(result, options, "DSART session 1")
+                self.assertTrue(result["operator_warning_acceptance"]["accepted"])
+
+    def test_live_warning_acceptance_declines_only_explicit_no_variants(self) -> None:
+        options = DsartRecordingOptions(
+            recipe="dsart32",
+            config_path=CONFIG_32,
+            participant_id="unit",
+            task_mode="psychopy",
+            trials_per_session=10,
+            record_eeg=True,
+            require_eeg=True,
+        )
+        for answer in ("N", "n", "NO", "No", "no"):
+            with self.subTest(answer=answer):
+                result = {"warnings": ["XDF signal quality warning"]}
+                with patch("builtins.input", return_value=answer):
+                    with self.assertRaisesRegex(RuntimeError, "raw recording was retained"):
+                        _accept_post_recording_warnings(result, options, "DSART session 1")
+                self.assertFalse(result["operator_warning_acceptance"]["accepted"])
+
+    def test_live_warning_acceptance_reprompts_unrecognized_input(self) -> None:
+        options = DsartRecordingOptions(
+            recipe="dsart32",
+            config_path=CONFIG_32,
+            participant_id="unit",
+            task_mode="psychopy",
+            trials_per_session=10,
+            record_eeg=True,
+            require_eeg=True,
+        )
+        result = {"warnings": ["XDF signal quality warning"]}
+        with patch("builtins.input", side_effect=["", "maybe", "yes"]) as mocked_input:
+            _accept_post_recording_warnings(result, options, "DSART session 1")
+
+        self.assertEqual(mocked_input.call_count, 3)
         self.assertTrue(result["operator_warning_acceptance"]["accepted"])
 
     def test_preflight_acceptance_report_rewrite_failure_is_nonfatal(self) -> None:

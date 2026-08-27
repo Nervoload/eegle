@@ -1,14 +1,12 @@
 [CmdletBinding(PositionalBinding = $false)]
 param(
-    [Parameter(Mandatory = $true)]
-    [string] $Participant,
-    [Parameter(Mandatory = $true)]
+    [string] $Participant = "",
     [ValidateRange(0, 9)]
-    [int] $NoGoDigit,
-    [Parameter(Mandatory = $true)]
-    [string] $Operator,
+    [int] $NoGoDigit = 0,
+    [string] $Operator = "",
     [string] $DataRoot = "",
     [string] $VisitId = "",
+    [string] $ResumeTarget = "",
     [ValidateRange(10, 100000)]
     [int] $Trials = 1000,
     [ValidateRange(10, 10000)]
@@ -23,6 +21,7 @@ param(
     [switch] $SkipBaseline,
     [ValidateRange(0, 16)]
     [int] $ScreenIndex = 0,
+    [string] $AudioOutputDevice = "",
     [switch] $Resume,
     [switch] $FullScreen,
     [switch] $Windowed,
@@ -31,6 +30,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$noGoDigitProvided = $PSBoundParameters.ContainsKey("NoGoDigit")
 . (Join-Path $PSScriptRoot "Common.ps1")
 
 if ($FullScreen -and $Windowed) {
@@ -38,8 +38,24 @@ if ($FullScreen -and $Windowed) {
 }
 $useFullScreen = -not $Windowed
 
-if (-not $ConfirmElectrodes) {
-    throw "Inspect cap contact/impedance in Collect, then rerun with -ConfirmElectrodes."
+if ($Resume) {
+    if ([string]::IsNullOrWhiteSpace($Participant) -and [string]::IsNullOrWhiteSpace($VisitId) -and [string]::IsNullOrWhiteSpace($ResumeTarget)) {
+        throw "-Resume requires -Participant, -VisitId, or -ResumeTarget (visit/run name or exact path)."
+    }
+}
+else {
+    if ([string]::IsNullOrWhiteSpace($Participant)) {
+        throw "-Participant is required for a new acquisition."
+    }
+    if (-not $noGoDigitProvided) {
+        throw "-NoGoDigit is required for a new acquisition."
+    }
+    if ([string]::IsNullOrWhiteSpace($Operator)) {
+        throw "-Operator is required for a new acquisition."
+    }
+    if (-not $ConfirmElectrodes) {
+        throw "Inspect cap contact/impedance in Collect, then rerun with -ConfirmElectrodes."
+    }
 }
 if (-not $SkipPractice -and $PracticeNoGoTrials -ge $PracticeTrials) {
     throw "-PracticeNoGoTrials must be less than -PracticeTrials."
@@ -65,7 +81,7 @@ if ($SkipPractice) {
     Write-Host "  participant practice skipped by operator request"
 }
 else {
-    Write-Host "  up to $PracticeMaxRounds criterion-gated practice round(s) of $PracticeTrials trials ($PracticeNoGoTrials no-go), then participant-ready confirmation"
+    Write-Host "  $PracticeMaxRounds initially planned criterion practice round(s) of $PracticeTrials trials ($PracticeNoGoTrials no-go); after 2 failed rounds choose retry or proceed"
 }
 if ($Trials -eq 1000) {
     Write-Host "  1,000 experimental trials in four 250-trial sections"
@@ -80,25 +96,36 @@ Write-Host "The experimental trials last about $([math]::Round($Trials * 1.6 / 6
 Write-Host "Keep Neuracle Collect LSL streaming. EEGle launches/stops LabRecorder."
 Write-Host "A phase-end liblsl ERR mentioning R_EEGleMarkers is expected when EEGle closes that phase's marker receiver; it is not the Neuracle EEG stream."
 Write-Host "LabRecorder may buffer XDF disk writes; paused XDF growth and CSV-mirror degradation are warnings. Primary XDF failure remains fatal."
-Write-Host "Review each numbered preflight/post-recording warning list; type YES only if you accept it."
+Write-Host "Review each numbered preflight/post-recording warning list; type Y/YES to accept or N/NO to decline (case-insensitive)."
 
 $arguments = @(
     "-m", "eegle.pipelines.study1",
     "--config", $config,
-    "--participant", $Participant,
     "--visit", "1",
-    "--operator", $Operator,
     "--task-mode", "psychopy",
-    "--no-go-digit", [string] $NoGoDigit,
     "--full-1000",
     "--trials", [string] $Trials,
     "--screen-index", [string] $ScreenIndex,
     "--window-size", "1000", "700",
-    "--confirm-electrodes",
     "--session-root", $resolvedDataRoot,
     "--result-file", $outcomeFile,
     "--lsl-wait", "10"
 )
+if (-not [string]::IsNullOrWhiteSpace($Participant)) {
+    $arguments += @("--participant", $Participant)
+}
+if ($noGoDigitProvided) {
+    $arguments += @("--no-go-digit", [string] $NoGoDigit)
+}
+if (-not [string]::IsNullOrWhiteSpace($Operator)) {
+    $arguments += @("--operator", $Operator)
+}
+if ($ConfirmElectrodes) {
+    $arguments += "--confirm-electrodes"
+}
+if (-not [string]::IsNullOrWhiteSpace($AudioOutputDevice)) {
+    $arguments += @("--audio-output-device", $AudioOutputDevice)
+}
 if ($SkipPractice) {
     $arguments += "--skip-practice"
 }
@@ -116,11 +143,17 @@ if ($SkipBaseline) {
 else {
     $arguments += @("--baseline-seconds", [string] $BaselineSeconds)
 }
-if (-not [string]::IsNullOrWhiteSpace($VisitId)) {
+if (-not [string]::IsNullOrWhiteSpace($VisitId) -and -not ($Resume -and [string]::IsNullOrWhiteSpace($Participant))) {
     $arguments += @("--visit-id", $VisitId)
 }
 if ($Resume) {
     $arguments += "--resume"
+    if (-not [string]::IsNullOrWhiteSpace($ResumeTarget)) {
+        $arguments += @("--resume-target", $ResumeTarget)
+    }
+    elseif ([string]::IsNullOrWhiteSpace($Participant) -and -not [string]::IsNullOrWhiteSpace($VisitId)) {
+        $arguments += @("--resume-target", $VisitId)
+    }
 }
 else {
     $arguments += "--retry-incomplete"

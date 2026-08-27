@@ -32,6 +32,12 @@ from eegle.hardware.system import CheckResult
 from eegle.io.events import EventLogger
 from eegle.lsl import LslMarkerOutlet, NullMarkerOutlet, lsl_local_clock, session_marker_source_id
 from eegle.preflight import run_preflight
+from eegle.psychopy_audio import (
+    PsychoPyAudioOutput,
+    audio_output_enabled,
+    play_psychopy_end_signal,
+    prepare_psychopy_audio_output,
+)
 from eegle.psychopy_display import (
     create_psychopy_window,
     measure_psychopy_refresh_rate,
@@ -717,6 +723,27 @@ def run_recording_preflight(
                 },
             ).__dict__
         )
+        if audio_output_enabled(config):
+            audio_probe = runtime_timing.get("audio_output")
+            if not isinstance(audio_probe, dict):
+                audio_probe = {
+                    "status": "warn",
+                    "detail": "audio output probe returned no result",
+                    "failure_policy": "warn",
+                }
+            print(
+                f"[audio] {audio_probe.get('detail') or 'audio output unavailable'}",
+                flush=True,
+            )
+            audio_status = "ok" if audio_probe.get("status") == "ok" else "warn"
+            check_payloads.append(
+                CheckResult(
+                    "audio_output",
+                    audio_status,
+                    str(audio_probe.get("detail") or "audio output unavailable"),
+                    {**audio_probe, "operator_gate": False},
+                ).__dict__
+            )
     eeg = dict(config.get("hardware", {}).get("eeg", {}) or {})
     profile = expected_profile(str(eeg["profile"]), eeg.get("family"))
     expected_channel_names = list(eeg.get("expected_channel_names") or profile.channel_names)
@@ -859,6 +886,7 @@ def run_recording_preflight(
     elif comparison and comparison.get("status") == "warning" and status == "pass":
         status = "warning"
     preflight_warnings = _preflight_warning_messages(check_payloads)
+    nonblocking_warnings = _nonblocking_preflight_warning_messages(check_payloads)
     preflight_failures = [item["detail"] for item in check_payloads if item.get("status") == "fail"]
     if comparison and comparison.get("status") == "warning":
         comparison_warnings = list(comparison.get("warnings") or [])
@@ -886,6 +914,7 @@ def run_recording_preflight(
         "electrode_quality_file": None if electrode_path is None else str(electrode_path),
         "comparison_to_initial": comparison,
         "warnings": list(dict.fromkeys(preflight_warnings)),
+        "nonblocking_warnings": list(dict.fromkeys(nonblocking_warnings)),
         "failures": list(dict.fromkeys(preflight_failures)),
     }
     report_path = output_dir / f"{phase}.json"
@@ -910,6 +939,18 @@ def _preflight_warning_messages(checks: list[dict[str, Any]]) -> list[str]:
         if detail:
             messages.append(detail)
     return list(dict.fromkeys(messages))
+
+
+def _nonblocking_preflight_warning_messages(checks: list[dict[str, Any]]) -> list[str]:
+    """Return advisory warnings which must never gate an experiment."""
+
+    return _preflight_warning_messages(
+        [
+            check
+            for check in checks
+            if dict(check.get("data") or {}).get("operator_gate") is False
+        ]
+    )
 
 
 def _run_xdf_preflight_probe(
@@ -1206,29 +1247,36 @@ def _accept_recording_preflight(report: dict[str, Any], options: DsartRecordingO
     }
     print(json.dumps({"dsart_recording_preflight": summary}, indent=2, sort_keys=True))
     warnings = [str(item).strip() for item in report.get("warnings", []) if str(item).strip()]
+    nonblocking_warnings = {
+        str(item).strip()
+        for item in report.get("nonblocking_warnings", [])
+        if str(item).strip()
+    }
+    blocking_warnings = [warning for warning in warnings if warning not in nonblocking_warnings]
     accepted_by = "software_only"
     accepted = True
     if options.task_mode == "psychopy" and options.record_eeg:
         if warnings:
             print(f"{phase}: preflight warnings")
             for index, warning in enumerate(warnings, start=1):
-                print(f"  {index}. {warning}")
-        if options.electrodes_confirmed and not warnings:
+                advisory = (
+                    " (advisory only; the run will continue)"
+                    if warning in nonblocking_warnings
+                    else ""
+                )
+                print(f"  {index}. {warning}{advisory}")
+        if options.electrodes_confirmed and not blocking_warnings:
             accepted_by = "--confirm-electrodes"
         else:
             requested_actions = []
-            if warnings:
+            if blocking_warnings:
                 requested_actions.append("review the warnings")
             if not options.electrodes_confirmed:
                 requested_actions.append("inspect cap contact/impedance")
             action_text = " and ".join(requested_actions)
-            try:
-                answer = input(
-                    f"{phase}: {action_text}. Type YES to continue: "
-                )
-            except EOFError:
-                answer = ""
-            accepted = answer.strip() == "YES"
+            accepted = _prompt_operator_acceptance(
+                f"{phase}: {action_text}. Type Y/YES to continue or N/NO to decline: "
+            )
             accepted_by = "interactive_terminal"
     report["operator_acceptance"] = {
         "accepted": accepted,
@@ -1236,7 +1284,9 @@ def _accept_recording_preflight(report: dict[str, Any], options: DsartRecordingO
         "accepted_at": _now() if accepted else None,
         "operator": options.operator,
         "warning_count": len(warnings),
-        "warnings_accepted": accepted and bool(warnings),
+        "blocking_warning_count": len(blocking_warnings),
+        "nonblocking_warning_count": len(nonblocking_warnings),
+        "warnings_accepted": accepted and bool(blocking_warnings),
     }
     report_file = report.get("report_file")
     if report_file:
@@ -1284,11 +1334,9 @@ def _accept_post_recording_warnings(
         print(f"{phase}: recording completed with warnings")
         for index, warning in enumerate(warnings, start=1):
             print(f"  {index}. {warning}")
-        try:
-            answer = input(f"{phase}: type YES to accept these warnings and continue: ")
-        except EOFError:
-            answer = ""
-        accepted = answer.strip() == "YES"
+        accepted = _prompt_operator_acceptance(
+            f"{phase}: type Y/YES to accept these warnings or N/NO to decline: "
+        )
         method = "interactive_terminal"
     acceptance = {
         "accepted": accepted,
@@ -1311,6 +1359,24 @@ def _accept_post_recording_warnings(
             )
     if not accepted:
         raise RuntimeError(f"{phase} warnings were not accepted; raw recording was retained")
+
+
+def _prompt_operator_acceptance(prompt: str) -> bool:
+    """Read an explicit, case-insensitive Y/YES or N/NO operator decision."""
+
+    while True:
+        try:
+            answer = input(prompt)
+        except EOFError as exc:
+            raise RuntimeError(
+                "operator confirmation input closed before a Y/YES or N/NO response"
+            ) from exc
+        normalized = answer.strip().casefold()
+        if normalized in {"y", "yes"}:
+            return True
+        if normalized in {"n", "no"}:
+            return False
+        print("Please enter Y/YES to continue or N/NO to decline.")
 
 
 def compare_preflights(
@@ -1670,6 +1736,15 @@ def _run_baseline_psychopy(
     failure: str | None = None
     cleanup_warnings: list[str] = []
     display_timing: dict[str, Any] | None = None
+    audio_output: PsychoPyAudioOutput | None = None
+    audio_output_report: dict[str, Any] = {
+        "status": "skip",
+        "detail": "eyes-closed baseline audio cue was not requested",
+    }
+    audio_end_signal: dict[str, Any] = {
+        "status": "skip",
+        "detail": "eyes-closed baseline audio cue was not reached",
+    }
     suite_config = dict(config.get("recording_suite", {}) or {})
     recorder_monitor = RecorderHealthMonitor(
         paths.process_logs / "recorder.status.json",
@@ -1679,6 +1754,11 @@ def _run_baseline_psychopy(
     try:
         win = create_psychopy_window(visual, display, title="EEGle DSART Baseline")
         display_timing = measure_psychopy_refresh_rate(win, display)
+        if eyes_closed_seconds > 0.0 and audio_output_enabled(config):
+            audio_output, audio_output_report = prepare_psychopy_audio_output(config)
+            print(f"[audio] {audio_output_report['detail']}", flush=True)
+            if audio_output_report.get("status") != "ok":
+                cleanup_warnings.append(str(audio_output_report["detail"]))
         clear_psychopy_keys(event)
         if marker_outlet is None:
             outlet = _make_marker_outlet(config, paths)
@@ -1714,7 +1794,15 @@ def _run_baseline_psychopy(
                 win,
                 visual,
                 event,
-                "Close your eyes, remain still, relax, and keep your eyes closed until you hear the end signal.\n\nPress SPACE, then close your eyes.",
+                (
+                    "Close your eyes, remain still, relax, and keep your eyes closed until "
+                    + (
+                        "you hear the end signal."
+                        if audio_output is not None and audio_output_report.get("status") == "ok"
+                        else "the operator tells you the interval is complete."
+                    )
+                    + "\n\nPress SPACE, then close your eyes."
+                ),
             ):
                 aborted = True
                 abort_reason = "operator_abort"
@@ -1735,7 +1823,11 @@ def _run_baseline_psychopy(
                 aborted = _baseline_phase_aborted(phases[-1])
                 if aborted:
                     abort_reason = str(phases[-1].get("abort_reason") or "baseline_phase_abort")
-                _play_baseline_end_signal()
+                if not aborted:
+                    audio_end_signal = _play_baseline_end_signal(audio_output, config)
+                    print(f"[audio] {audio_end_signal['detail']}", flush=True)
+                    if audio_end_signal.get("status") != "played":
+                        cleanup_warnings.append(str(audio_end_signal["detail"]))
             if not aborted:
                 _baseline_instruction(
                     win,
@@ -1759,6 +1851,7 @@ def _run_baseline_psychopy(
             _close_resources(
                 ("marker receipt recorder", marker_receipt),
                 ("marker outlet", outlet if owns_marker_outlet else None),
+                ("audio output", audio_output),
                 ("PsychoPy window", win),
             )
         )
@@ -1772,6 +1865,8 @@ def _run_baseline_psychopy(
         "actual_duration_seconds": actual_duration,
         "aborted": aborted,
         "display_timing": display_timing,
+        "audio_output": audio_output_report,
+        "baseline_end_signal": audio_end_signal,
     }
     if failure:
         result["error"] = failure
@@ -2095,6 +2190,27 @@ def _deserialize_recording_options(payload: dict[str, Any]) -> DsartRecordingOpt
     return DsartRecordingOptions(**values)
 
 
+def _practice_status_from_task_summary(
+    task_summary: dict[str, Any],
+    *,
+    practice_enabled: bool,
+) -> str:
+    """Translate task-level practice outcome without mislabeling operator proceed."""
+
+    if not practice_enabled:
+        return "skipped"
+    if task_summary.get("practice_passed") is True:
+        return "passed"
+    if task_summary.get("practice_proceeded_without_passing") is True:
+        return "proceeded_without_passing"
+    if "practice_passed" in task_summary:
+        return "not_passed" if task_summary.get("practice_trials", 0) else "not_recorded"
+    # Backward compatibility for summaries written before the explicit outcome
+    # fields existed: a completed task with recorded practice had necessarily
+    # passed the old finite-retry gate.
+    return "passed" if task_summary.get("practice_trials", 0) else "not_recorded"
+
+
 def _run_dsart_child_session_inline(
     config: dict[str, Any],
     options: DsartRecordingOptions,
@@ -2203,10 +2319,9 @@ def _run_dsart_child_session_inline(
         "session_id": session_dir.name,
         "seed": int(seed),
         "sequence_hash": sequence_manifest.get("sequence_id"),
-        "practice_status": (
-            "skipped"
-            if not practice_enabled
-            else ("passed" if task_summary.get("practice_trials", 0) else "not_recorded")
+        "practice_status": _practice_status_from_task_summary(
+            task_summary,
+            practice_enabled=practice_enabled,
         ),
         "task_summary": task_summary,
         "validation": validation,
@@ -3612,15 +3727,13 @@ def _baseline_instruction(
         sleep(0.01)
 
 
-def _play_baseline_end_signal() -> None:
-    try:
-        from psychopy import sound
+def _play_baseline_end_signal(
+    output: PsychoPyAudioOutput | None,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Play the optional cue without allowing audio to fail the baseline."""
 
-        tone = sound.Sound("C", secs=0.5)
-        tone.play()
-        sleep(0.55)
-    except Exception:
-        return
+    return play_psychopy_end_signal(output, config)
 
 
 def _baseline_phase_result(
@@ -4027,11 +4140,17 @@ def _hash_payload(payload: Any) -> str:
 
 
 def _acquisition_config_sha256(config: dict[str, Any]) -> str:
-    """Identify the hardware/recorder contract actually checked by preflight."""
+    """Identify the EEG/display/marker/recorder contract checked by preflight.
 
+    Optional operator audio is excluded: losing or changing a speaker must not
+    invalidate a completed baseline or prevent task resume.
+    """
+
+    hardware = copy.deepcopy(config.get("hardware", {}))
+    hardware.pop("audio", None)
     return _hash_payload(
         {
-            "hardware": config.get("hardware", {}),
+            "hardware": hardware,
             "recorder": config.get("processes", {}).get("recorder", {}),
         }
     )
@@ -4051,16 +4170,16 @@ def _require_preflight_acquisition_config(
         # this provenance field was introduced.
         return
     current = _acquisition_config_sha256(config)
-    compatible_operational_display_upgrade = checked in _operational_display_upgrade_hashes(config)
-    if current != checked and not compatible_operational_display_upgrade:
+    compatible_operational_upgrade = checked in _operational_hardware_upgrade_hashes(config)
+    if current != checked and not compatible_operational_upgrade:
         raise RuntimeError(
             f"{phase} acquisition configuration changed after preflight; rerun preflight "
             "before recording"
         )
 
 
-def _operational_display_upgrade_hashes(config: dict[str, Any]) -> set[str]:
-    """Recognize narrowly scoped Windows timing-safety upgrades after preflight.
+def _operational_hardware_upgrade_hashes(config: dict[str, Any]) -> set[str]:
+    """Recognize narrowly scoped timing/audio safety upgrades after preflight.
 
     Every visual phase measures its own live window, so these fields change how
     that local measurement is performed rather than the EEG/marker/recorder

@@ -4,6 +4,8 @@ import copy
 import io
 import importlib.util
 import json
+import os
+import re
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -14,12 +16,19 @@ from eegle.config import load_config
 from eegle.hardware.profiles import analysis_channel_indices, configured_channel_types, mapped_channel_names
 from eegle.pipelines.study1 import (
     SIMULATED_NEURACLE64_CHANNELS,
+    VISIT_SCHEMA,
     Study1Options,
     _apply_visit_baseline,
     _configure_simulated_eeg_rehearsal,
+    _find_resume_manifest,
+    _options_from_args,
+    _persisted_electrode_confirmation,
+    _resolve_visit_id,
+    _resume_options_with_persisted_task_shape,
     _study1_phase_result_failures,
     _validate_options,
     _validate_visit_slot,
+    build_parser,
     main,
     run_study1_visit,
 )
@@ -498,6 +507,129 @@ class Study1Tests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "either --baseline-seconds or --skip-baseline"):
             _validate_options(Study1Options(**{**base, "skip_baseline": True}))
 
+    def test_full_windows_launcher_argument_vectors_match_study1_cli(self) -> None:
+        launcher = (
+            ROOT / "scripts" / "windows" / "neuracle64" / "07-Run-Full.ps1"
+        ).read_text(encoding="utf-8")
+        emitted_flags = set(re.findall(r'"(--[a-z0-9-]+)"', launcher))
+        common = [
+            "--config",
+            str(CONFIG),
+            "--visit",
+            "1",
+            "--task-mode",
+            "psychopy",
+            "--full-1000",
+            "--trials",
+            "1000",
+            "--screen-index",
+            "0",
+            "--window-size",
+            "1000",
+            "700",
+            "--session-root",
+            "/tmp/eegle-study1",
+            "--result-file",
+            "/tmp/eegle-study1/outcome.json",
+            "--lsl-wait",
+            "10",
+            "--include-practice",
+            "--practice-trials",
+            "30",
+            "--practice-no-go-trials",
+            "4",
+            "--practice-max-rounds",
+            "3",
+            "--baseline-seconds",
+            "120",
+            "--fullscreen",
+        ]
+        parser = build_parser()
+        self.assertEqual(emitted_flags - set(parser._option_string_actions), set())
+
+        new_run = _options_from_args(
+            parser.parse_args(
+                common
+                + [
+                    "--participant",
+                    "participant-a",
+                    "--no-go-digit",
+                    "0",
+                    "--operator",
+                    "operator-a",
+                    "--confirm-electrodes",
+                    "--retry-incomplete",
+                ]
+            )
+        )
+        resume = _options_from_args(
+            parser.parse_args(common + ["--participant", "participant-a", "--resume"])
+        )
+        _validate_options(new_run)
+        _validate_options(resume)
+
+        self.assertTrue(new_run.full_1000)
+        self.assertEqual(new_run.trials, 1000)
+        self.assertEqual(new_run.no_go_digit, 0)
+        self.assertTrue(new_run.electrodes_confirmed)
+        self.assertTrue(new_run.retry_incomplete)
+        self.assertFalse(new_run.resume)
+        self.assertTrue(resume.full_1000)
+        self.assertTrue(resume.resume)
+        self.assertIsNone(resume.no_go_digit)
+        self.assertIsNone(resume.operator)
+        self.assertFalse(resume.electrodes_confirmed)
+
+    def test_resume_restores_electrode_confirmation_from_current_and_legacy_manifests(self) -> None:
+        options = Study1Options(
+            config_path=CONFIG,
+            participant_id="participant-a",
+            visit_number=1,
+            resume=True,
+        )
+        task_overrides = {
+            "experimental_trials": 1000,
+            "skip_practice": False,
+            "practice_trials_per_round": 30,
+            "practice_no_go_trials": 4,
+            "practice_max_rounds": 3,
+        }
+        current = {
+            "operator": "operator-a",
+            "include_practice": True,
+            "electrodes_confirmed": True,
+            "task_overrides": task_overrides,
+        }
+        legacy = {
+            "task_overrides": task_overrides,
+            "phases": {
+                "preflight": {
+                    "attempts": [
+                        {
+                            "result": {
+                                "checks": [
+                                    {
+                                        "name": "electrode_quality",
+                                        "data": {"operator_confirmed": True},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            },
+        }
+
+        restored = _resume_options_with_persisted_task_shape(options, current)
+
+        self.assertTrue(restored.electrodes_confirmed)
+        self.assertEqual(restored.operator, "operator-a")
+        self.assertTrue(restored.include_practice)
+        self.assertEqual(restored.trials, 1000)
+        self.assertTrue(
+            _persisted_electrode_confirmation(legacy, fallback=False)
+        )
+
     def test_protocol_hash_ignores_baseline_display_and_recorder_operations(self) -> None:
         original = load_config(CONFIG)
         changed = copy.deepcopy(original)
@@ -880,6 +1012,202 @@ class Study1Tests(unittest.TestCase):
             first["session_directories"]["baseline"],
         )
 
+    def test_resume_reaccepts_completed_baseline_without_reacquisition(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            initial_options = Study1Options(
+                config_path=CONFIG,
+                participant_id="resume-baseline-acceptance",
+                visit_number=1,
+                visit_id="resume-baseline-acceptance-visit",
+                task_mode="dry-run",
+                no_go_digit=3,
+                smoke=True,
+                trials=20,
+                baseline_seconds=0.0,
+                record_eeg=False,
+                require_eeg=False,
+                output_root=tmp,
+            )
+
+            def reject_baseline(result, _options, phase):
+                if phase == "Study 1 baseline":
+                    result["warnings"] = ["synthetic retained baseline warning"]
+                    result["operator_warning_acceptance"] = {"accepted": False}
+                    raise RuntimeError(
+                        "Study 1 baseline warnings were not accepted; raw recording was retained"
+                    )
+
+            with patch(
+                "eegle.pipelines.study1._accept_post_recording_warnings",
+                side_effect=reject_baseline,
+            ):
+                first = run_study1_visit(initial_options)
+
+            with patch(
+                "eegle.pipelines.study1.run_resting_baseline",
+                side_effect=AssertionError("completed baseline must not be reacquired"),
+            ):
+                resumed = run_study1_visit(
+                    Study1Options(
+                        **{
+                            **initial_options.__dict__,
+                            "visit_id": None,
+                            "retry_incomplete": True,
+                        }
+                    )
+                )
+            manifest = json.loads(Path(resumed["manifest_file"]).read_text(encoding="utf-8"))
+
+        self.assertEqual(first["status"], "partial")
+        self.assertEqual(first["failed_phase"], "baseline")
+        self.assertEqual(resumed["status"], "completed")
+        self.assertEqual(len(manifest["phases"]["baseline"]["attempts"]), 1)
+        self.assertTrue(
+            manifest["phases"]["baseline"]["attempts"][0][
+                "acceptance_recovered_without_reacquisition"
+            ]
+        )
+        self.assertEqual(
+            manifest["resumed_phases"][-1]["action"],
+            "post_recording_warning_acceptance_recovered_without_reacquisition",
+        )
+
+    def test_resume_reaccepts_completed_task_without_reacquisition(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            initial_options = Study1Options(
+                config_path=CONFIG,
+                participant_id="resume-task-acceptance",
+                visit_number=1,
+                visit_id="resume-task-acceptance-visit",
+                task_mode="dry-run",
+                no_go_digit=3,
+                smoke=True,
+                trials=20,
+                baseline_seconds=0.0,
+                record_eeg=False,
+                require_eeg=False,
+                output_root=tmp,
+            )
+
+            def reject_task(result, _options, phase):
+                if phase == "session1_main":
+                    result["warnings"] = ["synthetic retained task warning"]
+                    result["operator_warning_acceptance"] = {"accepted": False}
+                    raise RuntimeError(
+                        "session1_main warnings were not accepted; raw recording was retained"
+                    )
+
+            with patch(
+                "eegle.pipelines.study1._accept_post_recording_warnings",
+                side_effect=reject_task,
+            ):
+                first = run_study1_visit(initial_options)
+            retained = first["retained_session_directory"]
+
+            with patch(
+                "eegle.pipelines.study1.run_dsart_child_session",
+                side_effect=AssertionError("completed task must not be reacquired"),
+            ):
+                resumed = run_study1_visit(
+                    Study1Options(
+                        **{
+                            **initial_options.__dict__,
+                            "visit_id": None,
+                            "retry_incomplete": True,
+                        }
+                    )
+                )
+            manifest = json.loads(Path(resumed["manifest_file"]).read_text(encoding="utf-8"))
+
+        self.assertEqual(first["status"], "partial")
+        self.assertEqual(first["failed_phase"], "session1_main")
+        self.assertEqual(resumed["status"], "completed")
+        self.assertEqual(resumed["session_directories"]["session1_main"], retained)
+        self.assertEqual(len(manifest["phases"]["session1_main"]["attempts"]), 1)
+        self.assertTrue(
+            manifest["phases"]["session1_main"]["attempts"][0][
+                "acceptance_recovered_without_reacquisition"
+            ]
+        )
+
+    def test_resume_target_finds_visit_id_run_name_and_exact_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            visit_dir = root / "study1" / "participant-a" / "visits" / "visit-1" / "visit-alpha"
+            session_dir = root / "participants" / "participant-a" / "sessions" / "date" / "task" / "run-alpha"
+            visit_dir.mkdir(parents=True)
+            session_dir.mkdir(parents=True)
+            manifest_path = visit_dir / "visit_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema": VISIT_SCHEMA,
+                        "status": "partial",
+                        "participant_id": "participant-a",
+                        "visit_number": 1,
+                        "visit_id": "visit-alpha",
+                        "session_directories": {"session1_main": str(session_dir)},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            selections = [
+                _find_resume_manifest("visit-alpha", config_path=CONFIG, output_root=root),
+                _find_resume_manifest("run-alpha", config_path=CONFIG, output_root=root),
+                _find_resume_manifest(str(visit_dir), config_path=CONFIG, output_root=None),
+                _find_resume_manifest(str(manifest_path), config_path=CONFIG, output_root=None),
+                _find_resume_manifest(str(session_dir), config_path=CONFIG, output_root=None),
+            ]
+            parsed = build_parser().parse_args(
+                ["--resume", "--resume-target", str(session_dir)]
+            )
+            resolved_options = _options_from_args(parsed)
+
+        self.assertTrue(
+            all(Path(row["manifest_path"]).resolve() == manifest_path.resolve() for row in selections)
+        )
+        self.assertTrue(all(row["manifest"]["participant_id"] == "participant-a" for row in selections))
+        self.assertTrue(all(Path(row["output_root"]).resolve() == root.resolve() for row in selections))
+        self.assertEqual(resolved_options.participant_id, "participant-a")
+        self.assertEqual(resolved_options.visit_number, 1)
+        self.assertEqual(resolved_options.visit_id, "visit-alpha")
+        self.assertEqual(Path(resolved_options.output_root).resolve(), root.resolve())
+
+    def test_participant_resume_selects_most_recent_incomplete_visit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            participant_dir = Path(tmp) / "study1" / "participant-a"
+            older = participant_dir / "visits" / "visit-1" / "older" / "visit_manifest.json"
+            newer = participant_dir / "visits" / "visit-1" / "newer" / "visit_manifest.json"
+            for path, visit_id in ((older, "older"), (newer, "newer")):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(
+                    json.dumps(
+                        {
+                            "schema": VISIT_SCHEMA,
+                            "status": "partial",
+                            "participant_id": "participant-a",
+                            "visit_number": 1,
+                            "visit_id": visit_id,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            os.utime(older, (100.0, 100.0))
+            os.utime(newer, (200.0, 200.0))
+            selected = _resolve_visit_id(
+                participant_dir,
+                {"visits": {"1": {"status": "partial", "visit_id": "newer"}}},
+                Study1Options(
+                    config_path=CONFIG,
+                    participant_id="participant-a",
+                    visit_number=1,
+                    resume=True,
+                ),
+            )
+
+        self.assertEqual(selected, "newer")
+
     def test_main_reports_and_returns_process_exit_code_from_final_status(self) -> None:
         completed = {"status": "completed", "participant_id": "unit"}
         failed = {"status": "failed", "participant_id": "unit"}
@@ -957,6 +1285,21 @@ class Study1Tests(unittest.TestCase):
             self.assertEqual(
                 _study1_phase_result_failures("session1_main", valid, manifest),
                 [],
+            )
+
+            practice_manifest = copy.deepcopy(manifest)
+            practice_manifest["include_practice"] = True
+            proceeded = copy.deepcopy(valid)
+            proceeded["practice_status"] = "proceeded_without_passing"
+            self.assertEqual(
+                _study1_phase_result_failures("session1_main", proceeded, practice_manifest),
+                [],
+            )
+
+            not_passed = copy.deepcopy(valid)
+            not_passed["practice_status"] = "not_passed"
+            self.assertTrue(
+                _study1_phase_result_failures("session1_main", not_passed, practice_manifest)
             )
 
             contradictions = {
