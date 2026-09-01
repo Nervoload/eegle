@@ -1,81 +1,39 @@
-(.venv) PS C:\Projects\code\eegle> .\scripts\windows\neuracle64\07-Run-Full.ps1 `
->>   -ConfirmElectrodes `      
->>   -NoGoDigit 3 `      
->>   -Operator "john" `
->>   -BaselineSeconds 30 `
->>   -Trials 40 `         
->>   -PracticeTrials 12 `
->>   -PracticeNoGoTrials 3 `
->>   -ScreenIndex 1 `       
->>   -Participant "crashfix1"
-{
-  "written_configs": [
-    "C:\\Projects\\code\\eegle\\.runtime\\windows-neuracle64\\display-only.json",
-    "C:\\Projects\\code\\eegle\\.runtime\\windows-neuracle64\\study1-live.json",
-    "C:\\Projects\\code\\eegle\\.runtime\\windows-neuracle64\\short-live-task.json"
-  ]
-}
-Starting the Study 1 Visit 1 run (40 experimental trials):
-  full preflight, three-second XDF recording probe, storage gate, and electrode checks
-  PsychoPy monitor index 1 (window moves are detected before refresh measurement)
-  30 seconds eyes open
-  30 seconds eyes closed
-  up to 3 criterion-gated practice round(s) of 12 trials (3 no-go), then participant-ready confirmation
-  40 experimental trials using the deterministic shortened support/query plan
-  fixed timing: 250 ms digit + 1350 ms fixation (1600 ms SOI; no jitter)
-The experimental trials last about 1.1 minutes before practice and breaks.
-Keep Neuracle Collect LSL streaming. EEGle launches/stops LabRecorder.
-A phase-end liblsl ERR mentioning R_EEGleMarkers is expected when EEGle closes that phase's marker receiver; it is not the Neuracle EEG stream.
-LabRecorder may buffer XDF disk writes; paused XDF growth and CSV-mirror degradation are warnings. Primary XDF failure remains fatal.
-Review each numbered preflight/post-recording warning list; type YES only if you accept it.
-2026-08-25 13:31:44.462 (   0.032s) [        27E064B5]      netinterfaces.cpp:36    INFO| netif '{874AEFF9-2B3C-476A-B3F0-0F685E6CDB31}' (status: 2, multicast: 1
-2026-08-25 13:31:44.462 (   0.032s) [        27E064B5]      netinterfaces.cpp:36    INFO| netif '{50635E82-F596-4DD4-A07E-758006593EC2}' (status: 1, multicast: 1
-2026-08-25 13:31:44.462 (   0.032s) [        27E064B5]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 9
-2026-08-25 13:31:44.462 (   0.032s) [        27E064B5]      netinterfaces.cpp:36    INFO| netif '{4D8CF894-7764-40B7-B5F8-52C7C859FBA5}' (status: 2, multicast: 1
-2026-08-25 13:31:44.462 (   0.032s) [        27E064B5]      netinterfaces.cpp:36    INFO| netif '{8E26F3A3-0C9F-4C70-A709-35E90EC0A844}' (status: 2, multicast: 1
-2026-08-25 13:31:44.462 (   0.032s) [        27E064B5]      netinterfaces.cpp:36    INFO| netif '{94A5AEF1-4F4C-4BED-9205-860D4599A3B1}' (status: 1, multicast: 1
-2026-08-25 13:31:44.462 (   0.032s) [        27E064B5]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 20
-2026-08-25 13:31:44.462 (   0.032s) [        27E064B5]      netinterfaces.cpp:36    INFO| netif '{ABA8E1FB-58AD-424E-8FC2-3EE30AAB2410}' (status: 2, multicast: 1
-2026-08-25 13:31:44.462 (   0.032s) [        27E064B5]      netinterfaces.cpp:36    INFO| netif '{999E4E5F-9892-11EE-A20A-806E6F6E6963}' (status: 1, multicast: 1
-2026-08-25 13:31:44.462 (   0.032s) [        27E064B5]      netinterfaces.cpp:58    INFO|       IPv6 ifindex 1
-2026-08-25 13:31:44.462 (   0.033s) [        27E064B5]         api_config.cpp:126   INFO| Loaded default config
-2026-08-25 13:31:59.916 (  15.483s) [        27E064B5]             common.cpp:78    INFO| git:64988c6a14b8dc3b3f270ece58eab4f480bfab43/branch:refs/tags/v1.17.7/build:Release/compiler:MSVC-19.29.30159.0/link:SHARED
-13.0245         WARNING         Monitor specification not found. Creating a temporary one...
-2026-08-25 13:32:55.955 (  71.514s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
-2026-08-25 13:32:56.096 (  71.654s) [R_EEGleMarkers  ]      data_receiver.cpp:344    ERR| Stream transmission broke off (Input stream error.); re-connecting...
+1: A Consistent XDF EEG/marker boundaries disagree. Does not happen at every run, and I can't seem to recreate it consistently. 
+
+[feedback_manager] recorder stopped
+[offline_analyzer] offline_analyzer disabled
+[feedback_manager] Feedback manager summary: complete
+[experiment] Experiment complete: C:\Projects\code\eegle\data\participants\p3_alejandro_1\sessions\2026-08-28\study1_visit_visit-1-20260828T130413_session1_main\dynamic_sart\run-20260828T131018
 {
   "acquisition_profile": "full_1000_support500_query500_v2",
-  "failed_phase": "preflight",
-  "failure_detail": "RuntimeError: Study 1 preflight did not complete: live DSART display/input probe failed: RuntimeError: PsychoPy display/input probe failed: RuntimeError: DSART display refresh check failed: measured refresh 54.335 Hz differs from the nearest supported mode (60.000 Hz) by more than 2.000 Hz (attempt 2: window moved or changed monitors during refresh measurement); active monitor index=1 mode=100.000 Hz; attempts=[41.26570159980143, 45.41872659481332, 54.33512820528655]. Use a supported 60 Hz or 120 Hz Windows display mode, or correct the display settings.",
+  "failed_phase": "session1_main",
+  "failure_detail": "RuntimeError: session1_main did not complete: XDF synchronized EEG/marker boundaries disagree (start lag 0.000000 seconds; end shortfall 259793.654659 seconds; warning limit 2.000). Independent clock-bridge evidence failed: EEG clock-bridge observer contains timestamp gaps",
   "failures": [
     {
-      "error": "RuntimeError: Study 1 preflight did not complete: live DSART display/input probe failed: RuntimeError: PsychoPy display/input probe failed: RuntimeError: DSART display refresh check failed: measured refresh 54.335 Hz differs from the nearest supported mode (60.000 Hz) by more than 2.000 Hz (attempt 2: window moved or changed monitors during refresh measurement); active monitor index=1 mode=100.000 Hz; attempts=[41.26570159980143, 45.41872659481332, 54.33512820528655]. Use a supported 60 Hz or 120 Hz Windows display mode, or correct the display settings.",
-      "phase": "preflight",
-      "timestamp": "2026-08-25T13:32:56"
+      "error": "RuntimeError: session1_main did not complete: XDF synchronized EEG/marker boundaries disagree (start lag 0.000000 seconds; end shortfall 259793.654659 seconds; warning limit 2.000). Independent clock-bridge evidence failed: EEG clock-bridge observer contains timestamp gaps",
+      "phase": "session1_main",
+      "timestamp": "2026-08-28T13:41:41"
     }
   ],
-  "manifest_file": "C:\\Users\\Surettej\\AppData\\Local\\EEGle\\data\\study1\\crashfix1\\visits\\visit-1\\visit-1-20260825T133143\\visit_manifest.json",
+  "manifest_file": "C:\\Projects\\code\\eegle\\data\\study1\\p3_alejandro_1\\visits\\visit-1\\visit-1-20260828T130413\\visit_manifest.json",
   "next_action": "Correct the reported failure, then rerun the same Windows operator command. EEGle will reuse this incomplete visit, skip completed phases, and rerun the failed phase.",
   "no_go_digit": 3,
-  "outcome_file": "C:\\Users\\Surettej\\AppData\\Local\\eegle\\data\\operator_outcomes\\study1-20260825-133140-pid22660.json",
-  "participant_id": "crashfix1",
+  "outcome_file": "C:\\Projects\\code\\eegle\\data\\operator_outcomes\\study1-20260828-130410-pid34756.json",
+  "participant_id": "p3_alejandro_1",
   "process_exit_code": 1,
   "resolved_failures": [],
+  "retained_session_directory": "C:\\Projects\\code\\eegle\\data\\participants\\p3_alejandro_1\\sessions\\2026-08-28\\study1_visit_visit-1-20260828T130413_session1_main\\dynamic_sart\\run-20260828T131018",
   "schema": "eegle.study1.visit.v1",
   "sequence_hashes": {},
-  "session_directories": {},
-  "status": "failed",
-  "visit_id": "visit-1-20260825T133143",
+  "session_directories": {
+    "baseline": "C:\\Projects\\code\\eegle\\data\\participants\\p3_alejandro_1\\sessions\\2026-08-28\\study1_visit_visit-1-20260828T130413\\study1_baseline\\run-20260828T130504"
+  },
+  "status": "partial",
+  "visit_id": "visit-1-20260828T130413",
   "visit_number": 1
 }
 EEGle Study 1 native process exit code: 1
 EEGle Study 1 verified outcome exit code: 1
-EEGle Study 1 outcome file: C:\Users\Surettej\AppData\Local\EEGle\data\operator_outcomes\study1-20260825-133140-pid22660.json
-Study 1 Visit 1 run stopped without a successful completion (exit code 1). Read the EEGle failure_detail and next_action printed immediately above; retained raw/session files are not overwritten.
-At C:\Projects\code\eegle\scripts\windows\neuracle64\Common.ps1:104 char:9
-+         throw "$Operation stopped without a successful completion (ex ...
-+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : OperationStopped: (Study 1 Visit 1...ot overwritten.:String) [], RuntimeException
-    + FullyQualifiedErrorId : Study 1 Visit 1 run stopped without a successful completion (exit code 1). Read the EEGle failure_detail and next_action printed immediately above; retained raw/session files are not overwr 
-   itten.
- 
+EEGle Study 1 outcome file: C:\Projects\code\eegle\data\operator_outcomes\study1-20260828-130410-pid34756.json
+
+
