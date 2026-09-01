@@ -118,6 +118,76 @@ data/participants/demo/sessions/<date>/<experiment-id>/pvt/run-<timestamp>/
 `data/` is ignored by Git because sessions may contain large or sensitive EEG
 recordings.
 
+## Study 1: install, test, acquire, validate
+
+The canonical Study 1 workflow is in [`docs/STUDY1.md`](docs/STUDY1.md). The
+Windows acquisition-machine checklist and troubleshooting detail are in
+[`docs/NEURACLE64_WINDOWS_TEST.md`](docs/NEURACLE64_WINDOWS_TEST.md).
+
+For the Neuracle W64 production path, use 64-bit Python 3.10 in Windows
+PowerShell. From the repository root, choose one data root and keep using it for
+all tests, acquisition phases, resumes, and participant-based validation:
+
+```powershell
+$EegleData = Join-Path $env:LOCALAPPDATA "EEGle\data"
+
+.\scripts\windows\neuracle64\00-Setup.ps1 `
+  -LabRecorderPath "C:\Tools\LabRecorder\LabRecorder.exe" `
+  -DataRoot $EegleData `
+  -AddCommandsToUserPath
+
+.\scripts\windows\neuracle64\06-Test-StorageAccess.ps1 -DataRoot $EegleData
+.\scripts\windows\neuracle64\01-DryRun-Task.ps1 -Trials 10 -DataRoot $EegleData
+.\scripts\windows\neuracle64\02-Test-NeuracleLsl.ps1 -DiscoverOnly -DataRoot $EegleData
+```
+
+After physically checking Collect's channel order and electrode/contact state,
+create the confirmed local live configuration and complete the real XDF
+preflight. Then run the short recorded task and `FullTest` before using
+`FullRun` with a participant:
+
+```powershell
+.\scripts\windows\neuracle64\02-Test-NeuracleLsl.ps1 `
+  -ConfirmCapContract -ConfirmElectrodes `
+  -LabRecorderPath "C:\Tools\LabRecorder\LabRecorder.exe" `
+  -Reference "CPz" -Ground "AFz" `
+  -EogAllocation "ECG, HEOR, HEOL, VEOU, VEOL" `
+  -DataRoot $EegleData
+
+.\scripts\windows\neuracle64\03-Run-EEGTaskTest.ps1 `
+  -Trials 20 -Participant "recording-test" -ConfirmElectrodes -DataRoot $EegleData
+
+$TestId = "systemtest-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+FullTest -Participant $TestId -NoGoDigit 3 -Operator "operator-id" `
+  -ConfirmElectrodes -DataRoot $EegleData
+
+FullRun -Participant "sub-001" -NoGoDigit 3 -Operator "operator-id" `
+  -ConfirmElectrodes -DataRoot $EegleData
+```
+
+Run independent read-only validation after acquisition. Quick mode is the
+routine completion check; comprehensive mode scans XDF samples, reconciles the
+event/trial/keypress/marker ledgers, recomputes task scoring, and creates the
+hashed file inventory:
+
+```powershell
+ValidateRun -Participant "sub-001" -Visit 1 -DataRoot $EegleData -Mode Quick
+ValidateRun -Participant "sub-001" -Visit 1 -DataRoot $EegleData -Mode Comprehensive
+```
+
+`FullRun -Participant "sub-001" -Resume -DataRoot $EegleData` selects that
+participant's newest incomplete Visit 1. `-ResumeTarget` accepts an exact visit
+ID, run/session name, directory, or `visit_manifest.json`. `-SkipBaseline`,
+`-BaselineSeconds`, `-SkipPractice`, trial/practice overrides, monitor selection,
+exact-target validation, and read-only backup comparison are documented with
+their constraints and examples in the Study 1 guide.
+
+Study 1's full EEG/LSL recording is `raw/recording.xdf`; it does not create a
+full EEG CSV mirror. Signal, electrode, timestamp, and recoverable timing
+findings are precise operator-reviewed warnings. Required-stream, storage,
+LabRecorder process, and missing/empty/unreadable authoritative-XDF failures
+remain blocking acquisition errors.
+
 ## Installation Options
 
 The base package is intentionally lean. It installs importable session,
@@ -205,10 +275,11 @@ POSIX-like development shells, not the Windows-native operator path.
 | `eegle evaluate-model` | `python -m eegle.cli evaluate-model` | Score classifier predictions against the stimulus manifest |
 | `eegle replay-classifier` | `python -m eegle.cli replay-classifier` | Replay classifier predictions from captured EEG and markers |
 
-The `alpha8`, `inhibition8`, `classify8`, `attention8`, `dsart8`, `dsart32`, and `study1` installed scripts
-have equivalent source-module forms. They run the posterior-alpha,
-response-inhibition, participant-specific GO/NO-GO classification, and
-attention-lapse system-test pipelines respectively:
+The `alpha8`, `inhibition8`, `classify8`, `attention8`, `dsart8`, `dsart32`,
+`study1`, and `study1-validate` installed scripts have equivalent source-module
+forms. The first seven run their respective acquisition/system-test workflows;
+`study1-validate` performs separate read-only validation of retained Study 1
+data:
 
 ```bash
 alpha8 --help
@@ -218,12 +289,14 @@ attention8 --help
 dsart8 --help
 dsart32 --help
 study1 --help
+study1-validate --help
 python -m eegle.pipelines.alpha8 --help
 python -m eegle.pipelines.inhibition8 --help
 python -m eegle.pipelines.classify8 --help
 python -m eegle.pipelines.attention8 --help
 python -m eegle.pipelines.dsart_recording --help
 python -m eegle.pipelines.study1 --help
+python -m eegle.pipelines.study1_validation --help
 ```
 
 ### Windows PowerShell Command Forms
@@ -251,6 +324,10 @@ is used. The activation-free generic CLI form is
 
 ## Documentation Guide
 
+- `docs/STUDY1.md` is the canonical Study 1 installation, qualification,
+  acquisition, resume, artifact, and post-run-validation workflow.
+- `docs/NEURACLE64_WINDOWS_TEST.md` is the acquisition-computer test and
+  troubleshooting runbook for Neuracle W64/Collect/LabRecorder.
 - `docs/ARCHITECTURE.md` describes the runtime data path and component
   boundaries.
 - `docs/MODEL_TRAINING_TESTING_GOALS.md` describes classifier training,
@@ -591,6 +668,13 @@ data/participants/<participant-id>/sessions/<date>/<experiment-id>/<task>/run-<t
 `events/events.jsonl`, `events/behavior.csv`, and `triggers.txt` are the
 canonical task timing records. Realtime telemetry and derived reports are
 written beside them, not in their place.
+
+This tree describes the generic recorder. Study 1 uses managed LabRecorder and
+stores full EEG plus LSL markers in authoritative `raw/recording.xdf`; it
+intentionally omits `raw/eeg.csv`. Study 1 also adds canonical Dynamic SART
+trial, keypress, probe, and stimulus-manifest ledgers, structured recording
+quality warnings, visit manifests, and timestamped post-run validation reports.
+See `docs/STUDY1.md` before interpreting a Study 1 session.
 
 Generated sessions, runtime caches, models, artifacts, virtual environments,
 build output, logs, and operating-system metadata are excluded by `.gitignore`.

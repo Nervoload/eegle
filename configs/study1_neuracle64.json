@@ -156,6 +156,7 @@
       "require_refresh_rate_match": true,
       "wait_blanking": true,
       "keyboard_backend": "ptb",
+      "capture_keyboard_outside_window": true,
       "fixed_display_latency_ms": 0.0
     }
   },

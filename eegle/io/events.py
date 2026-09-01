@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from time import monotonic
@@ -51,6 +52,7 @@ class EventLogger:
         )
         self._writer.writeheader()
         self.telemetry_error: str | None = None
+        self.durability_warnings: list[str] = []
 
     def mark(
         self,
@@ -82,12 +84,22 @@ class EventLogger:
             self.flush()
         self._emit_telemetry(record)
 
-    def flush(self) -> None:
+    def flush(self, *, durable: bool = False) -> None:
         """Checkpoint every primary event ledger outside a display deadline."""
 
-        self._csv.flush()
-        self._jsonl.flush()
-        self._triggers.flush()
+        for name, handle in (
+            ("behavior CSV", self._csv),
+            ("events JSONL", self._jsonl),
+            ("triggers", self._triggers),
+        ):
+            handle.flush()
+            if durable:
+                try:
+                    os.fsync(handle.fileno())
+                except OSError as exc:
+                    warning = f"{name} durable flush failed: {type(exc).__name__}: {exc}"
+                    if warning not in self.durability_warnings:
+                        self.durability_warnings.append(warning)
 
     def _emit_telemetry(self, record: EventRecord) -> None:
         if self.telemetry is None:
@@ -111,7 +123,13 @@ class EventLogger:
             self.telemetry_error = f"{type(exc).__name__}: {exc}"
 
     def close(self) -> None:
+        if all(handle.closed for handle in (self._csv, self._jsonl, self._triggers)):
+            return
         failures = []
+        try:
+            self.flush(durable=True)
+        except Exception as exc:
+            failures.append(f"event ledger final flush: {type(exc).__name__}: {exc}")
         for name, handle in (("behavior CSV", self._csv), ("events JSONL", self._jsonl), ("triggers", self._triggers)):
             try:
                 if not handle.closed:

@@ -5,6 +5,446 @@ EEGle's existing PsychoPy task, deterministic sequence generator, LSL preflight,
 raw recorder lifecycle, resting baseline, child-process isolation, analysis,
 and resume machinery.
 
+This is the canonical end-to-end Study 1 guide. The shorter
+[`NEURACLE64_WINDOWS_TEST.md`](NEURACLE64_WINDOWS_TEST.md) runbook is useful at
+the acquisition computer, but the workflow and command semantics below are
+authoritative.
+
+## End-to-end workflow
+
+The production Windows Visit 1 path is intentionally staged. Complete the
+software and hardware tests on the acquisition computer before using a
+participant identity:
+
+| Stage | Command or script | Result |
+| --- | --- | --- |
+| Install | `00-Setup.ps1` | Python 3.10 environment, runtime dependencies, and local display config |
+| Prove storage | `06-Test-StorageAccess.ps1` | Parent and child-process write/flush/rename/read/delete probe |
+| Test display/task | `01-DryRun-Task.ps1` | PsychoPy Dynamic SART without EEG or LabRecorder |
+| Discover EEG | `02-Test-NeuracleLsl.ps1 -DiscoverOnly` | Retained Collect/LSL stream and sample report |
+| Lock hardware contract | `02-Test-NeuracleLsl.ps1 -ConfirmCapContract ...` | Machine-local live configs and full physical/XDF preflight |
+| Test short recording | `03-Run-EEGTaskTest.ps1` | A 10-20 trial authoritative XDF recording |
+| Rehearse whole visit | `FullTest` | Short preflight, baseline, practice, and task visit |
+| Record participant | `FullRun` | Full Visit 1 profile unless logged overrides are supplied |
+| Validate data | `ValidateRun` or `study1-validate` | Independent quick or comprehensive read-only report |
+
+`FullRun` is the guarded production launcher for the implemented complete Visit
+1 profile. The generic `study1` command also models Visit 2, but live Visit 2
+PsychoPy acquisition remains gated at the physical auditory cue extension; see
+the intentional live gates below. Do not interpret a software-only Visit 2
+rehearsal as permission to collect that unimplemented cue phase.
+
+## Install the acquisition computer
+
+The supported hardware path requires 64-bit Windows x64, 64-bit CPython 3.10,
+Neuracle Collect and its amplifier driver, and a Windows LabRecorder build with
+remote-control support. Run the supplied scripts in Windows PowerShell, not WSL
+or Git Bash. From the repository root:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+$EegleData = Join-Path $env:LOCALAPPDATA "EEGle\data"
+
+.\scripts\windows\neuracle64\00-Setup.ps1 `
+  -LabRecorderPath "C:\Tools\LabRecorder\LabRecorder.exe" `
+  -DataRoot $EegleData `
+  -AddCommandsToUserPath
+```
+
+The process-scoped execution policy lasts only for that PowerShell window. Use
+the institution-approved policy when local policy does not permit this change.
+`00-Setup.ps1` creates `.venv`, installs `.[runtime,analysis]`, runs dependency
+and setup checks, and generates a machine-local display configuration. It does
+not confirm the physical cap mapping; that is a later, explicit step.
+
+The setup switches are:
+
+| Parameter | Required? | Use |
+| --- | --- | --- |
+| `-LabRecorderPath <exe>` | Recommended | Explicit executable when LabRecorder is not discoverable on `PATH` |
+| `-DataRoot <path>` | Optional | Exact acquisition root; defaults to `%LOCALAPPDATA%\EEGle\data` |
+| `-AddCommandsToUserPath` | Optional | Add `.venv\Scripts` and the guarded launcher directory to the current and future user terminals |
+
+If `-AddCommandsToUserPath` is omitted, keep using repository-relative script
+paths. Activation is optional because every supplied launcher uses the virtual
+environment directly:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+eegle --help
+study1 --help
+study1-validate --help
+```
+
+For development or software-only rehearsal on macOS/Linux, install the same
+package extras with Python 3.10:
+
+```bash
+python3.10 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[runtime,analysis]"
+study1 --help
+study1-validate --help
+```
+
+Do not use the macOS constraints snapshot on Windows. Production Neuracle,
+LabRecorder, display, and permission qualification must still be completed on
+the actual Windows acquisition computer.
+
+## Qualify storage, task, EEG, and XDF
+
+Use the same `$EegleData` value throughout setup, testing, acquisition, resume,
+and participant-based validation. A different root can split a visit's raw data
+from its manifest and recovery state.
+
+### 1. Storage and display
+
+Before applying the cap:
+
+```powershell
+.\scripts\windows\neuracle64\06-Test-StorageAccess.ps1 -DataRoot $EegleData
+
+.\scripts\windows\neuracle64\01-DryRun-Task.ps1 `
+  -Trials 10 `
+  -Participant "display-check-001" `
+  -ScreenIndex 0 `
+  -DataRoot $EegleData
+```
+
+The storage probe exercises the fresh child-process boundary used between
+phases. The dry task must open on the intended monitor, accept SPACE, allow
+ESCAPE/Q to abort, and finish without starting LabRecorder or requiring an EEG
+stream.
+
+Useful dry-task options are `-Trials 10..100`, `-Participant <test-id>`,
+`-ScreenIndex <zero-based-index>`, and `-DataRoot <path>`. Fullscreen is the
+default. `-Windowed` is a display diagnostic only; it cannot certify the strict
+VBlank timing contract. `-FullScreen` is retained for explicit/backward-
+compatible invocation, and it cannot be combined with `-Windowed`.
+
+### 2. Collect discovery and cap confirmation
+
+In Collect, connect the amplifier, select 1000 Hz, inspect contact/impedance,
+and enable one unique 65-value LSL EEG outlet. Keep it publishing continuously.
+Close any LabRecorder that was opened manually because EEGle owns its process
+and loopback control port.
+
+Discover first without generating a live configuration:
+
+```powershell
+.\scripts\windows\neuracle64\02-Test-NeuracleLsl.ps1 `
+  -DiscoverOnly `
+  -DataRoot $EegleData
+```
+
+If the default matcher is ambiguous, supply a unique fragment of the outlet's
+name or source ID with `-LslNamePattern "fragment"`. If no external stream is
+visible, run:
+
+```powershell
+.\scripts\windows\neuracle64\05-Diagnose-Lsl.ps1 -DataRoot $EegleData
+```
+
+After physically verifying the 65-value positional order, reference, ground,
+and auxiliary allocation, generate the live configs and run the real preflight:
+
+```powershell
+.\scripts\windows\neuracle64\02-Test-NeuracleLsl.ps1 `
+  -ConfirmCapContract `
+  -ConfirmElectrodes `
+  -LabRecorderPath "C:\Tools\LabRecorder\LabRecorder.exe" `
+  -Reference "CPz" `
+  -Ground "AFz" `
+  -EogAllocation "ECG, HEOR, HEOL, VEOU, VEOL" `
+  -DataRoot $EegleData
+```
+
+`-ConfirmElectrodes` records that the operator inspected the electrodes in
+Collect; it is not a numeric impedance reading. The preflight reports signal,
+timestamp, channel, electrode, storage, marker, and recorder findings. Quality
+findings remain precise warnings that the operator may accept or decline.
+Unavailable required streams, invalid channel identity/order, unwritable
+storage, LabRecorder startup/process failure, or a missing/empty/unreadable
+authoritative XDF remain acquisition failures.
+
+The discovery/preflight launcher also accepts `-Participant <test-id>`,
+`-LslNamePattern <unique-fragment>`, and hardware values different from the
+defaults through `-Reference`, `-Ground`, and `-EogAllocation`. Use those values
+only when they describe the physically verified installation.
+
+### 3. Short authoritative recording
+
+Keep Collect streaming and do not start LabRecorder yourself:
+
+```powershell
+.\scripts\windows\neuracle64\03-Run-EEGTaskTest.ps1 `
+  -Trials 20 `
+  -Participant "neuracle-task-test-001" `
+  -ScreenIndex 0 `
+  -ConfirmElectrodes `
+  -DataRoot $EegleData
+```
+
+This launcher accepts `-Trials 10..20`, `-Participant`, `-DataRoot`,
+`-ScreenIndex`, optional `-AudioOutputDevice`, and the mutually exclusive
+`-FullScreen`/`-Windowed` display switches. It repeats the complete physical
+preflight, then records a short task to XDF.
+
+### 4. Whole-visit rehearsal
+
+Use a non-participant test identity:
+
+```powershell
+$TestId = "systemtest-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+
+FullTest `
+  -Participant $TestId `
+  -VisitId "$TestId-visit1" `
+  -NoGoDigit 3 `
+  -Operator "operator-initials" `
+  -ScreenIndex 0 `
+  -BaselineSeconds 60 `
+  -ConfirmElectrodes `
+  -DataRoot $EegleData
+```
+
+The default `FullTest` profile uses 30 experimental trials, 30-trial practice
+rounds with four no-go trials, up to three initially materialized rounds, and
+60 seconds for each baseline condition. It uses the same phase transitions,
+managed XDF recorder, marker receipts, task ledgers, warnings, and resume logic
+as the full run.
+
+## Run a participant
+
+Before launch, confirm that Collect is publishing the verified outlet, the
+participant has been allocated exactly one no-go digit, the correct data root
+is available, the acquisition display is in its validated 60 Hz or 120 Hz mode,
+and no manually started LabRecorder owns port 22345.
+
+The normal complete Visit 1 command is:
+
+```powershell
+$ParticipantId = "sub-001"
+$VisitId = "$ParticipantId-full-visit1"
+
+FullRun `
+  -Participant $ParticipantId `
+  -VisitId $VisitId `
+  -NoGoDigit 3 `
+  -Operator "operator-initials" `
+  -ScreenIndex 0 `
+  -ConfirmElectrodes `
+  -DataRoot $EegleData
+```
+
+For a new acquisition, `-Participant`, `-NoGoDigit`, `-Operator`, and
+`-ConfirmElectrodes` are required. `-VisitId` is optional but recommended for
+an operator-readable visit identity. Participant values such as names, spaces,
+Unicode, and ordinary Windows-valid punctuation are preserved exactly in the
+manifests. Only values that would be unsafe as a directory component are given
+a stable encoded storage component; participant lookup and resume use the exact
+manifest identity.
+
+The normal `FullRun` defaults are 120 seconds for each baseline condition,
+criterion-gated practice, and 1,000 experimental trials in four 250-trial
+sections. The important operational alternatives are:
+
+```powershell
+$RunArgs = @{
+  Participant = $ParticipantId
+  VisitId = $VisitId
+  NoGoDigit = 3
+  Operator = "operator-initials"
+  ConfirmElectrodes = $true
+  DataRoot = $EegleData
+}
+
+# Choose one of these launch forms for a new visit; do not run them in sequence.
+
+# Shorten both eyes-open and eyes-closed baselines.
+FullRun @RunArgs -BaselineSeconds 30
+
+# Deliberately omit the baseline child session.
+FullRun @RunArgs -SkipBaseline
+
+# Deliberately omit practice.
+FullRun @RunArgs -SkipPractice
+
+# Use a shortened deterministic task and custom practice plan.
+FullRun @RunArgs -Trials 100 -PracticeTrials 12 -PracticeNoGoTrials 1 -PracticeMaxRounds 1
+
+# Choose another monitor and an exact optional speaker endpoint.
+FullRun @RunArgs -ScreenIndex 1 -AudioOutputDevice "Speakers (Realtek(R) Audio)"
+```
+
+All overrides are recorded. A shortened task has its own prepared sequence
+identity and must not be treated as the default 1,000-trial profile.
+
+### FullTest and FullRun parameter reference
+
+Both launchers expose the same operator-facing parameter names. Their defaults
+differ only where shown:
+
+| Parameter | FullTest default | FullRun default | Meaning |
+| --- | --- | --- | --- |
+| `-Participant <text>` | Required for new run | Required for new run | Exact participant identity stored in manifests |
+| `-NoGoDigit <0..9>` | Required for new run | Required for new run | Counterbalanced no-go assignment |
+| `-Operator <text>` | Required for new run | Required for new run | Operator identity |
+| `-ConfirmElectrodes` | Required for new run | Required for new run | Attest that Collect electrode/contact inspection was performed |
+| `-DataRoot <path>` | Configured/default root | Configured/default root | Root used for every visit and child session artifact |
+| `-VisitId <text>` | Generated if omitted | Generated if omitted | Explicit visit identity; also usable for exact resume selection |
+| `-Trials <n>` | `30` | `1000` | Experimental trial count (`10..100000`) |
+| `-BaselineSeconds <seconds>` | `60` | `120` | Duration of each eyes-open and eyes-closed condition |
+| `-SkipBaseline` | Off | Off | Create no baseline child session |
+| `-PracticeTrials <n>` | `30` | `30` | Trials in each planned practice round |
+| `-PracticeNoGoTrials <n>` | `4` | `4` | No-go trials per practice round; must be less than practice trials |
+| `-PracticeMaxRounds <n>` | `3` | `3` | Rounds materialized initially; participant-requested retries may extend it |
+| `-SkipPractice` | Off | Off | Proceed without practice |
+| `-ScreenIndex <0..16>` | `0` | `0` | Zero-based PsychoPy monitor |
+| `-AudioOutputDevice <name>` | Automatic | Automatic | Prefer the exact PsychoPy speaker name; unavailability is warning-only |
+| `-FullScreen` | Default behavior | Default behavior | Explicitly request acquisition-capable fullscreen |
+| `-Windowed` | Off | Off | Diagnostic-only window; mutually exclusive with `-FullScreen` |
+| `-Resume` | Off | Off | Resume a selected existing incomplete visit |
+| `-ResumeTarget <id-or-path>` | Empty | Empty | Visit ID, child run/session name, visit directory, child directory, or manifest path |
+
+PowerShell wrapper parameters use one leading dash. Python `study1` options use
+two leading dashes; do not mix the two forms.
+
+## Resume and retry safely
+
+`FullTest` and `FullRun` automatically request `--retry-incomplete` for a normal
+new-run invocation. Repeating the same full command after correcting a failure
+continues that participant's incomplete Visit 1, preserves completed phases,
+and records a failed/interrupted phase into a new child directory. It never
+appends to or overwrites an earlier XDF.
+
+Use `-Resume` when deliberately selecting an existing visit. The smallest forms
+are:
+
+```powershell
+# Newest incomplete Visit 1 matching the exact participant identity.
+FullRun -Participant "sub-001" -Resume -DataRoot $EegleData
+
+# Visit ID, child run/session name, or an exact directory/manifest path.
+FullRun -Resume -ResumeTarget "visit-1-20260825T120000" -DataRoot $EegleData
+FullRun -Resume -ResumeTarget "D:\EEGleData\study1\...\visit_manifest.json" -DataRoot $EegleData
+```
+
+Resume reloads participant allocation, operator identity, protocol/task shape,
+prepared sequence, and completed-phase state from the manifests. Do not add
+new task-shaping flags in an attempt to change an existing visit. A completed
+baseline stays complete; a visit initially created with `-SkipBaseline` stays
+baseline-free. If a recording completed but its warning decision was deferred,
+resume presents the warnings again instead of reacquiring the phase.
+
+## Validate after the run
+
+Validation is separate from acquisition. It does not change the XDF, ledgers,
+quality decisions, or Study 1 completion status. Run quick validation after
+each completed participant visit:
+
+```powershell
+ValidateRun -Participant $ParticipantId -Visit 1 -DataRoot $EegleData -Mode Quick
+```
+
+Run comprehensive validation before analysis/export and whenever investigating
+warnings:
+
+```powershell
+ValidateRun -Participant $ParticipantId -Visit 1 -DataRoot $EegleData -Mode Comprehensive
+```
+
+To validate a retained incomplete visit or exact baseline/task child session,
+use `-RunRoot` rather than `-Participant`:
+
+```powershell
+ValidateRun -RunRoot "D:\EEGleData\study1\...\visit_manifest.json" -Mode Comprehensive
+```
+
+To compare a separately maintained mirror without writing to it:
+
+```powershell
+ValidateRun -RunRoot "D:\EEGleData\study1\...\visit_manifest.json" `
+  -Mode Comprehensive `
+  -BackupRoot "E:\EEGleBackup"
+```
+
+Exactly one of `-Participant` or `-RunRoot` is required. `-Visit 1|2` narrows
+participant lookup, `-DataRoot` supplies that lookup root, `-Mode` is `Quick`
+or `Comprehensive`, and `-BackupRoot` is valid only in comprehensive mode.
+Participant lookup selects the newest completed visit whose manifest contains
+the exact participant identity. Exact targets may be incomplete.
+
+The installed cross-platform equivalents are:
+
+```bash
+study1-validate --participant "Participant Name" --visit 1 --session-root /path/to/data --mode quick
+study1-validate --target /path/to/visit-or-run --mode comprehensive
+study1-validate --target /path/to/visit-or-run --mode comprehensive --backup-root /path/to/mirror
+```
+
+The direct validator parameters are:
+
+| Parameter | Meaning |
+| --- | --- |
+| `--participant <text>` | Select the newest completed visit with this exact manifest identity |
+| `--target <path>` | Select an exact visit/session/run directory or `visit_manifest.json`, including retained incomplete data |
+| `--visit 1\|2` | Optionally narrow participant lookup |
+| `--session-root <path>` | DataRoot used for participant lookup |
+| `--mode quick\|comprehensive` | Quick is the default |
+| `--backup-root <path>` | Read-only DataRoot mirror comparison; comprehensive mode only |
+| `--config <json>` | Optional config override used for defaults and validation contracts |
+
+Exactly one of `--participant` or `--target` is required.
+
+Quick mode resolves every phase/session, checks canonical artifacts for
+existence/readability/nonzero size, reads XDF headers, strictly parses canonical
+JSON/JSONL/CSV ledgers, and checks declared identities, counts, sequences, and
+basic key-event references. Comprehensive mode also scans all XDF samples and
+clock data with bounded memory; reconciles XDF markers, independent receipts,
+baseline/task/trial/keypress/stimulus ledgers; recomputes response assignment,
+correctness, and RT; reports supportable channel/timing intervals and trials;
+and writes a SHA-256 canonical inventory. Backup comparison is read-only.
+
+Every invocation atomically creates a timestamped report below the visit's
+`reports\post_run_validation` directory. Interpret validator exit codes as:
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | Validation completed; inspect the report because scientific, integrity, or backup warnings may still exist |
+| `2` | Target not found or a canonical core artifact is missing/unreadable |
+| `1` | Internal validator error |
+
+Cross-ledger mismatches, timestamp defects, signal artifacts, and backup
+differences are reported as warnings and do not themselves produce a nonzero
+exit. Missing signal cannot be recreated; clock correction may address
+offset/drift, while isolated nonmonotonic samples can sometimes be dropped or
+reordered during documented post-processing. The report describes the affected
+intervals and likely recoverability without making the exclusion decision.
+
+## Required Study 1 artifacts
+
+XDF is the authoritative raw EEG and LSL container. Study 1 deliberately does
+not create `raw/eeg.csv`. JSONL task, keypress, event, and stimulus-manifest
+files are canonical behavioral/timing artifacts; any CSV task files are
+convenience mirrors and never replace or rewrite XDF.
+
+A completed recorded child phase must retain at least:
+
+```text
+raw/recording.xdf
+raw/xdf_metadata.json
+raw/lsl_markers_received.csv
+logs/processes/recorder.status.json
+reports/recording_quality_warnings.json
+```
+
+Task phases also retain canonical trial, keypress, event, and stimulus-manifest
+ledgers. The visit manifest links each phase to its child session. Use the
+validator to resolve and reconcile these files; do not infer completeness from
+the presence of a single XDF or from the PsychoPy window closing.
+
 ## Current protocol structure
 
 - Visit 1: preflight, 120-second eyes-open baseline, 120-second eyes-closed
@@ -150,9 +590,69 @@ using the observed live transport contract: 59 scalp EEG channels, `ECG`,
 first 64 values correspond to physical inputs; value 65 is preserved raw but
 excluded from derived EEG analysis.
 
+### Direct `study1` option reference
+
+Use `FullTest` and `FullRun` for guarded Windows Visit 1 acquisition. Use the
+installed `study1` command (or `python -m eegle.pipelines.study1`) for software
+rehearsal, physical preflight automation, or explicitly controlled development.
+The direct options are grouped below; `study1 --help` is the executable source
+of truth.
+
+| Options | Use and constraints |
+| --- | --- |
+| `--config <json>` | Recipe/config path; the checked-in candidate is not a confirmed live cap config |
+| `--participant <text>` | Required nonempty exact identity |
+| `--visit 1\|2` | Required visit number; Visit 2 requires an existing completed Visit 1 participant manifest |
+| `--visit-id <text>` | Optional explicit visit identity |
+| `--operator <text>` | Operator identity; required by the guarded live launcher |
+| `--master-seed <int>` | Deterministic participant/session seed; do not change it between visits/resume |
+| `--no-go-digit 0..9` | Required when creating a real EEG participant; dry/synthetic rehearsals can allocate deterministically |
+| `--task-mode psychopy\|dry-run` | Real display task or software-only task execution |
+| `--smoke` | Shorten every visit phase; cannot be combined with `--full-1000` |
+| `--full-1000` | Select the separate complete Visit 1 profile; Visit 1 only |
+| `--include-practice` / `--skip-practice` | Mutually exclusive practice choice |
+| `--trials <n>` | Override each experimental segment; minimum 10 |
+| `--practice-trials <n>` | Planned practice length; minimum 10 |
+| `--practice-no-go-trials <n>` | At least 1 and less than practice trials |
+| `--practice-max-rounds <n>` | Initially materialized deterministic rounds; minimum 1 |
+| `--baseline-seconds <seconds>` / `--skip-baseline` | Mutually exclusive per-condition duration or deliberate omission |
+| `--window-size <width> <height>` | Positive diagnostic window dimensions |
+| `--screen-index <n>` | Nonnegative zero-based monitor index |
+| `--audio-output-device <name>` | Exact preferred PsychoPy speaker; unavailable audio remains warning-only |
+| `--fullscreen` / `--windowed` | Mutually exclusive; windowed mode is diagnostic, not acquisition timing qualification |
+| `--skip-eeg` | Do not start an EEG recorder; used for software rehearsal |
+| `--allow-missing-eeg` | Permit missing EEG only when not recording it; Study 1 cannot record while allowing the required stream to be absent |
+| `--simulate-eeg` | Development-only synthetic 65-value LSL outlet; requires dry-run and real recorder, and conflicts with skip/allow-missing EEG |
+| `--labrecorder-executable <path>` | Per-invocation executable override |
+| `--preflight-only` | Physical EEG/LSL/channel/electrode/LabRecorder/XDF gate without creating a visit; conflicts with resume/retry/simulation |
+| `--confirm-electrodes` | Operator attestation after inspecting Collect |
+| `--electrode-quality-file <json>` | Optional external structured electrode/contact report; unrecognized status values are reported as warnings |
+| `--electrode-note <text>` | Operator note stored with electrode-quality evidence |
+| `--resume` | Resume an existing visit without appending to an existing XDF |
+| `--resume-target <id-or-path>` | Visit ID, child run/session name, directory, or visit manifest; requires resume |
+| `--retry-incomplete` | Automatically continue the participant's incomplete visit; mutually exclusive with resume |
+| `--session-root <path>` | Exact DataRoot; `--output-root` is a compatibility alias |
+| `--result-file <path>` | Atomic final launcher handshake; not a substitute for the visit/session artifacts |
+| `--lsl-wait <seconds>` | Stream-discovery wait duration |
+| `--allow-visit-interval-override` | Logged pilot-only exception to the configured 2-7 day Visit 2 interval |
+
+For a direct live Visit 1, use the generated confirmed live config created by
+`02-Test-NeuracleLsl.ps1`, not the checked-in candidate config:
+
+```powershell
+study1 --config .runtime\windows-neuracle64\study1-live.json `
+  --participant "sub-001" --visit 1 --no-go-digit 3 --operator "operator-id" `
+  --include-practice --confirm-electrodes --fullscreen --session-root $EegleData
+```
+
+That direct command uses the standard proposal profile, not `FullRun`'s
+separately versioned complete 1,000-trial profile. Prefer `FullRun` when the
+complete profile is intended.
+
 ## Participant allocation
 
-The first live visit requires an explicitly assigned counterbalanced digit:
+The first live visit requires an explicitly assigned counterbalanced digit. In
+a direct command, the identity/allocation portion is:
 
 ```bash
 study1 --participant sub-001 --visit 1 --no-go-digit 7 --operator operator-id
@@ -179,6 +679,46 @@ Study 1 uses the managed `labrecorder_xdf` backend. Each baseline or task child
 session writes `raw/recording.xdf` as its authoritative recording. A non-writing
 LSL sample heartbeat reports live progress without duplicating the full EEG
 amplitudes. The XDF is never appended across phases or visits.
+
+After each recorder stops, the phase writes
+`reports/recording_quality_warnings.json`. This atomic sidecar contains stable,
+structured warning codes plus exact channels, trials, counts, timestamp-gap
+intervals, recoverability, and suggested review actions where the evidence
+supports them. It does not emit new LSL markers, change the completion decision,
+or turn signal/electrode/timing quality findings into automatic failures. Task,
+keypress, event, and stimulus-manifest ledgers receive best-effort durable flushes
+at block and final boundaries. A Windows `fsync` denial is recorded as
+`io.durability_sync_failed` and remains non-blocking. XDF remains the authoritative
+raw EEG/LSL artifact; CSV task files are convenience mirrors only.
+
+## Read-only post-run validation
+
+Use the separate validator after acquisition. Participant lookup matches the
+exact `participant_id` stored in visit manifests and selects the newest completed
+visit; an exact target may also select an incomplete retained visit or one child
+session:
+
+```bash
+study1-validate --participant "Participant Name" --session-root /path/to/data --mode quick
+study1-validate --participant "Participant Name" --visit 1 --session-root /path/to/data
+study1-validate --target /path/to/visit-or-run --mode comprehensive
+study1-validate --target /path/to/visit-or-run --mode comprehensive --backup-root /path/to/mirror
+```
+
+Quick mode checks canonical file readability, XDF headers, strict JSON/JSONL/CSV
+parsing, declared counts, identities, sequence consistency, and key-event
+references. Comprehensive mode additionally scans XDF samples and clocks,
+reconciles marker/baseline/task/key ledgers, recomputes scoring and RT, hashes the
+canonical inventory, and optionally compares a read-only backup mirror. Every
+invocation writes a unique atomic JSON report beneath
+`reports/post_run_validation/`. It never rewrites raw files or Study 1 completion
+manifests.
+
+Exit code `0` means validation completed, even when scientific or integrity
+warnings were reported. Exit code `2` means the target or a canonical core
+artifact was missing/unreadable; exit code `1` is an internal validator error.
+On Windows, `ValidateRun` exposes `-Participant`, optional `-Visit`, `-RunRoot`,
+`-DataRoot`, `-Mode`, and `-BackupRoot` equivalents.
 
 On the Windows x64 acquisition computer:
 

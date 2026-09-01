@@ -32,6 +32,12 @@ from eegle.hardware.system import CheckResult
 from eegle.io.events import EventLogger
 from eegle.lsl import LslMarkerOutlet, NullMarkerOutlet, lsl_local_clock, session_marker_source_id
 from eegle.preflight import run_preflight
+from eegle.quality import (
+    collect_recording_quality_issues,
+    electrode_quality_issues,
+    format_quality_issue,
+    publish_recording_quality_report,
+)
 from eegle.psychopy_audio import (
     PsychoPyAudioOutput,
     audio_output_enabled,
@@ -47,6 +53,7 @@ from eegle.psychopy_display import (
 from eegle.psychopy_input import clear_psychopy_keys, poll_psychopy_keys
 from eegle.recording_health import RecorderHealthMonitor
 from eegle.runtime import prepare_psychopy_runtime
+from eegle.session import assert_lexically_contained, participant_storage_component
 from eegle.session import SessionPaths, create_session
 from eegle.storage_permissions import probe_recording_storage
 from eegle.telemetry import Telemetry
@@ -268,7 +275,9 @@ def run_recording_suite(options: DsartRecordingOptions) -> dict[str, Any]:
     runtime_config["runtime_cache_dir"] = str(_runtime_cache_root(config, output_root))
     _probe_session_root_writable(output_root)
     visit_id = _resolve_visit_id(options, output_root)
-    visit_dir = output_root / "recording_suites" / options.participant_id / visit_id / options.recipe
+    participant_dir = _recording_suite_participant_directory(output_root, options.participant_id)
+    visit_dir = participant_dir / visit_id / options.recipe
+    assert_lexically_contained(participant_dir, visit_dir)
     manifest_path = visit_dir / "recording_suite.json"
     if manifest_path.exists() and not options.resume:
         raise FileExistsError(f"recording suite already exists; use --resume: {manifest_path}")
@@ -376,6 +385,7 @@ def run_recording_suite(options: DsartRecordingOptions) -> dict[str, Any]:
                         preflight=current_preflight,
                     )
                     active_result = result
+                    _publish_post_recording_quality_nonfatal(result, "resting baseline")
                     manifest["baseline_session_directory"] = result.get("session_dir")
                     if result.get("status") != "completed":
                         raise RuntimeError(_incomplete_phase_detail("resting baseline", result))
@@ -390,6 +400,7 @@ def run_recording_suite(options: DsartRecordingOptions) -> dict[str, Any]:
                         preflight=current_preflight,
                     )
                     active_result = result
+                    _publish_post_recording_quality_nonfatal(result, "DSART session 1")
                     _record_dsart_attempt(manifest, 1, result)
                     if result.get("status") != "completed":
                         raise RuntimeError(_incomplete_phase_detail("DSART session 1", result))
@@ -419,6 +430,7 @@ def run_recording_suite(options: DsartRecordingOptions) -> dict[str, Any]:
                         preflight=current_preflight,
                     )
                     active_result = result
+                    _publish_post_recording_quality_nonfatal(result, "DSART session 2")
                     _record_dsart_attempt(manifest, 2, result)
                     if result.get("status") != "completed":
                         raise RuntimeError(_incomplete_phase_detail("DSART session 2", result))
@@ -864,11 +876,16 @@ def run_recording_preflight(
             operator_confirmed=electrodes_confirmed,
         )
         electrode_path = output_dir / f"{phase}_electrode_quality.json"
+        electrode_report["quality_issues"] = electrode_quality_issues(
+            electrode_report,
+            phase=phase,
+        )
         _write_json_atomic(electrode_path, electrode_report)
         electrode_status = "ok"
-        if any(row["quality_status"] == "failed" for row in electrode_report["channels"]):
-            electrode_status = "fail"
-        elif any(row["quality_status"] in {"warning", "unavailable"} for row in electrode_report["channels"]):
+        if any(
+            row["quality_status"] not in {"good", "excluded"}
+            for row in electrode_report["channels"]
+        ):
             electrode_status = "warn"
         electrode_check = CheckResult(
             "electrode_quality",
@@ -927,6 +944,19 @@ def run_recording_preflight(
         "nonblocking_warnings": list(dict.fromkeys(nonblocking_warnings)),
         "failures": list(dict.fromkeys(preflight_failures)),
     }
+    quality_issues = []
+    if xdf_probe is not None:
+        probe_validation = dict(xdf_probe.data.get("validation") or {})
+        quality_issues.extend(
+            collect_recording_quality_issues(
+                {"validation": {"xdf_integrity": probe_validation}},
+                phase=phase,
+                session_dir=xdf_probe.data.get("session_dir"),
+            )
+        )
+    if record_eeg:
+        quality_issues.extend(electrode_report.get("quality_issues") or [])
+    report["quality_issues"] = quality_issues
     report_path = output_dir / f"{phase}.json"
     report["report_file"] = str(report_path)
     _write_json_atomic(report_path, report)
@@ -1044,8 +1074,9 @@ def _run_xdf_preflight_probe(
                 str(receipt_summary.get("error") or "preflight marker receipt did not stop cleanly")
             )
         validation = validate_xdf_recording(paths.root, required=True)
-        failures = [str(item) for item in validation.get("failures") or []]
+        failures, quality_review = _partition_xdf_failures(validation.get("failures") or [])
         warnings = [str(item) for item in validation.get("warnings") or []]
+        warnings.extend(f"XDF quality review: {message}" for message in quality_review)
         mirror_warning = str(recorder_summary.get("csv_mirror_warning") or "").strip()
         if mirror_warning:
             warnings.append(mirror_warning)
@@ -1256,10 +1287,13 @@ def _accept_recording_preflight(report: dict[str, Any], options: DsartRecordingO
         "status": report.get("status"),
         "channel_contract": report.get("channel_contract", {}).get("status"),
         "warnings": report.get("warnings", []),
+        "quality_issues": report.get("quality_issues", []),
         "electrode_quality_file": report.get("electrode_quality_file"),
         "report_file": report.get("report_file"),
     }
     print(json.dumps({"dsart_recording_preflight": summary}, indent=2, sort_keys=True))
+    for issue in list(report.get("quality_issues") or []):
+        print(f"  {format_quality_issue(issue)}")
     warnings = [str(item).strip() for item in report.get("warnings", []) if str(item).strip()]
     nonblocking_warnings = {
         str(item).strip()
@@ -1334,18 +1368,33 @@ def _accept_post_recording_warnings(
     phase: str,
 ) -> None:
     """Show nonfatal validation warnings before advancing to another acquisition phase."""
+    _publish_post_recording_quality_nonfatal(result, phase)
     validation = dict(result.get("validation") or {})
     candidates = [
         *list(result.get("warnings") or []),
         *list(validation.get("warnings") or []),
     ]
     warnings = list(dict.fromkeys(str(item).strip() for item in candidates if str(item).strip()))
-    if not warnings:
+    quality_issues = list(result.get("quality_issues") or [])
+    if not warnings and not quality_issues:
         return
     accepted = True
     method = "software_only"
     if options.task_mode == "psychopy" and options.record_eeg:
         print(f"{phase}: recording completed with warnings")
+        if quality_issues:
+            print("  Structured quality issues:")
+            issue_number = 0
+            domains = sorted({str(issue.get("domain") or "other") for issue in quality_issues})
+            for domain in domains:
+                print(f"    {domain.upper()}:")
+                for issue in quality_issues:
+                    if str(issue.get("domain") or "other") != domain:
+                        continue
+                    issue_number += 1
+                    print(f"      {issue_number}. {format_quality_issue(issue)}")
+            if warnings:
+                print("  Additional warning messages:")
         for index, warning in enumerate(warnings, start=1):
             print(f"  {index}. {warning}")
         accepted = _prompt_operator_acceptance(
@@ -1358,6 +1407,7 @@ def _accept_post_recording_warnings(
         "accepted_at": _now() if accepted else None,
         "operator": options.operator,
         "warnings": warnings,
+        "quality_issue_codes": [str(issue.get("code")) for issue in quality_issues],
     }
     result["operator_warning_acceptance"] = acceptance
     session_dir = result.get("session_dir")
@@ -1373,6 +1423,22 @@ def _accept_post_recording_warnings(
             )
     if not accepted:
         raise RuntimeError(f"{phase} warnings were not accepted; raw recording was retained")
+
+
+def _publish_post_recording_quality_nonfatal(
+    result: dict[str, Any],
+    phase: str,
+) -> None:
+    existing = result.get("quality_report_file")
+    if existing and Path(str(existing)).is_file():
+        return
+    try:
+        publish_recording_quality_report(result, phase=phase)
+    except Exception as exc:
+        result.setdefault("warnings", []).append(
+            "recording quality sidecar could not be published: "
+            f"{type(exc).__name__}: {exc}"
+        )
 
 
 def _prompt_operator_acceptance(prompt: str) -> bool:
@@ -1582,14 +1648,24 @@ def run_resting_baseline(
     if baseline_validation["failures"]:
         result["status"] = "failed"
         result.setdefault("warnings", []).extend(baseline_validation["failures"])
-    for target in (paths.events / "dsart_baseline_results.json", paths.completion_summary):
+    completion_targets = (paths.events / "dsart_baseline_results.json", paths.completion_summary)
+    for target in completion_targets:
         try:
             _write_json_atomic(target, result)
+            durability_warning = _best_effort_fsync_path(target, target.name)
+            if durability_warning:
+                result.setdefault("durability_warnings", []).append(durability_warning)
         except Exception as exc:
             result.setdefault("warnings", []).append(
                 f"baseline completion report could not be published to {target}: {type(exc).__name__}: {exc}; "
                 "raw recording was retained"
             )
+    if result.get("durability_warnings"):
+        for target in completion_targets:
+            try:
+                _write_json_atomic(target, result)
+            except Exception:
+                pass
     return result
 
 
@@ -1651,6 +1727,7 @@ def _run_baseline_dry(
     start = monotonic()
     phases = []
     cleanup_warnings: list[str] = []
+    logger: EventLogger | None = None
     try:
         if record_eeg:
             if marker_outlet is None:
@@ -1722,6 +1799,8 @@ def _run_baseline_dry(
     }
     if cleanup_warnings:
         result["warnings"] = cleanup_warnings
+    if logger is not None and logger.durability_warnings:
+        result["durability_warnings"] = list(logger.durability_warnings)
     return result
 
 
@@ -1749,6 +1828,7 @@ def _run_baseline_psychopy(
     operator_interrupt = False
     failure: str | None = None
     cleanup_warnings: list[str] = []
+    logger: EventLogger | None = None
     display_timing: dict[str, Any] | None = None
     audio_output: PsychoPyAudioOutput | None = None
     audio_output_report: dict[str, Any] = {
@@ -1888,6 +1968,8 @@ def _run_baseline_psychopy(
         result["abort_reason"] = abort_reason
     if cleanup_warnings:
         result["warnings"] = cleanup_warnings
+    if logger is not None and logger.durability_warnings:
+        result["durability_warnings"] = list(logger.durability_warnings)
     return result
 
 
@@ -2094,7 +2176,9 @@ def _run_dsart_child_session_isolated(
 ) -> dict[str, Any]:
     """Run each visual session in a fresh interpreter to isolate native GUI state."""
     output_root = Path(config.get("runtime", {}).get("session_root", "data")).expanduser().resolve()
-    worker_dir = output_root / "recording_suites" / options.participant_id / visit_id / options.recipe / "phase_workers"
+    participant_dir = _recording_suite_participant_directory(output_root, options.participant_id)
+    worker_dir = participant_dir / visit_id / options.recipe / "phase_workers"
+    assert_lexically_contained(participant_dir, worker_dir)
     attempt_token = datetime.now().strftime("%Y%m%dT%H%M%S%f")
     request_path = worker_dir / f"session-{session_index}-{attempt_token}.request.json"
     result_path = worker_dir / f"session-{session_index}-{attempt_token}.result.json"
@@ -2338,6 +2422,7 @@ def _run_dsart_child_session_inline(
             practice_enabled=practice_enabled,
         ),
         "task_summary": task_summary,
+        "durability_warnings": list(task_summary.get("durability_warnings") or []),
         "validation": validation,
         "warnings": list(dict.fromkeys([*post_recording_warnings, *list(validation.get("warnings") or [])])),
         "raw_recording_retained": True,
@@ -2618,9 +2703,9 @@ def _child_session_validation(
         failures.append("support reference did not complete")
     if dynamic_report:
         if dynamic_report.get("support_complete_event_count") != 1:
-            failures.append("support-complete marker count is not exactly one")
+            warnings.append("support-complete marker count is not exactly one")
         if not dynamic_report.get("marker_trial_parity", {}).get("matches", False):
-            failures.append("stimulus marker/trial parity failed")
+            warnings.append("stimulus marker/trial parity failed")
     else:
         warnings.append("post-recording DSART validation report was unavailable; raw recording was retained")
     if analysis_error:
@@ -2651,10 +2736,16 @@ def _child_session_validation(
         require_markers=record_eeg,
         require_display_flip=task_mode == "psychopy",
     )
-    failures.extend(marker_integrity["failures"])
+    warnings.extend(
+        f"marker integrity review: {message}"
+        for message in marker_integrity["failures"]
+    )
     warnings.extend(marker_integrity["warnings"])
     countdown_integrity = _countdown_event_integrity(session_dir)
-    failures.extend(countdown_integrity["failures"])
+    warnings.extend(
+        f"countdown timing review: {message}"
+        for message in countdown_integrity["failures"]
+    )
     warnings.extend(countdown_integrity["warnings"])
     return {
         "status": "pass" if not failures and not warnings else ("fail" if failures else "warning"),
@@ -3300,7 +3391,9 @@ def _raw_eeg_integrity(session_dir: Path, *, required: bool) -> dict[str, Any]:
     if recorder_backend == "labrecorder_xdf":
         xdf = validate_xdf_recording(session_dir, required=required)
         result["xdf_integrity"] = xdf
-        failures.extend(list(xdf.get("failures") or []))
+        xdf_blocking, xdf_review = _partition_xdf_failures(xdf.get("failures") or [])
+        failures.extend(xdf_blocking)
+        warnings.extend(f"XDF quality review: {message}" for message in xdf_review)
         warnings.extend(list(xdf.get("warnings") or []))
         if failures:
             result["status"] = "fail"
@@ -3313,6 +3406,25 @@ def _raw_eeg_integrity(session_dir: Path, *, required: bool) -> dict[str, Any]:
         else:
             result["status"] = "pass"
     return result
+
+
+def _partition_xdf_failures(messages: Iterable[str]) -> tuple[list[str], list[str]]:
+    """Keep unreadable/absent/ambiguous streams blocking; surface quality defects for review."""
+
+    review_tokens = (
+        "eeg channel count is",
+        "eeg channel labels/order",
+        "marker labels/order do not exactly match",
+        "synchronized eeg/marker boundaries disagree",
+        "lacks synchronized eeg/marker timestamps",
+    )
+    blocking = []
+    review = []
+    for message in messages:
+        text = str(message)
+        target = review if any(token in text.casefold() for token in review_tokens) else blocking
+        target.append(text)
+    return blocking, review
 
 
 def _baseline_recording_validation(
@@ -3341,7 +3453,7 @@ def _baseline_recording_validation(
             _optional_float(phase.get("start_lsl_timestamp")) is None
             or _optional_float(phase.get("end_lsl_timestamp")) is None
         ):
-            failures.append(f"baseline phase {phase.get('phase')} lacks LSL boundary timestamps")
+            warnings.append(f"baseline phase {phase.get('phase')} lacks LSL boundary timestamps")
     parameters = _load_json(paths.parameters) or {}
     expected_source_id = parameters.get("hardware", {}).get("markers", {}).get("source_id")
     expected_labels = [
@@ -3363,7 +3475,7 @@ def _baseline_recording_validation(
                 if row.get("label") in set(expected_labels):
                     marker_rows.append(row)
     observed_labels = [str(row.get("label")) for row in marker_rows]
-    target = failures if record_eeg else warnings
+    target = warnings
     if observed_labels != expected_labels:
         target.append("baseline boundary marker ledger is incomplete, duplicated, or out of order")
     boundary_lsl_timestamps = []
@@ -3410,7 +3522,10 @@ def _baseline_recording_validation(
                 f"baseline phase {phase.get('phase')} has misaligned monotonic/LSL boundary timing"
             )
     marker_receipt = _marker_receipt_integrity(paths.root, marker_rows, required=record_eeg)
-    failures.extend(marker_receipt["failures"])
+    warnings.extend(
+        f"baseline marker receipt review: {message}"
+        for message in marker_receipt["failures"]
+    )
     warnings.extend(marker_receipt["warnings"])
     raw = _raw_eeg_integrity(paths.root, required=record_eeg)
     failures.extend(raw["failures"])
@@ -3484,12 +3599,22 @@ def _electrode_report(
         supplied = external_channels.get(name)
         supplied = dict(supplied) if isinstance(supplied, dict) else ({"value": supplied} if supplied is not None else {})
         signal = signal_rows.get(name, {})
-        status = str(supplied.get("status") or signal.get("status") or "unavailable")
+        raw_supplied_status = supplied.get("status") if "status" in supplied else None
+        reported_status = str(
+            raw_supplied_status
+            if raw_supplied_status is not None
+            else signal.get("status") or "unavailable"
+        )
+        status, category, recognized = _normalize_electrode_quality_status(reported_status)
         channels.append(
             {
                 "channel_name": name,
                 "quality_or_impedance_value": supplied.get("value", supplied.get("impedance_kohm")),
                 "quality_status": status,
+                "quality_status_category": category,
+                "quality_status_recognized": recognized,
+                "reported_quality_status": reported_status,
+                "raw_supplied_status": raw_supplied_status,
                 "operator_note": supplied.get("note", operator_note),
                 "timestamp": _now(),
                 "finite_sample_fraction": signal.get("finite_sample_fraction"),
@@ -3510,6 +3635,28 @@ def _electrode_report(
         "measurement_type": "impedance_or_contact_quality" if recipe == "dsart32" else "contact_or_signal_quality",
         "channels": channels,
     }
+
+
+def _normalize_electrode_quality_status(status: str) -> tuple[str, str, bool]:
+    normalized = str(status).strip().casefold().replace("-", "_").replace(" ", "_")
+    if normalized in {"good", "ok", "pass", "passed", "acceptable", "excluded"}:
+        return ("excluded", "excluded", True) if normalized == "excluded" else ("good", "good", True)
+    if normalized in {"unavailable", "unknown", "missing", "not_measured", "none"}:
+        return "unavailable", "unavailable", True
+    if normalized in {
+        "warning",
+        "warn",
+        "failed",
+        "fail",
+        "bad",
+        "poor",
+        "high_impedance",
+        "noisy",
+        "flat",
+    }:
+        category = "reported_problem" if normalized not in {"warning", "warn"} else "warning"
+        return "warning", category, True
+    return "warning", "unrecognized_status", False
 
 
 def _marker_preflight_check(
@@ -3912,6 +4059,7 @@ def _initial_manifest(
         "schema": SUITE_SCHEMA,
         "recipe": options.recipe,
         "participant_id": options.participant_id,
+        "participant_storage_component": participant_storage_component(options.participant_id),
         "visit_id": visit_id,
         "hardware_profile": hardware.get("profile"),
         "channel_mapping_source": hardware.get("mapping_source"),
@@ -4046,7 +4194,7 @@ def _resolve_visit_id(options: DsartRecordingOptions, output_root: Path) -> str:
     if options.visit_id:
         return _safe_token(options.visit_id)
     if options.resume:
-        base = output_root / "recording_suites" / options.participant_id
+        base = _recording_suite_participant_directory(output_root, options.participant_id)
         candidates = sorted(
             (
                 path
@@ -4060,6 +4208,34 @@ def _resolve_visit_id(options: DsartRecordingOptions, output_root: Path) -> str:
             return candidates[0].parent.parent.name
         raise FileNotFoundError("--resume could not find an incomplete visit; provide --visit-id")
     return datetime.now().strftime("visit-%Y%m%dT%H%M%S")
+
+
+def _recording_suite_participant_directory(
+    output_root: Path,
+    participant_id: str,
+) -> Path:
+    """Reuse exact-identity legacy suite roots and safely represent path-like IDs."""
+
+    suite_root = output_root / "recording_suites"
+    preferred = suite_root / participant_storage_component(participant_id)
+    assert_lexically_contained(suite_root, preferred)
+    matches = []
+    for manifest_path in suite_root.glob("*/*/*/recording_suite.json"):
+        try:
+            payload = _load_json(manifest_path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict) and payload.get("participant_id") == participant_id:
+            matches.append(manifest_path.parents[2])
+    unique = list(dict.fromkeys(matches))
+    if len(unique) > 1:
+        choices = ", ".join(str(path) for path in unique)
+        raise ValueError(
+            f"participant {participant_id!r} has multiple recording-suite directories: {choices}"
+        )
+    selected = unique[0] if unique else preferred
+    assert_lexically_contained(suite_root, selected)
+    return selected
 
 
 def _validate_resume_identity(
@@ -4173,6 +4349,15 @@ def _write_text_atomic(path: Path, text: str) -> None:
         _replace_atomic_file(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _best_effort_fsync_path(path: Path, label: str) -> str | None:
+    try:
+        with path.open("rb") as handle:
+            os.fsync(handle.fileno())
+    except OSError as exc:
+        return f"{label} durable flush failed: {type(exc).__name__}: {exc}"
+    return None
 
 
 def _replace_atomic_file(source: Path, target: Path) -> None:

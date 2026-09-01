@@ -922,11 +922,17 @@ def _probe_psychopy_display_and_keyboard_inline(config: dict[str, Any]) -> dict[
         keyboard = create_hardware_keyboard(
             keyboard_module,
             backend=str(display.get("keyboard_backend", "ptb")),
+            capture_outside_window=bool(
+                display.get("capture_keyboard_outside_window", False)
+            ),
         )
         # Exercise the queue once.  A backend/configuration failure therefore
         # occurs before LabRecorder creates a partial XDF.
         poll_hardware_keyboard(keyboard)
         timing["keyboard_backend"] = str(display.get("keyboard_backend", "ptb"))
+        timing["capture_keyboard_outside_window"] = bool(
+            display.get("capture_keyboard_outside_window", False)
+        )
         timing["window_opened"] = True
         # Audio is an optional operator cue. Its probe is deliberately
         # best-effort and reports warn/skip instead of failing this worker.

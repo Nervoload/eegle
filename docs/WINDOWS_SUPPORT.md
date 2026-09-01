@@ -8,10 +8,12 @@ commands, module launches, and explicit hardware checks.
 
 - Package import and public APIs: OS-agnostic Python.
 - CLI commands: installed `eegle`, `alpha8`, `inhibition8`, `classify8`,
-  `attention8`, `dsart8`, `dsart32`, and `study1` scripts, or module forms.
-- Guarded Study 1 launchers: `FullTest` and `FullRun` after
-  `00-Setup.ps1 -AddCommandsToUserPath`, with `FullTest.ps1` and `FullRun.ps1`
-  retained as repository-relative forms.
+  `attention8`, `dsart8`, `dsart32`, `study1`, and `study1-validate` scripts,
+  or module forms.
+- Guarded Study 1 launchers: `FullTest`, `FullRun`, and the read-only
+  `ValidateRun` post-run validator after
+  `00-Setup.ps1 -AddCommandsToUserPath`, with `FullTest.ps1`, `FullRun.ps1`, and
+  `ValidateRun.ps1` retained as repository-relative forms.
 - Worker processes: launched with the current Python executable, `-m`, and
   `shell=False`.
 - Session output: created through `pathlib`, with relative paths documented for
@@ -59,6 +61,8 @@ py -3.10 -m eegle.cli --help
 py -3.10 -m eegle.pipelines.classify8 --help
 py -3.10 -m eegle.pipelines.attention8 --help
 py -3.10 -m eegle.pipelines.dsart_recording --help
+py -3.10 -m eegle.pipelines.study1 --help
+py -3.10 -m eegle.pipelines.study1_validation --help
 ```
 
 Makefile targets and repository-root `./alpha8` wrappers are POSIX conveniences,
@@ -66,11 +70,37 @@ not the Windows operator path.
 
 ## Neuracle W64 / Collect Test Path
 
-Use `docs/NEURACLE64_WINDOWS_TEST.md` for the guarded Windows x64 operator
-sequence: setup, a visible 10-trial no-EEG run, Collect/LSL discovery, physical
-cap-contract confirmation, a 10-20 trial XDF test, and the complete short
-baseline/practice/30-trial test. The supplied PowerShell scripts live under
-`scripts\windows\neuracle64` and call the virtual environment directly.
+Use [`STUDY1.md`](STUDY1.md) for the complete installation-to-validation
+workflow and parameter reference. Use
+[`NEURACLE64_WINDOWS_TEST.md`](NEURACLE64_WINDOWS_TEST.md) as the guarded Windows
+x64 acquisition-computer runbook. The required order is setup, exact-root
+storage probe, a visible 10-trial no-EEG run, Collect/LSL discovery,
+physical cap-contract confirmation and XDF preflight, a 10-20 trial recorded
+task, the complete short `FullTest`, the participant `FullRun`, then independent
+quick and comprehensive validation.
+
+The supplied PowerShell scripts live under `scripts\windows\neuracle64` and
+call the virtual environment directly. After
+`00-Setup.ps1 -AddCommandsToUserPath`, the guarded launchers are available as
+`FullTest`, `FullRun`, and `ValidateRun`. A minimal participant acquisition and
+validation sequence is:
+
+```powershell
+$EegleData = Join-Path $env:LOCALAPPDATA "EEGle\data"
+
+FullRun -Participant "sub-001" -NoGoDigit 3 -Operator "operator-id" `
+  -ConfirmElectrodes -DataRoot $EegleData
+
+ValidateRun -Participant "sub-001" -Visit 1 -DataRoot $EegleData -Mode Quick
+ValidateRun -Participant "sub-001" -Visit 1 -DataRoot $EegleData -Mode Comprehensive
+```
+
+`FullRun` owns LabRecorder; do not start it manually. Its authoritative raw
+recording is XDF and it deliberately disables the full EEG CSV mirror.
+Scientific quality/timestamp/electrode findings remain explicit operator-
+reviewed warnings. The post-run validator is read-only and never changes raw
+files or acquisition completion state.
+
 When discovery reports zero streams, `05-Diagnose-Lsl.ps1` performs a
 cross-process pylsl loopback and compares EEGle's explicit LSL configuration
 with normal liblsl configuration discovery before any stream-name matching.

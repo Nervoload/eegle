@@ -522,15 +522,27 @@ class DynamicSartTaskTests(unittest.TestCase):
         ), patch(
             "eegle.psychopy_input.create_hardware_keyboard",
             return_value=keyboard,
-        ), patch(
+        ) as create_keyboard, patch(
             "eegle.psychopy_input.poll_hardware_keyboard",
         ), patch(
             "eegle.psychopy_input.stop_hardware_keyboard",
             side_effect=lambda value: actions.append("keyboard") if value is keyboard else None,
         ):
-            result = _probe_psychopy_display_and_keyboard_inline({"hardware": {"display": {}}})
+            result = _probe_psychopy_display_and_keyboard_inline(
+                {
+                    "hardware": {
+                        "display": {"capture_keyboard_outside_window": True}
+                    }
+                }
+            )
 
         self.assertTrue(result["window_opened"])
+        self.assertTrue(result["capture_keyboard_outside_window"])
+        create_keyboard.assert_called_once_with(
+            psychopy_hardware.keyboard,
+            backend="ptb",
+            capture_outside_window=True,
+        )
         self.assertEqual(actions, ["keyboard", "window"])
 
     def test_instruction_screen_services_window_until_space_is_received(self) -> None:
@@ -624,6 +636,52 @@ class DynamicSartTaskTests(unittest.TestCase):
             closed,
             ["trials-jsonl", "keys-jsonl", "probes-jsonl", "trials-csv", "blocks-csv"],
         )
+
+    def test_artifact_checkpoint_records_fsync_denial_without_stopping(self) -> None:
+        config_mapping = _config()
+        config = DynamicSartConfig.from_mapping(config_mapping["tasks"]["dynamic_sart"])
+        plan = build_dynamic_sart_plan(config)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = create_session(
+                config_mapping,
+                task="dynamic_sart",
+                participant_id="unit",
+                root=Path(tmp),
+            )
+            store = DynamicSartArtifactStore(paths, plan, config, "unit")
+            try:
+                with patch(
+                    "eegle.tasks.dynamic_sart.os.fsync",
+                    side_effect=PermissionError("Windows policy denial"),
+                ):
+                    store.checkpoint(durable=True)
+                self.assertEqual(len(store.durability_warnings), 5)
+                self.assertTrue(
+                    all("PermissionError" in warning for warning in store.durability_warnings)
+                )
+            finally:
+                store.close()
+
+    def test_artifact_buffer_flush_does_not_fsync_before_durable_boundary(self) -> None:
+        config_mapping = _config()
+        config = DynamicSartConfig.from_mapping(config_mapping["tasks"]["dynamic_sart"])
+        plan = build_dynamic_sart_plan(config)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = create_session(
+                config_mapping,
+                task="dynamic_sart",
+                participant_id="unit",
+                root=Path(tmp),
+            )
+            store = DynamicSartArtifactStore(paths, plan, config, "unit")
+            try:
+                with patch("eegle.tasks.dynamic_sart.os.fsync") as fsync:
+                    store.checkpoint()
+                    self.assertEqual(fsync.call_count, 0)
+                    store.checkpoint(durable=True)
+                    self.assertEqual(fsync.call_count, 5)
+            finally:
+                store.close()
 
     def test_flip_callback_emits_marker_before_any_event_file_logging(self) -> None:
         class MarkerOutlet:

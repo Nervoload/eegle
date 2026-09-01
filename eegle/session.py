@@ -3,14 +3,27 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import os
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from eegle.config import merged_config, resolve_path, resolve_session_root, write_config
 from eegle.hardware.system import system_snapshot
 from eegle.lsl import session_marker_source_id
+
+
+_WINDOWS_RESERVED_COMPONENTS = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
+_WINDOWS_INVALID_COMPONENT_CHARACTERS = set('<>:"/\\|?*')
 
 
 @dataclass
@@ -68,15 +81,17 @@ def create_session(
     experiment = config.get("experiment", {})
     runtime = config.get("runtime", {})
     task_name = task or experiment.get("task", "pvt")
-    participant = participant_id or experiment.get("participant_id", "example-participant")
+    participant = str(participant_id or experiment.get("participant_id", "example-participant"))
+    participant_component = participant_storage_component(participant)
     experiment_id = experiment.get("experiment_id", "experiment")
     session_root = resolve_session_root(config, root)
     now = datetime.now()
     run_stamp = now.strftime("run-%Y%m%dT%H%M%S")
+    participant_root = session_root / "participants"
+    participant_dir = participant_root / participant_component
+    assert_lexically_contained(participant_root, participant_dir)
     session_dir = _unique_session_dir(
-        session_root
-        / "participants"
-        / participant
+        participant_dir
         / "sessions"
         / now.strftime("%Y-%m-%d")
         / experiment_id
@@ -164,6 +179,7 @@ def create_session(
     manifest = {
         "created_at": now.isoformat(timespec="seconds"),
         "participant_id": participant,
+        "participant_storage_component": participant_component,
         "task": task_name,
         "experiment_id": experiment_id,
         "components": experiment.get("components", {}),
@@ -192,6 +208,51 @@ def create_session(
         handle.write("\n")
 
     return paths
+
+
+def participant_storage_component(participant_id: str) -> str:
+    """Return a stable Windows-safe directory component without restricting the ID.
+
+    Ordinary single-component names are retained verbatim. Only values which
+    could redirect a path or cannot be created as a Windows directory are
+    represented by a stable digest. The original identifier remains in session
+    parameters and manifests.
+    """
+
+    value = str(participant_id)
+    if _participant_component_is_safe(value):
+        return value
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:20]
+    return f"participant-{digest}"
+
+
+def _participant_component_is_safe(value: str) -> bool:
+    if not value or value in {".", ".."} or value[-1:] in {" ", "."}:
+        return False
+    if any(ord(character) < 32 for character in value):
+        return False
+    if any(character in _WINDOWS_INVALID_COMPONENT_CHARACTERS for character in value):
+        return False
+    windows = PureWindowsPath(value)
+    if windows.is_absolute() or windows.drive or windows.root or len(windows.parts) != 1:
+        return False
+    if Path(value).is_absolute() or len(Path(value).parts) != 1:
+        return False
+    device_name = value.split(".", 1)[0].upper()
+    return device_name not in _WINDOWS_RESERVED_COMPONENTS
+
+
+def assert_lexically_contained(parent: Path, child: Path) -> None:
+    """Reject a child path which lexically leaves its intended parent."""
+
+    parent_absolute = os.path.abspath(os.fspath(parent))
+    child_absolute = os.path.abspath(os.fspath(child))
+    try:
+        common = os.path.commonpath((parent_absolute, child_absolute))
+    except ValueError as exc:
+        raise ValueError(f"participant session path is outside the configured root: {child}") from exc
+    if os.path.normcase(common) != os.path.normcase(parent_absolute):
+        raise ValueError(f"participant session path is outside the configured root: {child}")
 
 
 def _unique_session_dir(candidate: Path) -> Path:

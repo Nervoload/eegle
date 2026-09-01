@@ -25,7 +25,12 @@ def poll_psychopy_keys(event_module: Any, *, clock: Any | None = None) -> list[P
     return normalized
 
 
-def create_hardware_keyboard(keyboard_module: Any, *, backend: str = "ptb") -> Any:
+def create_hardware_keyboard(
+    keyboard_module: Any,
+    *,
+    backend: str = "ptb",
+    capture_outside_window: bool = False,
+) -> Any:
     """Create PsychoPy's asynchronous hardware keyboard and clear stale keys.
 
     The PTB backend records key-down times in its operating-system queue rather
@@ -35,6 +40,20 @@ def create_hardware_keyboard(keyboard_module: Any, *, backend: str = "ptb") -> A
     """
 
     keyboard = keyboard_module.Keyboard(backend=str(backend))
+    if capture_outside_window:
+        device = getattr(keyboard, "device", None)
+        if device is None or not hasattr(device, "muteOutsidePsychopy"):
+            stop = getattr(keyboard, "stop", None)
+            if callable(stop):
+                stop()
+            raise RuntimeError(
+                "PsychoPy hardware Keyboard cannot capture keys while its window is unfocused"
+            )
+        # PsychoPy 2024.2+ defaults to discarding PTB events whenever a
+        # registered PsychoPy window is not focused. Study 1 runs LabRecorder
+        # on the same laptop, so retain the native PTB queue but disable that
+        # focus filter for the lifetime of this task process.
+        device.muteOutsidePsychopy = False
     clock = getattr(keyboard, "clock", None)
     if clock is None:
         raise RuntimeError("PsychoPy hardware Keyboard did not expose its timestamp clock")

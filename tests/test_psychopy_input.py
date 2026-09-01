@@ -60,6 +60,7 @@ class _MalformedKeyPress:
 class _HardwareKeyboard:
     def __init__(self, *, backend: str) -> None:
         self.backend = backend
+        self.device = type("KeyboardDevice", (), {"muteOutsidePsychopy": True})()
         self.clock = _Clock()
         self.events: list[object] = []
         self.cleared = 0
@@ -155,12 +156,39 @@ class PsychoPyInputTests(unittest.TestCase):
         keys = poll_hardware_keyboard(keyboard)
 
         self.assertEqual(keyboard.backend, "ptb")
+        self.assertTrue(keyboard.device.muteOutsidePsychopy)
         self.assertEqual(keyboard.cleared, 1)
         self.assertEqual(keyboard.asserted_call, (None, False, True))
         self.assertEqual([(key.name, key.rt) for key in keys], [("space", 0.125)])
 
         stop_hardware_keyboard(keyboard)
         self.assertEqual(keyboard.stopped, 1)
+
+    def test_hardware_keyboard_can_retain_ptb_keys_while_window_is_unfocused(self) -> None:
+        module = type("KeyboardModule", (), {"Keyboard": _HardwareKeyboard})
+
+        keyboard = create_hardware_keyboard(
+            module,
+            backend="ptb",
+            capture_outside_window=True,
+        )
+
+        self.assertFalse(keyboard.device.muteOutsidePsychopy)
+
+    def test_unfocused_capture_fails_closed_when_psychopy_lacks_focus_control(self) -> None:
+        class UnsupportedKeyboard(_HardwareKeyboard):
+            def __init__(self, *, backend: str) -> None:
+                super().__init__(backend=backend)
+                del self.device
+
+        module = type("KeyboardModule", (), {"Keyboard": UnsupportedKeyboard})
+
+        with self.assertRaisesRegex(RuntimeError, "cannot capture keys"):
+            create_hardware_keyboard(
+                module,
+                backend="ptb",
+                capture_outside_window=True,
+            )
 
     def test_hardware_keyboard_cleanup_requires_public_stop_contract(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "did not expose stop"):

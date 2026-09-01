@@ -69,6 +69,9 @@ class Study1Tests(unittest.TestCase):
         self.assertTrue(display["hardware"]["display"]["resizable"])
         self.assertTrue(display["hardware"]["display"]["wait_blanking"])
         self.assertTrue(display["hardware"]["display"]["require_refresh_rate_match"])
+        self.assertTrue(
+            display["hardware"]["display"]["capture_keyboard_outside_window"]
+        )
         self.assertEqual(display["tasks"]["dynamic_sart"]["response_window_seconds"], 1.6)
 
     def test_windows_live_config_requires_and_records_cap_confirmation(self) -> None:
@@ -788,6 +791,18 @@ class Study1Tests(unittest.TestCase):
         self.assertTrue(any("tolerance" in detail for detail in failures))
         self.assertTrue(any("stability threshold" in detail for detail in failures))
         self.assertTrue(any("at least three attempts" in detail for detail in failures))
+
+    def test_protocol_requires_keyboard_capture_when_task_window_loses_focus(self) -> None:
+        config = load_config(CONFIG)
+        config["hardware"]["display"]["capture_keyboard_outside_window"] = False
+
+        failures = [
+            issue["detail"]
+            for issue in validate_study1_config(config)
+            if issue["status"] == "fail"
+        ]
+
+        self.assertTrue(any("unfocused" in detail for detail in failures))
 
     def test_cue_assignments_are_two_of_four_and_deterministic(self) -> None:
         config = load_config(CONFIG)

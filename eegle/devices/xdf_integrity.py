@@ -20,7 +20,15 @@ from eegle.hardware.eeg_device import matching_eeg_streams
 from eegle.hardware.profiles import configured_channel_types, expected_profile, mapped_channel_names
 
 
-def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[str, Any]:
+MAX_REPORTED_TIMESTAMP_ISSUES = 100
+
+
+def validate_xdf_recording(
+    session_dir: str | Path,
+    *,
+    required: bool,
+    persist_report: bool = True,
+) -> dict[str, Any]:
     root = Path(session_dir)
     xdf_path = root / "raw" / "recording.xdf"
     metadata_path = root / "raw" / "xdf_metadata.json"
@@ -54,25 +62,25 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
         return result
     if not xdf_path.exists():
         failures.append("authoritative XDF recording is missing")
-        return _finish(result, metadata_path)
+        return _finish(result, metadata_path, persist_report=persist_report)
     if xdf_path.stat().st_size <= 4:
         failures.append("authoritative XDF recording is empty")
-        return _finish(result, metadata_path)
+        return _finish(result, metadata_path, persist_report=persist_report)
     try:
         import pyxdf
     except Exception as exc:
         failures.append(f"PyXDF import failed: {type(exc).__name__}: {exc}")
-        return _finish(result, metadata_path)
+        return _finish(result, metadata_path, persist_report=persist_report)
 
     try:
         stream_infos = list(pyxdf.resolve_streams(str(xdf_path)))
     except Exception as exc:
         failures.append(f"XDF structure could not be read: {type(exc).__name__}: {exc}")
-        return _finish(result, metadata_path)
+        return _finish(result, metadata_path, persist_report=persist_report)
     result["captured_streams"] = stream_infos
     if not stream_infos:
         failures.append("XDF does not contain any stream headers")
-        return _finish(result, metadata_path)
+        return _finish(result, metadata_path, persist_report=persist_report)
 
     recorder_status = _load_json(root / "logs" / "processes" / "recorder.status.json") or {}
     recorder_summary = dict(recorder_status.get("summary") or {})
@@ -127,7 +135,7 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
     if unexpected:
         warnings.append(f"XDF contains {len(unexpected)} additional LSL stream(s)")
     if failures:
-        return _finish(result, metadata_path)
+        return _finish(result, metadata_path, persist_report=persist_report)
 
     eeg_id = int(eeg_matches[0]["stream_id"])
     marker_id = int(marker_matches[0]["stream_id"])
@@ -439,12 +447,19 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
         "largest_timestamp_gap_seconds": eeg_stats["largest_timestamp_gap_seconds"],
         "sampling_gap_warning_count": eeg_stats["sampling_gap_warning_count"],
         "estimated_missing_samples": eeg_stats["estimated_missing_samples"],
+        "timestamp_issues": list(eeg_stats["timestamp_issues"]),
+        "timestamp_issue_count": int(eeg_stats["timestamp_issue_count"]),
+        "timestamp_issues_truncated": bool(eeg_stats["timestamp_issues_truncated"]),
         "effective_sample_rate_hz": effective_rate,
+        "expected_sample_rate_hz": expected_rate,
+        "effective_rate_warning_tolerance_fraction": rate_tolerance_fraction,
         "expected_sample_count": expected_sample_count,
         "sample_fraction_of_expected": sample_fraction,
+        "minimum_sample_fraction_warning": minimum_sample_fraction,
         "signal_quality": signal_quality,
         "original_channel_names": original_labels,
         "mapped_channel_names": mapped_labels,
+        "expected_channel_names": expected_labels,
         "mapped_channel_types": mapped_types,
         "channel_mapping_source": mapping_source,
         "confirmed_positional_mapping_evidence": positional_evidence,
@@ -466,7 +481,7 @@ def validate_xdf_recording(session_dir: str | Path, *, required: bool) -> dict[s
     }
     result["recording_coverage"] = coverage
     result["pyxdf_errors"] = log_messages
-    return _finish(result, metadata_path)
+    return _finish(result, metadata_path, persist_report=persist_report)
 
 
 def _new_stream_stats() -> dict[str, Any]:
@@ -481,6 +496,9 @@ def _new_stream_stats() -> dict[str, Any]:
         "largest_timestamp_gap_seconds": 0.0,
         "sampling_gap_warning_count": 0,
         "estimated_missing_samples": 0,
+        "timestamp_issues": [],
+        "timestamp_issue_count": 0,
+        "timestamp_issues_truncated": False,
     }
 
 
@@ -515,9 +533,20 @@ def _update_stats(
 ) -> None:
     if timestamps.size == 0:
         return
+    sample_offset = int(stats["sample_count"])
     finite = np.isfinite(timestamps)
     stats["sample_count"] += int(timestamps.size)
     stats["nonfinite_timestamp_count"] += int(np.sum(~finite))
+    for index in np.flatnonzero(~finite):
+        _record_timestamp_issue(
+            stats,
+            {
+                "code": "nonfinite_timestamp",
+                "sample_index": sample_offset + int(index),
+                "timestamp": None,
+            },
+        )
+    finite_indices = np.flatnonzero(finite)
     values = timestamps[finite]
     stats["finite_timestamp_count"] += int(values.size)
     if values.size == 0:
@@ -525,10 +554,35 @@ def _update_stats(
     previous = stats.get("last_timestamp")
     if stats.get("first_timestamp") is None:
         stats["first_timestamp"] = float(values[0])
-    differences = np.diff(values)
+    transitions: list[tuple[float, float, int]] = []
     if previous is not None:
-        differences = np.concatenate((np.asarray([float(values[0]) - float(previous)]), differences))
+        transitions.append((float(previous), float(values[0]), sample_offset + int(finite_indices[0])))
+    transitions.extend(
+        (
+            float(values[index - 1]),
+            float(values[index]),
+            sample_offset + int(finite_indices[index]),
+        )
+        for index in range(1, int(values.size))
+    )
+    differences = np.asarray(
+        [current - prior for prior, current, _sample_index in transitions],
+        dtype=float,
+    )
     stats["nonmonotonic_timestamp_count"] += int(np.sum(differences <= 0))
+    for prior, current, sample_index in transitions:
+        difference = current - prior
+        if difference <= 0:
+            _record_timestamp_issue(
+                stats,
+                {
+                    "code": "nonmonotonic_timestamp",
+                    "sample_index": sample_index,
+                    "previous_timestamp": prior,
+                    "timestamp": current,
+                    "difference_seconds": difference,
+                },
+            )
     if maximum_gap is not None:
         gaps = differences[differences > maximum_gap]
         stats["timestamp_gap_count"] += int(gaps.size)
@@ -547,7 +601,39 @@ def _update_stats(
         stats["sampling_gap_warning_count"] += int(
             np.sum(positive_differences > float(gap_warning_samples) / expected_rate)
         )
+        warning_threshold = float(gap_warning_samples) / expected_rate
+        for prior, current, sample_index in transitions:
+            difference = current - prior
+            if difference <= warning_threshold:
+                continue
+            _record_timestamp_issue(
+                stats,
+                {
+                    "code": (
+                        "timestamp_gap"
+                        if maximum_gap is not None and difference > maximum_gap
+                        else "sampling_gap"
+                    ),
+                    "sample_index": sample_index,
+                    "previous_timestamp": prior,
+                    "timestamp": current,
+                    "gap_seconds": difference,
+                    "estimated_missing_samples": max(
+                        0,
+                        int(round(difference * expected_rate)) - 1,
+                    ),
+                },
+            )
     stats["last_timestamp"] = float(values[-1])
+
+
+def _record_timestamp_issue(stats: dict[str, Any], issue: dict[str, Any]) -> None:
+    stats["timestamp_issue_count"] = int(stats.get("timestamp_issue_count") or 0) + 1
+    issues = stats.setdefault("timestamp_issues", [])
+    if len(issues) < MAX_REPORTED_TIMESTAMP_ISSUES:
+        issues.append(issue)
+    else:
+        stats["timestamp_issues_truncated"] = True
 
 
 def _effective_sample_rate(stats: dict[str, Any]) -> float | None:
@@ -575,6 +661,10 @@ def _new_signal_stats(channel_count: int) -> dict[str, Any]:
         "last_values": np.full(count, np.nan, dtype=float),
         "current_constant_runs": np.zeros(count, dtype=np.int64),
         "longest_constant_runs": np.zeros(count, dtype=np.int64),
+        "shape_mismatch": False,
+        "shape_mismatch_count": 0,
+        "shape_mismatch_details": [],
+        "shape_mismatch_details_truncated": False,
     }
 
 
@@ -587,6 +677,20 @@ def _update_signal_stats(stats: dict[str, Any], values: Any) -> None:
         matrix = matrix.reshape(1, -1)
     if matrix.ndim != 2 or matrix.shape[1] != channel_count:
         stats["shape_mismatch"] = True
+        affected_rows = int(matrix.shape[0]) if matrix.ndim >= 1 else 1
+        stats["shape_mismatch_count"] += affected_rows
+        details = stats["shape_mismatch_details"]
+        if len(details) < MAX_REPORTED_TIMESTAMP_ISSUES:
+            details.append(
+                {
+                    "valid_row_offset": int(stats.get("row_count") or 0),
+                    "observed_shape": list(matrix.shape),
+                    "declared_channel_count": channel_count,
+                    "affected_rows": affected_rows,
+                }
+            )
+        else:
+            stats["shape_mismatch_details_truncated"] = True
         return
     stats["row_count"] += int(matrix.shape[0])
     finite = np.isfinite(matrix)
@@ -727,6 +831,8 @@ def _finish_signal_stats(
             {
                 "channel_index": index + 1,
                 "channel_name": name,
+                "finite_sample_count": finite_count,
+                "nonfinite_sample_count": max(0, row_count - finite_count),
                 "finite_sample_fraction": float(finite_count / row_count) if row_count else 0.0,
                 "standard_deviation_native_units": std,
                 "minimum_native_units": minimum,
@@ -734,6 +840,7 @@ def _finish_signal_stats(
                 "longest_constant_run_samples": longest_run,
                 "longest_constant_run_seconds": longest_run_seconds,
                 "possible_clipping": clipping,
+                "extreme_repeat_count": extreme_repeats,
                 "extreme_repeat_fraction": clipping_fraction,
                 "status": "excluded" if is_excluded else ("warning" if channel_warnings else "good"),
                 "warnings": [] if is_excluded else channel_warnings,
@@ -744,6 +851,11 @@ def _finish_signal_stats(
         "channel_count": int(stats.get("channel_count") or 0),
         "nonfinite_value_count": int(stats.get("nonfinite_value_count") or 0),
         "shape_mismatch": bool(stats.get("shape_mismatch", False)),
+        "shape_mismatch_count": int(stats.get("shape_mismatch_count") or 0),
+        "shape_mismatch_details": list(stats.get("shape_mismatch_details") or []),
+        "shape_mismatch_details_truncated": bool(
+            stats.get("shape_mismatch_details_truncated", False)
+        ),
         "channels": channels,
         "warning_channels": [row["channel_name"] for row in channels if row["status"] == "warning"],
     }
@@ -1123,7 +1235,12 @@ def _optional_float(value: Any) -> float | None:
     return converted if np.isfinite(converted) else None
 
 
-def _finish(result: dict[str, Any], metadata_path: Path) -> dict[str, Any]:
+def _finish(
+    result: dict[str, Any],
+    metadata_path: Path,
+    *,
+    persist_report: bool,
+) -> dict[str, Any]:
     failures = list(result.get("failures") or [])
     warnings = list(result.get("warnings") or [])
     result["status"] = "fail" if failures else ("warning" if warnings else "pass")
@@ -1133,14 +1250,16 @@ def _finish(result: dict[str, Any], metadata_path: Path) -> dict[str, Any]:
         for key, value in result.items()
         if key not in {"metadata"}
     }
-    try:
-        _write_json_atomic(metadata_path, metadata)
-    except Exception as exc:
-        warnings.append(
-            f"XDF validation report could not be written ({type(exc).__name__}: {exc}); "
-            "the raw XDF was retained"
-        )
-        result["status"] = "fail" if failures else "warning"
+    if persist_report:
+        try:
+            _write_json_atomic(metadata_path, metadata)
+        except Exception as exc:
+            warnings.append(
+                f"XDF validation report could not be written ({type(exc).__name__}: {exc}); "
+                "the raw XDF was retained"
+            )
+            result["status"] = "fail" if failures else "warning"
+    result["validation_report_persisted"] = bool(persist_report)
     result["failures"] = failures
     result["warnings"] = warnings
     result["metadata"] = metadata

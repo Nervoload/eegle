@@ -825,6 +825,21 @@ class XdfIntegrityTests(unittest.TestCase):
         self.assertIn("not requested", result["skip_reason"])
         self.assertEqual(result["failures"], [])
 
+    def test_read_only_xdf_validation_does_not_refresh_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths, pyxdf = self._session(Path(tmp))
+            metadata_before = paths.xdf_metadata.read_bytes()
+            with patch.dict(sys.modules, {"pyxdf": pyxdf}):
+                result = validate_xdf_recording(
+                    paths.root,
+                    required=True,
+                    persist_report=False,
+                )
+
+            self.assertEqual(result["status"], "pass")
+            self.assertFalse(result["validation_report_persisted"])
+            self.assertEqual(paths.xdf_metadata.read_bytes(), metadata_before)
+
     def test_xdf_validation_report_write_failure_does_not_invalidate_raw_xdf(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths, pyxdf = self._session(Path(tmp))
@@ -956,6 +971,14 @@ class XdfIntegrityTests(unittest.TestCase):
         self.assertEqual(result["failures"], [])
         self.assertGreater(result["eeg"]["estimated_missing_samples"], 0)
         self.assertTrue(any("timestamp gap" in warning for warning in result["warnings"]))
+        gap = next(
+            row
+            for row in result["eeg"]["timestamp_issues"]
+            if row["code"] in {"sampling_gap", "timestamp_gap"}
+        )
+        self.assertEqual(gap["sample_index"], 2)
+        self.assertAlmostEqual(gap["gap_seconds"], 0.499)
+        self.assertFalse(result["eeg"]["timestamp_issues_truncated"])
 
     def test_xdf_validation_warns_for_nonfinite_flatline_and_clipping(self) -> None:
         stamps = [1.0 + index / 1000.0 for index in range(100)]
@@ -1306,6 +1329,11 @@ class XdfIntegrityTests(unittest.TestCase):
         self.assertEqual(result["status"], "warning")
         self.assertEqual(result["failures"], [])
         self.assertTrue(any("nonmonotonic" in warning for warning in result["warnings"]))
+        issue = next(
+            row for row in result["eeg"]["timestamp_issues"] if row["code"] == "nonmonotonic_timestamp"
+        )
+        self.assertEqual(issue["sample_index"], 2)
+        self.assertAlmostEqual(issue["difference_seconds"], -0.001)
 
     def test_xdf_validation_rejects_duplicate_required_eeg_stream(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

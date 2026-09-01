@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import os
 import random
 from copy import deepcopy
 from pathlib import Path
@@ -242,6 +243,7 @@ class DynamicSartTask:
         support_reference: dict[str, Any] | None = None
         experimental_completed = 0
         store = DynamicSartArtifactStore(paths, plan, self.task_config, participant)
+        logger: EventLogger | None = None
         feedback_client = _make_task_feedback_client(self.config, paths)
         primary_error: BaseException | None = None
         summary: dict[str, Any] | None = None
@@ -283,6 +285,8 @@ class DynamicSartTask:
                             round_records.append(record)
                         criteria = practice_criteria(round_records, self.task_config, comprehension_confirmed=True)
                         store.append_block(_block_result(practice_plan, round_records, criteria=criteria))
+                        logger.flush(durable=True)
+                        store.add_durability_warnings(logger.durability_warnings)
                         if criteria["passed"]:
                             practice_passed = True
                             break
@@ -378,6 +382,8 @@ class DynamicSartTask:
                         completed_trials=len(block_records),
                     )
                     store.append_block(_block_result(trials_by_block[block_index], block_records))
+                    logger.flush(durable=True)
+                    store.add_durability_warnings(logger.durability_warnings)
                     if not aborted and block_index == final_support_block:
                         support_reference = _complete_support(
                             store,
@@ -439,6 +445,7 @@ class DynamicSartTask:
                 support_complete=support_complete,
                 planned_experimental_trials=len(plan["planned_trials"]),
             )
+            store.add_durability_warnings(logger.durability_warnings)
             store.finalize(summary, aborted=aborted, abort_reason=abort_reason)
             return summary
         except Exception as exc:
@@ -452,6 +459,8 @@ class DynamicSartTask:
                 planned_experimental_trials=len(plan["planned_trials"]),
             )
             try:
+                if logger is not None:
+                    store.add_durability_warnings(logger.durability_warnings)
                 store.finalize(summary, aborted=True, abort_reason=abort_reason)
             except Exception as finalize_exc:
                 exc.add_note(f"Additional DSART finalization error: {finalize_exc}")
@@ -514,6 +523,7 @@ class DynamicSartTask:
         task_start = monotonic()
         primary_error: BaseException | None = None
         summary: dict[str, Any] | None = None
+        logger: EventLogger | None = None
         suite_config = dict(self.config.get("recording_suite", {}) or {})
         recorder_monitor = RecorderHealthMonitor(
             paths.process_logs / "recorder.status.json",
@@ -538,6 +548,9 @@ class DynamicSartTask:
             hardware_keyboard = create_hardware_keyboard(
                 keyboard_module,
                 backend=str(display.get("keyboard_backend", "ptb")),
+                capture_outside_window=bool(
+                    display.get("capture_keyboard_outside_window", False)
+                ),
             )
             keyboard = PersistentKeyboardCollector(
                 hardware_keyboard,
@@ -697,6 +710,8 @@ class DynamicSartTask:
                             )
                         practice_rounds_completed = practice_round_index
                         store.append_block(_block_result(practice_plan, round_records, criteria=criteria))
+                        logger.flush(durable=True)
+                        store.add_durability_warnings(logger.durability_warnings)
                         if aborted or criteria["passed"]:
                             practice_passed = criteria["passed"]
                             break
@@ -931,7 +946,8 @@ class DynamicSartTask:
                         completed_trials=len(block_records),
                     )
                     store.append_block(_block_result(block_trials, block_records))
-                    logger.flush()
+                    logger.flush(durable=True)
+                    store.add_durability_warnings(logger.durability_warnings)
                     if not aborted and block_index == final_support_block:
                         support_reference = _complete_support(store, self.task_config, monotonic(), logger, marker_outlet)
                         support_complete = True
@@ -987,6 +1003,8 @@ class DynamicSartTask:
                         "practice_failure_policy": deepcopy(PRACTICE_FAILURE_POLICY),
                     }
                 )
+                logger.flush(durable=True)
+                store.add_durability_warnings(logger.durability_warnings)
                 store.finalize(summary, aborted=aborted, abort_reason=abort_reason)
                 update_dsart_phase_status(
                     "completion_screen",
@@ -1005,6 +1023,8 @@ class DynamicSartTask:
                 support_complete=support_complete,
                 planned_experimental_trials=len(plan["planned_trials"]),
             )
+            if logger is not None:
+                store.add_durability_warnings(logger.durability_warnings)
             store.finalize(summary, aborted=True, abort_reason=abort_reason)
             return summary
         except Exception as exc:
@@ -1020,6 +1040,8 @@ class DynamicSartTask:
                     planned_experimental_trials=len(plan["planned_trials"]),
                 )
                 try:
+                    if logger is not None:
+                        store.add_durability_warnings(logger.durability_warnings)
                     store.finalize(summary, aborted=True, abort_reason=abort_reason)
                 except Exception as finalize_exc:
                     exc.add_note(f"Additional DSART finalization error: {finalize_exc}")
@@ -1072,6 +1094,8 @@ class DynamicSartArtifactStore:
         self.participant_id = participant_id
         self.records: list[dict[str, Any]] = []
         self.key_events: list[dict[str, Any]] = []
+        self.durability_warnings: list[str] = []
+        self._finalized = False
         self.trials_jsonl_path = paths.events / "dynamic_sart_trials.jsonl"
         self.trials_csv_path = paths.events / "dynamic_sart_trials.csv"
         self.key_events_path = paths.events / "dynamic_sart_key_events.jsonl"
@@ -1231,7 +1255,7 @@ class DynamicSartArtifactStore:
 
     def append_block(self, result: dict[str, Any]) -> None:
         self._block_writer.writerow({field: _csv_value(result.get(field)) for field in self._block_fields})
-        self.checkpoint()
+        self.checkpoint(durable=True)
         self.manifest["last_checkpoint"] = {
             "completed_record_count": len(self.records),
             "last_completed_trial_index": (
@@ -1240,10 +1264,16 @@ class DynamicSartArtifactStore:
             "block_index": result.get("block_index"),
             "block_name": result.get("block_name"),
         }
+        self.manifest["durability_warnings"] = list(self.durability_warnings)
         _write_json_atomic(self.manifest_path, self.manifest)
+        warning_count = len(self.durability_warnings)
+        self._durable_sync_path(self.manifest_path, "stimulus manifest")
+        if len(self.durability_warnings) != warning_count:
+            self.manifest["durability_warnings"] = list(self.durability_warnings)
+            _write_json_atomic(self.manifest_path, self.manifest)
 
-    def checkpoint(self) -> None:
-        """Flush task ledgers only at a non-stimulus block boundary."""
+    def checkpoint(self, *, durable: bool = False) -> None:
+        """Flush task ledgers; request ``durable`` only at block/final boundaries."""
 
         for handle in (
             self._trial_jsonl,
@@ -1253,14 +1283,39 @@ class DynamicSartArtifactStore:
             self._blocks_csv,
         ):
             handle.flush()
+            if not durable:
+                continue
+            try:
+                os.fsync(handle.fileno())
+            except OSError as exc:
+                warning = (
+                    f"{Path(handle.name).name} durable flush failed: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                if warning not in self.durability_warnings:
+                    self.durability_warnings.append(warning)
+
+    def add_durability_warnings(self, warnings: Iterable[str]) -> None:
+        for warning in warnings:
+            text = str(warning).strip()
+            if text and text not in self.durability_warnings:
+                self.durability_warnings.append(text)
 
     def write_support_reference(self, reference: dict[str, Any]) -> None:
         _write_json_atomic(self.reference_path, reference)
+        self._durable_sync_path(self.reference_path, "support reference")
         self.manifest["support_complete"] = True
         self.manifest["support_reference_hash"] = reference.get("reference_hash")
+        self.manifest["durability_warnings"] = list(self.durability_warnings)
         _write_json_atomic(self.manifest_path, self.manifest)
+        warning_count = len(self.durability_warnings)
+        self._durable_sync_path(self.manifest_path, "stimulus manifest")
+        if len(self.durability_warnings) != warning_count:
+            self.manifest["durability_warnings"] = list(self.durability_warnings)
+            _write_json_atomic(self.manifest_path, self.manifest)
 
     def finalize(self, summary: dict[str, Any], *, aborted: bool, abort_reason: str | None) -> None:
+        self.checkpoint(durable=True)
         self.manifest["aborted"] = aborted
         self.manifest["abort_reason"] = abort_reason
         self.manifest["presented_trial_count"] = len(self.records)
@@ -1272,31 +1327,70 @@ class DynamicSartArtifactStore:
             )
             for row in self.records
         )
+        self.manifest["durability_warnings"] = list(self.durability_warnings)
+        summary["durability_warnings"] = list(self.durability_warnings)
         _write_json_atomic(self.manifest_path, self.manifest)
-        _write_json_atomic(
-            self.results_path,
-            {
-                "schema": SUMMARY_SCHEMA,
-                "task": TASK_NAME,
-                "settings": self.config.payload(),
-                "sequence_id": self.plan["sequence_id"],
-                "summary": summary,
-                "aborted": aborted,
-                "abort_reason": abort_reason,
-                "artifact_files": {
-                    "trials_jsonl": str(self.trials_jsonl_path),
-                    "trials_csv": str(self.trials_csv_path),
-                    "key_events_jsonl": str(self.key_events_path),
-                    "blocks_csv": str(self.blocks_path),
-                    "support_reference_json": str(self.reference_path),
-                    "probes_jsonl": str(self.probes_path),
-                },
+        manifest_warning_count = len(self.durability_warnings)
+        self._durable_sync_path(self.manifest_path, "stimulus manifest")
+        if len(self.durability_warnings) != manifest_warning_count:
+            self.manifest["durability_warnings"] = list(self.durability_warnings)
+            summary["durability_warnings"] = list(self.durability_warnings)
+            _write_json_atomic(self.manifest_path, self.manifest)
+        results = {
+            "schema": SUMMARY_SCHEMA,
+            "task": TASK_NAME,
+            "settings": self.config.payload(),
+            "sequence_id": self.plan["sequence_id"],
+            "summary": summary,
+            "aborted": aborted,
+            "abort_reason": abort_reason,
+            "durability_warnings": list(self.durability_warnings),
+            "artifact_files": {
+                "trials_jsonl": str(self.trials_jsonl_path),
+                "trials_csv": str(self.trials_csv_path),
+                "key_events_jsonl": str(self.key_events_path),
+                "blocks_csv": str(self.blocks_path),
+                "support_reference_json": str(self.reference_path),
+                "probes_jsonl": str(self.probes_path),
             },
-        )
+        }
+        _write_json_atomic(self.results_path, results)
+        results_warning_count = len(self.durability_warnings)
+        self._durable_sync_path(self.results_path, "task results")
+        if len(self.durability_warnings) != results_warning_count:
+            summary["durability_warnings"] = list(self.durability_warnings)
+            self.manifest["durability_warnings"] = list(self.durability_warnings)
+            results["durability_warnings"] = list(self.durability_warnings)
+            _write_json_atomic(self.manifest_path, self.manifest)
+            _write_json_atomic(self.results_path, results)
+        self._finalized = True
+
+    def _durable_sync_path(self, path: Path, label: str) -> None:
+        try:
+            with path.open("rb") as handle:
+                os.fsync(handle.fileno())
+        except OSError as exc:
+            warning = f"{label} durable flush failed: {type(exc).__name__}: {exc}"
+            if warning not in self.durability_warnings:
+                self.durability_warnings.append(warning)
 
     def close(self) -> None:
+        handles = (
+            self._trial_jsonl,
+            self._key_jsonl,
+            self._probes_jsonl,
+            self._trial_csv,
+            self._blocks_csv,
+        )
+        if all(handle is None or handle.closed for handle in handles):
+            return
         failures = []
-        for handle in (self._trial_jsonl, self._key_jsonl, self._probes_jsonl, self._trial_csv, self._blocks_csv):
+        if not getattr(self, "_finalized", False):
+            try:
+                self.checkpoint(durable=True)
+            except Exception as exc:
+                failures.append(f"final checkpoint: {type(exc).__name__}: {exc}")
+        for handle in handles:
             if handle is None:
                 continue
             try:

@@ -3,9 +3,10 @@
 This is the operator path for testing EEGle on a Windows x64 Dell with the
 Neuracle 64-channel wet system. Neuracle Collect owns the amplifier connection
 and publishes EEG to Lab Streaming Layer (LSL). EEGle owns the task, marker
-stream, managed LabRecorder process, XDF file, and CSV safety mirror.
+stream, managed LabRecorder process, authoritative XDF file, and behavioral
+ledgers. Study 1 does not create a full EEG CSV mirror.
 
-The eight operator PowerShell scripts are under
+The nine operator PowerShell scripts are under
 `scripts\windows\neuracle64`:
 
 | Script | Purpose | EEG recorded? |
@@ -18,11 +19,21 @@ The eight operator PowerShell scripts are under
 | `05-Diagnose-Lsl.ps1` | Separate local pylsl/config failures from a missing external outlet | No |
 | `06-Test-StorageAccess.ps1` | Reproduce parent/child recording permission operations without EEG | No |
 | `FullRun.ps1` | Complete two-minute baselines, practice gate, and 1,000-trial task | Yes: authoritative XDF |
+| `ValidateRun.ps1` | Read-only quick/comprehensive validation of retained Study 1 data | Never records or changes raw data |
 
 Run every command below from a 64-bit Windows PowerShell terminal. Do not use
 Git Bash or WSL for the hardware run.
 
-## Storage permission gate
+For the canonical installation-to-validation workflow, complete parameter
+tables, direct `study1` forms, warning policy, resume behavior, and artifact
+contract, see [`STUDY1.md`](STUDY1.md). The intended order is setup, storage
+probe, display dry run, Collect discovery, cap-contract preflight, short XDF
+task, `FullTest`, `FullRun`, and post-run validation.
+
+## Storage permission gate (after one-time setup)
+
+Read this section when choosing the data root, then run the command immediately
+after completing section 1 so that `.venv` exists.
 
 Use one explicit data root for the whole visit. Do not automatically fall back
 from one folder to another after a visit starts: that can divide raw EEG,
@@ -149,10 +160,12 @@ Python executable directly. To add `eegle.exe` and `study1.exe` to the user
 
 Setup adds both the Python command directory and the guarded launcher directory
 to the current terminal and the user `PATH`, so the complete launchers can be
-invoked immediately from any directory as `FullTest` and `FullRun`. Their
+invoked immediately from any directory as `FullTest`, `FullRun`, and
+`ValidateRun`. Their
 PowerShell parameters are forwarded unchanged. Without that setup option, use
-`.\scripts\windows\neuracle64\FullTest.ps1` or
-`.\scripts\windows\neuracle64\FullRun.ps1` from the repository root.
+`.\scripts\windows\neuracle64\FullTest.ps1`,
+`.\scripts\windows\neuracle64\FullRun.ps1`, or
+`.\scripts\windows\neuracle64\ValidateRun.ps1` from the repository root.
 
 ## 2. Display-only dry run: 10 trials
 
@@ -230,7 +243,7 @@ physical auxiliary inputs and one reserved transport value:
 
 The dedicated reference is CPz and ground is AFz. Collect exposes generic LSL
 labels (`ch_001` through `ch_065`), so EEGle maps them positionally to the
-confirmed order. Value 65 is preserved in raw XDF/CSV as `TRIGGER_STATUS` but is
+confirmed order. Value 65 is preserved in raw XDF as `TRIGGER_STATUS` but is
 excluded from electrode quality and derived EEG analysis. ECG/EOG values are
 also preserved raw and excluded from default scalp-EEG analysis.
 
@@ -314,9 +327,15 @@ raw\xdf_metadata.json
 raw\lsl_markers_received.csv
 events\events.jsonl
 events\dynamic_sart_trials.jsonl
-process_logs\manager_summary.json
+events\dynamic_sart_key_events.jsonl
+events\stimulus_manifest.json
+logs\feedback_manager.json
+logs\processes\recorder.status.json
+reports\recording_quality_warnings.json
 ```
 
+`events\behavior.csv` and `events\dynamic_sart_trials.csv` may also be present as
+convenience mirrors; they do not replace XDF or the canonical JSONL ledgers.
 The XDF is the only full raw EEG recording. A task run is not successful merely
 because the PsychoPy window closed; the terminal reports while XDF or other
 processing continues, and the final command returns only after graceful
@@ -543,6 +562,33 @@ completed the run needs a new participant/visit identity for another test.
 Without `-Resume`, rerunning the same `FullRun` command automatically
 retries an incomplete full visit in the same way as the short-test launcher.
 
+## Post-run validation
+
+Run the read-only validator independently of `FullRun`. Quick mode selects the
+newest completed visit by the exact participant identity stored in its manifest:
+
+```powershell
+ValidateRun -Participant $ParticipantId -DataRoot $EegleData -Mode Quick
+ValidateRun -Participant $ParticipantId -Visit 1 -DataRoot $EegleData -Mode Comprehensive
+```
+
+An exact visit directory, visit manifest, baseline/task child session, or run
+root can be checked even when the visit is incomplete:
+
+```powershell
+ValidateRun -RunRoot "D:\EEGleData\study1\sub-001\visits\visit-1\visit-id" -Mode Comprehensive
+ValidateRun -RunRoot "D:\EEGleData\study1\sub-001\visits\visit-1\visit-id" `
+  -Mode Comprehensive -BackupRoot "E:\EEGleBackup"
+```
+
+The backup option compares the mirror by DataRoot-relative path, size, SHA-256,
+and readability; it never creates, overwrites, restores, or deletes backup
+files. Scientific defects and backup differences are warnings with exit code
+zero. A missing or unreadable canonical core artifact returns exit code 2, and
+an internal validator error returns 1. Timestamped reports are saved under the
+visit's `reports\post_run_validation` directory without changing XDF, task
+ledgers, or visit completion state.
+
 ## Troubleshooting gates
 
 ### No matching stream
@@ -701,14 +747,15 @@ proves that SPACE reached the Python task code.
 ### Task window is on the wrong display
 
 Pass `-ScreenIndex 0` or `-ScreenIndex 1`; do not edit the generated config.
-Scripts 01, 03, 04, and 07 use fullscreen by default so Pyglet's Windows backend
-keeps swap-interval VSync enabled. Before LabRecorder starts, EEGle opens the
-real window, measures the refresh rate, verifies the PTB keyboard queue, and
-prints a complete monitor inventory. A measured 60 Hz or 120 Hz mode is selected
-automatically (within 2 Hz); other display modes fail preflight. If the inventory
-reports 100 Hz for the selected display, check that same display in Windows
-Advanced display settings and disable Dynamic Refresh Rate or Variable Refresh
-Rate for the acquisition test before retrying at a fixed supported mode.
+The dry-task, short-recording, `FullTest`, and `FullRun` launchers use fullscreen
+by default so Pyglet's Windows backend keeps swap-interval VSync enabled. Before
+LabRecorder starts, EEGle opens the real window, measures the refresh rate,
+verifies the PTB keyboard queue, and prints a complete monitor inventory. A
+measured 60 Hz or 120 Hz mode is selected automatically (within 2 Hz); other
+display modes fail preflight. If the inventory reports 100 Hz for the selected
+display, check that same display in Windows Advanced display settings and
+disable Dynamic Refresh Rate or Variable Refresh Rate for the acquisition test
+before retrying at a fixed supported mode.
 
 ### Script reports exit code 1 after the task window closes
 
@@ -741,6 +788,7 @@ Python commands use these activation-independent forms:
 .\.venv\Scripts\python.exe -m eegle.cli check-setup --help
 .\.venv\Scripts\python.exe -m eegle.cli run-forward --help
 .\.venv\Scripts\python.exe -m eegle.pipelines.study1 --help
+.\.venv\Scripts\python.exe -m eegle.pipelines.study1_validation --help
 ```
 
 Use the generated JSON paths under `.runtime\windows-neuracle64` when invoking

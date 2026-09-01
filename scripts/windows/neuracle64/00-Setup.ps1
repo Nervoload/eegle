@@ -89,7 +89,7 @@ if ($AddCommandsToUserPath) {
         }
     }
     $env:Path = $currentEntries -join ";"
-    Write-Host "FullRun and FullTest are now available without a repository-relative path in this and future terminals."
+    Write-Host "FullRun, FullTest, and ValidateRun are now available without a repository-relative path in this and future terminals."
 }
 
 Write-Host ""

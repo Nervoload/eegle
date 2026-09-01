@@ -41,11 +41,12 @@ class PortabilityTests(unittest.TestCase):
             "Common.ps1",
             "FullRun.ps1",
             "FullTest.ps1",
+            "ValidateRun.ps1",
         }
         self.assertEqual({path.name for path in scripts.glob("*.ps1")}, expected)
         self.assertEqual(
             {path.name for path in scripts.glob("*.cmd")},
-            {"FullRun.cmd", "FullTest.cmd"},
+            {"FullRun.cmd", "FullTest.cmd", "ValidateRun.cmd"},
         )
         common = (scripts / "Common.ps1").read_text(encoding="utf-8")
         self.assertIn(r".venv\Scripts\python.exe", common)
@@ -118,14 +119,19 @@ class PortabilityTests(unittest.TestCase):
         self.assertIn('-Resume requires -Participant, -VisitId, or -ResumeTarget', complete)
         self.assertIn('"--resume-target", $ResumeTarget', complete)
         self.assertIn("Resolve-EegleStudyExit", complete)
-        for command_name in ("FullRun", "FullTest"):
+        validator = (scripts / "ValidateRun.ps1").read_text(encoding="utf-8")
+        self.assertIn('"--participant", $Participant', validator)
+        self.assertIn('"--target", $RunRoot', validator)
+        self.assertIn('"--backup-root", $BackupRoot', validator)
+        self.assertNotIn("Get-EegleDataRoot", validator)
+        for command_name in ("FullRun", "FullTest", "ValidateRun"):
             wrapper = (scripts / f"{command_name}.cmd").read_text(encoding="utf-8")
             self.assertIn(f'"%~dp0{command_name}.ps1" %*', wrapper)
             self.assertIn("exit /b %ERRORLEVEL%", wrapper)
         setup = (scripts / "00-Setup.ps1").read_text(encoding="utf-8")
         self.assertIn("$PSScriptRoot", setup)
         self.assertIn("$env:Path = $currentEntries", setup)
-        self.assertIn("FullRun and FullTest", setup)
+        self.assertIn("FullRun, FullTest, and ValidateRun", setup)
         for script_path in scripts.glob("*.ps1"):
             if script_path.name == "Common.ps1":
                 continue

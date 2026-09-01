@@ -101,6 +101,7 @@ attention8 = "eegle.pipelines.attention8:main"
 dsart8 = "eegle.pipelines.dsart_recording:main_dsart8"
 dsart32 = "eegle.pipelines.dsart_recording:main_dsart32"
 study1 = "eegle.pipelines.study1:main"
+study1-validate = "eegle.pipelines.study1_validation:main"
 
 [tool.setuptools.packages.find]
 include = ["configs*", "eegle*"]

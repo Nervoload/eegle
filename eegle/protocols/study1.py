@@ -344,6 +344,13 @@ def validate_study1_config(config: dict[str, Any]) -> list[dict[str, str]]:
         )
     if str(display.get("keyboard_backend", "")).lower() != "ptb":
         issues.append(_issue("fail", "Study 1 requires PsychoPy's asynchronous PTB keyboard backend"))
+    if not bool(display.get("capture_keyboard_outside_window", False)):
+        issues.append(
+            _issue(
+                "fail",
+                "Study 1 must retain PTB keyboard responses while the task window is unfocused",
+            )
+        )
     for name in STUDY1_SEGMENTS:
         try:
             child = configure_study1_segment(config, name, no_go_digit=0, seed=42)

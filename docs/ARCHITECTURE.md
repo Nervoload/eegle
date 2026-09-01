@@ -162,6 +162,26 @@ data/participants/<participant-id>/sessions/<date>/<experiment-id>/<task>/run-<t
 
 Telemetry augments the canonical experiment files. Stimulus timing still lives in `events/events.jsonl`, `triggers.txt`, stimulus manifests, and marker streams. EEG remains under `raw/`: legacy recipes use CSV, while Study 1 uses authoritative XDF plus a non-writing live LSL sample heartbeat.
 
+### Study 1 visit and validation boundary
+
+`eegle.pipelines.study1` adds a participant manifest and atomic visit-phase
+ledger above the independent preflight, baseline, and Dynamic SART child
+sessions. Each recorded child phase gets a new managed LabRecorder lifecycle
+and `raw/recording.xdf`; resume skips completed phases and never appends to an
+existing XDF. After recorder shutdown, structured non-blocking findings are
+written to `reports/recording_quality_warnings.json`. Canonical JSONL task,
+keypress, event, and stimulus ledgers are durably checkpointed only at block or
+final boundaries so acquisition timing is not given new per-trial disk work.
+
+`eegle.pipelines.study1_validation` is a separate read-only boundary exposed as
+`study1-validate` and the Windows `ValidateRun` wrapper. Quick validation checks
+resolution, core artifacts, XDF headers, strict ledgers, identities, counts,
+sequences, and basic references. Comprehensive validation performs the bounded-
+memory XDF scan, cross-ledger reconciliation, task rescoring, SHA-256 inventory,
+and optional read-only mirror comparison. It writes a timestamped report below
+the visit but never changes acquisition completion state or raw data. The full
+operator workflow and flags are documented in `docs/STUDY1.md`.
+
 ## Layer 2: Realtime Closed Loop
 
 `eegle.feedback_manager.FeedbackManager` owns the managed Architecture C lifecycle. It can start the recorder before calibration, reconfigure after calibration, launch enabled realtime workers before the task, stop long-running workers after the task, and run offline analysis after recording ends. The current workers are:

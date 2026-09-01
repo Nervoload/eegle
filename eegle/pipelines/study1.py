@@ -25,6 +25,7 @@ from eegle.pipelines.dsart_recording import (
     DsartRecordingOptions,
     _accept_recording_preflight,
     _accept_post_recording_warnings,
+    _publish_post_recording_quality_nonfatal,
     _complete_phase,
     _fail_phase,
     _latest_phase_result,
@@ -51,6 +52,7 @@ from eegle.protocols.study1 import (
     study1_protocol_hash,
     validate_study1_config,
 )
+from eegle.session import assert_lexically_contained, participant_storage_component
 from eegle.tasks.dynamic_sart_schema import DynamicSartConfig
 from eegle.tasks.dynamic_sart_sequence import build_dynamic_sart_plan, validate_dynamic_sart_plan
 
@@ -541,13 +543,10 @@ def _run_study1_preflight_only(
     check_id = _safe_token(
         options.visit_id or datetime.now().strftime("preflight-%Y%m%dT%H%M%S")
     )
-    output_dir = (
-        output_root
-        / "system_checks"
-        / "study1_neuracle64"
-        / _safe_token(options.participant_id)
-        / check_id
-    )
+    preflight_root = output_root / "system_checks" / "study1_neuracle64"
+    participant_dir = preflight_root / participant_storage_component(options.participant_id)
+    assert_lexically_contained(preflight_root, participant_dir)
+    output_dir = participant_dir / check_id
     report = run_recording_preflight(
         config,
         recipe="study1",
@@ -604,7 +603,7 @@ def _run_configured_study1_visit(
     output_root: Path,
 ) -> dict[str, Any]:
 
-    participant_dir = output_root / "study1" / _safe_token(options.participant_id)
+    participant_dir = _study1_participant_directory(output_root, options.participant_id)
     participant_manifest_path = participant_dir / "participant_manifest.json"
     participant_manifest = _participant_manifest(
         participant_manifest_path,
@@ -734,6 +733,7 @@ def _run_configured_study1_visit(
                         visit_id=visit_id,
                         preflight=active_preflight,
                     )
+                    _publish_post_recording_quality_nonfatal(result, "Study 1 baseline")
                     if result.get("status") != "completed":
                         raise RuntimeError(_phase_error("Study 1 baseline", result))
                     _accept_post_recording_warnings(result, dsart_options, "Study 1 baseline")
@@ -770,6 +770,7 @@ def _run_configured_study1_visit(
                     preflight=active_preflight,
                 )
                 result["study_segment"] = phase
+                _publish_post_recording_quality_nonfatal(result, phase)
                 if result.get("status") != "completed":
                     raise RuntimeError(_phase_error(phase, result))
                 _accept_post_recording_warnings(result, dsart_options, phase)
@@ -1066,6 +1067,7 @@ def _participant_manifest(
             else STUDY1_STANDARD_ACQUISITION_PROFILE
         ),
         "participant_id": options.participant_id,
+        "participant_storage_component": participant_storage_component(options.participant_id),
         "master_seed": options.master_seed,
         "no_go_digit": no_go_digit,
         "allocation_method": allocation_method,
@@ -1074,6 +1076,34 @@ def _participant_manifest(
     }
     _write_json_atomic(path, manifest)
     return manifest
+
+
+def _study1_participant_directory(output_root: Path, participant_id: str) -> Path:
+    """Reuse an exact-identity legacy folder or select the safe new component."""
+
+    study_root = output_root / "study1"
+    preferred = study_root / participant_storage_component(participant_id)
+    assert_lexically_contained(study_root, preferred)
+    candidate_manifests = [study_root / "participant_manifest.json"]
+    candidate_manifests.extend(study_root.glob("*/participant_manifest.json"))
+    matches = []
+    for manifest_path in candidate_manifests:
+        try:
+            payload = _load_json(manifest_path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict) and payload.get("participant_id") == participant_id:
+            matches.append(manifest_path.parent)
+    unique = list(dict.fromkeys(matches))
+    if len(unique) > 1:
+        choices = ", ".join(str(path) for path in unique)
+        raise ValueError(
+            f"participant {participant_id!r} has multiple Study 1 directories; "
+            f"resume with an exact target after resolving the duplicate manifests: {choices}"
+        )
+    selected = unique[0] if unique else preferred
+    assert_lexically_contained(study_root, selected)
+    return selected
 
 
 def _apply_visit_baseline(config: dict[str, Any], options: Study1Options) -> None:
@@ -1368,6 +1398,7 @@ def _new_visit_manifest(
         "protocol_name": STUDY1_PROTOCOL_NAME,
         "protocol_hash": protocol_hash,
         "participant_id": options.participant_id,
+        "participant_storage_component": visit_dir.parents[2].name,
         "visit_number": options.visit_number,
         "visit_id": visit_id,
         "visit_start": _now(),
