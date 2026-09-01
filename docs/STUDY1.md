@@ -219,8 +219,8 @@ as the full run.
 
 Before launch, confirm that Collect is publishing the verified outlet, the
 participant has been allocated exactly one no-go digit, the correct data root
-is available, the acquisition display is in its validated 60 Hz or 120 Hz mode,
-and no manually started LabRecorder owns port 22345.
+is available, the acquisition display is using the intended mode, and no
+manually started LabRecorder owns port 22345.
 
 The normal complete Visit 1 command is:
 
@@ -462,9 +462,13 @@ the presence of a single XDF or from the PsychoPy window closing.
 - Each digit is planned for 250 ms, followed by 1350 ms of fixation. The SOI is
   fixed at 1600 ms with no intentional jitter.
 - Before LabRecorder starts, preflight opens the real PsychoPy window, measures
-  the display, and verifies the asynchronous PTB keyboard queue. Only measured
-  60 Hz and 120 Hz modes are accepted. The digit/SOI use 15/96 or 30/192 frames,
-  respectively, on absolute VBlank boundaries.
+  the display when `hardware.display.check_refresh_rate` is enabled, and
+  verifies the asynchronous PTB keyboard queue. Accepted rates, tolerance, and
+  measurement settings come from `configs/study1_neuracle64.json`. A mismatch
+  is recorded but is non-blocking by default; set
+  `require_refresh_rate_match: true` only when an operator wants a strict gate.
+  Frame counts are rounded to the closest count for the configured nominal
+  rate when a duration is not exactly representable.
 - The cue extension creates 20 deterministic opportunities, grouped into five
   permuted blocks with two cue and two no-cue assignments in each block.
 
@@ -713,6 +717,26 @@ canonical inventory, and optionally compares a read-only backup mirror. Every
 invocation writes a unique atomic JSON report beneath
 `reports/post_run_validation/`. It never rewrites raw files or Study 1 completion
 manifests.
+
+A very large absolute EEG/marker boundary separation can mean that PyXDF placed
+the device and PC streams on incompatible clock origins; it is not, by itself,
+evidence that hours of EEG are missing. EEGle checks marker parity and the
+authoritative XDF sample timestamps, then uses the non-writing heartbeat's
+source/local endpoint anchors to derive an affine mapping. Gaps seen only by
+that diagnostic heartbeat are retained as warnings and do not veto the mapping;
+a nonmonotonic heartbeat clock, missing endpoints, stream-identity mismatch, or
+real XDF coverage shortfall still prevents normalization.
+
+For an older retained session whose `raw/xdf_metadata.json` records the former
+clock-bridge failure, epoch extraction automatically reruns XDF integrity
+validation and refreshes that derived sidecar before loading samples:
+
+```bash
+eegle extract-epochs --session-dir /path/to/retained/run --source stimulus_manifest
+```
+
+This writes derived validation/epoch artifacts only. It does not alter
+`raw/recording.xdf` or mark an incomplete Study 1 visit complete.
 
 Exit code `0` means validation completed, even when scientific or integrity
 warnings were reported. Exit code `2` means the target or a canonical core

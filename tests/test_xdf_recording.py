@@ -1268,6 +1268,123 @@ class XdfIntegrityTests(unittest.TestCase):
             "recording_origin_normalized",
         )
 
+    def test_heartbeat_gap_warns_without_vetoing_clock_normalization(self) -> None:
+        eeg_stamps = [100.0 + index / 1000.0 for index in range(301)]
+        with tempfile.TemporaryDirectory() as tmp:
+            paths, pyxdf = self._session(Path(tmp), eeg_stamps=eeg_stamps)
+            original_load = pyxdf.load_xdf  # type: ignore[attr-defined]
+
+            def load_with_device_clock_offset(*args: object, **kwargs: object) -> object:
+                loaded, header = original_load(*args, **kwargs)
+                loaded[1]["time_stamps"] = np.asarray([871645.05, 871645.25])
+                return loaded, header
+
+            pyxdf.load_xdf = load_with_device_clock_offset  # type: ignore[attr-defined]
+            (paths.raw / "lsl_markers_received.csv").write_text(
+                "marker_label,lsl_timestamp,local_received_lsl_timestamp\n"
+                "task_start,871645.05,871645.06\n"
+                "task_end,871645.25,871645.26\n",
+                encoding="utf-8",
+            )
+            metadata = json.loads(paths.xdf_metadata.read_text(encoding="utf-8"))
+            metadata["lsl_sample_heartbeat"] = {
+                "status": "stopped",
+                "sample_count": 399,
+                "first_source_lsl_timestamp": 99.9,
+                "last_source_lsl_timestamp": 100.4,
+                "first_local_received_lsl_timestamp": 871644.9,
+                "last_local_received_lsl_timestamp": 871645.4,
+                "timestamp_gap_count": 1,
+                "largest_timestamp_gap_seconds": 0.125,
+                "nonmonotonic_timestamp_count": 0,
+                "stream": {
+                    "name": "Neuracle EEG",
+                    "type": "EEG",
+                    "source_id": "eeg-test",
+                    "channel_count": 65,
+                },
+            }
+            paths.xdf_metadata.write_text(json.dumps(metadata), encoding="utf-8")
+            with patch.dict(sys.modules, {"pyxdf": pyxdf}):
+                result = validate_xdf_recording(paths.root, required=True)
+
+        self.assertEqual(result["status"], "warning", result)
+        self.assertEqual(result["failures"], [])
+        bridge = result["recording_coverage"]["clock_bridge_evidence"]
+        self.assertEqual(bridge["status"], "warning")
+        self.assertIsNotNone(result["recording_coverage"]["clock_normalization"])
+        self.assertTrue(
+            any("diagnostic EEG heartbeat observed 1 timestamp gap" in row for row in result["warnings"])
+        )
+
+    def test_epoch_loader_revalidates_retained_xdf_after_old_clock_bridge_failure(self) -> None:
+        eeg_stamps = [100.0 + index / 1000.0 for index in range(301)]
+        with tempfile.TemporaryDirectory() as tmp:
+            paths, pyxdf = self._session(Path(tmp), eeg_stamps=eeg_stamps)
+            original_load = pyxdf.load_xdf  # type: ignore[attr-defined]
+
+            def load_for_validation_or_epoching(*args: object, **kwargs: object) -> object:
+                if "on_chunk" not in kwargs:
+                    return [
+                        {
+                            "time_stamps": np.asarray(eeg_stamps),
+                            "time_series": (
+                                np.arange(len(eeg_stamps), dtype=float)[:, np.newaxis]
+                                + np.arange(65, dtype=float)[np.newaxis, :]
+                            ),
+                        }
+                    ], {}
+                loaded, header = original_load(*args, **kwargs)
+                loaded[1]["time_stamps"] = np.asarray([871645.05, 871645.25])
+                return loaded, header
+
+            pyxdf.load_xdf = load_for_validation_or_epoching  # type: ignore[attr-defined]
+            (paths.raw / "lsl_markers_received.csv").write_text(
+                "marker_label,lsl_timestamp,local_received_lsl_timestamp\n"
+                "task_start,871645.05,871645.06\n"
+                "task_end,871645.25,871645.26\n",
+                encoding="utf-8",
+            )
+            metadata = json.loads(paths.xdf_metadata.read_text(encoding="utf-8"))
+            metadata["validation"] = {"status": "fail"}
+            metadata["lsl_sample_heartbeat"] = {
+                "status": "stopped",
+                "sample_count": 399,
+                "first_source_lsl_timestamp": 99.9,
+                "last_source_lsl_timestamp": 100.4,
+                "first_local_received_lsl_timestamp": 871644.9,
+                "last_local_received_lsl_timestamp": 871645.4,
+                "timestamp_gap_count": 1,
+                "largest_timestamp_gap_seconds": 0.125,
+                "nonmonotonic_timestamp_count": 0,
+                "stream": {
+                    "name": "Neuracle EEG",
+                    "type": "EEG",
+                    "source_id": "eeg-test",
+                    "channel_count": 65,
+                },
+            }
+            paths.xdf_metadata.write_text(json.dumps(metadata), encoding="utf-8")
+            raw_before = paths.eeg_xdf.read_bytes()
+
+            with patch.dict(sys.modules, {"pyxdf": pyxdf}):
+                bundle = load_eeg_xdf_for_epoching(
+                    paths.eeg_xdf,
+                    metadata_path=paths.xdf_metadata,
+                    parameters_path=paths.parameters,
+                )
+            refreshed = json.loads(paths.xdf_metadata.read_text(encoding="utf-8"))
+            raw_after = paths.eeg_xdf.read_bytes()
+
+        self.assertEqual(refreshed["validation"]["status"], "warning")
+        self.assertEqual(raw_after, raw_before)
+        self.assertEqual(
+            bundle.clock_normalization["method"],
+            "affine_eeg_source_to_pc_local_lsl",
+        )
+        self.assertAlmostEqual(bundle.timestamps[0], -0.05)
+        self.assertAlmostEqual(bundle.timestamps[-1], 0.25)
+
     def test_clock_bridge_still_rejects_xdf_that_really_starts_after_marker(self) -> None:
         eeg_stamps = [100.8, 100.85, 100.9, 100.95, 101.0]
         with tempfile.TemporaryDirectory() as tmp:

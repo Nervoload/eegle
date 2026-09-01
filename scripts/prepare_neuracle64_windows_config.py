@@ -1,4 +1,4 @@
-"""Build local Windows display/live configs without weakening the checked-in live gate."""
+"""Build local Windows display/live configs from the operator-edited Study 1 preset."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def build_configs(
     extra_lsl_name_patterns: Sequence[str] = (),
     confirm_cap_contract: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]:
-    """Return display-only, locked Study 1, and short live-task configs."""
+    """Return display-only, confirmed Study 1, and short live-task configs."""
     display = copy.deepcopy(base_config)
     display.setdefault("hardware", {}).setdefault("eeg", {})["required_for_run"] = False
     display_eeg = display["hardware"]["eeg"]
@@ -159,8 +159,9 @@ def refresh_confirmed_configs(
 
     Runtime configs are deliberately generated artifacts.  When the checked-in
     protocol changes, carrying the entire old runtime config forward would also
-    carry stale timing or display parameters.  Only operator/hardware facts are
-    migrated into a fresh copy of the current base protocol.
+    carry stale task or display parameters.  Only operator/hardware facts are
+    migrated into a fresh copy of the current base protocol, so edits to
+    ``configs/study1_neuracle64.json`` remain authoritative.
     """
 
     confirmation = dict(confirmed_config.get("operator_confirmation") or {})

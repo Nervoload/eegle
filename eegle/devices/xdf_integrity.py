@@ -994,8 +994,24 @@ def _source_preserving_csv_coverage_evidence(
         reasons.append("EEG clock-bridge observer did not stop cleanly")
     if int(raw_metadata.get("sample_count") or 0) <= 0:
         reasons.append("EEG clock-bridge observer contains no samples")
-    if int(raw_metadata.get("timestamp_gap_count") or 0) != 0:
-        reasons.append("EEG clock-bridge observer contains timestamp gaps")
+    observer_gap_count = int(raw_metadata.get("timestamp_gap_count") or 0)
+    if observer_gap_count != 0:
+        if evidence_source == "lsl_sample_heartbeat":
+            largest_gap = _optional_float(
+                raw_metadata.get("largest_timestamp_gap_seconds")
+            )
+            gap_detail = (
+                ""
+                if largest_gap is None
+                else f" (largest {largest_gap:.6f} seconds)"
+            )
+            evidence_warnings.append(
+                "diagnostic EEG heartbeat observed "
+                f"{observer_gap_count} timestamp gap(s){gap_detail}; authoritative XDF "
+                "sample-retention and timestamp checks determine recording quality"
+            )
+        else:
+            reasons.append("EEG clock-bridge observer contains timestamp gaps")
     if int(raw_metadata.get("nonmonotonic_timestamp_count") or 0) != 0:
         reasons.append("EEG clock-bridge observer contains nonmonotonic timestamps")
     if evidence_source == "csv_mirror":

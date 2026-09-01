@@ -11,7 +11,7 @@ import os
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from time import monotonic_ns, sleep
 from typing import Any, Iterable
 
@@ -100,7 +100,7 @@ def validate_study1_data(options: ValidationOptions) -> dict[str, Any]:
         raise ValueError("--backup-root requires --mode comprehensive")
     manifest_path, manifest, data_root = resolve_visit(options)
     visit_dir = manifest_path.parent
-    sessions = _visit_sessions(manifest)
+    sessions = _visit_sessions(manifest, data_root=data_root)
     core_errors: list[str] = []
     warnings: list[str] = []
     quality_issues: list[dict[str, Any]] = []
@@ -118,7 +118,11 @@ def validate_study1_data(options: ValidationOptions) -> dict[str, Any]:
     if visit_artifact:
         artifacts.append(visit_artifact)
 
-    for path, role, required in _visit_artifact_specs(manifest_path, manifest):
+    for path, role, required in _visit_artifact_specs(
+        manifest_path,
+        manifest,
+        data_root=data_root,
+    ):
         artifact = _inspect_artifact(
             path,
             role=role,
@@ -269,17 +273,21 @@ def _manifest_from_target(target: Path) -> Path | None:
             payload = _read_json_object(manifest_path)
         except Exception:
             continue
-        absolute_values = {
-            Path(value).expanduser().resolve()
+        referenced_paths = {
+            _portable_data_path(value, data_root).resolve()
             for value in _nested_strings(payload)
-            if Path(value).expanduser().is_absolute()
+            if _looks_like_path(value)
         }
-        if resolved in absolute_values:
+        if resolved in referenced_paths:
             matches.append(manifest_path)
     return matches[0] if len(matches) == 1 else None
 
 
-def _visit_sessions(manifest: dict[str, Any]) -> list[tuple[str, Path]]:
+def _visit_sessions(
+    manifest: dict[str, Any],
+    *,
+    data_root: Path,
+) -> list[tuple[str, Path]]:
     sessions = []
     seen = set()
     phase_order = list(manifest.get("phase_order") or [])
@@ -297,7 +305,7 @@ def _visit_sessions(manifest: dict[str, Any]) -> list[tuple[str, Path]]:
         session_value = result.get("session_dir")
         if not session_value:
             continue
-        session = Path(str(session_value)).expanduser()
+        session = _portable_data_path(str(session_value), data_root)
         key = os.path.normcase(os.path.abspath(os.fspath(session)))
         if key not in seen:
             sessions.append((str(phase), session))
@@ -305,7 +313,7 @@ def _visit_sessions(manifest: dict[str, Any]) -> list[tuple[str, Path]]:
     for phase, session_value in dict(manifest.get("session_directories") or {}).items():
         if not session_value:
             continue
-        session = Path(str(session_value)).expanduser()
+        session = _portable_data_path(str(session_value), data_root)
         key = os.path.normcase(os.path.abspath(os.fspath(session)))
         if key not in seen:
             sessions.append((str(phase), session))
@@ -534,6 +542,8 @@ def _canonical_artifact_specs(
 def _visit_artifact_specs(
     manifest_path: Path,
     manifest: dict[str, Any],
+    *,
+    data_root: Path,
 ) -> list[tuple[Path, str, bool]]:
     rows: list[tuple[Path, str, bool]] = [
         (manifest_path.parents[3] / "participant_manifest.json", "participant_manifest", True)
@@ -555,7 +565,7 @@ def _visit_artifact_specs(
     ):
         value = result.get(field)
         if value:
-            rows.append((Path(str(value)).expanduser(), role, True))
+            rows.append((_portable_data_path(str(value), data_root), role, True))
     unique = {}
     for path, role, required in rows:
         unique[(os.path.normcase(os.path.abspath(os.fspath(path))), role)] = (
@@ -1216,6 +1226,42 @@ def _data_root_for_manifest(path: Path) -> Path:
         if parent.name == "study1":
             return parent.parent
     raise ValueError(f"visit manifest is not beneath a study1 data directory: {path}")
+
+
+def _looks_like_path(value: str) -> bool:
+    normalized = str(value).strip().replace("\\", "/")
+    absolute = normalized.startswith("/") or (
+        len(normalized) >= 3 and normalized[1:3] == ":/"
+    )
+    wrapped = "/" + normalized.strip("/") + "/"
+    return absolute and any(
+        f"/{anchor}/" in wrapped
+        for anchor in ("participants", "study1", "recording_suites", "operator_outcomes")
+    )
+
+
+def _portable_data_path(value: str | Path, data_root: Path) -> Path:
+    """Resolve a retained DataRoot path after copying data across hosts.
+
+    Manifests preserve their acquisition-machine absolute paths for provenance.
+    When an entire DataRoot is relocated, only the stable suffix beginning at a
+    known DataRoot child is remapped; arbitrary external paths remain untouched.
+    """
+
+    original = Path(value).expanduser()
+    if original.exists():
+        return original
+    normalized = str(value).replace("\\", "/")
+    parts = PurePosixPath(normalized).parts
+    anchors = ("participants", "study1", "recording_suites", "operator_outcomes")
+    anchor_index = next(
+        (index for index, part in enumerate(parts) if part in anchors),
+        None,
+    )
+    if anchor_index is None:
+        return original
+    candidate = data_root.joinpath(*parts[anchor_index:])
+    return candidate if candidate.exists() else original
 
 
 def _nested_strings(value: Any):

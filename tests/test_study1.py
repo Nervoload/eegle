@@ -68,7 +68,7 @@ class Study1Tests(unittest.TestCase):
         self.assertFalse(display["tasks"]["dynamic_sart"]["practice"]["enabled"])
         self.assertTrue(display["hardware"]["display"]["resizable"])
         self.assertTrue(display["hardware"]["display"]["wait_blanking"])
-        self.assertTrue(display["hardware"]["display"]["require_refresh_rate_match"])
+        self.assertFalse(display["hardware"]["display"]["require_refresh_rate_match"])
         self.assertTrue(
             display["hardware"]["display"]["capture_keyboard_outside_window"]
         )
@@ -102,7 +102,7 @@ class Study1Tests(unittest.TestCase):
         self.assertIn("neuracle-collect-test", live["hardware"]["eeg"]["lsl_name_patterns"])
         self.assertFalse(live_task["tasks"]["dynamic_sart"]["practice"]["enabled"])
 
-    def test_windows_live_config_refresh_replaces_stale_protocol_values(self) -> None:
+    def test_windows_live_config_refresh_uses_operator_edited_base_display(self) -> None:
         base = load_config(CONFIG)
         _display, old_live, _old_live_task = build_configs(
             base,
@@ -111,6 +111,20 @@ class Study1Tests(unittest.TestCase):
             confirm_cap_contract=True,
         )
         assert old_live is not None
+        base["hardware"]["display"].update(
+            {
+                "wait_blanking": False,
+                "check_refresh_rate": False,
+                "require_refresh_rate_match": False,
+                "expected_refresh_rate_hz": 144.0,
+                "supported_refresh_rates_hz": [75.0, 100.0, 144.0],
+                "refresh_rate_tolerance_hz": 1000.0,
+                "refresh_rate_stability_threshold_ms": 1000.0,
+                "refresh_rate_measurement_attempts": 1,
+                "refresh_rate_sample_frames": 12,
+                "refresh_rate_window_settle_seconds": 0.0,
+            }
+        )
         old_live["tasks"]["dynamic_sart"].update(
             {
                 "response_window_seconds": 1.15,
@@ -118,16 +132,6 @@ class Study1Tests(unittest.TestCase):
                 "inter_trial_jitter_max_seconds": 0.15,
                 "soi_min_seconds": 1.20,
                 "soi_max_seconds": 1.30,
-            }
-        )
-        old_live["hardware"]["display"].update(
-            {
-                "wait_blanking": False,
-                "check_refresh_rate": False,
-                "require_refresh_rate_match": False,
-                "refresh_rate_tolerance_hz": 1000.0,
-                "refresh_rate_stability_threshold_ms": 1000.0,
-                "refresh_rate_measurement_attempts": 1,
             }
         )
 
@@ -143,19 +147,24 @@ class Study1Tests(unittest.TestCase):
         self.assertEqual(task["inter_trial_jitter_max_seconds"], 0.0)
         self.assertEqual(task["soi_min_seconds"], 1.6)
         self.assertEqual(task["soi_max_seconds"], 1.6)
-        self.assertTrue(refreshed["hardware"]["display"]["wait_blanking"])
-        self.assertTrue(refreshed["hardware"]["display"]["check_refresh_rate"])
-        self.assertTrue(refreshed["hardware"]["display"]["require_refresh_rate_match"])
-        self.assertEqual(refreshed["hardware"]["display"]["refresh_rate_tolerance_hz"], 2.0)
+        self.assertFalse(refreshed["hardware"]["display"]["wait_blanking"])
+        self.assertFalse(refreshed["hardware"]["display"]["check_refresh_rate"])
+        self.assertFalse(refreshed["hardware"]["display"]["require_refresh_rate_match"])
+        self.assertEqual(refreshed["hardware"]["display"]["expected_refresh_rate_hz"], 144.0)
+        self.assertEqual(
+            refreshed["hardware"]["display"]["supported_refresh_rates_hz"],
+            [75.0, 100.0, 144.0],
+        )
+        self.assertEqual(refreshed["hardware"]["display"]["refresh_rate_tolerance_hz"], 1000.0)
         self.assertEqual(
             refreshed["hardware"]["display"]["refresh_rate_stability_threshold_ms"],
-            1.0,
+            1000.0,
         )
-        self.assertEqual(refreshed["hardware"]["display"]["refresh_rate_measurement_attempts"], 3)
-        self.assertEqual(refreshed["hardware"]["display"]["refresh_rate_sample_frames"], 90)
+        self.assertEqual(refreshed["hardware"]["display"]["refresh_rate_measurement_attempts"], 1)
+        self.assertEqual(refreshed["hardware"]["display"]["refresh_rate_sample_frames"], 12)
         self.assertEqual(
             refreshed["hardware"]["display"]["refresh_rate_window_settle_seconds"],
-            1.0,
+            0.0,
         )
         self.assertIn("m_73393543_eeg", refreshed["hardware"]["eeg"]["lsl_name_patterns"])
         self.assertEqual(
@@ -778,19 +787,24 @@ class Study1Tests(unittest.TestCase):
         self.assertTrue(any(issue["status"] == "fail" and "CSV mirror" in issue["detail"] for issue in issues))
         self.assertTrue(any(issue["status"] == "fail" and "sample heartbeat" in issue["detail"] for issue in issues))
 
-    def test_protocol_rejects_permissive_refresh_measurement_contract(self) -> None:
+    def test_protocol_accepts_operator_configured_refresh_measurement_contract(self) -> None:
         config = load_config(CONFIG)
         display = config["hardware"]["display"]
+        display["wait_blanking"] = False
+        display["check_refresh_rate"] = False
+        display["require_refresh_rate_match"] = False
+        display["expected_refresh_rate_hz"] = 144.0
+        display["supported_refresh_rates_hz"] = [75.0, 100.0, 144.0]
         display["refresh_rate_tolerance_hz"] = 1000.0
         display["refresh_rate_stability_threshold_ms"] = 1000.0
         display["refresh_rate_measurement_attempts"] = 1
+        display["refresh_rate_sample_frames"] = 12
+        display["refresh_rate_window_settle_seconds"] = 0.0
 
         issues = validate_study1_config(config)
         failures = [issue["detail"] for issue in issues if issue["status"] == "fail"]
 
-        self.assertTrue(any("tolerance" in detail for detail in failures))
-        self.assertTrue(any("stability threshold" in detail for detail in failures))
-        self.assertTrue(any("at least three attempts" in detail for detail in failures))
+        self.assertEqual(failures, [])
 
     def test_protocol_requires_keyboard_capture_when_task_window_loses_focus(self) -> None:
         config = load_config(CONFIG)

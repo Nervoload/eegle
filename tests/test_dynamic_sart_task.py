@@ -271,6 +271,43 @@ class DynamicSartTaskTests(unittest.TestCase):
                 },
             )
 
+    def test_refresh_measurement_mismatch_is_nonblocking_when_configured(self) -> None:
+        result = measure_psychopy_refresh_rate(
+            _FlipWindow([1.0 / 120.0] * 13),
+            {
+                "expected_refresh_rate_hz": 75.0,
+                "supported_refresh_rates_hz": [75.0],
+                "refresh_rate_tolerance_hz": 0.1,
+                "refresh_rate_warmup_frames": 0,
+                "refresh_rate_sample_frames": 12,
+                "require_refresh_rate_match": False,
+            },
+        )
+
+        self.assertEqual(result["status"], "mismatch")
+        self.assertFalse(result["refresh_rate_within_tolerance"])
+        self.assertFalse(result["refresh_rate_match_required"])
+        self.assertEqual(result["nominal_refresh_rate_hz"], 75.0)
+        self.assertEqual(result["stimulus_frame_count"], 19)
+        self.assertEqual(result["soi_frame_count"], 120)
+
+    def test_disabled_refresh_measurement_overrides_stale_required_flag(self) -> None:
+        result = measure_psychopy_refresh_rate(
+            _FlipWindow([]),
+            {
+                "expected_refresh_rate_hz": 144.0,
+                "supported_refresh_rates_hz": [144.0],
+                "check_refresh_rate": False,
+                "require_refresh_rate_match": True,
+            },
+        )
+
+        self.assertEqual(result["status"], "disabled")
+        self.assertTrue(result["refresh_rate_match_requested"])
+        self.assertFalse(result["refresh_rate_match_required"])
+        self.assertEqual(result["stimulus_frame_count"], 36)
+        self.assertEqual(result["soi_frame_count"], 230)
+
     def test_refresh_measurement_retries_transient_half_rate_result(self) -> None:
         window = _FlipWindow([1.0 / 30.0] * 13 + [1.0 / 59.94] * 13)
         result = measure_psychopy_refresh_rate(

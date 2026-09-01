@@ -28,9 +28,11 @@ The JSON files in this directory are experiment presets. They are loaded by
   launch settings, and analysis settings in their existing top-level sections.
 - Keep formal Dynamic SART timing fixed at a 0.25-second digit plus 1.35-second
   fixation (1.60-second SOI), with both intentional jitter bounds at zero.
-- Formal Dynamic SART display presets must wait for VBlank and require a
-  measured refresh-rate match. Windowed and full-screen launch modes are both
-  valid; keep windowed mode resizable and use `units: height` so layouts scale.
+- Formal Dynamic SART display settings are operator-controlled. Preserve and
+  report refresh measurements when enabled, and block on a mismatch only when
+  `require_refresh_rate_match` is explicitly true. Windowed and full-screen
+  launch modes are both valid; keep windowed mode resizable and use
+  `units: height` so layouts scale.
 - When adding a new config key, verify that the consumer code handles a missing
   value with a safe default. Older session `parameters.json` files can be
   replayed later.

@@ -528,6 +528,62 @@ class DsartRecordingTests(unittest.TestCase):
         self.assertTrue(result["session_dir"])
         manager.stop_after_task.assert_called_once()
 
+    def test_baseline_completion_does_not_reopen_summaries_for_fsync(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = load_config(CONFIG_8)
+            config["runtime"]["session_root"] = tmp
+            options = DsartRecordingOptions(
+                recipe="dsart8",
+                config_path=CONFIG_8,
+                participant_id="unit",
+                visit_id="visit-no-summary-fsync",
+                task_mode="dry-run",
+                trials_per_session=10,
+                baseline_seconds=0.0,
+                break_seconds=0.0,
+                record_eeg=False,
+                require_eeg=False,
+                output_root=tmp,
+            )
+            manager = MagicMock()
+            manager.eeg_summary = None
+            manager.summary.return_value = {
+                "status": "complete",
+                "processes": {},
+                "notes": [],
+            }
+            baseline_result = {
+                "schema": "eegle.dsart_resting_baseline.v1",
+                "status": "completed",
+                "mode": "dry-run",
+                "phases": [],
+                "planned_duration_seconds": 0.0,
+                "actual_duration_seconds": 0.0,
+                "aborted": False,
+            }
+            with patch(
+                "eegle.pipelines.dsart_recording.FeedbackManager",
+                return_value=manager,
+            ), patch(
+                "eegle.pipelines.dsart_recording._run_baseline_protocol",
+                return_value=baseline_result,
+            ), patch(
+                "eegle.pipelines.dsart_recording._baseline_recording_validation",
+                return_value={"status": "pass", "failures": [], "warnings": []},
+            ), patch("eegle.pipelines.dsart_recording.os.fsync") as fsync:
+                result = run_resting_baseline(
+                    config,
+                    options,
+                    visit_id=options.visit_id or "visit",
+                    preflight={},
+                )
+
+            fsync.assert_not_called()
+            self.assertNotIn("durability_warnings", result)
+            session_dir = Path(result["session_dir"])
+            self.assertTrue((session_dir / "events" / "dsart_baseline_results.json").is_file())
+            self.assertTrue((session_dir / "session_summary.json").is_file())
+
     def test_smoke_cli_overrides_trials_baseline_and_break(self) -> None:
         args = build_parser().parse_args(
             [
@@ -1658,6 +1714,21 @@ class DsartRecordingTests(unittest.TestCase):
         suite_32.pop("recipe")
         self.assertEqual(suite_8, suite_32)
 
+    def test_recipe_validation_allows_operator_refresh_policy(self) -> None:
+        config = load_config(CONFIG_8)
+        config["hardware"]["display"].update(
+            {
+                "wait_blanking": False,
+                "check_refresh_rate": False,
+                "require_refresh_rate_match": False,
+                "expected_refresh_rate_hz": 144.0,
+                "supported_refresh_rates_hz": [75.0, 100.0, 144.0],
+                "refresh_rate_tolerance_hz": 1000.0,
+            }
+        )
+
+        self.assertEqual(validate_recording_config(config, "dsart8"), [])
+
     def test_recipe_validation_rejects_all_online_acquisition_work(self) -> None:
         mutations = (
             ("enabled",),
@@ -1679,9 +1750,8 @@ class DsartRecordingTests(unittest.TestCase):
                 ]
                 self.assertTrue(failures)
 
-    def test_recipe_validation_rejects_window_marker_and_epoching_drift(self) -> None:
+    def test_recipe_validation_rejects_marker_raw_and_epoching_drift(self) -> None:
         mutations = (
-            ("hardware", "display", "wait_blanking", False),
             ("hardware", "markers", "required_for_realtime", False),
             ("hardware", "eeg", "raw_sample_mode", "filtered"),
             ("realtime", "epoching", "timebase", "local_received"),

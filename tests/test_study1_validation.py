@@ -233,6 +233,51 @@ class Study1ValidationTests(unittest.TestCase):
             exit_code = main(["--target", str(session), "--mode", "quick"])
             self.assertEqual(exit_code, 2)
 
+    def test_relocated_windows_manifest_paths_resolve_against_current_data_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "data"
+            manifest_path, session = self._visit_fixture(root)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+            def windows_acquisition_path(path: Path) -> str:
+                relative = str(path.relative_to(root)).replace("/", "\\")
+                return f"C:\\Projects\\eegle\\data\\{relative}"
+
+            task_result = manifest["phases"]["session1_main"]["attempts"][0]["result"]
+            task_result["session_dir"] = windows_acquisition_path(session)
+            manifest["session_directories"]["session1_main"] = windows_acquisition_path(session)
+            preflight_result = manifest["phases"]["preflight"]["attempts"][0]["result"]
+            preflight_result["report_file"] = windows_acquisition_path(
+                Path(preflight_result["report_file"])
+            )
+            preflight_result["electrode_quality_file"] = windows_acquisition_path(
+                Path(preflight_result["electrode_quality_file"])
+            )
+            manifest["failures"] = [
+                {
+                    "error": (
+                        "RuntimeError: retained path was "
+                        + windows_acquisition_path(session)
+                    )
+                }
+            ]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with patch(
+                "eegle.pipelines.study1_validation._resolve_xdf_headers",
+                return_value=[{"type": "EEG"}, {"type": "Markers"}],
+            ):
+                report = validate_study1_data(
+                    ValidationOptions(config_path="unused", target=session, mode="quick")
+                )
+
+        self.assertEqual(report["status"], "ok", report)
+        self.assertEqual(len(report["sessions"]), 1)
+        self.assertEqual(
+            Path(report["sessions"][0]["session_dir"]).resolve(),
+            session.resolve(),
+        )
+
     def test_comprehensive_inventory_and_optional_backup_comparison(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "data"
@@ -550,11 +595,12 @@ class Study1ValidationTests(unittest.TestCase):
             [
                 "XDF EEG channel labels/order do not map to the configured physical device order",
                 "XDF marker labels/order do not exactly match the independent LSL marker receipt",
+                "XDF synchronized EEG/marker boundaries disagree; clock bridge unavailable",
                 "authoritative XDF recording is missing",
                 "XDF sample chunks could not be read: corrupt",
             ]
         )
-        self.assertEqual(len(review), 2)
+        self.assertEqual(len(review), 3)
         self.assertEqual(len(blocking), 2)
         self.assertTrue(any("recording is missing" in row for row in blocking))
 

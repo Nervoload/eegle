@@ -586,12 +586,6 @@ def validate_recording_config(config: dict[str, Any], recipe: str) -> list[dict[
     display_size = list(display.get("size", []))
     if len(display_size) != 2 or any(float(value) <= 0.0 for value in display_size):
         issues.append(_issue("fail", "hardware.display.size must contain two positive values"))
-    if not bool(display.get("wait_blanking", False)):
-        issues.append(_issue("fail", "hardware.display.wait_blanking must be true for VBlank synchronization"))
-    if not bool(display.get("check_refresh_rate", False)):
-        issues.append(_issue("fail", "hardware.display.check_refresh_rate must be true"))
-    if not bool(display.get("require_refresh_rate_match", False)):
-        issues.append(_issue("fail", "hardware.display.require_refresh_rate_match must be true"))
     if float(display.get("expected_refresh_rate_hz", 0.0)) <= 0.0:
         issues.append(_issue("fail", "hardware.display.expected_refresh_rate_hz must be positive"))
     marker_config = dict(config.get("hardware", {}).get("markers", {}) or {})
@@ -1648,24 +1642,14 @@ def run_resting_baseline(
     if baseline_validation["failures"]:
         result["status"] = "failed"
         result.setdefault("warnings", []).extend(baseline_validation["failures"])
-    completion_targets = (paths.events / "dsart_baseline_results.json", paths.completion_summary)
-    for target in completion_targets:
+    for target in (paths.events / "dsart_baseline_results.json", paths.completion_summary):
         try:
             _write_json_atomic(target, result)
-            durability_warning = _best_effort_fsync_path(target, target.name)
-            if durability_warning:
-                result.setdefault("durability_warnings", []).append(durability_warning)
         except Exception as exc:
             result.setdefault("warnings", []).append(
                 f"baseline completion report could not be published to {target}: {type(exc).__name__}: {exc}; "
                 "raw recording was retained"
             )
-    if result.get("durability_warnings"):
-        for target in completion_targets:
-            try:
-                _write_json_atomic(target, result)
-            except Exception:
-                pass
     return result
 
 
@@ -4349,15 +4333,6 @@ def _write_text_atomic(path: Path, text: str) -> None:
         _replace_atomic_file(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
-
-
-def _best_effort_fsync_path(path: Path, label: str) -> str | None:
-    try:
-        with path.open("rb") as handle:
-            os.fsync(handle.fileno())
-    except OSError as exc:
-        return f"{label} durable flush failed: {type(exc).__name__}: {exc}"
-    return None
 
 
 def _replace_atomic_file(source: Path, target: Path) -> None:

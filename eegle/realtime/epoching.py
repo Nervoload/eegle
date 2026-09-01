@@ -12,6 +12,7 @@ from typing import Any, Iterable
 import numpy as np
 
 from eegle.devices.xdf_clock import load_xdf_clock_normalization
+from eegle.devices.xdf_integrity import validate_xdf_recording
 from eegle.eeg_csv import eeg_channel_columns
 from eegle.hardware.profiles import analysis_channel_indices, mapped_channel_names
 
@@ -400,10 +401,36 @@ def load_eeg_xdf_for_epoching(
     metadata_path: str | Path,
     parameters_path: str | Path,
 ) -> EegCsvBundle:
-    """Load validated XDF EEG and place it in the task marker's normalized clock."""
+    """Load validated XDF EEG and place it in the task marker's normalized clock.
+
+    A retained recording may have validation metadata written by an older EEGle
+    version. Refresh that derived sidecar once when it is missing or failed; the
+    authoritative XDF is only read and is never rewritten.
+    """
 
     raw = Path(xdf_path).expanduser().resolve()
-    normalizer, metadata = load_xdf_clock_normalization(metadata_path)
+    resolved_metadata_path = Path(metadata_path).expanduser().resolve()
+    try:
+        normalizer, metadata = load_xdf_clock_normalization(resolved_metadata_path)
+    except (OSError, json.JSONDecodeError, ValueError) as stale_error:
+        validation = validate_xdf_recording(
+            raw.parent.parent,
+            required=True,
+            persist_report=True,
+        )
+        if validation.get("status") not in {"pass", "warning"}:
+            detail = "; ".join(str(row) for row in validation.get("failures") or [])
+            raise ValueError(
+                "XDF integrity revalidation did not establish a usable clock "
+                f"normalization: {detail or validation.get('status')}"
+            ) from stale_error
+        try:
+            normalizer, metadata = load_xdf_clock_normalization(resolved_metadata_path)
+        except (OSError, json.JSONDecodeError, ValueError) as refresh_error:
+            raise ValueError(
+                "XDF integrity revalidation completed but did not persist a usable "
+                "clock normalization"
+            ) from refresh_error
     validation = dict(metadata.get("validation") or {})
     eeg_validation = dict(validation.get("eeg") or {})
     stream = dict(eeg_validation.get("stream") or {})

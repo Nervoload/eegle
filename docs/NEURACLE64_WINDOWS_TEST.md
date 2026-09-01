@@ -364,7 +364,9 @@ The baseline's post-recording XDF validation is not a second preflight.
 
 The short test uses the same timing contract as a genuine Study 1 run: a 250 ms
 digit, 1350 ms post-digit fixation, fixed 1600 ms SOI, no intentional jitter,
-VBlank waiting, and a required measured refresh-rate match.
+and the display settings selected in `configs\study1_neuracle64.json`. The
+shipped preset waits for VBlank and measures refresh timing without making a
+mismatch blocking.
 
 The refresh probe leaves the new window available for two seconds before
 sampling. Move it to the intended monitor during that interval. EEGle identifies
@@ -520,8 +522,8 @@ windowed windows while the Windows Desktop Window Manager is active. Windowed
 `flip()` cadence can therefore appear stable with one display but become
 irregular with two displays, and it cannot validate physical VBlank timing.
 Use `-ScreenIndex N` by itself for acquisition; `-FullScreen` remains accepted
-for backward-compatible commands. `-Windowed` is diagnostic-only and the strict
-display gate explains why it cannot certify an acquisition run.
+for backward-compatible commands. `-Windowed` remains useful for diagnosis;
+the measured timing and monitor inventory are retained with the run.
 
 On failure, the terminal now lists every Pyglet screen index, bounds, resolution,
 and current mode. Compare that inventory with Windows **Settings > System >
@@ -685,6 +687,31 @@ sample-heartbeat warning, XDF timestamp/sample-retention warning, or the selecte
 Neuracle stream identity. Review and explicitly accept quality warnings; do not
 confuse them with the harmless marker-transition message.
 
+### Very large XDF EEG/marker boundary disagreement
+
+A reported boundary difference of thousands of seconds can come from the
+Neuracle device clock and the acquisition-PC clock having different origins. It
+does not mean that the reported duration is necessarily missing. EEGle verifies
+the XDF's own sample retention and exact marker parity, then derives a
+recording-relative affine mapping from the non-writing heartbeat endpoints. A
+gap observed only by this diagnostic heartbeat is a quality warning; it no
+longer invalidates otherwise monotonic endpoints or fails the phase. Real XDF
+gaps, clock resets, missing endpoints, identity mismatches, and genuine boundary
+shortfalls remain visible and are not accepted silently.
+
+Preserve the retained run and inspect it directly:
+
+```powershell
+ValidateRun -RunRoot "C:\path\to\retained\run" -Mode Comprehensive
+eegle extract-epochs --session-dir "C:\path\to\retained\run" --source stimulus_manifest
+```
+
+`ValidateRun` is read-only. If the retained metadata contains an older failed
+clock-bridge result, `extract-epochs` reruns integrity validation, refreshes only
+the derived `raw\xdf_metadata.json` validation section, and applies the mapping
+to derived epochs. Neither command rewrites `raw\recording.xdf`, and neither
+changes the incomplete visit manifest to completed.
+
 ### XDF file-growth warning during a live phase
 
 LabRecorder can buffer XDF chunks on Windows, so the visible `recording.xdf`
@@ -746,16 +773,18 @@ proves that SPACE reached the Python task code.
 
 ### Task window is on the wrong display
 
-Pass `-ScreenIndex 0` or `-ScreenIndex 1`; do not edit the generated config.
+Pass `-ScreenIndex 0` or `-ScreenIndex 1`. Edit
+`configs\study1_neuracle64.json` for durable display-probe defaults; generated
+runtime configs are refreshed from that file.
 The dry-task, short-recording, `FullTest`, and `FullRun` launchers use fullscreen
 by default so Pyglet's Windows backend keeps swap-interval VSync enabled. Before
 LabRecorder starts, EEGle opens the real window, measures the refresh rate,
-verifies the PTB keyboard queue, and prints a complete monitor inventory. A
-measured 60 Hz or 120 Hz mode is selected automatically (within 2 Hz); other
-display modes fail preflight. If the inventory reports 100 Hz for the selected
-display, check that same display in Windows Advanced display settings and
-disable Dynamic Refresh Rate or Variable Refresh Rate for the acquisition test
-before retrying at a fixed supported mode.
+verifies the PTB keyboard queue, and prints a complete monitor inventory. The
+accepted modes and tolerance come directly from the Study 1 JSON. Refresh
+mismatches are diagnostic by default and do not fail preflight; an operator can
+opt back into blocking behavior with `require_refresh_rate_match: true`. If the
+inventory reports an unexpected mode, compare it with Windows Advanced display
+settings and decide whether to change the display mode or the JSON policy.
 
 ### Script reports exit code 1 after the task window closes
 

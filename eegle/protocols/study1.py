@@ -319,29 +319,12 @@ def validate_study1_config(config: dict[str, Any]) -> list[dict[str, str]]:
     for name in ("soi_min_seconds", "soi_max_seconds"):
         if base_task.get(name) is not None and abs(float(base_task[name]) - 1.60) > 1e-9:
             issues.append(_issue("fail", f"Study 1 {name} must be fixed at 1.60 seconds"))
+    # Display timing is an operational, operator-controlled measurement policy.
+    # The PsychoPy probe records the configured values and its observation; it
+    # blocks only when the operator explicitly enables
+    # ``require_refresh_rate_match``.  Do not turn refresh-rate preferences into
+    # proposal/protocol invariants here.
     display = dict(config.get("hardware", {}).get("display", {}) or {})
-    if not bool(display.get("wait_blanking", False)):
-        issues.append(_issue("fail", "Study 1 display must wait for VBlank"))
-    if not bool(display.get("check_refresh_rate", False)):
-        issues.append(_issue("fail", "Study 1 display refresh-rate measurement must be enabled"))
-    if not bool(display.get("require_refresh_rate_match", False)):
-        issues.append(_issue("fail", "Study 1 measured refresh rate must match the configured display mode"))
-    if list(display.get("supported_refresh_rates_hz") or []) != [60.0, 120.0]:
-        issues.append(_issue("fail", "Study 1 display modes must be restricted to measured 60 Hz or 120 Hz"))
-    if float(display.get("refresh_rate_tolerance_hz", float("inf"))) > 2.0:
-        issues.append(_issue("fail", "Study 1 display refresh tolerance must be no greater than 2 Hz"))
-    if float(display.get("refresh_rate_stability_threshold_ms", float("inf"))) > 1.0:
-        issues.append(
-            _issue("fail", "Study 1 display refresh stability threshold must be no greater than 1 ms")
-        )
-    if int(display.get("refresh_rate_measurement_attempts", 0)) < 3:
-        issues.append(_issue("fail", "Study 1 display refresh measurement must allow at least three attempts"))
-    if int(display.get("refresh_rate_sample_frames", 0)) < 60:
-        issues.append(_issue("fail", "Study 1 display refresh measurement must sample at least 60 frames"))
-    if float(display.get("refresh_rate_window_settle_seconds", 0.0)) < 1.0:
-        issues.append(
-            _issue("fail", "Study 1 display refresh measurement must allow the window to settle")
-        )
     if str(display.get("keyboard_backend", "")).lower() != "ptb":
         issues.append(_issue("fail", "Study 1 requires PsychoPy's asynchronous PTB keyboard backend"))
     if not bool(display.get("capture_keyboard_outside_window", False)):

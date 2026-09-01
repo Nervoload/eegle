@@ -167,12 +167,13 @@ the asynchronous PTB keyboard queue. The queue is stopped explicitly and
 process exit releases any remaining native HID state before the baseline or
 task starts. The accepted preflight report fingerprints the acquisition
 hardware/display/recorder contract, and each later recording phase verifies the
-same fingerprint before it starts. Formal Study 1 refresh measurement uses a
-1 ms frame-interval stability threshold, permits only a measured 60 Hz or 120
-Hz mode within 2 Hz, and retries transient mismatches up to three times.
-Study 1 accepts only measured 60 Hz or 120 Hz modes. The task schedules the
-250 ms digit and 1600 ms SOI as 15/96 frames at 60 Hz or 30/192 frames at 120 Hz,
-using absolute VBlank boundaries rather than cumulative relative sleeps. The
+same fingerprint before it starts. Study 1 refresh measurement uses the rates,
+tolerance, stability threshold, and retry policy in
+`configs/study1_neuracle64.json`. The shipped preset measures and records timing
+but treats a mismatch as non-blocking; `require_refresh_rate_match: true` is an
+explicit operator opt-in. The task schedules the 250 ms digit and 1600 ms SOI
+with the nearest whole-frame counts for the configured nominal rate, using
+absolute VBlank boundaries rather than cumulative relative sleeps. The
 post-digit fixation occupies the remaining frames and intentional jitter stays
 zero. Hardware key-down timestamps, rather than polling time, assign responses
 to their trial. Space, Escape, and Q are recognized consistently in practice,

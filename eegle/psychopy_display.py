@@ -70,7 +70,11 @@ def measure_psychopy_refresh_rate(win: Any, display: dict[str, Any]) -> dict[str
     supported = _positive_rates(display.get("supported_refresh_rates_hz", []))
     tolerance = max(0.0, float(display.get("refresh_rate_tolerance_hz", 10.0)))
     check_enabled = bool(display.get("check_refresh_rate", True))
-    check_required = bool(display.get("require_refresh_rate_match", False))
+    check_requested_as_required = bool(display.get("require_refresh_rate_match", False))
+    # Disabling the measurement must also disable its gate.  This lets the JSON
+    # remain authoritative even when a stale generated config still contains
+    # ``require_refresh_rate_match: true``.
+    check_required = check_enabled and check_requested_as_required
     measured_value: float | None = None
     measurement_values: list[float | None] = []
     measurement_errors: list[str] = []
@@ -227,9 +231,11 @@ def measure_psychopy_refresh_rate(win: Any, display: dict[str, Any]) -> dict[str
         if measurement_values:
             detail += f"; attempts={measurement_values}"
         detail += f"; {_monitor_inventory_summary(monitor_inventory)}"
+        configured_rates = supported or [expected]
         raise RuntimeError(
             f"DSART display refresh check failed: {detail}. "
-            "Use a supported 60 Hz or 120 Hz Windows display mode, or correct the display settings."
+            f"Configured accepted rates are {configured_rates}; adjust hardware.display or set "
+            "require_refresh_rate_match to false to keep the probe diagnostic-only."
         )
     effective = measured_value or nominal
     stimulus_frames = _whole_frame_count(0.25, nominal)
@@ -250,10 +256,17 @@ def measure_psychopy_refresh_rate(win: Any, display: dict[str, Any]) -> dict[str
             "[display] "
             f"{_active_monitor_summary(active_monitor)}; "
             f"measured={measured_text}; "
+            f"status={status}; "
             f"attempt={selected_attempt}/{maximum_attempts}; "
             f"method=blank_flip_robust_median_v1",
             flush=True,
         )
+        if status != "measured" and not check_required:
+            print(
+                "[display] refresh measurement is outside the configured acceptance "
+                "policy or unavailable; continuing because require_refresh_rate_match is false",
+                flush=True,
+            )
     return {
         "status": status,
         "expected_refresh_rate_hz": expected,
@@ -265,6 +278,7 @@ def measure_psychopy_refresh_rate(win: Any, display: dict[str, Any]) -> dict[str
         "refresh_rate_tolerance_hz": tolerance,
         "refresh_rate_within_tolerance": within_tolerance,
         "refresh_rate_check_enabled": check_enabled,
+        "refresh_rate_match_requested": check_requested_as_required,
         "refresh_rate_match_required": check_required,
         "refresh_rate_measurement_attempts": len(measurement_values),
         "refresh_rate_maximum_attempts": maximum_attempts,
@@ -826,13 +840,11 @@ def _positive_rates(values: Any) -> list[float]:
 
 
 def _whole_frame_count(seconds: float, refresh_rate_hz: float) -> int:
-    frames = int(round(float(seconds) * float(refresh_rate_hz)))
-    if frames <= 0 or abs((frames / float(refresh_rate_hz)) - float(seconds)) > 1e-9:
-        raise RuntimeError(
-            f"DSART timing {seconds:.3f}s is not representable as a whole number of frames "
-            f"at {refresh_rate_hz:.3f} Hz"
-        )
-    return frames
+    # Arbitrary operator-approved display modes need not represent every task
+    # duration exactly.  PsychoPy necessarily presents an integer frame count,
+    # so use the nearest count and retain the nominal/measured rates in timing
+    # metadata instead of rejecting the experiment.
+    return max(1, int(round(float(seconds) * float(refresh_rate_hz))))
 
 
 def probe_psychopy_display_and_keyboard(config: dict[str, Any]) -> dict[str, Any]:

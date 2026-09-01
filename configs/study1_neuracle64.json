@@ -153,7 +153,7 @@
       "refresh_rate_warmup_frames": 20,
       "refresh_rate_sample_frames": 90,
       "check_refresh_rate": true,
-      "require_refresh_rate_match": true,
+      "require_refresh_rate_match": false,
       "wait_blanking": true,
       "keyboard_backend": "ptb",
       "capture_keyboard_outside_window": true,
